@@ -6,9 +6,22 @@ set(ENABLE_TESTING OFF CACHE BOOL "Disable mbedtls tests" FORCE)
 set(ENABLE_PROGRAMS OFF CACHE BOOL "Disable mbedtls programs" FORCE)
 add_subdirectory(mbedtls)
 
-add_library(veracrypt-native SHARED VeraCryptNative.cpp)
+# libexfat
+file(GLOB EXFAT_SRCS "exfat/*.c")
+add_library(exfat STATIC ${EXFAT_SRCS})
+target_compile_definitions(exfat PRIVATE
+    _FILE_OFFSET_BITS=64
+    PACKAGE="exfat"
+    VERSION="1.4.0"
+)
+target_include_directories(exfat PUBLIC exfat)
+
+# veracrypt-native
+add_library(veracrypt-native SHARED VeraCryptNative.cpp exfat/ExFatNative.cpp)
+target_compile_definitions(veracrypt-native PRIVATE _FILE_OFFSET_BITS=64)
 
 target_link_options(veracrypt-native PRIVATE "-Wl,-z,max-page-size=16384")
 target_link_libraries(veracrypt-native
         mbedcrypto
+        exfat
         log)

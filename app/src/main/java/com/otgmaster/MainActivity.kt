@@ -39,7 +39,9 @@ import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 import me.jahnen.libaums.core.fs.fat32.Fat32FileSystemCreator
+import me.jahnen.libaums.core.fs.FileSystemFactory
 import me.jahnen.libaums.core.partition.PartitionTableEntry
+import com.otgmaster.exfat.ExFatFileSystemCreator
 import java.util.UUID
 
 class MainActivity : ComponentActivity() {
@@ -83,6 +85,9 @@ class MainActivity : ComponentActivity() {
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
+        
+        FileSystemFactory.registerFileSystem(ExFatFileSystemCreator(), 1)
+        
         usbManager = getSystemService(USB_SERVICE) as UsbManager
         registerUsbReceiver()
 
