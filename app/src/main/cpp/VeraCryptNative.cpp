@@ -8,7 +8,7 @@
 #define LOGE(...) __android_log_print(ANDROID_LOG_ERROR, TAG, __VA_ARGS__)
 
 extern "C" JNIEXPORT jbyteArray JNICALL
-Java_com_otgmaster_veracrypt_VeraCryptNative_decryptHeader(JNIEnv *env, jobject thiz, jbyteArray jPassword, jbyteArray jSalt, jbyteArray jEncHeader) {
+Java_com_otgmaster_veracrypt_VeraCryptNative_decryptHeader(JNIEnv *env, jobject thiz, jbyteArray jPassword, jbyteArray jSalt, jint iterations, jbyteArray jEncHeader) {
     jsize pwdLen = env->GetArrayLength(jPassword);
     jbyte* pwd = env->GetByteArrayElements(jPassword, NULL);
 
@@ -24,7 +24,7 @@ Java_com_otgmaster_veracrypt_VeraCryptNative_decryptHeader(JNIEnv *env, jobject 
     const mbedtls_md_info_t *md_info = mbedtls_md_info_from_type(MBEDTLS_MD_SHA512);
     mbedtls_md_setup(&md_ctx, md_info, 1);
 
-    int ret = mbedtls_pkcs5_pbkdf2_hmac(&md_ctx, (const unsigned char*)pwd, pwdLen, (const unsigned char*)salt, saltLen, 500000, 64, headerKey);
+    int ret = mbedtls_pkcs5_pbkdf2_hmac(&md_ctx, (const unsigned char*)pwd, pwdLen, (const unsigned char*)salt, saltLen, iterations, 64, headerKey);
     mbedtls_md_free(&md_ctx);
 
     if (ret != 0) {

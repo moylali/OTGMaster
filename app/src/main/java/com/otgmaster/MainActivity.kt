@@ -30,9 +30,14 @@ class MainActivity : Activity() {
     private lateinit var usbManager: UsbManager
     private lateinit var statusView: TextView
     private lateinit var passwordInput: EditText
+    private lateinit var pimInput: EditText
+    private lateinit var keyfileButton: Button
     private lateinit var unlockButton: Button
+    private lateinit var unmountButton: Button
     private var openedBlockDevice: RawBlockDevice? = null
+    private var decryptedBlockDevice: RawBlockDevice? = null
     private var currentCandidates: List<VolumeCandidate> = emptyList()
+    private var selectedKeyfileUris = mutableListOf<android.net.Uri>()
 
     private val permissionIntent: PendingIntent by lazy {
         val flags = PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE
@@ -117,12 +122,33 @@ class MainActivity : Activity() {
         }
         root.addView(passwordInput)
 
+        pimInput = EditText(this).apply {
+            hint = "PIM (leave blank for default)"
+            inputType = android.text.InputType.TYPE_CLASS_NUMBER
+            visibility = android.view.View.GONE
+        }
+        root.addView(pimInput)
+
+        keyfileButton = Button(this).apply {
+            text = "Select Keyfiles (0)"
+            visibility = android.view.View.GONE
+            setOnClickListener { selectKeyfile() }
+        }
+        root.addView(keyfileButton)
+
         unlockButton = Button(this).apply {
             text = "Unlock & Read FAT32"
             visibility = android.view.View.GONE
             setOnClickListener { attemptUnlock() }
         }
         root.addView(unlockButton)
+
+        unmountButton = Button(this).apply {
+            text = "Unmount Drive"
+            visibility = android.view.View.GONE
+            setOnClickListener { unmountDrive() }
+        }
+        root.addView(unmountButton)
 
         statusView = TextView(this).apply {
             textSize = 14f
@@ -182,8 +208,7 @@ class MainActivity : Activity() {
                 runOnUiThread {
                     currentCandidates = candidates
                     if (candidates.isNotEmpty()) {
-                        passwordInput.visibility = android.view.View.VISIBLE
-                        unlockButton.visibility = android.view.View.VISIBLE
+                        showPasswordInput()
                     }
                 }
                 buildString {
@@ -206,19 +231,47 @@ class MainActivity : Activity() {
         }.start()
     }
 
+    private fun showPasswordInput() {
+        passwordInput.visibility = android.view.View.VISIBLE
+        pimInput.visibility = android.view.View.VISIBLE
+        keyfileButton.visibility = android.view.View.VISIBLE
+        unlockButton.visibility = android.view.View.VISIBLE
+        unmountButton.visibility = android.view.View.GONE
+    }
+
     private fun attemptUnlock() {
+        val device = openedBlockDevice
+        val candidate = currentCandidates.firstOrNull()
+        if (device == null || candidate == null) {
+            appendStatus("No device or candidate to unlock.")
+            return
+        }
+
         val pwd = passwordInput.text.toString().toCharArray()
-        if (pwd.isEmpty()) return
-        val device = openedBlockDevice ?: return
-        val candidate = currentCandidates.firstOrNull() ?: return
+        val pimStr = pimInput.text.toString()
+        val pim = if (pimStr.isNotBlank()) pimStr.toIntOrNull() else null
+
+        if (pwd.isEmpty() && selectedKeyfileUris.isEmpty()) {
+            appendStatus("Please enter a password or select keyfiles.")
+            return
+        }
 
         appendStatus("Attempting unlock of ${candidate.label}...")
         passwordInput.text.clear()
+        pimInput.text.clear()
 
         Thread {
             try {
-                val decryptedDevice = VeraCryptUnlocker().unlock(device, candidate, pwd)
-                runOnUiThread { appendStatus("Unlock successful! Reading FAT32...") }
+                val decryptedDevice = VeraCryptUnlocker().unlock(device, candidate, pwd, pim, selectedKeyfileUris, contentResolver)
+                this.decryptedBlockDevice = decryptedDevice
+                runOnUiThread { 
+                    appendStatus("Unlock successful! Reading FAT32...")
+                    passwordInput.visibility = android.view.View.GONE
+                    pimInput.visibility = android.view.View.GONE
+                    keyfileButton.visibility = android.view.View.GONE
+                    unlockButton.visibility = android.view.View.GONE
+                    unmountButton.visibility = android.view.View.VISIBLE
+                }
                 
                 val dummyEntry = PartitionTableEntry(0, 0, 0)
                 val byteDevice = me.jahnen.libaums.core.driver.ByteBlockDevice(decryptedDevice as me.jahnen.libaums.core.driver.BlockDeviceDriver)
@@ -256,6 +309,43 @@ class MainActivity : Activity() {
             @Suppress("DEPRECATION")
             getParcelableExtra(name)
         }
+    }
+
+    private fun selectKeyfile() {
+        val intent = Intent(Intent.ACTION_OPEN_DOCUMENT).apply {
+            addCategory(Intent.CATEGORY_OPENABLE)
+            type = "*/*"
+            putExtra(Intent.EXTRA_ALLOW_MULTIPLE, true)
+        }
+        startActivityForResult(intent, 1001)
+    }
+
+    override fun onActivityResult(requestCode: Int, resultCode: Int, data: Intent?) {
+        super.onActivityResult(requestCode, resultCode, data)
+        if (requestCode == 1001 && resultCode == RESULT_OK) {
+            if (data?.clipData != null) {
+                val count = data.clipData!!.itemCount
+                for (i in 0 until count) {
+                    selectedKeyfileUris.add(data.clipData!!.getItemAt(i).uri)
+                }
+            } else if (data?.data != null) {
+                selectedKeyfileUris.add(data.data!!)
+            }
+            keyfileButton.text = "Select Keyfiles (${selectedKeyfileUris.size})"
+        }
+    }
+
+    private fun unmountDrive() {
+        OtgMasterState.currentFileSystem = null
+        contentResolver.notifyChange(android.provider.DocumentsContract.buildRootsUri("com.otgmaster.documents"), null)
+        decryptedBlockDevice?.close()
+        decryptedBlockDevice = null
+        
+        selectedKeyfileUris.clear()
+        keyfileButton.text = "Select Keyfiles (0)"
+        
+        showPasswordInput()
+        appendStatus("Drive unmounted securely.")
     }
 
     private companion object {

@@ -5,9 +5,11 @@ object VeraCryptNative {
         System.loadLibrary("veracrypt-native")
     }
 
+    @JvmStatic
     external fun decryptHeader(
         password: ByteArray,
         salt: ByteArray,
+        iterations: Int,
         encryptedHeader: ByteArray
     ): ByteArray?
 
