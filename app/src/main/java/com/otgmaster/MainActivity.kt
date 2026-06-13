@@ -1,6 +1,5 @@
 package com.otgmaster
 
-import android.app.Activity
 import android.app.PendingIntent
 import android.content.BroadcastReceiver
 import android.content.Context
@@ -8,36 +7,49 @@ import android.content.Intent
 import android.content.IntentFilter
 import android.hardware.usb.UsbDevice
 import android.hardware.usb.UsbManager
+import android.net.Uri
 import android.os.Build
 import android.os.Bundle
 import android.util.Log
-import android.view.Gravity
-import android.view.ViewGroup
-import android.widget.Button
-import android.widget.LinearLayout
-import android.widget.ScrollView
-import android.widget.TextView
+import androidx.activity.ComponentActivity
+import androidx.activity.compose.rememberLauncherForActivityResult
+import androidx.activity.compose.setContent
+import androidx.activity.result.contract.ActivityResultContracts
+import androidx.compose.animation.AnimatedVisibility
+import androidx.compose.foundation.clickable
+import androidx.compose.foundation.layout.*
+import androidx.compose.foundation.lazy.LazyColumn
+import androidx.compose.foundation.lazy.items
+import androidx.compose.foundation.rememberScrollState
+import androidx.compose.foundation.verticalScroll
+import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.filled.KeyboardArrowDown
+import androidx.compose.material.icons.filled.KeyboardArrowUp
+import androidx.compose.material3.*
+import androidx.compose.runtime.*
+import androidx.compose.ui.Alignment
+import androidx.compose.ui.Modifier
+import androidx.compose.ui.text.input.PasswordVisualTransformation
+import androidx.compose.ui.unit.dp
 import com.otgmaster.block.RawBlockDevice
 import com.otgmaster.usb.LibaumsRawBlockDeviceOpener
-import com.otgmaster.usb.UsbDeviceDescriber
 import com.otgmaster.veracrypt.VeraCryptUnlocker
 import com.otgmaster.veracrypt.VolumeCandidate
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.launch
+import kotlinx.coroutines.withContext
 import me.jahnen.libaums.core.fs.fat32.Fat32FileSystemCreator
 import me.jahnen.libaums.core.partition.PartitionTableEntry
-import android.widget.EditText
+import java.util.UUID
 
-class MainActivity : Activity() {
+class MainActivity : ComponentActivity() {
     private lateinit var usbManager: UsbManager
-    private lateinit var statusView: TextView
-    private lateinit var passwordInput: EditText
-    private lateinit var pimInput: EditText
-    private lateinit var keyfileButton: Button
-    private lateinit var unlockButton: Button
-    private lateinit var unmountButton: Button
+    private val _candidates = mutableStateOf<List<VolumeCandidate>>(emptyList())
     private var openedBlockDevice: RawBlockDevice? = null
-    private var decryptedBlockDevice: RawBlockDevice? = null
-    private var currentCandidates: List<VolumeCandidate> = emptyList()
-    private var selectedKeyfileUris = mutableListOf<android.net.Uri>()
+
+    // For Compose state hoisting
+    private val mountedDrivesState = mutableStateOf<List<MountedDrive>>(emptyList())
+    private val logsState = mutableStateListOf<String>()
 
     private val permissionIntent: PendingIntent by lazy {
         val flags = PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE
@@ -51,20 +63,18 @@ class MainActivity : Activity() {
                     val device = intent.getParcelableExtraCompat<UsbDevice>(UsbManager.EXTRA_DEVICE)
                     val granted = intent.getBooleanExtra(UsbManager.EXTRA_PERMISSION_GRANTED, false)
                     if (device != null && granted) {
-                        appendStatus("USB permission granted for ${device.deviceName}.")
+                        appendLog("USB permission granted for ${device.deviceName}.")
                         openAndProbeUsb()
                     } else {
-                        appendStatus("USB permission denied.")
+                        appendLog("USB permission denied.")
                     }
                 }
-
                 UsbManager.ACTION_USB_DEVICE_ATTACHED -> {
-                    appendStatus("USB device attached.")
+                    appendLog("USB device attached.")
                     refreshDevices()
                 }
-
                 UsbManager.ACTION_USB_DEVICE_DETACHED -> {
-                    appendStatus("USB device detached.")
+                    appendLog("USB device detached.")
                     refreshDevices()
                 }
             }
@@ -75,7 +85,26 @@ class MainActivity : Activity() {
         super.onCreate(savedInstanceState)
         usbManager = getSystemService(USB_SERVICE) as UsbManager
         registerUsbReceiver()
-        setContentView(buildContentView())
+
+        setContent {
+            MaterialTheme {
+                Surface(
+                    modifier = Modifier.fillMaxSize(),
+                    color = MaterialTheme.colorScheme.background
+                ) {
+                    OtgMasterApp(
+                        candidates = _candidates.value,
+                        mountedDrives = mountedDrivesState.value,
+                        logs = logsState,
+                        onRefreshDevices = { refreshDevices() },
+                        onUnlock = { pwd, pim, keyfiles -> attemptUnlock(pwd, pim, keyfiles) },
+                        onUnmount = { drive -> unmountDrive(drive) }
+                    )
+                }
+            }
+        }
+        
+        updateMountedDrives()
         refreshDevices()
     }
 
@@ -83,80 +112,6 @@ class MainActivity : Activity() {
         openedBlockDevice?.close()
         unregisterReceiver(usbReceiver)
         super.onDestroy()
-    }
-
-    private fun buildContentView(): ScrollView {
-        val root = LinearLayout(this).apply {
-            orientation = LinearLayout.VERTICAL
-            setPadding(40, 48, 40, 40)
-            layoutParams = ViewGroup.LayoutParams(
-                ViewGroup.LayoutParams.MATCH_PARENT,
-                ViewGroup.LayoutParams.WRAP_CONTENT,
-            )
-        }
-
-        val title = TextView(this).apply {
-            text = getString(R.string.app_name)
-            textSize = 26f
-            gravity = Gravity.START
-        }
-        root.addView(title)
-
-        val subtitle = TextView(this).apply {
-            text = "Userspace USB + VeraCrypt unlock prototype"
-            textSize = 15f
-            setPadding(0, 8, 0, 24)
-        }
-        root.addView(subtitle)
-
-        val refresh = Button(this).apply {
-            text = "Scan USB devices"
-            setOnClickListener { refreshDevices() }
-        }
-        root.addView(refresh)
-
-        passwordInput = EditText(this).apply {
-            hint = "VeraCrypt Password"
-            inputType = android.text.InputType.TYPE_CLASS_TEXT or android.text.InputType.TYPE_TEXT_VARIATION_PASSWORD
-            visibility = android.view.View.GONE
-        }
-        root.addView(passwordInput)
-
-        pimInput = EditText(this).apply {
-            hint = "PIM (leave blank for default)"
-            inputType = android.text.InputType.TYPE_CLASS_NUMBER
-            visibility = android.view.View.GONE
-        }
-        root.addView(pimInput)
-
-        keyfileButton = Button(this).apply {
-            text = "Select Keyfiles (0)"
-            visibility = android.view.View.GONE
-            setOnClickListener { selectKeyfile() }
-        }
-        root.addView(keyfileButton)
-
-        unlockButton = Button(this).apply {
-            text = "Unlock & Read FAT32"
-            visibility = android.view.View.GONE
-            setOnClickListener { attemptUnlock() }
-        }
-        root.addView(unlockButton)
-
-        unmountButton = Button(this).apply {
-            text = "Unmount Drive"
-            visibility = android.view.View.GONE
-            setOnClickListener { unmountDrive() }
-        }
-        root.addView(unmountButton)
-
-        statusView = TextView(this).apply {
-            textSize = 14f
-            setPadding(0, 28, 0, 0)
-        }
-        root.addView(statusView)
-
-        return ScrollView(this).apply { addView(root) }
     }
 
     private fun registerUsbReceiver() {
@@ -174,132 +129,116 @@ class MainActivity : Activity() {
 
     private fun refreshDevices() {
         val devices = usbManager.deviceList.values.toList()
-        statusView.text = ""
+        appendLog("Found ${devices.size} USB devices.")
 
         if (devices.isEmpty()) {
-            appendStatus("No USB devices found. Attach a USB mass-storage device with an OTG adapter.")
+            _candidates.value = emptyList()
+            openedBlockDevice?.close()
+            openedBlockDevice = null
             return
         }
 
-        appendStatus("Found ${devices.size} USB device(s):")
-        devices.forEach { device ->
-            appendStatus("")
-            appendStatus(UsbDeviceDescriber.describe(device))
-            if (usbManager.hasPermission(device)) {
-                appendStatus("Permission already granted.")
-                openAndProbeUsb()
-            } else {
-                appendStatus("Requesting permission...")
-                usbManager.requestPermission(device, permissionIntent)
-            }
+        val device = devices.first()
+        if (!usbManager.hasPermission(device)) {
+            appendLog("Requesting permission for ${device.deviceName}...")
+            usbManager.requestPermission(device, permissionIntent)
+        } else {
+            openAndProbeUsb()
         }
     }
 
     private fun openAndProbeUsb() {
-        appendStatus("Opening raw USB block device...")
-        Thread {
-            val result = runCatching {
-                Log.i(TAG, "Opening raw USB block device")
-                openedBlockDevice?.close()
+        val devices = usbManager.deviceList.values.toList()
+        if (devices.isEmpty()) return
+        val device = devices.first()
+
+        try {
+            Thread {
                 val opened = LibaumsRawBlockDeviceOpener(this).openFirstAvailable()
                 openedBlockDevice = opened.blockDevice
-
+                
                 val candidates = VeraCryptUnlocker().probeCandidates(opened.blockDevice)
                 runOnUiThread {
-                    currentCandidates = candidates
-                    if (candidates.isNotEmpty()) {
-                        showPasswordInput()
-                    }
+                    _candidates.value = candidates
                 }
-                buildString {
-                    appendLine("Opened ${opened.usbDevice.deviceName} interface ${opened.usbInterface.id}.")
-                    appendLine("Block size: ${opened.blockDevice.blockSize} bytes")
-                    appendLine("Blocks: ${opened.blockDevice.blockCount}")
-                    appendLine("Capacity: ${opened.blockDevice.blockSize * opened.blockDevice.blockCount / (1024 * 1024)} MiB")
-                    appendLine("Volume candidates:")
-                    candidates.forEach { candidate ->
-                        appendLine("  ${candidate.label}: start block ${candidate.startBlock}, blocks ${candidate.blockCount ?: "unknown"}")
-                    }
-                }
-            }.getOrElse { error ->
-                Log.e(TAG, "USB block open failed", error)
-                "USB block open failed: ${error.message ?: error.javaClass.simpleName}"
-            }
+                appendLog("Found ${candidates.size} VeraCrypt volume candidates.")
+            }.start()
 
-            Log.i(TAG, result.trimEnd())
-            runOnUiThread { appendStatus(result.trimEnd()) }
-        }.start()
+        } catch (e: Exception) {
+            Log.e(TAG, "Failed to open device", e)
+            appendLog("Error: ${e.message}")
+        }
     }
 
-    private fun showPasswordInput() {
-        passwordInput.visibility = android.view.View.VISIBLE
-        pimInput.visibility = android.view.View.VISIBLE
-        keyfileButton.visibility = android.view.View.VISIBLE
-        unlockButton.visibility = android.view.View.VISIBLE
-        unmountButton.visibility = android.view.View.GONE
-    }
-
-    private fun attemptUnlock() {
+    private fun attemptUnlock(password: String, pim: Int?, keyfiles: List<Uri>) {
         val device = openedBlockDevice
-        val candidate = currentCandidates.firstOrNull()
+        val candidate = _candidates.value.firstOrNull()
         if (device == null || candidate == null) {
-            appendStatus("No device or candidate to unlock.")
+            appendLog("No device or candidate to unlock.")
             return
         }
 
-        val pwd = passwordInput.text.toString().toCharArray()
-        val pimStr = pimInput.text.toString()
-        val pim = if (pimStr.isNotBlank()) pimStr.toIntOrNull() else null
-
-        if (pwd.isEmpty() && selectedKeyfileUris.isEmpty()) {
-            appendStatus("Please enter a password or select keyfiles.")
-            return
-        }
-
-        appendStatus("Attempting unlock of ${candidate.label}...")
-        passwordInput.text.clear()
-        pimInput.text.clear()
+        appendLog("Attempting unlock of ${candidate.label}...")
 
         Thread {
             try {
-                val decryptedDevice = VeraCryptUnlocker().unlock(device, candidate, pwd, pim, selectedKeyfileUris, contentResolver)
-                this.decryptedBlockDevice = decryptedDevice
-                runOnUiThread { 
-                    appendStatus("Unlock successful! Reading FAT32...")
-                    passwordInput.visibility = android.view.View.GONE
-                    pimInput.visibility = android.view.View.GONE
-                    keyfileButton.visibility = android.view.View.GONE
-                    unlockButton.visibility = android.view.View.GONE
-                    unmountButton.visibility = android.view.View.VISIBLE
-                }
-                
+                val decryptedDevice = VeraCryptUnlocker().unlock(
+                    device, candidate, password.toCharArray(), pim, keyfiles, contentResolver
+                )
+                runOnUiThread { appendLog("Unlock successful! Reading FAT32...") }
+
                 val dummyEntry = PartitionTableEntry(0, 0, 0)
-                val byteDevice = me.jahnen.libaums.core.driver.ByteBlockDevice(decryptedDevice as me.jahnen.libaums.core.driver.BlockDeviceDriver)
+                val byteDevice = me.jahnen.libaums.core.driver.ByteBlockDevice(
+                    decryptedDevice as me.jahnen.libaums.core.driver.BlockDeviceDriver
+                )
                 val fileSystem = Fat32FileSystemCreator().read(dummyEntry, byteDevice)
+                
                 if (fileSystem == null) {
-                    runOnUiThread { appendStatus("Failed to mount FAT32 file system") }
+                    runOnUiThread { appendLog("Failed to mount FAT32 file system") }
                     return@Thread
                 }
-                
-                OtgMasterState.currentFileSystem = fileSystem
-                contentResolver.notifyChange(android.provider.DocumentsContract.buildRootsUri("com.otgmaster.documents"), null)
+
+                val driveId = UUID.randomUUID().toString().substring(0, 8)
+                val mountedDrive = MountedDrive(
+                    id = driveId,
+                    name = "VeraCrypt Drive ($driveId)",
+                    fileSystem = fileSystem,
+                    blockDevice = decryptedDevice
+                )
+
+                OtgMasterState.addDrive(mountedDrive)
+                contentResolver.notifyChange(
+                    android.provider.DocumentsContract.buildRootsUri("com.otgmaster.documents"), null
+                )
                 
                 runOnUiThread {
-                    appendStatus("Mounted FAT32. Root capacity: ${fileSystem.capacity / (1024 * 1024)} MB")
-                    val files = fileSystem.rootDirectory.listFiles()
-                    appendStatus("Root directory files:")
-                    files.forEach { appendStatus("  ${if(it.isDirectory) "[DIR]" else "[FILE]"} ${it.name}") }
+                    updateMountedDrives()
+                    appendLog("Mounted FAT32 successfully. Root capacity: ${fileSystem.capacity / (1024 * 1024)} MB")
                 }
             } catch (e: Exception) {
                 Log.e(TAG, "Unlock/Read failed", e)
-                runOnUiThread { appendStatus("Failed: ${e.message}") }
+                runOnUiThread { appendLog("Failed: ${e.message}") }
             }
         }.start()
     }
 
-    private fun appendStatus(line: String) {
-        statusView.append(line)
-        statusView.append("\n")
+    private fun unmountDrive(drive: MountedDrive) {
+        OtgMasterState.removeDrive(drive.id)
+        contentResolver.notifyChange(
+            android.provider.DocumentsContract.buildRootsUri("com.otgmaster.documents"), null
+        )
+        drive.blockDevice?.close()
+        updateMountedDrives()
+        appendLog("Drive '${drive.name}' unmounted securely.")
+    }
+
+    private fun updateMountedDrives() {
+        mountedDrivesState.value = OtgMasterState.mountedDrives.toList()
+    }
+
+    private fun appendLog(line: String) {
+        if (logsState.size > 50) logsState.removeAt(0)
+        logsState.add(line)
     }
 
     private inline fun <reified T> Intent.getParcelableExtraCompat(name: String): T? {
@@ -311,45 +250,145 @@ class MainActivity : Activity() {
         }
     }
 
-    private fun selectKeyfile() {
-        val intent = Intent(Intent.ACTION_OPEN_DOCUMENT).apply {
-            addCategory(Intent.CATEGORY_OPENABLE)
-            type = "*/*"
-            putExtra(Intent.EXTRA_ALLOW_MULTIPLE, true)
-        }
-        startActivityForResult(intent, 1001)
-    }
-
-    override fun onActivityResult(requestCode: Int, resultCode: Int, data: Intent?) {
-        super.onActivityResult(requestCode, resultCode, data)
-        if (requestCode == 1001 && resultCode == RESULT_OK) {
-            if (data?.clipData != null) {
-                val count = data.clipData!!.itemCount
-                for (i in 0 until count) {
-                    selectedKeyfileUris.add(data.clipData!!.getItemAt(i).uri)
-                }
-            } else if (data?.data != null) {
-                selectedKeyfileUris.add(data.data!!)
-            }
-            keyfileButton.text = "Select Keyfiles (${selectedKeyfileUris.size})"
-        }
-    }
-
-    private fun unmountDrive() {
-        OtgMasterState.currentFileSystem = null
-        contentResolver.notifyChange(android.provider.DocumentsContract.buildRootsUri("com.otgmaster.documents"), null)
-        decryptedBlockDevice?.close()
-        decryptedBlockDevice = null
-        
-        selectedKeyfileUris.clear()
-        keyfileButton.text = "Select Keyfiles (0)"
-        
-        showPasswordInput()
-        appendStatus("Drive unmounted securely.")
-    }
-
-    private companion object {
+    companion object {
         const val TAG = "OTGMaster"
         const val ACTION_USB_PERMISSION = "com.otgmaster.USB_PERMISSION"
+    }
+}
+
+@Composable
+fun OtgMasterApp(
+    candidates: List<VolumeCandidate>,
+    mountedDrives: List<MountedDrive>,
+    logs: List<String>,
+    onRefreshDevices: () -> Unit,
+    onUnlock: (String, Int?, List<Uri>) -> Unit,
+    onUnmount: (MountedDrive) -> Unit
+) {
+    val coroutineScope = rememberCoroutineScope()
+    var isVeraCryptExpanded by remember { mutableStateOf(true) }
+
+    Column(
+        modifier = Modifier
+            .fillMaxSize()
+            .padding(16.dp)
+            .verticalScroll(rememberScrollState()),
+        verticalArrangement = Arrangement.spacedBy(16.dp)
+    ) {
+        Text(text = "OTG Master", style = MaterialTheme.typography.headlineLarge)
+        
+        Button(onClick = onRefreshDevices, modifier = Modifier.fillMaxWidth()) {
+            Text("Scan USB Devices")
+        }
+
+        // Section: Mounted Devices
+        if (mountedDrives.isNotEmpty()) {
+            Text("Mounted Devices", style = MaterialTheme.typography.titleLarge)
+            mountedDrives.forEach { drive ->
+                Card(
+                    modifier = Modifier.fillMaxWidth(),
+                    colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.secondaryContainer)
+                ) {
+                    Column(modifier = Modifier.padding(16.dp)) {
+                        Text(text = drive.name, style = MaterialTheme.typography.titleMedium)
+                        Text(text = "Capacity: ${drive.fileSystem.capacity / (1024 * 1024)} MB")
+                        Spacer(modifier = Modifier.height(8.dp))
+                        Button(onClick = { onUnmount(drive) }) {
+                            Text("Unmount Drive")
+                        }
+                    }
+                }
+            }
+            Spacer(modifier = Modifier.height(16.dp))
+        }
+
+        // Section: Supported Encryptions - VeraCrypt
+        Card(modifier = Modifier.fillMaxWidth()) {
+            Column(modifier = Modifier.padding(16.dp)) {
+                Row(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .clickable { isVeraCryptExpanded = !isVeraCryptExpanded },
+                    horizontalArrangement = Arrangement.SpaceBetween,
+                    verticalAlignment = Alignment.CenterVertically
+                ) {
+                    Text("Mount New Drive (VeraCrypt)", style = MaterialTheme.typography.titleMedium)
+                    Icon(
+                        imageVector = if (isVeraCryptExpanded) Icons.Default.KeyboardArrowUp else Icons.Default.KeyboardArrowDown,
+                        contentDescription = "Expand"
+                    )
+                }
+
+                AnimatedVisibility(visible = isVeraCryptExpanded) {
+                    VeraCryptMountSection(candidates, onUnlock)
+                }
+            }
+        }
+
+        // Logs
+        Text("Logs", style = MaterialTheme.typography.titleMedium)
+        Card(
+            modifier = Modifier
+                .fillMaxWidth()
+                .height(150.dp)
+        ) {
+            LazyColumn(modifier = Modifier.padding(8.dp)) {
+                items(logs) { log ->
+                    Text(text = log, style = MaterialTheme.typography.bodySmall)
+                }
+            }
+        }
+    }
+}
+
+@Composable
+fun VeraCryptMountSection(
+    candidates: List<VolumeCandidate>,
+    onUnlock: (String, Int?, List<Uri>) -> Unit
+) {
+    var password by remember { mutableStateOf("") }
+    var pim by remember { mutableStateOf("") }
+    var keyfiles by remember { mutableStateOf<List<Uri>>(emptyList()) }
+
+    val keyfileLauncher = rememberLauncherForActivityResult(
+        contract = ActivityResultContracts.OpenMultipleDocuments()
+    ) { uris ->
+        keyfiles = uris
+    }
+
+    Column(
+        modifier = Modifier.padding(top = 16.dp),
+        verticalArrangement = Arrangement.spacedBy(8.dp)
+    ) {
+        if (candidates.isEmpty()) {
+            Text("No VeraCrypt volume candidates found.", color = MaterialTheme.colorScheme.error)
+        } else {
+            OutlinedTextField(
+                value = password,
+                onValueChange = { password = it },
+                label = { Text("VeraCrypt Password") },
+                visualTransformation = PasswordVisualTransformation(),
+                modifier = Modifier.fillMaxWidth()
+            )
+            
+            OutlinedTextField(
+                value = pim,
+                onValueChange = { pim = it },
+                label = { Text("PIM (leave blank for default)") },
+                modifier = Modifier.fillMaxWidth()
+            )
+            
+            Button(onClick = { keyfileLauncher.launch(arrayOf("*/*")) }) {
+                Text("Select Keyfiles (${keyfiles.size})")
+            }
+            
+            Button(
+                onClick = { onUnlock(password, pim.toIntOrNull(), keyfiles) },
+                modifier = Modifier.fillMaxWidth(),
+                enabled = password.isNotEmpty() || keyfiles.isNotEmpty()
+            ) {
+                Text("Unlock & Mount")
+            }
+        }
     }
 }

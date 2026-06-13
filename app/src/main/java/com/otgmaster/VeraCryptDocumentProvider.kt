@@ -24,26 +24,20 @@ class VeraCryptDocumentProvider : DocumentsProvider() {
     override fun queryRoots(projection: Array<String>?): Cursor {
         val result = MatrixCursor(projection ?: DEFAULT_ROOT_PROJECTION)
 
-        // If no file system is currently mounted, we still show the root but maybe it will be empty
-        // or we can choose not to show the root if OtgMasterState.currentFileSystem is null.
-        // For better UX, we show the root, and if they click it before unlock, it's empty.
-        
+        val drives = OtgMasterState.mountedDrives
         val flags = Root.FLAG_SUPPORTS_IS_CHILD or Root.FLAG_LOCAL_ONLY
 
-        result.newRow().apply {
-            add(Root.COLUMN_ROOT_ID, ROOT_ID)
-            add(Root.COLUMN_SUMMARY, "VeraCrypt OTG Drive")
-            add(Root.COLUMN_FLAGS, flags)
-            add(Root.COLUMN_TITLE, "OTG Master")
-            add(Root.COLUMN_DOCUMENT_ID, getDocIdForFile("/"))
-            add(Root.COLUMN_MIME_TYPES, Document.MIME_TYPE_DIR)
-            // Available bytes can be obtained if the filesystem is mounted
-            val fs = OtgMasterState.currentFileSystem
-            if (fs != null) {
-                add(Root.COLUMN_AVAILABLE_BYTES, fs.freeSpace)
-                add(Root.COLUMN_CAPACITY_BYTES, fs.capacity)
+        for (drive in drives) {
+            result.newRow().apply {
+                add(Root.COLUMN_ROOT_ID, "root_${drive.id}")
+                add(Root.COLUMN_SUMMARY, "VeraCrypt OTG Drive")
+                add(Root.COLUMN_FLAGS, flags)
+                add(Root.COLUMN_TITLE, drive.name)
+                add(Root.COLUMN_DOCUMENT_ID, getDocIdForFile(drive.id, "/"))
+                add(Root.COLUMN_MIME_TYPES, Document.MIME_TYPE_DIR)
+                add(Root.COLUMN_AVAILABLE_BYTES, drive.fileSystem.freeSpace)
+                add(Root.COLUMN_CAPACITY_BYTES, drive.fileSystem.capacity)
             }
-            // No custom icon needed, system provides default
         }
 
         return result
@@ -123,14 +117,23 @@ class VeraCryptDocumentProvider : DocumentsProvider() {
     }
 
     private fun getFileForDocId(docId: String): UsbFile? {
-        val fs = OtgMasterState.currentFileSystem ?: return null
-        if (docId == "/") return fs.rootDirectory
+        // docId format: "driveId:path" e.g., "123:/" or "123:/folder/file.txt"
+        val parts = docId.split(":", limit = 2)
+        if (parts.size != 2) return null
+        
+        val driveId = parts[0]
+        val path = parts[1]
+        
+        val drive = OtgMasterState.getDrive(driveId) ?: return null
+        val fs = drive.fileSystem
+        
+        if (path == "/") return fs.rootDirectory
 
         // Traverse from root to find the file
         var current = fs.rootDirectory
-        val parts = docId.split("/").filter { it.isNotEmpty() }
+        val pathParts = path.split("/").filter { it.isNotEmpty() }
         
-        for (part in parts) {
+        for (part in pathParts) {
             current = current.listFiles().find { it.name == part } ?: return null
         }
         
@@ -138,11 +141,11 @@ class VeraCryptDocumentProvider : DocumentsProvider() {
     }
 
     private fun getDocIdForFile(parentDocId: String, file: UsbFile): String {
-        return if (parentDocId == "/") "/${file.name}" else "$parentDocId/${file.name}"
+        return if (parentDocId.endsWith(":/")) "${parentDocId}${file.name}" else "$parentDocId/${file.name}"
     }
     
-    private fun getDocIdForFile(path: String): String {
-        return path
+    private fun getDocIdForFile(driveId: String, path: String): String {
+        return "$driveId:$path"
     }
 
     private fun includeFile(result: MatrixCursor, docId: String, file: UsbFile) {
@@ -153,7 +156,7 @@ class VeraCryptDocumentProvider : DocumentsProvider() {
             flags = flags or Document.FLAG_SUPPORTS_WRITE
         }
 
-        val displayName = if (docId == "/") "VeraCrypt Drive" else file.name
+        val displayName = if (docId.endsWith(":/")) "VeraCrypt Drive" else file.name
         val mimeType = if (file.isDirectory) Document.MIME_TYPE_DIR else getMimeType(file.name)
 
         result.newRow().apply {
