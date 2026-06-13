@@ -22,7 +22,8 @@ import com.otgmaster.usb.LibaumsRawBlockDeviceOpener
 import com.otgmaster.usb.UsbDeviceDescriber
 import com.otgmaster.veracrypt.VeraCryptUnlocker
 import com.otgmaster.veracrypt.VolumeCandidate
-import com.otgmaster.fs.Fat32Reader
+import me.jahnen.libaums.core.fs.fat32.Fat32FileSystemCreator
+import me.jahnen.libaums.core.partition.PartitionTableEntry
 import android.widget.EditText
 
 class MainActivity : Activity() {
@@ -219,10 +220,22 @@ class MainActivity : Activity() {
                 val decryptedDevice = VeraCryptUnlocker().unlock(device, candidate, pwd)
                 runOnUiThread { appendStatus("Unlock successful! Reading FAT32...") }
                 
-                val files = Fat32Reader(decryptedDevice).listRootDirectory()
+                val dummyEntry = PartitionTableEntry(0, 0, 0)
+                val byteDevice = me.jahnen.libaums.core.driver.ByteBlockDevice(decryptedDevice as me.jahnen.libaums.core.driver.BlockDeviceDriver)
+                val fileSystem = Fat32FileSystemCreator().read(dummyEntry, byteDevice)
+                if (fileSystem == null) {
+                    runOnUiThread { appendStatus("Failed to mount FAT32 file system") }
+                    return@Thread
+                }
+                
+                OtgMasterState.currentFileSystem = fileSystem
+                contentResolver.notifyChange(android.provider.DocumentsContract.buildRootsUri("com.otgmaster.documents"), null)
+                
                 runOnUiThread {
+                    appendStatus("Mounted FAT32. Root capacity: ${fileSystem.capacity / (1024 * 1024)} MB")
+                    val files = fileSystem.rootDirectory.listFiles()
                     appendStatus("Root directory files:")
-                    files.forEach { appendStatus("  $it") }
+                    files.forEach { appendStatus("  ${if(it.isDirectory) "[DIR]" else "[FILE]"} ${it.name}") }
                 }
             } catch (e: Exception) {
                 Log.e(TAG, "Unlock/Read failed", e)
