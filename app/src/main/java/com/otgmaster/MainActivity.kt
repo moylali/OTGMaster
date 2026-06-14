@@ -196,10 +196,10 @@ class MainActivity : ComponentActivity() {
                 val byteDevice = me.jahnen.libaums.core.driver.ByteBlockDevice(
                     decryptedDevice as me.jahnen.libaums.core.driver.BlockDeviceDriver
                 )
-                val fileSystem = Fat32FileSystemCreator().read(dummyEntry, byteDevice)
-                
-                if (fileSystem == null) {
-                    runOnUiThread { appendLog("Failed to mount FAT32 file system") }
+                val fileSystem = try {
+                    FileSystemFactory.createFileSystem(dummyEntry, byteDevice)
+                } catch (e: Exception) {
+                    runOnUiThread { appendLog("Failed to mount file system: ${e.message}") }
                     return@Thread
                 }
 
@@ -218,7 +218,7 @@ class MainActivity : ComponentActivity() {
                 
                 runOnUiThread {
                     updateMountedDrives()
-                    appendLog("Mounted FAT32 successfully. Root capacity: ${fileSystem.capacity / (1024 * 1024)} MB")
+                    appendLog("Mounted successfully. Root capacity: ${fileSystem.capacity / (1024 * 1024)} MB")
                 }
             } catch (e: Exception) {
                 Log.e(TAG, "Unlock/Read failed", e)
