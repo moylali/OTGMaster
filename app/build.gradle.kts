@@ -4,11 +4,11 @@ plugins {
 }
 
 android {
-    namespace = "com.otgmaster"
+    namespace = "app.fayaz.otgmaster"
     compileSdk = 34
 
     defaultConfig {
-        applicationId = "com.otgmaster"
+        applicationId = "app.fayaz.otgmaster"
         minSdk = 26
         targetSdk = 34
         versionCode = 1

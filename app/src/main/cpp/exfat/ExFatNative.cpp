@@ -16,7 +16,7 @@ extern "C" {
 static jobject createExFatNode(JNIEnv* env, struct exfat_node* node) {
     if (!node) return NULL;
     
-    jclass clazz = env->FindClass("com/otgmaster/exfat/ExFatNode");
+    jclass clazz = env->FindClass("app/fayaz/otgmaster/exfat/ExFatNode");
     jmethodID constructor = env->GetMethodID(clazz, "<init>", "(JLjava/lang/String;ZJJJ)V");
     
     char name_utf8[EXFAT_UTF8_NAME_BUFFER_MAX];
@@ -35,7 +35,7 @@ static jobject createExFatNode(JNIEnv* env, struct exfat_node* node) {
 }
 
 extern "C" JNIEXPORT jlong JNICALL
-Java_com_otgmaster_exfat_ExFatNative_mount(JNIEnv *env, jobject thiz, jobject blockDevice) {
+Java_app_fayaz_otgmaster_exfat_ExFatNative_mount(JNIEnv *env, jobject thiz, jobject blockDevice) {
     jobject globalBlockDevice = env->NewGlobalRef(blockDevice);
     
     struct exfat* ef = (struct exfat*) malloc(sizeof(struct exfat));
@@ -60,7 +60,7 @@ Java_com_otgmaster_exfat_ExFatNative_mount(JNIEnv *env, jobject thiz, jobject bl
 }
 
 extern "C" JNIEXPORT void JNICALL
-Java_com_otgmaster_exfat_ExFatNative_unmount(JNIEnv *env, jobject thiz, jlong exfatPtr) {
+Java_app_fayaz_otgmaster_exfat_ExFatNative_unmount(JNIEnv *env, jobject thiz, jlong exfatPtr) {
     struct exfat* ef = (struct exfat*) exfatPtr;
     if (ef) {
         exfat_unmount(ef);
@@ -69,7 +69,7 @@ Java_com_otgmaster_exfat_ExFatNative_unmount(JNIEnv *env, jobject thiz, jlong ex
 }
 
 extern "C" JNIEXPORT jlong JNICALL
-Java_com_otgmaster_exfat_ExFatNative_getFreeSpace(JNIEnv *env, jclass clazz, jlong exfatPtr) {
+Java_app_fayaz_otgmaster_exfat_ExFatNative_getFreeSpace(JNIEnv *env, jclass clazz, jlong exfatPtr) {
     struct exfat* ef = (struct exfat*) exfatPtr;
     if (!ef || !ef->sb) return 0;
     
@@ -79,7 +79,7 @@ Java_com_otgmaster_exfat_ExFatNative_getFreeSpace(JNIEnv *env, jclass clazz, jlo
 }
 
 extern "C" JNIEXPORT jobject JNICALL
-Java_com_otgmaster_exfat_ExFatNative_getRootNode(JNIEnv *env, jclass clazz, jlong exfatPtr) {
+Java_app_fayaz_otgmaster_exfat_ExFatNative_getRootNode(JNIEnv *env, jclass clazz, jlong exfatPtr) {
     struct exfat* ef = (struct exfat*) exfatPtr;
     if (!ef || !ef->root) return NULL;
     
@@ -87,7 +87,7 @@ Java_com_otgmaster_exfat_ExFatNative_getRootNode(JNIEnv *env, jclass clazz, jlon
 }
 
 extern "C" JNIEXPORT jobjectArray JNICALL
-Java_com_otgmaster_exfat_ExFatNative_readDir(JNIEnv *env, jclass clazz, jlong exfatPtr, jlong nodePtr) {
+Java_app_fayaz_otgmaster_exfat_ExFatNative_readDir(JNIEnv *env, jclass clazz, jlong exfatPtr, jlong nodePtr) {
     struct exfat* ef = (struct exfat*) exfatPtr;
     struct exfat_node* dir = (struct exfat_node*) nodePtr;
     
@@ -107,7 +107,7 @@ Java_com_otgmaster_exfat_ExFatNative_readDir(JNIEnv *env, jclass clazz, jlong ex
     
     exfat_closedir(ef, &it);
     
-    jclass nodeClass = env->FindClass("com/otgmaster/exfat/ExFatNode");
+    jclass nodeClass = env->FindClass("app/fayaz/otgmaster/exfat/ExFatNode");
     jobjectArray array = env->NewObjectArray(count, nodeClass, NULL);
     
     exfat_opendir(ef, dir, &it);
@@ -123,7 +123,7 @@ Java_com_otgmaster_exfat_ExFatNative_readDir(JNIEnv *env, jclass clazz, jlong ex
 }
 
 extern "C" JNIEXPORT jint JNICALL
-Java_com_otgmaster_exfat_ExFatNative_readFile(JNIEnv *env, jclass clazz, jlong exfatPtr, jlong nodePtr, jlong offset, jint size, jbyteArray buffer) {
+Java_app_fayaz_otgmaster_exfat_ExFatNative_readFile(JNIEnv *env, jclass clazz, jlong exfatPtr, jlong nodePtr, jlong offset, jint size, jbyteArray buffer) {
     struct exfat* ef = (struct exfat*) exfatPtr;
     struct exfat_node* node = (struct exfat_node*) nodePtr;
     

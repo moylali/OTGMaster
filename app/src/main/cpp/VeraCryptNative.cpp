@@ -8,7 +8,7 @@
 #define LOGE(...) __android_log_print(ANDROID_LOG_ERROR, TAG, __VA_ARGS__)
 
 extern "C" JNIEXPORT jbyteArray JNICALL
-Java_com_otgmaster_veracrypt_VeraCryptNative_decryptHeader(JNIEnv *env, jobject thiz, jbyteArray jPassword, jbyteArray jSalt, jint iterations, jbyteArray jEncHeader) {
+Java_app_fayaz_otgmaster_veracrypt_VeraCryptNative_decryptHeader(JNIEnv *env, jobject thiz, jbyteArray jPassword, jbyteArray jSalt, jint iterations, jbyteArray jEncHeader) {
     jsize pwdLen = env->GetArrayLength(jPassword);
     jbyte* pwd = env->GetByteArrayElements(jPassword, NULL);
 
@@ -71,7 +71,7 @@ Java_com_otgmaster_veracrypt_VeraCryptNative_decryptHeader(JNIEnv *env, jobject 
 }
 
 extern "C" JNIEXPORT jbyteArray JNICALL
-Java_com_otgmaster_veracrypt_VeraCryptNative_decryptSector(JNIEnv *env, jobject thiz, jbyteArray jMasterKey, jlong sectorNum, jbyteArray jEncSector) {
+Java_app_fayaz_otgmaster_veracrypt_VeraCryptNative_decryptSector(JNIEnv *env, jobject thiz, jbyteArray jMasterKey, jlong sectorNum, jbyteArray jEncSector) {
     jsize keyLen = env->GetArrayLength(jMasterKey);
     jbyte* masterKey = env->GetByteArrayElements(jMasterKey, NULL);
 
