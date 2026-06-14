@@ -157,22 +157,23 @@ class MainActivity : ComponentActivity() {
         if (devices.isEmpty()) return
         val device = devices.first()
 
-        try {
-            Thread {
+        Thread {
+            try {
                 val opened = LibaumsRawBlockDeviceOpener(this).openFirstAvailable()
                 openedBlockDevice = opened.blockDevice
                 
                 val candidates = VeraCryptUnlocker().probeCandidates(opened.blockDevice)
                 runOnUiThread {
                     _candidates.value = candidates
+                    appendLog("Found ${candidates.size} VeraCrypt volume candidates.")
                 }
-                appendLog("Found ${candidates.size} VeraCrypt volume candidates.")
-            }.start()
-
-        } catch (e: Exception) {
-            Log.e(TAG, "Failed to open device", e)
-            appendLog("Error: ${e.message}")
-        }
+            } catch (e: Exception) {
+                Log.e(TAG, "Failed to open device", e)
+                runOnUiThread {
+                    appendLog("Error: ${e.message}")
+                }
+            }
+        }.start()
     }
 
     private fun attemptUnlock(password: String, pim: Int?, keyfiles: List<Uri>) {
@@ -352,6 +353,7 @@ fun VeraCryptMountSection(
     onUnlock: (String, Int?, List<Uri>) -> Unit
 ) {
     var password by remember { mutableStateOf("") }
+    var passwordVisible by remember { mutableStateOf(false) }
     var pim by remember { mutableStateOf("") }
     var keyfiles by remember { mutableStateOf<List<Uri>>(emptyList()) }
 
@@ -372,7 +374,12 @@ fun VeraCryptMountSection(
                 value = password,
                 onValueChange = { password = it },
                 label = { Text("VeraCrypt Password") },
-                visualTransformation = PasswordVisualTransformation(),
+                visualTransformation = if (passwordVisible) androidx.compose.ui.text.input.VisualTransformation.None else PasswordVisualTransformation(),
+                trailingIcon = {
+                    TextButton(onClick = { passwordVisible = !passwordVisible }) {
+                        Text(if (passwordVisible) "HIDE" else "SHOW")
+                    }
+                },
                 modifier = Modifier.fillMaxWidth()
             )
             
