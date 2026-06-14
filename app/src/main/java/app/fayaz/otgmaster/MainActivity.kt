@@ -70,8 +70,9 @@ class MainActivity : ComponentActivity() {
     private val _themeMode = mutableStateOf(ThemeMode.SYSTEM)
 
     private val permissionIntent: PendingIntent by lazy {
-        val flags = PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE
-        PendingIntent.getBroadcast(this, 0, Intent(ACTION_USB_PERMISSION), flags)
+        val flags = PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_MUTABLE
+        val intent = Intent(ACTION_USB_PERMISSION).apply { setPackage(packageName) }
+        PendingIntent.getBroadcast(this, 0, intent, flags)
     }
 
     private val usbReceiver = object : BroadcastReceiver() {
@@ -172,17 +173,23 @@ class MainActivity : ComponentActivity() {
         val devices = usbManager.deviceList.values.toList()
         appendLog("Found ${devices.size} USB devices.")
 
-        if (devices.isEmpty()) {
+        val massStorageDevice = devices.firstOrNull { device ->
+            (0 until device.interfaceCount).any { i ->
+                device.getInterface(i).interfaceClass == android.hardware.usb.UsbConstants.USB_CLASS_MASS_STORAGE
+            }
+        }
+
+        if (massStorageDevice == null) {
             _candidates.value = emptyList()
             openedBlockDevice?.close()
             openedBlockDevice = null
+            appendLog("No USB Mass Storage devices found.")
             return
         }
 
-        val device = devices.first()
-        if (!usbManager.hasPermission(device)) {
-            appendLog("Requesting permission for ${device.deviceName}...")
-            usbManager.requestPermission(device, permissionIntent)
+        if (!usbManager.hasPermission(massStorageDevice)) {
+            appendLog("Requesting permission for ${massStorageDevice.deviceName}...")
+            usbManager.requestPermission(massStorageDevice, permissionIntent)
         } else {
             openAndProbeUsb()
         }
@@ -405,12 +412,19 @@ fun OtgMasterApp(
                     colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.secondaryContainer)
                 ) {
                     Column(modifier = Modifier.padding(16.dp)) {
-                        Text(text = drive.name, style = MaterialTheme.typography.titleMedium)
-                        
                         val totalSpace = drive.fileSystem.capacity
                         val freeSpace = drive.fileSystem.freeSpace
                         val usedSpace = totalSpace - freeSpace
                         val progress = if (totalSpace > 0) usedSpace.toFloat() / totalSpace.toFloat() else 0f
+                        
+                        Row(
+                            modifier = Modifier.fillMaxWidth(),
+                            horizontalArrangement = Arrangement.SpaceBetween,
+                            verticalAlignment = Alignment.CenterVertically
+                        ) {
+                            Text(text = drive.name, style = MaterialTheme.typography.titleMedium)
+                            Text(text = formatSize(totalSpace), style = MaterialTheme.typography.bodyMedium, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                        }
                         
                         Spacer(modifier = Modifier.height(8.dp))
                         LinearProgressIndicator(

@@ -53,8 +53,8 @@ struct exfat_dev* exfat_open(const char* spec, enum exfat_mode mode) {
     }
     
     JNIEnv* env = getEnv();
-    jclass clazz = (*env)->FindClass(env, "com/otgmaster/exfat/ExFatNative");
-    jmethodID getDeviceSize = (*env)->GetStaticMethodID(env, clazz, "getDeviceSize", "(Lcom/otgmaster/block/RawBlockDevice;)J");
+    jclass clazz = (*env)->FindClass(env, "app/fayaz/otgmaster/exfat/ExFatNative");
+    jmethodID getDeviceSize = (*env)->GetStaticMethodID(env, clazz, "getDeviceSize", "(Lapp/fayaz/otgmaster/block/RawBlockDevice;)J");
     dev->size = (*env)->CallStaticLongMethod(env, clazz, getDeviceSize, (jobject)dev->block_device);
     
     return dev;
@@ -95,8 +95,8 @@ ssize_t exfat_write(struct exfat_dev* dev, const void* buffer, size_t size) {
 
 ssize_t exfat_pread(struct exfat_dev* dev, void* buffer, size_t size, off_t offset) {
     JNIEnv* env = getEnv();
-    jclass clazz = (*env)->FindClass(env, "com/otgmaster/exfat/ExFatNative");
-    jmethodID preadMethod = (*env)->GetStaticMethodID(env, clazz, "pread", "(Lcom/otgmaster/block/RawBlockDevice;JI[B)I");
+    jclass clazz = (*env)->FindClass(env, "app/fayaz/otgmaster/exfat/ExFatNative");
+    jmethodID preadMethod = (*env)->GetStaticMethodID(env, clazz, "pread", "(Lapp/fayaz/otgmaster/block/RawBlockDevice;JI[B)I");
     
     jbyteArray jBuffer = (*env)->NewByteArray(env, size);
     jint result = (*env)->CallStaticIntMethod(env, clazz, preadMethod, (jobject)dev->block_device, (jlong)offset, (jint)size, jBuffer);
@@ -110,8 +110,8 @@ ssize_t exfat_pread(struct exfat_dev* dev, void* buffer, size_t size, off_t offs
 
 ssize_t exfat_pwrite(struct exfat_dev* dev, const void* buffer, size_t size, off_t offset) {
     JNIEnv* env = getEnv();
-    jclass clazz = (*env)->FindClass(env, "com/otgmaster/exfat/ExFatNative");
-    jmethodID pwriteMethod = (*env)->GetStaticMethodID(env, clazz, "pwrite", "(Lcom/otgmaster/block/RawBlockDevice;JI[B)I");
+    jclass clazz = (*env)->FindClass(env, "app/fayaz/otgmaster/exfat/ExFatNative");
+    jmethodID pwriteMethod = (*env)->GetStaticMethodID(env, clazz, "pwrite", "(Lapp/fayaz/otgmaster/block/RawBlockDevice;JI[B)I");
     
     jbyteArray jBuffer = (*env)->NewByteArray(env, size);
     (*env)->SetByteArrayRegion(env, jBuffer, 0, size, (const jbyte*)buffer);
