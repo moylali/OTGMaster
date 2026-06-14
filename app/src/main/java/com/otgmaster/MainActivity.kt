@@ -102,7 +102,7 @@ class MainActivity : ComponentActivity() {
                         mountedDrives = mountedDrivesState.value,
                         logs = logsState,
                         onRefreshDevices = { refreshDevices() },
-                        onUnlock = { pwd, pim, keyfiles -> attemptUnlock(pwd, pim, keyfiles) },
+                        onUnlock = { candidate, pwd, pim, keyfiles -> attemptUnlock(candidate, pwd, pim, keyfiles) },
                         onUnmount = { drive -> unmountDrive(drive) }
                     )
                 }
@@ -176,11 +176,10 @@ class MainActivity : ComponentActivity() {
         }.start()
     }
 
-    private fun attemptUnlock(password: String, pim: Int?, keyfiles: List<Uri>) {
+    private fun attemptUnlock(candidate: VolumeCandidate, password: String, pim: Int?, keyfiles: List<Uri>) {
         val device = openedBlockDevice
-        val candidate = _candidates.value.firstOrNull()
-        if (device == null || candidate == null) {
-            appendLog("No device or candidate to unlock.")
+        if (device == null) {
+            appendLog("No device to unlock.")
             return
         }
 
@@ -191,7 +190,7 @@ class MainActivity : ComponentActivity() {
                 val decryptedDevice = VeraCryptUnlocker().unlock(
                     device, candidate, password.toCharArray(), pim, keyfiles, contentResolver
                 )
-                runOnUiThread { appendLog("Unlock successful! Reading FAT32...") }
+                runOnUiThread { appendLog("Unlock successful! Reading File System...") }
 
                 val dummyEntry = PartitionTableEntry(0, 0, 0)
                 val byteDevice = me.jahnen.libaums.core.driver.ByteBlockDevice(
@@ -268,7 +267,7 @@ fun OtgMasterApp(
     mountedDrives: List<MountedDrive>,
     logs: List<String>,
     onRefreshDevices: () -> Unit,
-    onUnlock: (String, Int?, List<Uri>) -> Unit,
+    onUnlock: (VolumeCandidate, String, Int?, List<Uri>) -> Unit,
     onUnmount: (MountedDrive) -> Unit
 ) {
     val coroutineScope = rememberCoroutineScope()
@@ -326,7 +325,7 @@ fun OtgMasterApp(
                 }
 
                 AnimatedVisibility(visible = isVeraCryptExpanded) {
-                    VeraCryptMountSection(candidates, onUnlock)
+                    VeraCryptMountSection(candidates, onUnlock = onUnlock)
                 }
             }
         }
@@ -350,8 +349,10 @@ fun OtgMasterApp(
 @Composable
 fun VeraCryptMountSection(
     candidates: List<VolumeCandidate>,
-    onUnlock: (String, Int?, List<Uri>) -> Unit
+    onUnlock: (VolumeCandidate, String, Int?, List<Uri>) -> Unit
 ) {
+    var selectedCandidate by remember { mutableStateOf(candidates.firstOrNull()) }
+    var expanded by remember { mutableStateOf(false) }
     var password by remember { mutableStateOf("") }
     var passwordVisible by remember { mutableStateOf(false) }
     var pim by remember { mutableStateOf("") }
@@ -370,6 +371,36 @@ fun VeraCryptMountSection(
         if (candidates.isEmpty()) {
             Text("No VeraCrypt volume candidates found.", color = MaterialTheme.colorScheme.error)
         } else {
+            @OptIn(ExperimentalMaterial3Api::class)
+            ExposedDropdownMenuBox(
+                expanded = expanded,
+                onExpandedChange = { expanded = !expanded }
+            ) {
+                OutlinedTextField(
+                    value = selectedCandidate?.label ?: "",
+                    onValueChange = {},
+                    readOnly = true,
+                    label = { Text("Volume to Unlock") },
+                    trailingIcon = { ExposedDropdownMenuDefaults.TrailingIcon(expanded = expanded) },
+                    colors = ExposedDropdownMenuDefaults.outlinedTextFieldColors(),
+                    modifier = Modifier.menuAnchor().fillMaxWidth()
+                )
+                ExposedDropdownMenu(
+                    expanded = expanded,
+                    onDismissRequest = { expanded = false }
+                ) {
+                    candidates.forEach { candidate ->
+                        DropdownMenuItem(
+                            text = { Text(candidate.label) },
+                            onClick = {
+                                selectedCandidate = candidate
+                                expanded = false
+                            }
+                        )
+                    }
+                }
+            }
+            
             OutlinedTextField(
                 value = password,
                 onValueChange = { password = it },
@@ -395,9 +426,9 @@ fun VeraCryptMountSection(
             }
             
             Button(
-                onClick = { onUnlock(password, pim.toIntOrNull(), keyfiles) },
+                onClick = { selectedCandidate?.let { onUnlock(it, password, pim.toIntOrNull(), keyfiles) } },
                 modifier = Modifier.fillMaxWidth(),
-                enabled = password.isNotEmpty() || keyfiles.isNotEmpty()
+                enabled = selectedCandidate != null && (password.isNotEmpty() || keyfiles.isNotEmpty())
             ) {
                 Text("Unlock & Mount")
             }

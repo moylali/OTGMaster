@@ -6,7 +6,7 @@ import java.nio.ByteBuffer
 object ExFatNative {
 
     init {
-        System.loadLibrary("exfat")
+        System.loadLibrary("veracrypt-native")
     }
 
     /**

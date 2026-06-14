@@ -50,22 +50,24 @@ Java_com_otgmaster_veracrypt_VeraCryptNative_decryptHeader(JNIEnv *env, jobject 
 
     unsigned char decHeader[448];
     unsigned char data_unit[16] = {0}; // Tweak for header is 0
-    // In VeraCrypt, the header is encrypted starting at block offset 64? Wait, let's just try length 448
     ret = mbedtls_aes_crypt_xts(&xts_ctx, MBEDTLS_AES_DECRYPT, 448, data_unit, (const unsigned char*)encHeader, decHeader);
 
-    mbedtls_aes_xts_free(&xts_ctx);
-    env->ReleaseByteArrayElements(jPassword, pwd, JNI_ABORT);
-    env->ReleaseByteArrayElements(jSalt, salt, JNI_ABORT);
-    env->ReleaseByteArrayElements(jEncHeader, encHeader, JNI_ABORT);
-
     if (ret != 0) {
-        LOGE("AES XTS decrypt failed: %d", ret);
+        mbedtls_aes_xts_free(&xts_ctx);
+        env->ReleaseByteArrayElements(jPassword, pwd, 0);
+        env->ReleaseByteArrayElements(jSalt, salt, 0);
+        env->ReleaseByteArrayElements(jEncHeader, encHeader, 0);
         return nullptr;
     }
 
-    jbyteArray result = env->NewByteArray(448);
-    env->SetByteArrayRegion(result, 0, 448, (const jbyte*)decHeader);
-    return result;
+    mbedtls_aes_xts_free(&xts_ctx);
+    env->ReleaseByteArrayElements(jPassword, pwd, 0);
+    env->ReleaseByteArrayElements(jSalt, salt, 0);
+    env->ReleaseByteArrayElements(jEncHeader, encHeader, 0);
+
+    jbyteArray jDecHeader = env->NewByteArray(448);
+    env->SetByteArrayRegion(jDecHeader, 0, 448, (jbyte*)decHeader);
+    return jDecHeader;
 }
 
 extern "C" JNIEXPORT jbyteArray JNICALL
