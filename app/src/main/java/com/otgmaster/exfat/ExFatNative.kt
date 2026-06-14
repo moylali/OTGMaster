@@ -22,6 +22,9 @@ object ExFatNative {
     external fun unmount(exfatPtr: Long)
 
     @JvmStatic
+    external fun getFreeSpace(exfatPtr: Long): Long
+
+    @JvmStatic
     external fun getRootNode(exfatPtr: Long): ExFatNode?
 
     @JvmStatic

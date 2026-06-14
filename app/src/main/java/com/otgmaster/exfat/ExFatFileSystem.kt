@@ -20,10 +20,10 @@ class ExFatFileSystem(private val blockDevice: RawBlockDevice, val exfatPtr: Lon
         get() = blockDevice.blockCount * blockDevice.blockSize
 
     override val occupiedSpace: Long
-        get() = 0 // Optional estimate
+        get() = capacity - freeSpace
 
     override val freeSpace: Long
-        get() = 0 // Optional estimate
+        get() = ExFatNative.getFreeSpace(exfatPtr)
 
     override val chunkSize: Int
         get() = blockDevice.blockSize

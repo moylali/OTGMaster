@@ -68,6 +68,16 @@ Java_com_otgmaster_exfat_ExFatNative_unmount(JNIEnv *env, jobject thiz, jlong ex
     }
 }
 
+extern "C" JNIEXPORT jlong JNICALL
+Java_com_otgmaster_exfat_ExFatNative_getFreeSpace(JNIEnv *env, jclass clazz, jlong exfatPtr) {
+    struct exfat* ef = (struct exfat*) exfatPtr;
+    if (!ef || !ef->sb) return 0;
+    
+    uint32_t freeClusters = exfat_count_free_clusters(ef);
+    jlong clusterSize = CLUSTER_SIZE(*(ef->sb));
+    return (jlong)freeClusters * clusterSize;
+}
+
 extern "C" JNIEXPORT jobject JNICALL
 Java_com_otgmaster_exfat_ExFatNative_getRootNode(JNIEnv *env, jclass clazz, jlong exfatPtr) {
     struct exfat* ef = (struct exfat*) exfatPtr;

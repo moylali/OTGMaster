@@ -9,6 +9,7 @@ import android.hardware.usb.UsbDevice
 import android.hardware.usb.UsbManager
 import android.net.Uri
 import android.os.Build
+import android.provider.DocumentsContract
 import android.os.Bundle
 import android.util.Log
 import androidx.activity.ComponentActivity
@@ -25,6 +26,18 @@ import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.KeyboardArrowDown
 import androidx.compose.material.icons.filled.KeyboardArrowUp
+import androidx.compose.material.icons.filled.Visibility
+import androidx.compose.material.icons.filled.VisibilityOff
+import androidx.compose.material.icons.filled.Delete
+import androidx.compose.material.icons.filled.ContentCopy
+import androidx.compose.foundation.text.KeyboardOptions
+import androidx.compose.ui.text.input.KeyboardType
+import androidx.compose.material3.IconButton
+import android.content.ClipboardManager
+import android.content.ClipData
+import android.content.SharedPreferences
+import androidx.compose.foundation.isSystemInDarkTheme
+import androidx.compose.material.icons.filled.Settings
 import androidx.compose.material3.*
 import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
@@ -52,6 +65,9 @@ class MainActivity : ComponentActivity() {
     // For Compose state hoisting
     private val mountedDrivesState = mutableStateOf<List<MountedDrive>>(emptyList())
     private val logsState = mutableStateListOf<String>()
+
+    private lateinit var sharedPreferences: SharedPreferences
+    private val _themeMode = mutableStateOf(ThemeMode.SYSTEM)
 
     private val permissionIntent: PendingIntent by lazy {
         val flags = PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE
@@ -90,9 +106,21 @@ class MainActivity : ComponentActivity() {
         
         usbManager = getSystemService(USB_SERVICE) as UsbManager
         registerUsbReceiver()
+        
+        sharedPreferences = getSharedPreferences("otgmaster_prefs", Context.MODE_PRIVATE)
+        val savedTheme = sharedPreferences.getString("theme_mode", ThemeMode.SYSTEM.name)
+        _themeMode.value = ThemeMode.valueOf(savedTheme ?: ThemeMode.SYSTEM.name)
 
         setContent {
-            MaterialTheme {
+            val themeMode = _themeMode.value
+            val isDarkTheme = when (themeMode) {
+                ThemeMode.LIGHT -> false
+                ThemeMode.DARK -> true
+                ThemeMode.SYSTEM -> isSystemInDarkTheme()
+            }
+            MaterialTheme(
+                colorScheme = if (isDarkTheme) darkColorScheme() else lightColorScheme()
+            ) {
                 Surface(
                     modifier = Modifier.fillMaxSize(),
                     color = MaterialTheme.colorScheme.background
@@ -101,9 +129,17 @@ class MainActivity : ComponentActivity() {
                         candidates = _candidates.value,
                         mountedDrives = mountedDrivesState.value,
                         logs = logsState,
+                        themeMode = themeMode,
                         onRefreshDevices = { refreshDevices() },
                         onUnlock = { candidate, pwd, pim, keyfiles -> attemptUnlock(candidate, pwd, pim, keyfiles) },
-                        onUnmount = { drive -> unmountDrive(drive) }
+                        onUnmount = { drive -> unmountDrive(drive) },
+                        onOpenFilesApp = { openFilesApp() },
+                        onClearLogs = { clearLogs() },
+                        onCopyText = { text, label -> copyText(text, label) },
+                        onThemeChange = { newMode ->
+                            _themeMode.value = newMode
+                            sharedPreferences.edit().putString("theme_mode", newMode.name).apply()
+                        }
                     )
                 }
             }
@@ -168,7 +204,7 @@ class MainActivity : ComponentActivity() {
                     appendLog("Found ${candidates.size} VeraCrypt volume candidates.")
                 }
             } catch (e: Exception) {
-                Log.e(TAG, "Failed to open device", e)
+                e.printStackTrace()
                 runOnUiThread {
                     appendLog("Error: ${e.message}")
                 }
@@ -199,9 +235,25 @@ class MainActivity : ComponentActivity() {
                 val fileSystem = try {
                     FileSystemFactory.createFileSystem(dummyEntry, byteDevice)
                 } catch (e: Exception) {
-                    runOnUiThread { appendLog("Failed to mount file system: ${e.message}") }
+                    try {
+                        val buffer = java.nio.ByteBuffer.allocate(512)
+                        byteDevice.read(0, buffer)
+                        buffer.clear()
+                        val oemName = ByteArray(8)
+                        buffer.position(3)
+                        buffer.get(oemName)
+                        if (String(oemName).startsWith("NTFS")) {
+                            runOnUiThread { appendLog("Unlock successful, but NTFS file system is not supported yet.") }
+                            return@Thread
+                        }
+                    } catch (ignore: Exception) {}
+                    
+                    runOnUiThread { appendLog("Failed to mount file system: ${e.message}\nCheck if the filesystem is supported.") }
                     return@Thread
                 }
+                
+                com.otgmaster.provider.VeraCryptDocumentProvider.mountedFileSystem = fileSystem
+                runOnUiThread { appendLog("Mounted successfully! You can now browse files in the Android 'Files' app.") }
 
                 val driveId = UUID.randomUUID().toString().substring(0, 8)
                 val mountedDrive = MountedDrive(
@@ -241,6 +293,31 @@ class MainActivity : ComponentActivity() {
         mountedDrivesState.value = OtgMasterState.mountedDrives.toList()
     }
 
+    private fun openFilesApp() {
+        val rootUri = DocumentsContract.buildRootUri("com.otgmaster.documents", "veracrypt_root")
+        val intent = Intent(Intent.ACTION_VIEW)
+        intent.setDataAndType(rootUri, "vnd.android.document/root")
+        intent.addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION)
+        try {
+            startActivity(intent)
+        } catch (e: Exception) {
+            appendLog("Could not open files app directly: ${e.message}")
+        }
+    }
+
+
+
+    private fun clearLogs() {
+        logsState.clear()
+    }
+
+    private fun copyText(text: String, label: String) {
+        val clipboard = getSystemService(Context.CLIPBOARD_SERVICE) as ClipboardManager
+        val clip = ClipData.newPlainText(label, text)
+        clipboard.setPrimaryClip(clip)
+        appendLog("Copied $label to clipboard")
+    }
+
     private fun appendLog(line: String) {
         if (logsState.size > 50) logsState.removeAt(0)
         logsState.add(line)
@@ -261,26 +338,59 @@ class MainActivity : ComponentActivity() {
     }
 }
 
+fun formatSize(bytes: Long): String {
+    if (bytes <= 0) return "0 B"
+    val units = arrayOf("B", "KB", "MB", "GB", "TB")
+    val digitGroups = (Math.log10(bytes.toDouble()) / Math.log10(1024.0)).toInt()
+    return String.format("%.1f %s", bytes / Math.pow(1024.0, digitGroups.toDouble()), units[digitGroups])
+}
+
+@OptIn(ExperimentalMaterial3Api::class)
 @Composable
 fun OtgMasterApp(
     candidates: List<VolumeCandidate>,
     mountedDrives: List<MountedDrive>,
     logs: List<String>,
+    themeMode: ThemeMode,
     onRefreshDevices: () -> Unit,
     onUnlock: (VolumeCandidate, String, Int?, List<Uri>) -> Unit,
-    onUnmount: (MountedDrive) -> Unit
+    onUnmount: (MountedDrive) -> Unit,
+    onOpenFilesApp: () -> Unit,
+    onClearLogs: () -> Unit,
+    onCopyText: (String, String) -> Unit,
+    onThemeChange: (ThemeMode) -> Unit
 ) {
-    val coroutineScope = rememberCoroutineScope()
+    var showSettings by remember { mutableStateOf(false) }
     var isVeraCryptExpanded by remember { mutableStateOf(true) }
 
-    Column(
-        modifier = Modifier
-            .fillMaxSize()
-            .padding(16.dp)
-            .verticalScroll(rememberScrollState()),
-        verticalArrangement = Arrangement.spacedBy(16.dp)
-    ) {
-        Text(text = "OTG Master", style = MaterialTheme.typography.headlineLarge)
+    if (showSettings) {
+        SettingsDialog(
+            currentTheme = themeMode,
+            onThemeSelected = onThemeChange,
+            onDismiss = { showSettings = false }
+        )
+    }
+
+    Scaffold(
+        topBar = {
+            TopAppBar(
+                title = { Text("OTG Master") },
+                actions = {
+                    IconButton(onClick = { showSettings = true }) {
+                        Icon(Icons.Default.Settings, contentDescription = "Settings")
+                    }
+                }
+            )
+        }
+    ) { paddingValues ->
+        Column(
+            modifier = Modifier
+                .fillMaxSize()
+                .padding(paddingValues)
+                .padding(16.dp)
+                .verticalScroll(rememberScrollState()),
+            verticalArrangement = Arrangement.spacedBy(16.dp)
+        ) {
         
         Button(onClick = onRefreshDevices, modifier = Modifier.fillMaxWidth()) {
             Text("Scan USB Devices")
@@ -296,10 +406,36 @@ fun OtgMasterApp(
                 ) {
                     Column(modifier = Modifier.padding(16.dp)) {
                         Text(text = drive.name, style = MaterialTheme.typography.titleMedium)
-                        Text(text = "Capacity: ${drive.fileSystem.capacity / (1024 * 1024)} MB")
+                        
+                        val totalSpace = drive.fileSystem.capacity
+                        val freeSpace = drive.fileSystem.freeSpace
+                        val usedSpace = totalSpace - freeSpace
+                        val progress = if (totalSpace > 0) usedSpace.toFloat() / totalSpace.toFloat() else 0f
+                        
                         Spacer(modifier = Modifier.height(8.dp))
-                        Button(onClick = { onUnmount(drive) }) {
-                            Text("Unmount Drive")
+                        LinearProgressIndicator(
+                            progress = progress,
+                            modifier = Modifier.fillMaxWidth().height(8.dp),
+                            color = MaterialTheme.colorScheme.primary,
+                            trackColor = MaterialTheme.colorScheme.primaryContainer
+                        )
+                        Spacer(modifier = Modifier.height(4.dp))
+                        Row(
+                            modifier = Modifier.fillMaxWidth(),
+                            horizontalArrangement = Arrangement.SpaceBetween
+                        ) {
+                            Text(text = "Used: ${formatSize(usedSpace)}", style = MaterialTheme.typography.bodySmall)
+                            Text(text = "Free: ${formatSize(freeSpace)}", style = MaterialTheme.typography.bodySmall)
+                        }
+                        
+                        Spacer(modifier = Modifier.height(16.dp))
+                        Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                            Button(onClick = { onOpenFilesApp() }) {
+                                Text("Open Files App")
+                            }
+                            Button(onClick = { onUnmount(drive) }) {
+                                Text("Unmount")
+                            }
                         }
                     }
                 }
@@ -331,7 +467,21 @@ fun OtgMasterApp(
         }
 
         // Logs
-        Text("Logs", style = MaterialTheme.typography.titleMedium)
+        Row(
+            modifier = Modifier.fillMaxWidth(),
+            horizontalArrangement = Arrangement.SpaceBetween,
+            verticalAlignment = Alignment.CenterVertically
+        ) {
+            Text("Logs", style = MaterialTheme.typography.titleMedium)
+            Row {
+                IconButton(onClick = { onClearLogs() }) {
+                    Icon(Icons.Default.Delete, contentDescription = "Clear Logs")
+                }
+                IconButton(onClick = { onCopyText(logs.joinToString("\n"), "Logs") }) {
+                    Icon(Icons.Default.ContentCopy, contentDescription = "Copy Logs")
+                }
+            }
+        }
         Card(
             modifier = Modifier
                 .fillMaxWidth()
@@ -343,6 +493,7 @@ fun OtgMasterApp(
                 }
             }
         }
+    }
     }
 }
 
@@ -405,10 +556,14 @@ fun VeraCryptMountSection(
                 value = password,
                 onValueChange = { password = it },
                 label = { Text("VeraCrypt Password") },
+                keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Password, autoCorrect = false),
                 visualTransformation = if (passwordVisible) androidx.compose.ui.text.input.VisualTransformation.None else PasswordVisualTransformation(),
                 trailingIcon = {
-                    TextButton(onClick = { passwordVisible = !passwordVisible }) {
-                        Text(if (passwordVisible) "HIDE" else "SHOW")
+                    IconButton(onClick = { passwordVisible = !passwordVisible }) {
+                        Icon(
+                            imageVector = if (passwordVisible) Icons.Default.Visibility else Icons.Default.VisibilityOff,
+                            contentDescription = if (passwordVisible) "Hide password" else "Show password"
+                        )
                     }
                 },
                 modifier = Modifier.fillMaxWidth()
@@ -434,4 +589,47 @@ fun VeraCryptMountSection(
             }
         }
     }
+}
+
+enum class ThemeMode {
+    SYSTEM, LIGHT, DARK
+}
+
+@Composable
+fun SettingsDialog(
+    currentTheme: ThemeMode,
+    onThemeSelected: (ThemeMode) -> Unit,
+    onDismiss: () -> Unit
+) {
+    AlertDialog(
+        onDismissRequest = onDismiss,
+        title = { Text("Settings") },
+        text = {
+            Column {
+                Text("Theme", style = MaterialTheme.typography.titleMedium)
+                Spacer(modifier = Modifier.height(8.dp))
+                ThemeMode.entries.forEach { mode ->
+                    Row(
+                        verticalAlignment = Alignment.CenterVertically,
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .clickable { onThemeSelected(mode) }
+                            .padding(8.dp)
+                    ) {
+                        RadioButton(
+                            selected = mode == currentTheme,
+                            onClick = { onThemeSelected(mode) }
+                        )
+                        Spacer(modifier = Modifier.width(8.dp))
+                        Text(mode.name.lowercase().replaceFirstChar { it.uppercase() })
+                    }
+                }
+            }
+        },
+        confirmButton = {
+            TextButton(onClick = onDismiss) {
+                Text("Close")
+            }
+        }
+    )
 }
