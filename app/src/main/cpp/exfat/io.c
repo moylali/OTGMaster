@@ -56,6 +56,7 @@ struct exfat_dev* exfat_open(const char* spec, enum exfat_mode mode) {
     jclass clazz = (*env)->FindClass(env, "app/fayaz/otgmaster/exfat/ExFatNative");
     jmethodID getDeviceSize = (*env)->GetStaticMethodID(env, clazz, "getDeviceSize", "(Lapp/fayaz/otgmaster/block/RawBlockDevice;)J");
     dev->size = (*env)->CallStaticLongMethod(env, clazz, getDeviceSize, (jobject)dev->block_device);
+    (*env)->DeleteLocalRef(env, clazz);
     
     return dev;
 }
@@ -105,6 +106,7 @@ ssize_t exfat_pread(struct exfat_dev* dev, void* buffer, size_t size, off_t offs
         (*env)->GetByteArrayRegion(env, jBuffer, 0, result, (jbyte*)buffer);
     }
     (*env)->DeleteLocalRef(env, jBuffer);
+    (*env)->DeleteLocalRef(env, clazz);
     return result;
 }
 
@@ -119,6 +121,7 @@ ssize_t exfat_pwrite(struct exfat_dev* dev, const void* buffer, size_t size, off
     jint result = (*env)->CallStaticIntMethod(env, clazz, pwriteMethod, (jobject)dev->block_device, (jlong)offset, (jint)size, jBuffer);
     
     (*env)->DeleteLocalRef(env, jBuffer);
+    (*env)->DeleteLocalRef(env, clazz);
     return result;
 }
 

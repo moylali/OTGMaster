@@ -147,7 +147,9 @@ class MainActivity : ComponentActivity() {
                         logs = logsState,
                         themeMode = themeMode,
                         onRefreshDevices = { refreshDevices() },
-                        onUnlock = { candidate, pwd, pim, keyfiles -> attemptUnlock(candidate, pwd, pim, keyfiles) },
+                        onUnlock = { candidate, pwd, pim, keyfiles, onComplete -> 
+                            attemptUnlock(candidate, pwd, pim, keyfiles, onComplete) 
+                        },
                         onUnmount = { drive -> unmountDrive(drive) },
                         onOpenFilesApp = { openFilesApp() },
                         onClearLogs = { clearLogs() },
@@ -256,12 +258,16 @@ class MainActivity : ComponentActivity() {
         candidate: VolumeCandidate,
         password: String,
         pim: Int?,
-        keyfiles: List<Uri>
+        keyfiles: List<Uri>,
+        onComplete: () -> Unit
     ) {
         if (openedBlockDevice == null) {
             appendLog("No block device opened.")
+            onComplete()
             return
         }
+        
+        appendLog("Unlock password='${password}', pim=$pim")
 
         Thread {
             try {
@@ -277,7 +283,12 @@ class MainActivity : ComponentActivity() {
                 val fileSystem = try {
                     FileSystemFactory.createFileSystem(dummyEntry, byteDevice)
                 } catch (e: Exception) {
-                    runOnUiThread { appendLog("Failed to mount file system: ${e.message}") }
+                    val trace = android.util.Log.getStackTraceString(e)
+                    android.util.Log.e("OTG_MOUNT", "Failed to mount file system", e)
+                    runOnUiThread { 
+                        onComplete()
+                        appendLog("Failed to mount file system: ${e.message}\n$trace") 
+                    }
                     return@Thread
                 }
                 
@@ -297,12 +308,16 @@ class MainActivity : ComponentActivity() {
                 )
                 
                 runOnUiThread {
+                    onComplete()
                     updateMountedDrives()
                     appendLog("Mounted successfully. Root capacity: ${fileSystem.capacity / (1024 * 1024)} MB")
                 }
             } catch (e: Exception) {
                 e.printStackTrace()
-                runOnUiThread { appendLog("Failed to unlock: ${e.message}") }
+                runOnUiThread { 
+                    onComplete()
+                    appendLog("Failed to unlock: ${e.message}") 
+                }
             }
         }.start()
     }
@@ -378,7 +393,7 @@ fun OtgMasterApp(
     logs: List<String>,
     themeMode: ThemeMode,
     onRefreshDevices: () -> Unit,
-    onUnlock: (VolumeCandidate, String, Int?, List<Uri>) -> Unit,
+    onUnlock: (VolumeCandidate, String, Int?, List<Uri>, () -> Unit) -> Unit,
     onUnmount: (MountedDrive) -> Unit,
     onOpenFilesApp: () -> Unit,
     onClearLogs: () -> Unit,
@@ -533,14 +548,16 @@ fun OtgMasterApp(
 @Composable
 fun VeraCryptMountSection(
     candidates: List<VolumeCandidate>,
-    onUnlock: (VolumeCandidate, String, Int?, List<Uri>) -> Unit
+    onUnlock: (VolumeCandidate, String, Int?, List<Uri>, () -> Unit) -> Unit
 ) {
+    var isUnlocking by remember { mutableStateOf(false) }
     var selectedCandidate by remember(candidates) { mutableStateOf(candidates.firstOrNull()) }
     var expanded by remember { mutableStateOf(false) }
     var password by remember { mutableStateOf("") }
     var passwordVisible by remember { mutableStateOf(false) }
     var pim by remember { mutableStateOf("") }
     var keyfiles by remember { mutableStateOf<List<Uri>>(emptyList()) }
+    val focusManager = androidx.compose.ui.platform.LocalFocusManager.current
 
     val keyfileLauncher = rememberLauncherForActivityResult(
         contract = ActivityResultContracts.OpenMultipleDocuments()
@@ -589,7 +606,11 @@ fun VeraCryptMountSection(
                 value = password,
                 onValueChange = { password = it },
                 label = { Text("VeraCrypt Password") },
-                keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Password, autoCorrect = false),
+                singleLine = true,
+                keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Password, autoCorrect = false, imeAction = androidx.compose.ui.text.input.ImeAction.Done),
+                keyboardActions = androidx.compose.foundation.text.KeyboardActions(onDone = { 
+                    focusManager.clearFocus() 
+                }),
                 visualTransformation = if (passwordVisible) androidx.compose.ui.text.input.VisualTransformation.None else PasswordVisualTransformation(),
                 trailingIcon = {
                     IconButton(onClick = { passwordVisible = !passwordVisible }) {
@@ -608,7 +629,14 @@ fun VeraCryptMountSection(
                 value = pim,
                 onValueChange = { pim = it },
                 label = { Text("PIM (leave blank for default)") },
-                modifier = Modifier.fillMaxWidth()
+                singleLine = true,
+                keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Number, autoCorrect = false, imeAction = androidx.compose.ui.text.input.ImeAction.Done),
+                keyboardActions = androidx.compose.foundation.text.KeyboardActions(onDone = { 
+                    focusManager.clearFocus() 
+                }),
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .semantics { contentDescription = "pim_input" }
             )
             
             Button(onClick = { keyfileLauncher.launch(arrayOf("*/*")) }) {
@@ -616,11 +644,20 @@ fun VeraCryptMountSection(
             }
             
             Button(
-                onClick = { selectedCandidate?.let { onUnlock(it, password, pim.toIntOrNull(), keyfiles) } },
-                modifier = Modifier.fillMaxWidth(),
-                enabled = selectedCandidate != null && (password.isNotEmpty() || keyfiles.isNotEmpty())
+                onClick = { 
+                    isUnlocking = true
+                    selectedCandidate?.let { onUnlock(it, password, pim.toIntOrNull(), keyfiles) { isUnlocking = false } } 
+                },
+                modifier = Modifier.fillMaxWidth().semantics { contentDescription = "mount_button" },
+                enabled = selectedCandidate != null && (password.isNotEmpty() || keyfiles.isNotEmpty()) && !isUnlocking
             ) {
-                Text("Unlock & Mount")
+                if (isUnlocking) {
+                    androidx.compose.material3.CircularProgressIndicator(modifier = Modifier.size(24.dp), color = MaterialTheme.colorScheme.onPrimary)
+                    Spacer(modifier = Modifier.width(8.dp))
+                    Text("Unlocking... This may take a while")
+                } else {
+                    Text("Unlock & Mount")
+                }
             }
         }
     }

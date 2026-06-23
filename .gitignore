@@ -8,3 +8,12 @@ captures/
 .idea/
 local.properties
 .cxx/
+
+# Generated e2e test data (run generate_testdata.sh to create)
+testdata/**/*.img
+testdata/**/*.key
+testdata/**/pim.txt
+
+# Test run artifacts
+logcat_*.txt
+test_out.log

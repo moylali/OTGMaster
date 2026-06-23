@@ -1,5 +1,6 @@
 package app.fayaz.otgmaster.veracrypt
 
+import android.util.Log
 import app.fayaz.otgmaster.block.RawBlockDevice
 import me.jahnen.libaums.core.driver.BlockDeviceDriver
 import java.nio.ByteBuffer
@@ -34,6 +35,10 @@ class NativeDecryptedBlockDevice(
             
             if (sectorDecrypted != null) {
                 System.arraycopy(sectorDecrypted, 0, decryptedData, i * 512, 512)
+                if (startBlock == 0L && i == 0) {
+                    val hex = sectorDecrypted.take(16).joinToString("") { "%02x".format(it) }
+                    Log.d("OTG_MOUNT", "Decrypted sector 0: $hex")
+                }
             } else {
                 throw IllegalStateException("Decryption failed at physical sector ${physicalStartBlock + i}")
             }
@@ -46,6 +51,8 @@ class NativeDecryptedBlockDevice(
         val bytesToRead = buffer.remaining()
         require(bytesToRead % blockSize == 0) { "buffer.remaining() must be multiple of blockSize" }
         val blocksToRead = bytesToRead / blockSize
+        // deviceOffset is a block number per BlockDeviceDriver contract (ByteBlockDevice converts bytes→blocks before calling here)
+        Log.d("OTG_MOUNT", "read: blockNum=$deviceOffset blocksToRead=$blocksToRead")
         val data = readBlocks(deviceOffset, blocksToRead)
         buffer.put(data)
     }

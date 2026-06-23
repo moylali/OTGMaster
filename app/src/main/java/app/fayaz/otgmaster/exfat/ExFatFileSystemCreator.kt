@@ -43,6 +43,7 @@ class ExFatFileSystemCreator : FileSystemCreator {
             }
             
             val exfatPtr = ExFatNative.mount(rawBlockDevice)
+            android.util.Log.d("OTG_EXFAT", "ExFatNative.mount returned $exfatPtr")
             if (exfatPtr == 0L) return null
             
             return ExFatFileSystem(rawBlockDevice, exfatPtr)

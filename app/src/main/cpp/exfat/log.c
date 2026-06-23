@@ -76,7 +76,7 @@ void exfat_error(const char* format, ...)
 	fputs(".\n", stderr);
 
 #ifdef __ANDROID__
-	__android_log_vprint(ANDROID_LOG_ERROR, PACKAGE, format, aq);
+	__android_log_vprint(ANDROID_LOG_ERROR, "ExFatNative", format, aq);
 #else
 	if (!isatty(STDERR_FILENO))
 		vsyslog(LOG_ERR, format, aq);

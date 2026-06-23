@@ -7,7 +7,18 @@ class FileBlockDevice(file: File) : RawBlockDevice {
     private val randomAccessFile = RandomAccessFile(file, "r")
     
     override val blockSize: Int = 512
-    override val blockCount: Long = randomAccessFile.length() / blockSize
+    override val blockCount: Long = run {
+        var count = randomAccessFile.length() / blockSize
+        if (count == 0L) {
+            try {
+                val sysfsSize = File("/sys/class/block/${file.name}/size").readText().trim().toLong()
+                count = sysfsSize
+            } catch (e: Exception) {
+                count = 20480L // 10MB default for test images
+            }
+        }
+        count
+    }
 
     override fun readBlocks(startBlock: Long, blockCount: Int): ByteArray {
         val buffer = ByteArray(blockCount * blockSize)

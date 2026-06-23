@@ -3,6 +3,7 @@
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
+#include <errno.h>
 
 extern "C" {
 #include "exfat.h"
@@ -48,10 +49,13 @@ Java_app_fayaz_otgmaster_exfat_ExFatNative_mount(JNIEnv *env, jobject thiz, jobj
     char spec[64];
     snprintf(spec, sizeof(spec), "%lld", (long long) globalBlockDevice);
     
-    if (exfat_mount(ef, spec, "ro") != 0) {
-        LOGE("exfat_mount failed");
+    int rc = exfat_mount(ef, spec, "ro");
+    if (rc != 0) {
+        LOGE("exfat_mount failed with %d", rc);
+        if (rc == -ENODEV) {
+            env->DeleteGlobalRef(globalBlockDevice);
+        }
         free(ef);
-        env->DeleteGlobalRef(globalBlockDevice);
         return 0;
     }
     

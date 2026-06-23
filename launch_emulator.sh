@@ -1,12 +1,14 @@
 #!/bin/bash
 set -e
 
-SDK_DIR="/opt/homebrew/share/android-commandlinetools"
+SDK_DIR="/home/fayaz/android-sdk-local"
+export JAVA_HOME=/home/fayaz/android-sdk-local/jdk-17
+export PATH=$JAVA_HOME/bin:$PATH
 CMD_SDKMANAGER="$SDK_DIR/cmdline-tools/latest/bin/sdkmanager"
 CMD_AVDMANAGER="$SDK_DIR/cmdline-tools/latest/bin/avdmanager"
 CMD_EMULATOR="$SDK_DIR/emulator/emulator"
 AVD_NAME="OTG_Test_Device"
-SYS_IMAGE="system-images;android-34;google_apis;arm64-v8a"
+SYS_IMAGE="system-images;android-34;google_apis;x86_64"
 IMG_FILE="$PWD/test_drive.img"
 
 if [ ! -f "$CMD_SDKMANAGER" ]; then

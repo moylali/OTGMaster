@@ -224,7 +224,7 @@ int exfat_mount(struct exfat* ef, const char* spec, const char* options)
 	}
 	if (memcmp(ef->sb->oem_name, "EXFAT   ", 8) != 0)
 	{
-		exfat_error("exFAT file system is not found");
+		exfat_error("exFAT file system is not found (oem_name: %.8s)", ef->sb->oem_name);
 		exfat_free(ef);
 		return -EIO;
 	}
