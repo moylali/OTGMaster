@@ -13,6 +13,8 @@ local.properties
 testdata/**/*.img
 testdata/**/*.key
 testdata/**/pim.txt
+testdata/**/expects_error.txt
+testdata/**/expected_fs.txt
 
 # Test run artifacts
 logcat_*.txt

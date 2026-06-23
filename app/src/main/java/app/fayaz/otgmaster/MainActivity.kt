@@ -52,6 +52,8 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.text.input.PasswordVisualTransformation
 import androidx.compose.ui.unit.dp
 import app.fayaz.otgmaster.block.RawBlockDevice
+import app.fayaz.otgmaster.fs.DetectedFilesystem
+import app.fayaz.otgmaster.fs.FilesystemDetector
 import app.fayaz.otgmaster.usb.LibaumsRawBlockDeviceOpener
 import app.fayaz.otgmaster.veracrypt.VeraCryptUnlocker
 import app.fayaz.otgmaster.veracrypt.VolumeCandidate
@@ -274,7 +276,22 @@ class MainActivity : ComponentActivity() {
                 val decryptedDevice = VeraCryptUnlocker().unlock(
                     openedBlockDevice!!, candidate, password.toCharArray(), pim, keyfiles, contentResolver
                 )
-                runOnUiThread { appendLog("Unlock successful! Reading File System...") }
+                runOnUiThread { appendLog("Unlock successful! Detecting filesystem...") }
+
+                val detected = FilesystemDetector.detect(decryptedDevice)
+                runOnUiThread { appendLog("Detected filesystem: ${detected.displayName}") }
+
+                if (detected is DetectedFilesystem.Unsupported) {
+                    runOnUiThread {
+                        onComplete()
+                        appendLog("Cannot mount: ${detected.reason}")
+                    }
+                    return@Thread
+                }
+
+                if (detected is DetectedFilesystem.Unknown) {
+                    runOnUiThread { appendLog("Filesystem unrecognized — attempting mount anyway") }
+                }
 
                 val dummyEntry = PartitionTableEntry(0, 0, 0)
                 val byteDevice = me.jahnen.libaums.core.driver.ByteBlockDevice(
@@ -283,11 +300,14 @@ class MainActivity : ComponentActivity() {
                 val fileSystem = try {
                     FileSystemFactory.createFileSystem(dummyEntry, byteDevice)
                 } catch (e: Exception) {
-                    val trace = android.util.Log.getStackTraceString(e)
                     android.util.Log.e("OTG_MOUNT", "Failed to mount file system", e)
-                    runOnUiThread { 
+                    val msg = if (detected is DetectedFilesystem.Unknown)
+                        "Unrecognized filesystem could not be mounted. Supported: FAT32, exFAT."
+                    else
+                        "Failed to mount ${detected.displayName}: ${e.message}"
+                    runOnUiThread {
                         onComplete()
-                        appendLog("Failed to mount file system: ${e.message}\n$trace") 
+                        appendLog(msg)
                     }
                     return@Thread
                 }
@@ -324,6 +344,7 @@ class MainActivity : ComponentActivity() {
 
     private fun unmountDrive(drive: MountedDrive) {
         OtgMasterState.removeDrive(drive.id)
+        app.fayaz.otgmaster.provider.VeraCryptDocumentProvider.mountedFileSystem = null
         contentResolver.notifyChange(
             android.provider.DocumentsContract.buildRootsUri("app.fayaz.otgmaster.documents"), null
         )
@@ -481,7 +502,10 @@ fun OtgMasterApp(
                             Button(onClick = { onOpenFilesApp() }) {
                                 Text("Open Files App")
                             }
-                            Button(onClick = { onUnmount(drive) }) {
+                            Button(
+                                onClick = { onUnmount(drive) },
+                                modifier = Modifier.semantics { contentDescription = "unmount_button" }
+                            ) {
                                 Text("Unmount")
                             }
                         }

@@ -5,6 +5,9 @@ mkdir -p testdata/fat32
 mkdir -p testdata/fat32_keyfile
 mkdir -p testdata/exfat
 mkdir -p testdata/exfat_keyfile
+mkdir -p testdata/fat16
+mkdir -p testdata/ntfs
+mkdir -p testdata/ext4
 
 
 PASSWORD="password123"
@@ -86,12 +89,45 @@ create_exfat_volume() {
     rm -rf "/tmp/mnt_exfat_vc"
 }
 
+create_unsupported_volume() {
+    DIR=$1
+    FS_DISPLAY_NAME=$2
+    MKFS_CMD=$3
+    IMG_FILE="$DIR/test.img"
+
+    echo "$PASSWORD" > "$DIR/password.txt"
+    echo "1" > "$DIR/pim.txt"
+    echo "true" > "$DIR/expects_error.txt"
+    echo "$FS_DISPLAY_NAME" > "$DIR/expected_fs.txt"
+
+    echo "Creating $IMG_FILE (inner: $FS_DISPLAY_NAME)..."
+    veracrypt -t -c --volume-type=normal "$IMG_FILE" --size="10M" --password="$PASSWORD" \
+        --encryption=AES --hash=SHA-512 --filesystem=none --pim=1 \
+        --random-source=/dev/urandom --non-interactive
+
+    echo "Mounting $IMG_FILE..."
+    veracrypt -t --mount "$IMG_FILE" --password="$PASSWORD" --pim=1 \
+        --non-interactive --filesystem=none --slot=1
+
+    echo "Formatting /dev/mapper/veracrypt1 as $FS_DISPLAY_NAME..."
+    eval "$MKFS_CMD /dev/mapper/veracrypt1"
+
+    echo "Unmounting..."
+    veracrypt -t -u "$IMG_FILE" --non-interactive
+}
+
 create_fat32_volume "testdata/fat32" "false"
 create_fat32_volume "testdata/fat32_keyfile" "true"
 create_exfat_volume "testdata/exfat" "false"
 create_exfat_volume "testdata/exfat_keyfile" "true"
+create_unsupported_volume "testdata/fat16" "FAT16" "mkfs.fat -F 16"
+create_unsupported_volume "testdata/ntfs" "NTFS" "mkfs.ntfs -f -q"
+create_unsupported_volume "testdata/ext4" "ext4" "mkfs.ext4 -F"
 
 # Remove the old default directory
 rm -rf testdata/default_image
+
+# Ensure all generated files are readable by the invoking user (when run via sudo, files are root-owned)
+chmod -R a+rX testdata/
 
 echo "Done generating test data."
