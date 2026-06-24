@@ -46,14 +46,31 @@ class VeraCryptUnlocker {
         return candidates
     }
 
+    class UnsupportedAlgorithmException(message: String) : Exception(message)
+
     fun unlock(
         device: RawBlockDevice,
         candidate: VolumeCandidate,
         password: CharArray,
         pim: Int? = null,
         keyfiles: List<android.net.Uri>? = null,
-        contentResolver: android.content.ContentResolver? = null
+        contentResolver: android.content.ContentResolver? = null,
+        cipher: VeraCryptCipher = VeraCryptCipher.DEFAULT,
+        hash: VeraCryptHash = VeraCryptHash.DEFAULT
     ): RawBlockDevice {
+        if (!cipher.isSupported) {
+            throw UnsupportedAlgorithmException(
+                "${cipher.displayName} is not yet supported. Supported ciphers: " +
+                    VeraCryptCipher.entries.filter { it.isSupported }.joinToString(", ") { it.displayName }
+            )
+        }
+        if (!hash.isSupported) {
+            throw UnsupportedAlgorithmException(
+                "${hash.displayName} is not yet supported. Supported hashes: " +
+                    VeraCryptHash.entries.filter { it.isSupported }.joinToString(", ") { it.displayName }
+            )
+        }
+
         var passwordBytes = String(password).toByteArray(Charsets.UTF_8)
         password.fill('\u0000')
 
@@ -126,12 +143,17 @@ class VeraCryptUnlocker {
         val salt = headerSector.copyOfRange(0, 64)
         val encryptedHeader = headerSector.copyOfRange(64, 512)
 
-        val decryptedHeader = VeraCryptNative.decryptHeader(passwordBytes, salt, iterations, encryptedHeader)
-        
+        // Only single (non-cascaded) ciphers are supported today; cipher.isSupported was
+        // already validated above, and every currently-supported VeraCryptCipher has exactly
+        // one component.
+        val cipherNativeId = cipher.components.first().nativeId
+
+        val decryptedHeader = VeraCryptNative.decryptHeader(cipherNativeId, passwordBytes, salt, iterations, encryptedHeader)
+
         if (decryptedHeader == null) {
             throw IllegalArgumentException("Decryption failed internally")
         }
-        
+
         // Check "VERA" magic bytes (ASCII)
         if (decryptedHeader[0] != 'V'.code.toByte() ||
             decryptedHeader[1] != 'E'.code.toByte() ||
@@ -140,13 +162,13 @@ class VeraCryptUnlocker {
             throw IllegalArgumentException("Magic bytes 'VERA' not found. Decryption failed.")
         }
 
-        // Master key is at offset 192 of the 448 decrypted bytes
-        val masterKey = decryptedHeader.copyOfRange(192, 192 + 64)
+        // Master key starts at offset 192 of the 448 decrypted bytes, sized per cipher.keySizeBytes
+        val masterKey = decryptedHeader.copyOfRange(192, 192 + cipher.keySizeBytes)
         passwordBytes.fill(0)
 
         // For standard volume, data area starts at byte 131072 (sector 256 for 512-byte sectors)
         val dataOffsetSectors = 131072L / device.blockSize
 
-        return NativeDecryptedBlockDevice(device, masterKey, candidate.startBlock + dataOffsetSectors)
+        return NativeDecryptedBlockDevice(device, masterKey, candidate.startBlock + dataOffsetSectors, cipherNativeId)
     }
 }

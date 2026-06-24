@@ -8,7 +8,8 @@ import java.nio.ByteBuffer
 class NativeDecryptedBlockDevice(
     private val encryptedDevice: RawBlockDevice,
     private val masterKey: ByteArray,
-    private val volumeDataOffset: Long // the number of blocks to skip to reach data
+    private val volumeDataOffset: Long, // the number of blocks to skip to reach data
+    private val cipherNativeId: Int = SingleCipher.AES.nativeId
 ) : RawBlockDevice, BlockDeviceDriver {
 
     override val blockSize: Int
@@ -31,8 +32,8 @@ class NativeDecryptedBlockDevice(
         
         for (i in 0 until sectorCount) {
             val sectorEncrypted = encryptedData.copyOfRange(i * 512, (i + 1) * 512)
-            val sectorDecrypted = VeraCryptNative.decryptSector(masterKey, physicalStartBlock + i, sectorEncrypted)
-            
+            val sectorDecrypted = VeraCryptNative.decryptSector(cipherNativeId, masterKey, physicalStartBlock + i, sectorEncrypted)
+
             if (sectorDecrypted != null) {
                 System.arraycopy(sectorDecrypted, 0, decryptedData, i * 512, 512)
                 if (startBlock == 0L && i == 0) {

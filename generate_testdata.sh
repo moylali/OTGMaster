@@ -8,6 +8,7 @@ mkdir -p testdata/exfat_keyfile
 mkdir -p testdata/fat16
 mkdir -p testdata/ntfs
 mkdir -p testdata/ext4
+mkdir -p testdata/serpent
 
 
 PASSWORD="password123"
@@ -15,10 +16,12 @@ PASSWORD="password123"
 create_fat32_volume() {
     DIR=$1
     HAS_KEYFILE=$2
+    CIPHER=${3:-AES}
     IMG_FILE="$DIR/test.img"
 
     echo "$PASSWORD" > "$DIR/password.txt"
     echo "1" > "$DIR/pim.txt"
+    echo "$CIPHER" > "$DIR/cipher.txt"
 
     KEY_ARG=""
     if [ "$HAS_KEYFILE" = "true" ]; then
@@ -27,9 +30,9 @@ create_fat32_volume() {
     fi
 
     # Create container without inner filesystem first
-    echo "Creating $IMG_FILE (no filesystem)..."
+    echo "Creating $IMG_FILE (no filesystem, cipher=$CIPHER)..."
     veracrypt -t -c --volume-type=normal "$IMG_FILE" --size="10M" --password="$PASSWORD" \
-        --encryption=AES --hash=SHA-512 --filesystem=none --pim=1 $KEY_ARG \
+        --encryption=$CIPHER --hash=SHA-512 --filesystem=none --pim=1 $KEY_ARG \
         --random-source=/dev/urandom --non-interactive
 
     # Mount with no-filesystem to get raw decrypted block device
@@ -118,6 +121,15 @@ create_unsupported_volume() {
 
 create_fat32_volume "testdata/fat32" "false"
 create_fat32_volume "testdata/fat32_keyfile" "true"
+create_fat32_volume "testdata/serpent" "false" "Serpent"
+
+# Unsupported-cipher case: a normal AES volume, but the test selects "Twofish" in the
+# cipher picker, so the app must reject it before ever touching the device.
+mkdir -p testdata/unsupported_cipher
+create_fat32_volume "testdata/unsupported_cipher" "false"
+echo "Twofish" > "testdata/unsupported_cipher/cipher.txt"
+echo "true" > "testdata/unsupported_cipher/expects_error.txt"
+
 create_exfat_volume "testdata/exfat" "false"
 create_exfat_volume "testdata/exfat_keyfile" "true"
 create_unsupported_volume "testdata/fat16" "FAT16" "mkfs.fat -F 16"

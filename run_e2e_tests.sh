@@ -44,7 +44,7 @@ ensure_testdata() {
         exit 1
     fi
 
-    for case_name in fat32 fat32_keyfile exfat exfat_keyfile fat16 ntfs ext4; do
+    for case_name in fat32 fat32_keyfile exfat exfat_keyfile fat16 ntfs ext4 serpent unsupported_cipher; do
         local dir="$TESTDATA_DIR/$case_name"
         if [ ! -f "$dir/test.img" ] || [ ! -f "$dir/password.txt" ] || [ ! -f "$dir/pim.txt" ]; then
             echo "Missing artifacts for test case: $case_name (test.img / password.txt / pim.txt)"
@@ -205,13 +205,20 @@ for test_dir in "$TESTDATA_DIR"/*/; do
         EXPECTED_FS_ARG="-e expected_fs $EXPECTED_FS"
     fi
 
+    CIPHER_ARG=""
+    CIPHER=""
+    if [ -f "$test_dir/cipher.txt" ]; then
+        CIPHER=$(cat "$test_dir/cipher.txt")
+        CIPHER_ARG="-e cipher $CIPHER"
+    fi
+
     echo "=================================================="
     echo "Running Test Case: $TEST_NAME"
     echo "Image: $IMG_FILE"
     if [ -f "$test_dir/expects_error.txt" ]; then
-        echo "Expects: error (filesystem: $EXPECTED_FS)"
+        echo "Expects: error (filesystem: $EXPECTED_FS, cipher: $CIPHER)"
     else
-        echo "Expects: successful mount"
+        echo "Expects: successful mount (cipher: $CIPHER)"
     fi
     echo "=================================================="
 
@@ -245,6 +252,7 @@ for test_dir in "$TESTDATA_DIR"/*/; do
         $PIM_ARG \
         $EXPECT_MOUNT_ARG \
         $EXPECTED_FS_ARG \
+        $CIPHER_ARG \
         -e class app.fayaz.otgmaster.E2EAutomatedTest \
         $PACKAGE_NAME.test/androidx.test.runner.AndroidJUnitRunner)
 

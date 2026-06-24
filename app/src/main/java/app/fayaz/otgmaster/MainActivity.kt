@@ -149,8 +149,8 @@ class MainActivity : ComponentActivity() {
                         logs = logsState,
                         themeMode = themeMode,
                         onRefreshDevices = { refreshDevices() },
-                        onUnlock = { candidate, pwd, pim, keyfiles, onComplete -> 
-                            attemptUnlock(candidate, pwd, pim, keyfiles, onComplete) 
+                        onUnlock = { candidate, pwd, pim, keyfiles, cipher, hash, onComplete ->
+                            attemptUnlock(candidate, pwd, pim, keyfiles, cipher, hash, onComplete)
                         },
                         onUnmount = { drive -> unmountDrive(drive) },
                         onOpenFilesApp = { openFilesApp() },
@@ -261,6 +261,8 @@ class MainActivity : ComponentActivity() {
         password: String,
         pim: Int?,
         keyfiles: List<Uri>,
+        cipher: app.fayaz.otgmaster.veracrypt.VeraCryptCipher,
+        hash: app.fayaz.otgmaster.veracrypt.VeraCryptHash,
         onComplete: () -> Unit
     ) {
         if (openedBlockDevice == null) {
@@ -268,13 +270,21 @@ class MainActivity : ComponentActivity() {
             onComplete()
             return
         }
-        
-        appendLog("Unlock password='${password}', pim=$pim")
+
+        appendLog("Unlock password='${password}', pim=$pim, cipher=${cipher.displayName}, hash=${hash.displayName}")
+
+        if (!cipher.isSupported || !hash.isSupported) {
+            val unsupportedName = if (!cipher.isSupported) cipher.displayName else hash.displayName
+            appendLog("Cannot mount: $unsupportedName is not yet supported.")
+            onComplete()
+            return
+        }
 
         Thread {
             try {
                 val decryptedDevice = VeraCryptUnlocker().unlock(
-                    openedBlockDevice!!, candidate, password.toCharArray(), pim, keyfiles, contentResolver
+                    openedBlockDevice!!, candidate, password.toCharArray(), pim, keyfiles, contentResolver,
+                    cipher, hash
                 )
                 runOnUiThread { appendLog("Unlock successful! Detecting filesystem...") }
 
@@ -414,7 +424,7 @@ fun OtgMasterApp(
     logs: List<String>,
     themeMode: ThemeMode,
     onRefreshDevices: () -> Unit,
-    onUnlock: (VolumeCandidate, String, Int?, List<Uri>, () -> Unit) -> Unit,
+    onUnlock: (VolumeCandidate, String, Int?, List<Uri>, app.fayaz.otgmaster.veracrypt.VeraCryptCipher, app.fayaz.otgmaster.veracrypt.VeraCryptHash, () -> Unit) -> Unit,
     onUnmount: (MountedDrive) -> Unit,
     onOpenFilesApp: () -> Unit,
     onClearLogs: () -> Unit,
@@ -559,8 +569,10 @@ fun OtgMasterApp(
                 .fillMaxWidth()
                 .height(150.dp)
         ) {
+            // Newest entries first so the latest status is visible without scrolling
+            // (the page itself, and this card, both have bounded/scrollable height).
             LazyColumn(modifier = Modifier.padding(8.dp)) {
-                items(logs) { log ->
+                items(logs.asReversed()) { log ->
                     Text(text = log, style = MaterialTheme.typography.bodySmall)
                 }
             }
@@ -572,7 +584,7 @@ fun OtgMasterApp(
 @Composable
 fun VeraCryptMountSection(
     candidates: List<VolumeCandidate>,
-    onUnlock: (VolumeCandidate, String, Int?, List<Uri>, () -> Unit) -> Unit
+    onUnlock: (VolumeCandidate, String, Int?, List<Uri>, app.fayaz.otgmaster.veracrypt.VeraCryptCipher, app.fayaz.otgmaster.veracrypt.VeraCryptHash, () -> Unit) -> Unit
 ) {
     var isUnlocking by remember { mutableStateOf(false) }
     var selectedCandidate by remember(candidates) { mutableStateOf(candidates.firstOrNull()) }
@@ -581,6 +593,10 @@ fun VeraCryptMountSection(
     var passwordVisible by remember { mutableStateOf(false) }
     var pim by remember { mutableStateOf("") }
     var keyfiles by remember { mutableStateOf<List<Uri>>(emptyList()) }
+    var selectedCipher by remember { mutableStateOf(app.fayaz.otgmaster.veracrypt.VeraCryptCipher.DEFAULT) }
+    var cipherExpanded by remember { mutableStateOf(false) }
+    var selectedHash by remember { mutableStateOf(app.fayaz.otgmaster.veracrypt.VeraCryptHash.DEFAULT) }
+    var hashExpanded by remember { mutableStateOf(false) }
     val focusManager = androidx.compose.ui.platform.LocalFocusManager.current
 
     val keyfileLauncher = rememberLauncherForActivityResult(
@@ -666,11 +682,73 @@ fun VeraCryptMountSection(
             Button(onClick = { keyfileLauncher.launch(arrayOf("*/*")) }) {
                 Text("Select Keyfiles (${keyfiles.size})")
             }
-            
+
+            @OptIn(ExperimentalMaterial3Api::class)
+            ExposedDropdownMenuBox(
+                expanded = cipherExpanded,
+                onExpandedChange = { cipherExpanded = !cipherExpanded }
+            ) {
+                OutlinedTextField(
+                    value = selectedCipher.displayName,
+                    onValueChange = {},
+                    readOnly = true,
+                    label = { Text("Encryption Algorithm") },
+                    trailingIcon = { ExposedDropdownMenuDefaults.TrailingIcon(expanded = cipherExpanded) },
+                    colors = ExposedDropdownMenuDefaults.outlinedTextFieldColors(),
+                    modifier = Modifier.menuAnchor().fillMaxWidth().semantics { contentDescription = "cipher_picker" }
+                )
+                ExposedDropdownMenu(
+                    expanded = cipherExpanded,
+                    onDismissRequest = { cipherExpanded = false }
+                ) {
+                    app.fayaz.otgmaster.veracrypt.VeraCryptCipher.entries.forEach { option ->
+                        DropdownMenuItem(
+                            text = { Text(if (option.isSupported) option.displayName else "${option.displayName} (not yet supported)") },
+                            onClick = {
+                                selectedCipher = option
+                                cipherExpanded = false
+                            }
+                        )
+                    }
+                }
+            }
+
+            @OptIn(ExperimentalMaterial3Api::class)
+            ExposedDropdownMenuBox(
+                expanded = hashExpanded,
+                onExpandedChange = { hashExpanded = !hashExpanded }
+            ) {
+                OutlinedTextField(
+                    value = selectedHash.displayName,
+                    onValueChange = {},
+                    readOnly = true,
+                    label = { Text("Hash Algorithm") },
+                    trailingIcon = { ExposedDropdownMenuDefaults.TrailingIcon(expanded = hashExpanded) },
+                    colors = ExposedDropdownMenuDefaults.outlinedTextFieldColors(),
+                    modifier = Modifier.menuAnchor().fillMaxWidth().semantics { contentDescription = "hash_picker" }
+                )
+                ExposedDropdownMenu(
+                    expanded = hashExpanded,
+                    onDismissRequest = { hashExpanded = false }
+                ) {
+                    app.fayaz.otgmaster.veracrypt.VeraCryptHash.entries.forEach { option ->
+                        DropdownMenuItem(
+                            text = { Text(if (option.isSupported) option.displayName else "${option.displayName} (not yet supported)") },
+                            onClick = {
+                                selectedHash = option
+                                hashExpanded = false
+                            }
+                        )
+                    }
+                }
+            }
+
             Button(
-                onClick = { 
+                onClick = {
                     isUnlocking = true
-                    selectedCandidate?.let { onUnlock(it, password, pim.toIntOrNull(), keyfiles) { isUnlocking = false } } 
+                    selectedCandidate?.let {
+                        onUnlock(it, password, pim.toIntOrNull(), keyfiles, selectedCipher, selectedHash) { isUnlocking = false }
+                    }
                 },
                 modifier = Modifier.fillMaxWidth().semantics { contentDescription = "mount_button" },
                 enabled = selectedCandidate != null && (password.isNotEmpty() || keyfiles.isNotEmpty()) && !isUnlocking

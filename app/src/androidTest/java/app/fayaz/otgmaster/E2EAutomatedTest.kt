@@ -62,6 +62,7 @@ class E2EAutomatedTest {
         val pim = arguments.getString("pim", "")
         val expectMount = arguments.getString("expect_mount", "true") == "true"
         val expectedFs = arguments.getString("expected_fs", "")
+        val cipher = arguments.getString("cipher", "")
 
         // Click "Scan USB Devices"
         val scanButton = device.wait(Until.findObject(By.textContains("Scan")), timeout)
@@ -106,6 +107,17 @@ class E2EAutomatedTest {
             fileObject?.click()
         }
 
+        if (cipher.isNotEmpty() && cipher != "AES") {
+            val cipherPicker = device.wait(Until.findObject(By.descContains("cipher_picker")), timeout)
+            assertTrue("Cipher picker not found", cipherPicker != null)
+            cipherPicker?.click()
+            android.os.SystemClock.sleep(500)
+            val cipherOption = device.wait(Until.findObject(By.textContains(cipher)), timeout)
+            assertTrue("Cipher option '$cipher' not found in picker", cipherOption != null)
+            cipherOption?.click()
+            android.os.SystemClock.sleep(500)
+        }
+
         // Click Mount
         val mountButton = device.wait(Until.findObject(By.descContains("mount_button")), timeout)
             ?: device.wait(Until.findObject(By.textContains("Unlock & Mount")), timeout)
@@ -114,7 +126,7 @@ class E2EAutomatedTest {
         mountButton.click()
 
         if (!expectMount) {
-            assertUnsupportedFilesystemError(expectedFs)
+            assertCannotMountError(expectedFs)
             return
         }
 
@@ -180,7 +192,14 @@ class E2EAutomatedTest {
         assertTrue("Drive was not successfully unmounted!", unmountGone)
     }
 
-    private fun assertUnsupportedFilesystemError(expectedFs: String) {
+    private fun assertCannotMountError(expectedFs: String) {
+        // The page may need scrolling for the Logs section to be visible/composed
+        // (e.g. with a tall expanded mount form above it). Scroll the screen itself
+        // rather than relying on the app to auto-scroll, which is both simpler and
+        // closer to real user behavior.
+        device.swipe(device.displayWidth / 2, device.displayHeight - 200, device.displayWidth / 2, 200, 20)
+        android.os.SystemClock.sleep(500)
+
         // Crypto is slow on emulator; allow up to 120s for decryption + detection
         val errorLog = device.wait(Until.findObject(By.textContains("Cannot mount:")), 120000L)
         assertTrue("Expected 'Cannot mount:' in app log but it did not appear", errorLog != null)

@@ -7,6 +7,7 @@ object VeraCryptNative {
 
     @JvmStatic
     external fun decryptHeader(
+        cipher: Int,
         password: ByteArray,
         salt: ByteArray,
         iterations: Int,
@@ -14,6 +15,7 @@ object VeraCryptNative {
     ): ByteArray?
 
     external fun decryptSector(
+        cipher: Int,
         masterKey: ByteArray,
         sectorNum: Long,
         encryptedSector: ByteArray
