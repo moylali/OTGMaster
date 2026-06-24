@@ -1,0 +1,69 @@
+# Builds a signed release APK and publishes it as a GitHub Release whenever a
+# tag matching v*.*.* is pushed (e.g. `git tag v0.2.0 && git push origin v0.2.0`).
+#
+# Requires these repository secrets to be set under Settings > Secrets and
+# variables > Actions before this workflow can sign anything:
+#   RELEASE_KEYSTORE_BASE64   base64 of your release .jks/.keystore file
+#                             (generate locally: keytool -genkeypair -v -storetype PKCS12
+#                             -keystore release.jks -alias otgmaster -keyalg RSA -keysize 2048
+#                             -validity 10000, then: base64 -w0 release.jks)
+#   RELEASE_KEYSTORE_PASSWORD the keystore password you set above
+#   RELEASE_KEY_ALIAS         the alias you set above (e.g. "otgmaster")
+#   RELEASE_KEY_PASSWORD      the key password you set above
+#
+# Note: this signed APK is for direct/GitHub-Releases distribution only. F-Droid
+# builds from source on its own infrastructure and signs with its own key, so
+# this workflow's signature has no bearing on the F-Droid-distributed build.
+
+name: Release
+
+on:
+  push:
+    tags:
+      - "v*.*.*"
+
+jobs:
+  build-release:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up JDK 17
+        uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: "17"
+
+      - name: Set up Gradle
+        uses: gradle/actions/setup-gradle@v3
+
+      - name: Accept Android SDK licenses
+        run: yes | "$ANDROID_HOME/cmdline-tools/latest/bin/sdkmanager" --licenses > /dev/null
+
+      - name: Install NDK and CMake
+        run: "$ANDROID_HOME/cmdline-tools/latest/bin/sdkmanager" "ndk;26.1.10909125" "cmake;3.22.1"
+
+      - name: Decode release keystore
+        run: echo "${{ secrets.RELEASE_KEYSTORE_BASE64 }}" | base64 -d > "${{ github.workspace }}/release.jks"
+
+      - name: Write keystore.properties
+        run: |
+          cat > keystore.properties <<EOF
+          storeFile=${{ github.workspace }}/release.jks
+          storePassword=${{ secrets.RELEASE_KEYSTORE_PASSWORD }}
+          keyAlias=${{ secrets.RELEASE_KEY_ALIAS }}
+          keyPassword=${{ secrets.RELEASE_KEY_PASSWORD }}
+          EOF
+
+      - name: Build signed release APK
+        run: ./gradlew assembleRelease
+
+      - name: Clean up signing secrets
+        if: always()
+        run: rm -f release.jks keystore.properties
+
+      - name: Create GitHub Release
+        uses: softprops/action-gh-release@v2
+        with:
+          files: app/build/outputs/apk/release/*.apk
+          generate_release_notes: true

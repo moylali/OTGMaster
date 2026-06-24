@@ -9,6 +9,11 @@ captures/
 local.properties
 .cxx/
 
+# Release signing secrets — never commit these
+keystore.properties
+*.jks
+*.keystore
+
 # Generated e2e test data (run generate_testdata.sh to create)
 testdata/**/*.img
 testdata/**/*.key

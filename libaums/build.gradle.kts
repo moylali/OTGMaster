@@ -6,6 +6,7 @@ plugins {
 android {
     namespace = "me.jahnen.libaums.core"
     compileSdk = 34
+    ndkVersion = "26.1.10909125"
 
     buildFeatures {
         buildConfig = true
