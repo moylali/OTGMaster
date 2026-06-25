@@ -8,8 +8,17 @@ import java.nio.ByteBuffer
 class NativeDecryptedBlockDevice(
     private val encryptedDevice: RawBlockDevice,
     private val masterKey: ByteArray,
-    private val volumeDataOffset: Long, // the number of blocks to skip to reach data
-    private val cipherNativeId: Int = SingleCipher.AES.nativeId
+    private val volumeDataOffset: Long, // absolute device blocks to skip to reach data (for I/O)
+    private val cipherNativeId: Int = SingleCipher.AES.nativeId,
+    // Sector number (relative to the START OF THE VOLUME, not the physical disk) where the
+    // data area begins — this is what VeraCrypt's XTS tweak is actually computed from. For a
+    // standard volume this is always headerSize/blockSize (e.g. 256 for 512-byte sectors),
+    // regardless of where the volume sits inside a partition. Using the *physical* sector
+    // number here instead (as this used to) only happens to work when the volume starts at
+    // physical sector 0 (e.g. "whole device") — for any volume inside a partition with a
+    // nonzero start, it corrupts every data sector while leaving the header (which uses its
+    // own fixed tweak) unaffected.
+    private val tweakDataOffset: Long = volumeDataOffset
 ) : RawBlockDevice, BlockDeviceDriver {
 
     override val blockSize: Int
@@ -32,7 +41,7 @@ class NativeDecryptedBlockDevice(
 
         for (i in 0 until sectorCount) {
             val sectorEncrypted = encryptedData.copyOfRange(i * 512, (i + 1) * 512)
-            val sectorDecrypted = VeraCryptNative.decryptSector(cipherNativeId, masterKey, physicalStartBlock + i, sectorEncrypted)
+            val sectorDecrypted = VeraCryptNative.decryptSector(cipherNativeId, masterKey, tweakDataOffset + startBlock + i, sectorEncrypted)
 
             if (sectorDecrypted != null) {
                 System.arraycopy(sectorDecrypted, 0, decryptedData, i * 512, 512)

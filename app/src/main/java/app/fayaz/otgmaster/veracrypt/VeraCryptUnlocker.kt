@@ -169,8 +169,16 @@ class VeraCryptUnlocker {
         passwordBytes.fill(0)
 
         // For standard volume, data area starts at byte 131072 (sector 256 for 512-byte sectors)
+        // relative to the START OF THE VOLUME — this is the XTS tweak offset. The physical I/O
+        // offset additionally includes wherever the volume's partition starts on the disk.
         val dataOffsetSectors = 131072L / device.blockSize
 
-        return NativeDecryptedBlockDevice(device, masterKey, candidate.startBlock + dataOffsetSectors, cipherNativeId)
+        return NativeDecryptedBlockDevice(
+            device,
+            masterKey,
+            volumeDataOffset = candidate.startBlock + dataOffsetSectors,
+            cipherNativeId = cipherNativeId,
+            tweakDataOffset = dataOffsetSectors
+        )
     }
 }
