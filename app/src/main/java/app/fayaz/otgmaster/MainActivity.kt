@@ -17,6 +17,9 @@ import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.compose.setContent
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.animation.AnimatedVisibility
+import androidx.compose.animation.slideInHorizontally
+import androidx.compose.animation.slideOutHorizontally
+import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.lazy.LazyColumn
@@ -30,6 +33,8 @@ import androidx.compose.material.icons.filled.Visibility
 import androidx.compose.material.icons.filled.VisibilityOff
 import androidx.compose.material.icons.filled.Delete
 import androidx.compose.material.icons.filled.ContentCopy
+import androidx.compose.material.icons.filled.Close
+import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.platform.LocalContext
 
 import androidx.compose.ui.semantics.testTagsAsResourceId
@@ -456,17 +461,7 @@ fun OtgMasterApp(
         previousMountedCount = mountedDrives.size
     }
 
-    if (showSettings) {
-        SettingsDialog(
-            currentTheme = themeMode,
-            versionName = versionName,
-            versionCode = versionCode,
-            onThemeSelected = onThemeChange,
-            onCopyText = onCopyText,
-            onDismiss = { showSettings = false }
-        )
-    }
-
+    Box(modifier = Modifier.fillMaxSize()) {
     Scaffold(
         topBar = {
             TopAppBar(
@@ -604,6 +599,17 @@ fun OtgMasterApp(
             }
         }
     }
+    }
+
+    SettingsDrawer(
+        visible = showSettings,
+        currentTheme = themeMode,
+        versionName = versionName,
+        versionCode = versionCode,
+        onThemeSelected = onThemeChange,
+        onCopyText = onCopyText,
+        onDismiss = { showSettings = false }
+    )
     }
 }
 
@@ -796,8 +802,55 @@ enum class ThemeMode {
     SYSTEM, LIGHT, DARK
 }
 
+fun themeStringRes(mode: ThemeMode): Int = when (mode) {
+    ThemeMode.SYSTEM -> R.string.theme_system
+    ThemeMode.LIGHT -> R.string.theme_light
+    ThemeMode.DARK -> R.string.theme_dark
+}
+
+/**
+ * A single collapsed-by-default settings entry: a tappable row showing a title and a
+ * one-line summary of its current value, expanding in place to reveal its full content.
+ * Keeping each setting in its own row like this lets new settings be added later without
+ * the drawer growing into an unscannable wall of controls.
+ */
 @Composable
-fun SettingsDialog(
+fun SettingsExpandableRow(
+    title: String,
+    summary: String,
+    content: @Composable () -> Unit
+) {
+    var expanded by remember { mutableStateOf(false) }
+    Column(modifier = Modifier.fillMaxWidth()) {
+        Row(
+            modifier = Modifier
+                .fillMaxWidth()
+                .clickable { expanded = !expanded }
+                .padding(vertical = 12.dp),
+            horizontalArrangement = Arrangement.SpaceBetween,
+            verticalAlignment = Alignment.CenterVertically
+        ) {
+            Column {
+                Text(title, style = MaterialTheme.typography.titleMedium)
+                Text(summary, style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+            }
+            Icon(
+                imageVector = if (expanded) Icons.Default.KeyboardArrowUp else Icons.Default.KeyboardArrowDown,
+                contentDescription = null
+            )
+        }
+        AnimatedVisibility(visible = expanded) {
+            Column(modifier = Modifier.padding(bottom = 8.dp)) {
+                content()
+            }
+        }
+        HorizontalDivider()
+    }
+}
+
+@Composable
+fun SettingsDrawer(
+    visible: Boolean,
     currentTheme: ThemeMode,
     versionName: String,
     versionCode: Long,
@@ -805,64 +858,93 @@ fun SettingsDialog(
     onCopyText: (String, String) -> Unit,
     onDismiss: () -> Unit
 ) {
+    if (!visible) return
+
     val versionText = stringResource(R.string.version_label, versionName, versionCode)
     val versionLabelShort = stringResource(R.string.version_label_short)
-    AlertDialog(
-        onDismissRequest = onDismiss,
-        title = { Text(stringResource(R.string.settings_title)) },
-        text = {
-            Column {
-                Text(stringResource(R.string.theme_label), style = MaterialTheme.typography.titleMedium)
-                Spacer(modifier = Modifier.height(8.dp))
-                ThemeMode.entries.forEach { mode ->
+
+    Box(modifier = Modifier.fillMaxSize()) {
+        Box(
+            modifier = Modifier
+                .fillMaxSize()
+                .background(Color.Black.copy(alpha = 0.32f))
+                .clickable(onClick = onDismiss)
+        )
+
+        AnimatedVisibility(
+            visible = true,
+            enter = slideInHorizontally(initialOffsetX = { it }),
+            exit = slideOutHorizontally(targetOffsetX = { it }),
+            modifier = Modifier.align(Alignment.CenterEnd)
+        ) {
+            Surface(
+                modifier = Modifier
+                    .fillMaxHeight()
+                    .width(300.dp),
+                tonalElevation = 4.dp
+            ) {
+                Column(
+                    modifier = Modifier
+                        .fillMaxSize()
+                        .padding(16.dp)
+                ) {
                     Row(
-                        verticalAlignment = Alignment.CenterVertically,
-                        modifier = Modifier
-                            .fillMaxWidth()
-                            .clickable { onThemeSelected(mode) }
-                            .padding(8.dp)
+                        modifier = Modifier.fillMaxWidth(),
+                        horizontalArrangement = Arrangement.SpaceBetween,
+                        verticalAlignment = Alignment.CenterVertically
                     ) {
-                        RadioButton(
-                            selected = mode == currentTheme,
-                            onClick = { onThemeSelected(mode) }
-                        )
-                        Spacer(modifier = Modifier.width(8.dp))
-                        Text(
-                            stringResource(
-                                when (mode) {
-                                    ThemeMode.SYSTEM -> R.string.theme_system
-                                    ThemeMode.LIGHT -> R.string.theme_light
-                                    ThemeMode.DARK -> R.string.theme_dark
-                                }
+                        Text(stringResource(R.string.settings_title), style = MaterialTheme.typography.headlineSmall)
+                        IconButton(onClick = onDismiss) {
+                            Icon(Icons.Default.Close, contentDescription = stringResource(R.string.cd_close_settings))
+                        }
+                    }
+                    Spacer(modifier = Modifier.height(8.dp))
+                    HorizontalDivider()
+
+                    SettingsExpandableRow(
+                        title = stringResource(R.string.theme_label),
+                        summary = stringResource(themeStringRes(currentTheme))
+                    ) {
+                        ThemeMode.entries.forEach { mode ->
+                            Row(
+                                verticalAlignment = Alignment.CenterVertically,
+                                modifier = Modifier
+                                    .fillMaxWidth()
+                                    .clickable { onThemeSelected(mode) }
+                                    .padding(vertical = 4.dp)
+                            ) {
+                                RadioButton(
+                                    selected = mode == currentTheme,
+                                    onClick = { onThemeSelected(mode) }
+                                )
+                                Spacer(modifier = Modifier.width(8.dp))
+                                Text(stringResource(themeStringRes(mode)))
+                            }
+                        }
+                    }
+
+                    SettingsExpandableRow(
+                        title = stringResource(R.string.app_version_label),
+                        summary = versionText
+                    ) {
+                        Row(
+                            verticalAlignment = Alignment.CenterVertically,
+                            horizontalArrangement = Arrangement.SpaceBetween,
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .clickable { onCopyText(versionText, versionLabelShort) }
+                                .padding(vertical = 4.dp)
+                        ) {
+                            Text(versionText, style = MaterialTheme.typography.bodyMedium)
+                            Icon(
+                                Icons.Default.ContentCopy,
+                                contentDescription = stringResource(R.string.cd_copy_version),
+                                modifier = Modifier.size(18.dp)
                             )
-                        )
+                        }
                     }
                 }
-
-                Spacer(modifier = Modifier.height(16.dp))
-                HorizontalDivider()
-                Spacer(modifier = Modifier.height(8.dp))
-                Row(
-                    verticalAlignment = Alignment.CenterVertically,
-                    horizontalArrangement = Arrangement.SpaceBetween,
-                    modifier = Modifier
-                        .fillMaxWidth()
-                        .clickable { onCopyText(versionText, versionLabelShort) }
-                        .padding(8.dp)
-                ) {
-                    Text(versionText, style = MaterialTheme.typography.bodyMedium)
-                    Icon(
-                        Icons.Default.ContentCopy,
-                        contentDescription = stringResource(R.string.cd_copy_version),
-                        modifier = Modifier.size(18.dp)
-                    )
-                }
-            }
-        },
-        confirmButton = {
-            TextButton(onClick = onDismiss) {
-                Text(stringResource(R.string.close))
             }
         }
-    )
+    }
 }
