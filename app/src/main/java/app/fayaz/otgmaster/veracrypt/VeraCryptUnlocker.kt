@@ -159,7 +159,9 @@ class VeraCryptUnlocker {
             decryptedHeader[1] != 'E'.code.toByte() ||
             decryptedHeader[2] != 'R'.code.toByte() ||
             decryptedHeader[3] != 'A'.code.toByte()) {
-            throw IllegalArgumentException("Magic bytes 'VERA' not found. Decryption failed.")
+            throw IllegalArgumentException(
+                "Wrong password, PIM, keyfile, or cipher/hash selection (header could not be decrypted)."
+            )
         }
 
         // Master key starts at offset 192 of the 448 decrypted bytes, sized per cipher.keySizeBytes
