@@ -85,6 +85,14 @@ class MainActivity : ComponentActivity() {
     private lateinit var sharedPreferences: SharedPreferences
     private val _themeMode = mutableStateOf(ThemeMode.SYSTEM)
 
+    private val versionName: String by lazy {
+        packageManager.getPackageInfo(packageName, 0).versionName ?: "?"
+    }
+    private val versionCode: Long by lazy {
+        val info = packageManager.getPackageInfo(packageName, 0)
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.P) info.longVersionCode else @Suppress("DEPRECATION") info.versionCode.toLong()
+    }
+
     private val permissionIntent: PendingIntent by lazy {
         val flags = PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_MUTABLE
         val intent = Intent(REQUEST_USB_PERMISSION).apply { setPackage(packageName) }
@@ -149,6 +157,8 @@ class MainActivity : ComponentActivity() {
                         mountedDrives = mountedDrivesState.value,
                         logs = logsState,
                         themeMode = themeMode,
+                        versionName = versionName,
+                        versionCode = versionCode,
                         onRefreshDevices = { refreshDevices() },
                         onUnlock = { candidate, pwd, pim, keyfiles, cipher, hash, onComplete ->
                             attemptUnlock(candidate, pwd, pim, keyfiles, cipher, hash, onComplete)
@@ -424,6 +434,8 @@ fun OtgMasterApp(
     mountedDrives: List<MountedDrive>,
     logs: List<String>,
     themeMode: ThemeMode,
+    versionName: String,
+    versionCode: Long,
     onRefreshDevices: () -> Unit,
     onUnlock: (VolumeCandidate, String, Int?, List<Uri>, app.fayaz.otgmaster.veracrypt.VeraCryptCipher, app.fayaz.otgmaster.veracrypt.VeraCryptHash, () -> Unit) -> Unit,
     onUnmount: (MountedDrive) -> Unit,
@@ -434,11 +446,23 @@ fun OtgMasterApp(
 ) {
     var showSettings by remember { mutableStateOf(false) }
     var isVeraCryptExpanded by remember { mutableStateOf(true) }
+    val scrollState = rememberScrollState()
+    var previousMountedCount by remember { mutableIntStateOf(mountedDrives.size) }
+
+    LaunchedEffect(mountedDrives.size) {
+        if (mountedDrives.size > previousMountedCount) {
+            scrollState.animateScrollTo(0)
+        }
+        previousMountedCount = mountedDrives.size
+    }
 
     if (showSettings) {
         SettingsDialog(
             currentTheme = themeMode,
+            versionName = versionName,
+            versionCode = versionCode,
             onThemeSelected = onThemeChange,
+            onCopyText = onCopyText,
             onDismiss = { showSettings = false }
         )
     }
@@ -461,7 +485,7 @@ fun OtgMasterApp(
                 .semantics { testTagsAsResourceId = true }
                 .padding(paddingValues)
                 .padding(16.dp)
-                .verticalScroll(rememberScrollState()),
+                .verticalScroll(scrollState),
             verticalArrangement = Arrangement.spacedBy(16.dp)
         ) {
         
@@ -747,6 +771,7 @@ fun VeraCryptMountSection(
 
             Button(
                 onClick = {
+                    focusManager.clearFocus()
                     isUnlocking = true
                     selectedCandidate?.let {
                         onUnlock(it, password, pim.toIntOrNull(), keyfiles, selectedCipher, selectedHash) { isUnlocking = false }
@@ -774,9 +799,14 @@ enum class ThemeMode {
 @Composable
 fun SettingsDialog(
     currentTheme: ThemeMode,
+    versionName: String,
+    versionCode: Long,
     onThemeSelected: (ThemeMode) -> Unit,
+    onCopyText: (String, String) -> Unit,
     onDismiss: () -> Unit
 ) {
+    val versionText = stringResource(R.string.version_label, versionName, versionCode)
+    val versionLabelShort = stringResource(R.string.version_label_short)
     AlertDialog(
         onDismissRequest = onDismiss,
         title = { Text(stringResource(R.string.settings_title)) },
@@ -807,6 +837,25 @@ fun SettingsDialog(
                             )
                         )
                     }
+                }
+
+                Spacer(modifier = Modifier.height(16.dp))
+                HorizontalDivider()
+                Spacer(modifier = Modifier.height(8.dp))
+                Row(
+                    verticalAlignment = Alignment.CenterVertically,
+                    horizontalArrangement = Arrangement.SpaceBetween,
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .clickable { onCopyText(versionText, versionLabelShort) }
+                        .padding(8.dp)
+                ) {
+                    Text(versionText, style = MaterialTheme.typography.bodyMedium)
+                    Icon(
+                        Icons.Default.ContentCopy,
+                        contentDescription = stringResource(R.string.cd_copy_version),
+                        modifier = Modifier.size(18.dp)
+                    )
                 }
             }
         },
