@@ -1,0 +1,4 @@
+- Fix VeraCrypt decryption for volumes inside a partition, not just whole-disk volumes
+- Support multiple simultaneously attached USB drives, with a device picker
+- Fix a crash when browsing a mounted volume's root directory in the Files app
+- Fix reopening a USB drive after unmounting without restarting the app

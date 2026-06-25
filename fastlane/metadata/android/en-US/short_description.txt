@@ -1,0 +1,1 @@
+Mount VeraCrypt-encrypted USB drives on non-rooted Android

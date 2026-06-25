@@ -1,0 +1,13 @@
+OTG Master lets you mount VeraCrypt-encrypted USB mass-storage devices on Android without root access.
+
+The app reads raw sectors from the USB drive using the Android USB Host API, unlocks the VeraCrypt volume header (AES or Serpent cipher, SHA-512 key derivation), and exposes the decrypted filesystem through a standard Android DocumentsProvider — so other apps like Files or Gallery can browse the unlocked volume directly, just like any other storage location.
+
+Features:
+
+* Unlock VeraCrypt volumes with a password, PIM, and/or keyfiles
+* AES and Serpent ciphers, SHA-512 key derivation
+* Read FAT32 and exFAT filesystems
+* Browse unlocked volumes through any file manager via Android's Storage Access Framework
+* Support for multiple simultaneously attached USB drives, with a picker when more than one is detected
+
+This app is currently read-only and does not support writing to mounted volumes. Filesystems other than FAT32 and exFAT (such as NTFS or ext4) are detected but not yet supported. See the project's roadmap in the source repository for planned support.
