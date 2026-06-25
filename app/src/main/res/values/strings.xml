@@ -1,3 +1,73 @@
 <resources>
     <string name="app_name">OTG Master</string>
+
+    <!-- Top bar / global -->
+    <string name="cd_settings">Settings</string>
+    <string name="cd_expand">Expand</string>
+    <string name="scan_usb_devices">Scan USB Devices</string>
+
+    <!-- Mounted devices section -->
+    <string name="mounted_devices">Mounted Devices</string>
+    <string name="open_files_app">Open Files App</string>
+    <string name="unmount">Unmount</string>
+    <string name="used_label">Used: %1$s</string>
+    <string name="free_label">Free: %1$s</string>
+    <string name="mounted_drive_name">VeraCrypt Drive (%1$s)</string>
+
+    <!-- VeraCrypt mount section -->
+    <string name="mount_veracrypt_drive">Mount VeraCrypt Encrypted Drive</string>
+    <string name="no_candidates_found">No VeraCrypt volume candidates found.</string>
+    <string name="label_volume_to_unlock">Volume to Unlock</string>
+    <string name="label_veracrypt_password">VeraCrypt Password</string>
+    <string name="label_pim">PIM (leave blank for default)</string>
+    <string name="select_keyfiles">Select Keyfiles (%1$d)</string>
+    <string name="label_encryption_algorithm">Encryption Algorithm</string>
+    <string name="label_hash_algorithm">Hash Algorithm</string>
+    <string name="algorithm_not_supported">%1$s (not yet supported)</string>
+    <string name="cd_hide_password">Hide password</string>
+    <string name="cd_show_password">Show password</string>
+    <string name="unlocking_in_progress">Unlocking… This may take a while</string>
+    <string name="unlock_and_mount">Unlock &amp; Mount</string>
+
+    <!-- Logs section -->
+    <string name="logs">Logs</string>
+    <string name="cd_clear_logs">Clear Logs</string>
+    <string name="cd_copy_logs">Copy Logs</string>
+
+    <!-- Settings dialog -->
+    <string name="settings_title">Settings</string>
+    <string name="theme_label">Theme</string>
+    <string name="theme_system">System</string>
+    <string name="theme_light">Light</string>
+    <string name="theme_dark">Dark</string>
+    <string name="close">Close</string>
+
+    <!-- Log/status messages -->
+    <string name="log_usb_permission_granted">USB permission granted for %1$s.</string>
+    <string name="log_usb_permission_denied">USB permission denied.</string>
+    <string name="log_usb_device_attached">USB device attached.</string>
+    <string name="log_usb_device_detached">USB device detached.</string>
+    <string name="log_found_usb_devices">Found %1$d USB devices.</string>
+    <string name="log_found_candidates_qemu">Found %1$d VeraCrypt volume candidates on QEMU disk.</string>
+    <string name="log_error_probing_qemu_candidates">Error probing QEMU candidates: %1$s</string>
+    <string name="log_no_usb_devices">No USB devices found.</string>
+    <string name="log_requested_usb_permission">Requested USB permission…</string>
+    <string name="log_could_not_open_block_device">Could not open RawBlockDevice via libaums.</string>
+    <string name="log_opened_block_device">Successfully opened USB RawBlockDevice.</string>
+    <string name="log_found_candidates">Found %1$d VeraCrypt volume candidates.</string>
+    <string name="log_error_probing_candidates">Error probing candidates: %1$s</string>
+    <string name="log_no_block_device_opened">No block device opened.</string>
+    <string name="log_unlock_attempt">Unlock attempt: pim=%1$s, cipher=%2$s, hash=%3$s</string>
+    <string name="log_cannot_mount_unsupported">Cannot mount: %1$s is not yet supported.</string>
+    <string name="log_unlock_successful">Unlock successful! Detecting filesystem…</string>
+    <string name="log_detected_filesystem">Detected filesystem: %1$s</string>
+    <string name="log_cannot_mount_reason">Cannot mount: %1$s</string>
+    <string name="log_filesystem_unrecognized">Filesystem unrecognized — attempting mount anyway</string>
+    <string name="log_unrecognized_fs_not_mounted">Unrecognized filesystem could not be mounted. Supported: FAT32, exFAT.</string>
+    <string name="log_failed_to_mount">Failed to mount %1$s: %2$s</string>
+    <string name="log_mounted_successfully">Mounted successfully. Root capacity: %1$d MB</string>
+    <string name="log_failed_to_unlock">Failed to unlock: %1$s</string>
+    <string name="log_drive_unmounted">Drive \'%1$s\' unmounted securely.</string>
+    <string name="log_could_not_open_files_app">Could not open files app directly: %1$s</string>
+    <string name="log_copied_to_clipboard">Copied %1$s to clipboard</string>
 </resources>

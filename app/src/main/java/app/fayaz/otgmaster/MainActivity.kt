@@ -50,6 +50,7 @@ import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.text.input.PasswordVisualTransformation
+import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.unit.dp
 import app.fayaz.otgmaster.block.RawBlockDevice
 import app.fayaz.otgmaster.fs.DetectedFilesystem
@@ -97,18 +98,18 @@ class MainActivity : ComponentActivity() {
                     val device = intent.getParcelableExtraCompat<UsbDevice>(UsbManager.EXTRA_DEVICE)
                     val granted = intent.getBooleanExtra(UsbManager.EXTRA_PERMISSION_GRANTED, false)
                     if (device != null && granted) {
-                        appendLog("USB permission granted for ${device.deviceName}.")
+                        appendLog(getString(R.string.log_usb_permission_granted, device.deviceName))
                         openAndProbeUsb()
                     } else {
-                        appendLog("USB permission denied.")
+                        appendLog(getString(R.string.log_usb_permission_denied))
                     }
                 }
                 UsbManager.ACTION_USB_DEVICE_ATTACHED -> {
-                    appendLog("USB device attached.")
+                    appendLog(getString(R.string.log_usb_device_attached))
                     refreshDevices()
                 }
                 UsbManager.ACTION_USB_DEVICE_DETACHED -> {
-                    appendLog("USB device detached.")
+                    appendLog(getString(R.string.log_usb_device_detached))
                     refreshDevices()
                 }
             }
@@ -190,7 +191,7 @@ class MainActivity : ComponentActivity() {
 
     private fun refreshDevices() {
         val devices = usbDeviceProvider.getDevices()
-        appendLog("Found ${devices.size} USB devices.")
+        appendLog(getString(R.string.log_found_usb_devices, devices.size))
 
         val usbDevice = devices.firstOrNull()
         if (usbDevice == null) {
@@ -204,11 +205,11 @@ class MainActivity : ComponentActivity() {
                         val candidates = app.fayaz.otgmaster.veracrypt.VeraCryptUnlocker().probeCandidates(openedBlockDevice!!)
                         runOnUiThread {
                             _candidates.value = candidates
-                            appendLog("Found ${candidates.size} VeraCrypt volume candidates on QEMU disk.")
+                            appendLog(getString(R.string.log_found_candidates_qemu, candidates.size))
                         }
                     } catch (e: Exception) {
                         e.printStackTrace()
-                        runOnUiThread { appendLog("Error probing QEMU candidates: ${e.message}") }
+                        runOnUiThread { appendLog(getString(R.string.log_error_probing_qemu_candidates, e.message)) }
                     }
                 }.start()
                 return
@@ -217,7 +218,7 @@ class MainActivity : ComponentActivity() {
             _candidates.value = emptyList()
             openedBlockDevice?.close()
             openedBlockDevice = null
-            appendLog("No USB devices found.")
+            appendLog(getString(R.string.log_no_usb_devices))
             return
         }
 
@@ -225,7 +226,7 @@ class MainActivity : ComponentActivity() {
             openAndProbeUsb()
         } else {
             usbDeviceProvider.requestPermission(usbDevice, permissionIntent)
-            appendLog("Requested USB permission...")
+            appendLog(getString(R.string.log_requested_usb_permission))
         }
     }
 
@@ -238,20 +239,20 @@ class MainActivity : ComponentActivity() {
             try {
                 val opened = LibaumsRawBlockDeviceOpener(this).openFirstAvailable()
                 if (opened == null) {
-                    runOnUiThread { appendLog("Could not open RawBlockDevice via libaums.") }
+                    runOnUiThread { appendLog(getString(R.string.log_could_not_open_block_device)) }
                     return@Thread
                 }
                 openedBlockDevice = opened.blockDevice
-                runOnUiThread { appendLog("Successfully opened USB RawBlockDevice.") }
+                runOnUiThread { appendLog(getString(R.string.log_opened_block_device)) }
 
                 val candidates = VeraCryptUnlocker().probeCandidates(opened.blockDevice)
                 runOnUiThread {
                     _candidates.value = candidates
-                    appendLog("Found ${candidates.size} VeraCrypt volume candidates.")
+                    appendLog(getString(R.string.log_found_candidates, candidates.size))
                 }
             } catch (e: Exception) {
                 e.printStackTrace()
-                runOnUiThread { appendLog("Error probing candidates: ${e.message}") }
+                runOnUiThread { appendLog(getString(R.string.log_error_probing_candidates, e.message)) }
             }
         }.start()
     }
@@ -266,16 +267,16 @@ class MainActivity : ComponentActivity() {
         onComplete: () -> Unit
     ) {
         if (openedBlockDevice == null) {
-            appendLog("No block device opened.")
+            appendLog(getString(R.string.log_no_block_device_opened))
             onComplete()
             return
         }
 
-        appendLog("Unlock password='${password}', pim=$pim, cipher=${cipher.displayName}, hash=${hash.displayName}")
+        appendLog(getString(R.string.log_unlock_attempt, pim.toString(), cipher.displayName, hash.displayName))
 
         if (!cipher.isSupported || !hash.isSupported) {
             val unsupportedName = if (!cipher.isSupported) cipher.displayName else hash.displayName
-            appendLog("Cannot mount: $unsupportedName is not yet supported.")
+            appendLog(getString(R.string.log_cannot_mount_unsupported, unsupportedName))
             onComplete()
             return
         }
@@ -286,21 +287,21 @@ class MainActivity : ComponentActivity() {
                     openedBlockDevice!!, candidate, password.toCharArray(), pim, keyfiles, contentResolver,
                     cipher, hash
                 )
-                runOnUiThread { appendLog("Unlock successful! Detecting filesystem...") }
+                runOnUiThread { appendLog(getString(R.string.log_unlock_successful)) }
 
                 val detected = FilesystemDetector.detect(decryptedDevice)
-                runOnUiThread { appendLog("Detected filesystem: ${detected.displayName}") }
+                runOnUiThread { appendLog(getString(R.string.log_detected_filesystem, detected.displayName)) }
 
                 if (detected is DetectedFilesystem.Unsupported) {
                     runOnUiThread {
                         onComplete()
-                        appendLog("Cannot mount: ${detected.reason}")
+                        appendLog(getString(R.string.log_cannot_mount_reason, detected.reason))
                     }
                     return@Thread
                 }
 
                 if (detected is DetectedFilesystem.Unknown) {
-                    runOnUiThread { appendLog("Filesystem unrecognized — attempting mount anyway") }
+                    runOnUiThread { appendLog(getString(R.string.log_filesystem_unrecognized)) }
                 }
 
                 val dummyEntry = PartitionTableEntry(0, 0, 0)
@@ -312,9 +313,9 @@ class MainActivity : ComponentActivity() {
                 } catch (e: Exception) {
                     android.util.Log.e("OTG_MOUNT", "Failed to mount file system", e)
                     val msg = if (detected is DetectedFilesystem.Unknown)
-                        "Unrecognized filesystem could not be mounted. Supported: FAT32, exFAT."
+                        getString(R.string.log_unrecognized_fs_not_mounted)
                     else
-                        "Failed to mount ${detected.displayName}: ${e.message}"
+                        getString(R.string.log_failed_to_mount, detected.displayName, e.message)
                     runOnUiThread {
                         onComplete()
                         appendLog(msg)
@@ -327,7 +328,7 @@ class MainActivity : ComponentActivity() {
                 val driveId = UUID.randomUUID().toString().substring(0, 8)
                 val mountedDrive = MountedDrive(
                     id = driveId,
-                    name = "VeraCrypt Drive ($driveId)",
+                    name = getString(R.string.mounted_drive_name, driveId),
                     fileSystem = fileSystem,
                     blockDevice = decryptedDevice
                 )
@@ -340,13 +341,13 @@ class MainActivity : ComponentActivity() {
                 runOnUiThread {
                     onComplete()
                     updateMountedDrives()
-                    appendLog("Mounted successfully. Root capacity: ${fileSystem.capacity / (1024 * 1024)} MB")
+                    appendLog(getString(R.string.log_mounted_successfully, fileSystem.capacity / (1024 * 1024)))
                 }
             } catch (e: Exception) {
                 e.printStackTrace()
-                runOnUiThread { 
+                runOnUiThread {
                     onComplete()
-                    appendLog("Failed to unlock: ${e.message}") 
+                    appendLog(getString(R.string.log_failed_to_unlock, e.message))
                 }
             }
         }.start()
@@ -360,7 +361,7 @@ class MainActivity : ComponentActivity() {
         )
         drive.blockDevice?.close()
         updateMountedDrives()
-        appendLog("Drive '${drive.name}' unmounted securely.")
+        appendLog(getString(R.string.log_drive_unmounted, drive.name))
     }
 
     private fun updateMountedDrives() {
@@ -375,7 +376,7 @@ class MainActivity : ComponentActivity() {
         try {
             startActivity(intent)
         } catch (e: Exception) {
-            appendLog("Could not open files app directly: ${e.message}")
+            appendLog(getString(R.string.log_could_not_open_files_app, e.message))
         }
     }
 
@@ -389,7 +390,7 @@ class MainActivity : ComponentActivity() {
         val clipboard = getSystemService(Context.CLIPBOARD_SERVICE) as ClipboardManager
         val clip = ClipData.newPlainText(label, text)
         clipboard.setPrimaryClip(clip)
-        appendLog("Copied $label to clipboard")
+        appendLog(getString(R.string.log_copied_to_clipboard, label))
     }
 
     private fun appendLog(line: String) {
@@ -445,10 +446,10 @@ fun OtgMasterApp(
     Scaffold(
         topBar = {
             TopAppBar(
-                title = { Text("OTG Master") },
+                title = { Text(stringResource(R.string.app_name)) },
                 actions = {
                     IconButton(onClick = { showSettings = true }) {
-                        Icon(Icons.Default.Settings, contentDescription = "Settings")
+                        Icon(Icons.Default.Settings, contentDescription = stringResource(R.string.cd_settings))
                     }
                 }
             )
@@ -465,12 +466,12 @@ fun OtgMasterApp(
         ) {
         
         Button(onClick = onRefreshDevices, modifier = Modifier.fillMaxWidth()) {
-            Text("Scan USB Devices")
+            Text(stringResource(R.string.scan_usb_devices))
         }
 
         // Section: Mounted Devices
         if (mountedDrives.isNotEmpty()) {
-            Text("Mounted Devices", style = MaterialTheme.typography.titleLarge)
+            Text(stringResource(R.string.mounted_devices), style = MaterialTheme.typography.titleLarge)
             mountedDrives.forEach { drive ->
                 Card(
                     modifier = Modifier.fillMaxWidth(),
@@ -503,20 +504,20 @@ fun OtgMasterApp(
                             modifier = Modifier.fillMaxWidth(),
                             horizontalArrangement = Arrangement.SpaceBetween
                         ) {
-                            Text(text = "Used: ${formatSize(usedSpace)}", style = MaterialTheme.typography.bodySmall)
-                            Text(text = "Free: ${formatSize(freeSpace)}", style = MaterialTheme.typography.bodySmall)
+                            Text(text = stringResource(R.string.used_label, formatSize(usedSpace)), style = MaterialTheme.typography.bodySmall)
+                            Text(text = stringResource(R.string.free_label, formatSize(freeSpace)), style = MaterialTheme.typography.bodySmall)
                         }
-                        
+
                         Spacer(modifier = Modifier.height(16.dp))
                         Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
                             Button(onClick = { onOpenFilesApp() }) {
-                                Text("Open Files App")
+                                Text(stringResource(R.string.open_files_app))
                             }
                             Button(
                                 onClick = { onUnmount(drive) },
                                 modifier = Modifier.semantics { contentDescription = "unmount_button" }
                             ) {
-                                Text("Unmount")
+                                Text(stringResource(R.string.unmount))
                             }
                         }
                     }
@@ -535,10 +536,10 @@ fun OtgMasterApp(
                     horizontalArrangement = Arrangement.SpaceBetween,
                     verticalAlignment = Alignment.CenterVertically
                 ) {
-                    Text("Mount New Drive (VeraCrypt)", style = MaterialTheme.typography.titleMedium)
+                    Text(stringResource(R.string.mount_veracrypt_drive), style = MaterialTheme.typography.titleMedium)
                     Icon(
                         imageVector = if (isVeraCryptExpanded) Icons.Default.KeyboardArrowUp else Icons.Default.KeyboardArrowDown,
-                        contentDescription = "Expand"
+                        contentDescription = stringResource(R.string.cd_expand)
                     )
                 }
 
@@ -554,13 +555,14 @@ fun OtgMasterApp(
             horizontalArrangement = Arrangement.SpaceBetween,
             verticalAlignment = Alignment.CenterVertically
         ) {
-            Text("Logs", style = MaterialTheme.typography.titleMedium)
+            val logsLabel = stringResource(R.string.logs)
+            Text(logsLabel, style = MaterialTheme.typography.titleMedium)
             Row {
                 IconButton(onClick = { onClearLogs() }) {
-                    Icon(Icons.Default.Delete, contentDescription = "Clear Logs")
+                    Icon(Icons.Default.Delete, contentDescription = stringResource(R.string.cd_clear_logs))
                 }
-                IconButton(onClick = { onCopyText(logs.joinToString("\n"), "Logs") }) {
-                    Icon(Icons.Default.ContentCopy, contentDescription = "Copy Logs")
+                IconButton(onClick = { onCopyText(logs.joinToString("\n"), logsLabel) }) {
+                    Icon(Icons.Default.ContentCopy, contentDescription = stringResource(R.string.cd_copy_logs))
                 }
             }
         }
@@ -610,7 +612,7 @@ fun VeraCryptMountSection(
         verticalArrangement = Arrangement.spacedBy(8.dp)
     ) {
         if (candidates.isEmpty()) {
-            Text("No VeraCrypt volume candidates found.", color = MaterialTheme.colorScheme.error)
+            Text(stringResource(R.string.no_candidates_found), color = MaterialTheme.colorScheme.error)
         } else {
             @OptIn(ExperimentalMaterial3Api::class)
             ExposedDropdownMenuBox(
@@ -621,7 +623,7 @@ fun VeraCryptMountSection(
                     value = selectedCandidate?.label ?: "",
                     onValueChange = {},
                     readOnly = true,
-                    label = { Text("Volume to Unlock") },
+                    label = { Text(stringResource(R.string.label_volume_to_unlock)) },
                     trailingIcon = { ExposedDropdownMenuDefaults.TrailingIcon(expanded = expanded) },
                     colors = ExposedDropdownMenuDefaults.outlinedTextFieldColors(),
                     modifier = Modifier.menuAnchor().fillMaxWidth()
@@ -645,7 +647,7 @@ fun VeraCryptMountSection(
             OutlinedTextField(
                 value = password,
                 onValueChange = { password = it },
-                label = { Text("VeraCrypt Password") },
+                label = { Text(stringResource(R.string.label_veracrypt_password)) },
                 singleLine = true,
                 keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Password, autoCorrect = false, imeAction = androidx.compose.ui.text.input.ImeAction.Done),
                 keyboardActions = androidx.compose.foundation.text.KeyboardActions(onDone = { 
@@ -656,7 +658,7 @@ fun VeraCryptMountSection(
                     IconButton(onClick = { passwordVisible = !passwordVisible }) {
                         Icon(
                             imageVector = if (passwordVisible) Icons.Default.Visibility else Icons.Default.VisibilityOff,
-                            contentDescription = if (passwordVisible) "Hide password" else "Show password"
+                            contentDescription = if (passwordVisible) stringResource(R.string.cd_hide_password) else stringResource(R.string.cd_show_password)
                         )
                     }
                 },
@@ -668,7 +670,7 @@ fun VeraCryptMountSection(
             OutlinedTextField(
                 value = pim,
                 onValueChange = { pim = it },
-                label = { Text("PIM (leave blank for default)") },
+                label = { Text(stringResource(R.string.label_pim)) },
                 singleLine = true,
                 keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Number, autoCorrect = false, imeAction = androidx.compose.ui.text.input.ImeAction.Done),
                 keyboardActions = androidx.compose.foundation.text.KeyboardActions(onDone = { 
@@ -680,7 +682,7 @@ fun VeraCryptMountSection(
             )
             
             Button(onClick = { keyfileLauncher.launch(arrayOf("*/*")) }) {
-                Text("Select Keyfiles (${keyfiles.size})")
+                Text(stringResource(R.string.select_keyfiles, keyfiles.size))
             }
 
             @OptIn(ExperimentalMaterial3Api::class)
@@ -692,7 +694,7 @@ fun VeraCryptMountSection(
                     value = selectedCipher.displayName,
                     onValueChange = {},
                     readOnly = true,
-                    label = { Text("Encryption Algorithm") },
+                    label = { Text(stringResource(R.string.label_encryption_algorithm)) },
                     trailingIcon = { ExposedDropdownMenuDefaults.TrailingIcon(expanded = cipherExpanded) },
                     colors = ExposedDropdownMenuDefaults.outlinedTextFieldColors(),
                     modifier = Modifier.menuAnchor().fillMaxWidth().semantics { contentDescription = "cipher_picker" }
@@ -703,7 +705,7 @@ fun VeraCryptMountSection(
                 ) {
                     app.fayaz.otgmaster.veracrypt.VeraCryptCipher.entries.forEach { option ->
                         DropdownMenuItem(
-                            text = { Text(if (option.isSupported) option.displayName else "${option.displayName} (not yet supported)") },
+                            text = { Text(if (option.isSupported) option.displayName else stringResource(R.string.algorithm_not_supported, option.displayName)) },
                             onClick = {
                                 selectedCipher = option
                                 cipherExpanded = false
@@ -722,7 +724,7 @@ fun VeraCryptMountSection(
                     value = selectedHash.displayName,
                     onValueChange = {},
                     readOnly = true,
-                    label = { Text("Hash Algorithm") },
+                    label = { Text(stringResource(R.string.label_hash_algorithm)) },
                     trailingIcon = { ExposedDropdownMenuDefaults.TrailingIcon(expanded = hashExpanded) },
                     colors = ExposedDropdownMenuDefaults.outlinedTextFieldColors(),
                     modifier = Modifier.menuAnchor().fillMaxWidth().semantics { contentDescription = "hash_picker" }
@@ -733,7 +735,7 @@ fun VeraCryptMountSection(
                 ) {
                     app.fayaz.otgmaster.veracrypt.VeraCryptHash.entries.forEach { option ->
                         DropdownMenuItem(
-                            text = { Text(if (option.isSupported) option.displayName else "${option.displayName} (not yet supported)") },
+                            text = { Text(if (option.isSupported) option.displayName else stringResource(R.string.algorithm_not_supported, option.displayName)) },
                             onClick = {
                                 selectedHash = option
                                 hashExpanded = false
@@ -756,9 +758,9 @@ fun VeraCryptMountSection(
                 if (isUnlocking) {
                     androidx.compose.material3.CircularProgressIndicator(modifier = Modifier.size(24.dp), color = MaterialTheme.colorScheme.onPrimary)
                     Spacer(modifier = Modifier.width(8.dp))
-                    Text("Unlocking... This may take a while")
+                    Text(stringResource(R.string.unlocking_in_progress))
                 } else {
-                    Text("Unlock & Mount")
+                    Text(stringResource(R.string.unlock_and_mount))
                 }
             }
         }
@@ -777,10 +779,10 @@ fun SettingsDialog(
 ) {
     AlertDialog(
         onDismissRequest = onDismiss,
-        title = { Text("Settings") },
+        title = { Text(stringResource(R.string.settings_title)) },
         text = {
             Column {
-                Text("Theme", style = MaterialTheme.typography.titleMedium)
+                Text(stringResource(R.string.theme_label), style = MaterialTheme.typography.titleMedium)
                 Spacer(modifier = Modifier.height(8.dp))
                 ThemeMode.entries.forEach { mode ->
                     Row(
@@ -795,14 +797,22 @@ fun SettingsDialog(
                             onClick = { onThemeSelected(mode) }
                         )
                         Spacer(modifier = Modifier.width(8.dp))
-                        Text(mode.name.lowercase().replaceFirstChar { it.uppercase() })
+                        Text(
+                            stringResource(
+                                when (mode) {
+                                    ThemeMode.SYSTEM -> R.string.theme_system
+                                    ThemeMode.LIGHT -> R.string.theme_light
+                                    ThemeMode.DARK -> R.string.theme_dark
+                                }
+                            )
+                        )
                     }
                 }
             }
         },
         confirmButton = {
             TextButton(onClick = onDismiss) {
-                Text("Close")
+                Text(stringResource(R.string.close))
             }
         }
     )
