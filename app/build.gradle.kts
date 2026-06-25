@@ -16,6 +16,38 @@ val keystoreProperties = Properties().apply {
     if (hasReleaseSigning) load(FileInputStream(keystorePropertiesFile))
 }
 
+// versionCode tracks total commit count, so it increases automatically on every commit
+// without ever needing a manual bump (requires full git history — CI must check out with
+// fetch-depth: 0, not a shallow clone, or this silently collapses to 1).
+// versionName tracks the latest git tag (e.g. "v0.2.0" -> "0.2.0"), so it only changes when
+// a release is actually tagged. Falls back to "0.0.0" / commit count 1 outside a git repo.
+fun gitCommitCount(): Int {
+    return try {
+        val process = ProcessBuilder("git", "rev-list", "--count", "HEAD")
+            .directory(rootDir)
+            .redirectErrorStream(true)
+            .start()
+        process.waitFor()
+        process.inputStream.bufferedReader().readText().trim().toIntOrNull() ?: 1
+    } catch (e: Exception) {
+        1
+    }
+}
+
+fun gitVersionName(): String {
+    return try {
+        val process = ProcessBuilder("git", "describe", "--tags", "--abbrev=0")
+            .directory(rootDir)
+            .redirectErrorStream(true)
+            .start()
+        process.waitFor()
+        val tag = process.inputStream.bufferedReader().readText().trim()
+        tag.removePrefix("v").ifEmpty { "0.0.0" }
+    } catch (e: Exception) {
+        "0.0.0"
+    }
+}
+
 android {
     namespace = "app.fayaz.otgmaster"
     compileSdk = 34
@@ -25,8 +57,8 @@ android {
         applicationId = "app.fayaz.otgmaster"
         minSdk = 26
         targetSdk = 34
-        versionCode = 2
-        versionName = "0.2.0"
+        versionCode = gitCommitCount()
+        versionName = gitVersionName()
         testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
         externalNativeBuild {
             cmake {
