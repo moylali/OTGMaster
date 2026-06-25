@@ -16,13 +16,20 @@ import java.io.IOException
 class LibaumsRawBlockDeviceOpener(private val context: Context) {
     private val usbManager = context.getSystemService(Context.USB_SERVICE) as UsbManager
 
-    fun openFirstAvailable(): OpenedUsbBlockDevice {
-        val failures = mutableListOf<String>()
+    /**
+     * Opens every attached mass-storage device not already in [excludeDeviceKeys] (e.g.
+     * already-mounted devices, keyed by [UsbDeviceDescriber.stableKey]), so the UI can let
+     * the user pick which one to unlock instead of only ever surfacing a single "next" device.
+     */
+    fun openAllAvailable(excludeDeviceKeys: Set<String> = emptySet()): List<OpenedUsbBlockDevice> {
+        val opened = mutableListOf<OpenedUsbBlockDevice>()
         for (device in usbManager.deviceList.values) {
             val supportedInterfaces = device.supportedMassStorageInterfaces()
             if (supportedInterfaces.isEmpty()) continue
-            if (!usbManager.hasPermission(device)) {
-                failures += "${device.deviceName}: missing USB permission"
+            val hasPermission = usbManager.hasPermission(device)
+            if (UsbDeviceDescriber.stableKey(device, hasPermission) in excludeDeviceKeys) continue
+            if (!hasPermission) {
+                Log.w(TAG, "${device.deviceName}: missing USB permission")
                 continue
             }
 
@@ -30,16 +37,14 @@ class LibaumsRawBlockDeviceOpener(private val context: Context) {
                 try {
                     Log.i(TAG, "Opening ${device.deviceName} interface ${candidate.usbInterface.id}")
                     val blockDevice = open(device, candidate)
-                    return OpenedUsbBlockDevice(device, candidate.usbInterface, blockDevice)
+                    opened += OpenedUsbBlockDevice(device, candidate.usbInterface, blockDevice)
+                    break
                 } catch (error: Exception) {
                     Log.e(TAG, "Failed opening ${device.deviceName}", error)
-                    failures += "${device.deviceName}: ${error.message ?: error.javaClass.simpleName}"
                 }
             }
         }
-
-        val detail = failures.takeIf { it.isNotEmpty() }?.joinToString("; ") ?: "no supported USB mass-storage devices"
-        throw IOException("Could not open USB block device: $detail")
+        return opened
     }
 
     private fun open(device: UsbDevice, candidate: InterfaceCandidate): RawBlockDevice {
@@ -114,7 +119,10 @@ class LibaumsRawBlockDeviceOpener(private val context: Context) {
         val usbDevice: UsbDevice,
         val usbInterface: UsbInterface,
         val blockDevice: RawBlockDevice,
-    )
+    ) {
+        // Permission was already confirmed before this was constructed (see openAllAvailable).
+        val deviceKey: String get() = UsbDeviceDescriber.stableKey(usbDevice, hasPermission = true)
+    }
 
     private companion object {
         const val TAG = "OTGMaster"

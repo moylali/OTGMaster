@@ -8,7 +8,12 @@ data class MountedDrive(
     val id: String,
     val name: String,
     val fileSystem: FileSystem,
-    val blockDevice: RawBlockDevice?
+    val blockDevice: RawBlockDevice?,
+    /** Stable USB device identity (see UsbDeviceDescriber.stableKey) this drive was unlocked
+     * from, used to avoid re-probing/re-mounting the same physical device while it's mounted. */
+    val sourceDeviceName: String? = null,
+    /** Human-readable USB device name (e.g. "Kingston DataTraveler") for display purposes. */
+    val sourceDeviceDisplayName: String? = null
 )
 
 object OtgMasterState {

@@ -12,7 +12,7 @@
     <string name="unmount">Unmount</string>
     <string name="used_label">Used: %1$s</string>
     <string name="free_label">Free: %1$s</string>
-    <string name="mounted_drive_name">VeraCrypt Drive (%1$s)</string>
+    <string name="mounted_drive_name">%1$s — VeraCrypt Drive (%2$s)</string>
 
     <!-- VeraCrypt mount section -->
     <string name="mount_veracrypt_drive">Mount VeraCrypt Encrypted Drive</string>
@@ -28,6 +28,10 @@
     <string name="cd_show_password">Show password</string>
     <string name="unlocking_in_progress">Unlocking… This may take a while</string>
     <string name="unlock_and_mount">Unlock &amp; Mount</string>
+    <string name="label_usb_drive">USB Drive</string>
+    <string name="unlocking_drive_label">Unlocking: %1$s</string>
+    <string name="no_devices_available">No USB drives available to mount.</string>
+    <string name="qemu_test_disk_label">QEMU Test Disk</string>
 
     <!-- Logs section -->
     <string name="logs">Logs</string>
@@ -45,7 +49,6 @@
     <string name="app_version_label">App Version</string>
     <string name="cd_copy_version">Copy version</string>
     <string name="cd_close_settings">Close settings</string>
-    <string name="close">Close</string>
 
     <!-- Log/status messages -->
     <string name="log_usb_permission_granted">USB permission granted for %1$s.</string>
@@ -58,11 +61,10 @@
     <string name="log_no_usb_devices">No USB devices found.</string>
     <string name="log_requested_usb_permission">Requested USB permission…</string>
     <string name="log_could_not_open_block_device">Could not open RawBlockDevice via libaums.</string>
-    <string name="log_opened_block_device">Successfully opened USB RawBlockDevice.</string>
-    <string name="log_found_candidates">Found %1$d VeraCrypt volume candidates.</string>
+    <string name="log_probed_devices">Probed new USB drive(s): %1$s</string>
     <string name="log_error_probing_candidates">Error probing candidates: %1$s</string>
     <string name="log_no_block_device_opened">No block device opened.</string>
-    <string name="log_unlock_attempt">Unlock attempt: pim=%1$s, cipher=%2$s, hash=%3$s</string>
+    <string name="log_unlock_attempt">Unlock attempt on %1$s: pim=%2$s, cipher=%3$s, hash=%4$s</string>
     <string name="log_cannot_mount_unsupported">Cannot mount: %1$s is not yet supported.</string>
     <string name="log_unlock_successful">Unlock successful! Detecting filesystem…</string>
     <string name="log_detected_filesystem">Detected filesystem: %1$s</string>
@@ -70,8 +72,8 @@
     <string name="log_filesystem_unrecognized">Filesystem unrecognized — attempting mount anyway</string>
     <string name="log_unrecognized_fs_not_mounted">Unrecognized filesystem could not be mounted. Supported: FAT32, exFAT.</string>
     <string name="log_failed_to_mount">Failed to mount %1$s: %2$s</string>
-    <string name="log_mounted_successfully">Mounted successfully. Root capacity: %1$d MB</string>
-    <string name="log_failed_to_unlock">Failed to unlock: %1$s</string>
+    <string name="log_mounted_successfully">Mounted %1$s successfully. Root capacity: %2$d MB</string>
+    <string name="log_failed_to_unlock">Failed to unlock %1$s: %2$s</string>
     <string name="log_drive_unmounted">Drive \'%1$s\' unmounted securely.</string>
     <string name="log_could_not_open_files_app">Could not open files app directly: %1$s</string>
     <string name="log_copied_to_clipboard">Copied %1$s to clipboard</string>

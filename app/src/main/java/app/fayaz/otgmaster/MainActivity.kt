@@ -61,6 +61,7 @@ import app.fayaz.otgmaster.block.RawBlockDevice
 import app.fayaz.otgmaster.fs.DetectedFilesystem
 import app.fayaz.otgmaster.fs.FilesystemDetector
 import app.fayaz.otgmaster.usb.LibaumsRawBlockDeviceOpener
+import app.fayaz.otgmaster.usb.UsbDeviceDescriber
 import app.fayaz.otgmaster.veracrypt.VeraCryptUnlocker
 import app.fayaz.otgmaster.veracrypt.VolumeCandidate
 import kotlinx.coroutines.Dispatchers
@@ -72,11 +73,29 @@ import me.jahnen.libaums.core.partition.PartitionTableEntry
 import app.fayaz.otgmaster.exfat.ExFatFileSystemCreator
 import java.util.UUID
 
+/**
+ * One attached, not-yet-mounted USB mass-storage device that's been opened and probed for
+ * VeraCrypt volume candidates, with a human-readable [displayName] so the user can tell
+ * devices apart in a dropdown when more than one is plugged in.
+ */
+data class UsbDeviceCandidate(
+    val deviceName: String,
+    val displayName: String,
+    val blockDevice: RawBlockDevice,
+    val candidates: List<VolumeCandidate>
+)
+
 class MainActivity : ComponentActivity() {
     // Provider for USB device handling (real implementation)
     private lateinit var usbDeviceProvider: app.fayaz.otgmaster.usb.UsbDeviceProvider
-    private val _candidates = mutableStateOf<List<VolumeCandidate>>(emptyList())
-    private var openedBlockDevice: RawBlockDevice? = null
+    // Keyed by UsbDevice.deviceName. Kept open (not closed) while listed here, since the
+    // user may switch the dropdown selection before deciding which one to unlock.
+    private val openedDevices = mutableMapOf<String, RawBlockDevice>()
+    private val _deviceCandidates = mutableStateOf<List<UsbDeviceCandidate>>(emptyList())
+    // Guards against overlapping probes (e.g. from rapid repeated ATTACHED broadcasts on a
+    // flaky connection) racing to open/add the same device twice. Touched only on the UI
+    // thread, so no synchronization is needed.
+    private var isProbingDevices = false
 
     // For Compose state hoisting
     private val mountedDrivesState = mutableStateOf<List<MountedDrive>>(emptyList())
@@ -85,6 +104,7 @@ class MainActivity : ComponentActivity() {
     companion object {
         const val TAG = "OTGMaster"
         private const val REQUEST_USB_PERMISSION = "app.fayaz.otgmaster.USB_PERMISSION"
+        private const val QEMU_DEVICE_KEY = "qemu:/dev/block/sda"
     }
 
     private lateinit var sharedPreferences: SharedPreferences
@@ -158,15 +178,15 @@ class MainActivity : ComponentActivity() {
                     color = MaterialTheme.colorScheme.background
                 ) {
                     OtgMasterApp(
-                        candidates = _candidates.value,
+                        deviceCandidates = _deviceCandidates.value,
                         mountedDrives = mountedDrivesState.value,
                         logs = logsState,
                         themeMode = themeMode,
                         versionName = versionName,
                         versionCode = versionCode,
                         onRefreshDevices = { refreshDevices() },
-                        onUnlock = { candidate, pwd, pim, keyfiles, cipher, hash, onComplete ->
-                            attemptUnlock(candidate, pwd, pim, keyfiles, cipher, hash, onComplete)
+                        onUnlock = { deviceName, candidate, pwd, pim, keyfiles, cipher, hash, onComplete ->
+                            attemptUnlock(deviceName, candidate, pwd, pim, keyfiles, cipher, hash, onComplete)
                         },
                         onUnmount = { drive -> unmountDrive(drive) },
                         onOpenFilesApp = { openFilesApp() },
@@ -186,9 +206,14 @@ class MainActivity : ComponentActivity() {
     }
 
     override fun onDestroy() {
-        openedBlockDevice?.close()
+        closeOpenedDevices()
         unregisterReceiver(usbReceiver)
         super.onDestroy()
+    }
+
+    private fun closeOpenedDevices() {
+        openedDevices.values.forEach { it.close() }
+        openedDevices.clear()
     }
 
     private fun registerUsbReceiver() {
@@ -208,71 +233,127 @@ class MainActivity : ComponentActivity() {
         val devices = usbDeviceProvider.getDevices()
         appendLog(getString(R.string.log_found_usb_devices, devices.size))
 
-        val usbDevice = devices.firstOrNull()
-        if (usbDevice == null) {
-            val sda = java.io.File("/dev/block/sda")
-            if (sda.exists() && sda.canRead()) {
-                openedBlockDevice?.close()
-                openedBlockDevice = app.fayaz.otgmaster.block.FileBlockDevice(sda)
-                
-                Thread {
-                    try {
-                        val candidates = app.fayaz.otgmaster.veracrypt.VeraCryptUnlocker().probeCandidates(openedBlockDevice!!)
-                        runOnUiThread {
-                            _candidates.value = candidates
-                            appendLog(getString(R.string.log_found_candidates_qemu, candidates.size))
-                        }
-                    } catch (e: Exception) {
-                        e.printStackTrace()
-                        runOnUiThread { appendLog(getString(R.string.log_error_probing_qemu_candidates, e.message)) }
-                    }
-                }.start()
-                return
-            }
+        val mountedDeviceKeys = OtgMasterState.mountedDrives.mapNotNull { it.sourceDeviceName }.toSet()
 
-            _candidates.value = emptyList()
-            openedBlockDevice?.close()
-            openedBlockDevice = null
-            appendLog(getString(R.string.log_no_usb_devices))
+        // Drop any previously-opened, not-yet-mounted device that's no longer attached.
+        val attachedKeys = devices.map { UsbDeviceDescriber.stableKey(it, usbDeviceProvider.hasPermission(it)) }.toSet()
+        val staleKeys = openedDevices.keys.filter { it != QEMU_DEVICE_KEY && it !in attachedKeys }
+        if (staleKeys.isNotEmpty()) {
+            staleKeys.forEach { key -> openedDevices.remove(key)?.close() }
+            _deviceCandidates.value = _deviceCandidates.value.filterNot { it.deviceName in staleKeys }
+        }
+
+        if (devices.isEmpty()) {
+            val qemuAlreadyHandled = QEMU_DEVICE_KEY in mountedDeviceKeys || QEMU_DEVICE_KEY in openedDevices
+            if (!qemuAlreadyHandled) {
+                val sda = java.io.File("/dev/block/sda")
+                if (sda.exists() && sda.canRead()) {
+                    probeQemuDisk(sda)
+                    return
+                }
+                _deviceCandidates.value = emptyList()
+                appendLog(getString(R.string.log_no_usb_devices))
+            }
             return
         }
 
-        if (usbDeviceProvider.hasPermission(usbDevice)) {
-            openAndProbeUsb()
-        } else {
-            usbDeviceProvider.requestPermission(usbDevice, permissionIntent)
+        // Devices not already mounted, not already sitting in the dropdown unprobed, and
+        // that actually expose a mass-storage interface (skips USB hubs/keyboards/etc.).
+        val candidateDevices = devices.filter {
+            val key = UsbDeviceDescriber.stableKey(it, usbDeviceProvider.hasPermission(it))
+            key !in mountedDeviceKeys && key !in openedDevices && UsbDeviceDescriber.isMassStorageDevice(it)
+        }
+        if (candidateDevices.isEmpty()) return
+
+        val deviceNeedingPermission = candidateDevices.firstOrNull { !usbDeviceProvider.hasPermission(it) }
+        if (deviceNeedingPermission != null) {
+            usbDeviceProvider.requestPermission(deviceNeedingPermission, permissionIntent)
             appendLog(getString(R.string.log_requested_usb_permission))
+        } else {
+            openAndProbeUsb()
         }
     }
 
-    private fun openAndProbeUsb() {
-        val devices = usbDeviceProvider.getDevices()
-        if (devices.isEmpty()) return
-        val device = devices.firstOrNull()
-
+    private fun probeQemuDisk(sda: java.io.File) {
+        val device = app.fayaz.otgmaster.block.FileBlockDevice(sda)
         Thread {
             try {
-                val opened = LibaumsRawBlockDeviceOpener(this).openFirstAvailable()
-                if (opened == null) {
-                    runOnUiThread { appendLog(getString(R.string.log_could_not_open_block_device)) }
-                    return@Thread
-                }
-                openedBlockDevice = opened.blockDevice
-                runOnUiThread { appendLog(getString(R.string.log_opened_block_device)) }
-
-                val candidates = VeraCryptUnlocker().probeCandidates(opened.blockDevice)
+                val candidates = app.fayaz.otgmaster.veracrypt.VeraCryptUnlocker().probeCandidates(device)
                 runOnUiThread {
-                    _candidates.value = candidates
-                    appendLog(getString(R.string.log_found_candidates, candidates.size))
+                    openedDevices[QEMU_DEVICE_KEY] = device
+                    _deviceCandidates.value = listOf(
+                        UsbDeviceCandidate(QEMU_DEVICE_KEY, getString(R.string.qemu_test_disk_label), device, candidates)
+                    )
+                    appendLog(getString(R.string.log_found_candidates_qemu, candidates.size))
                 }
             } catch (e: Exception) {
                 e.printStackTrace()
-                runOnUiThread { appendLog(getString(R.string.log_error_probing_candidates, e.message)) }
+                device.close()
+                runOnUiThread { appendLog(getString(R.string.log_error_probing_qemu_candidates, e.message)) }
+            }
+        }.start()
+    }
+
+    /**
+     * Opens and probes every newly-attached device not already mounted or already sitting
+     * in [_deviceCandidates], adding results to the dropdown rather than replacing it, so an
+     * in-progress unlock attempt on one device isn't disturbed by a second device appearing.
+     */
+    private fun openAndProbeUsb() {
+        // Rapid repeated ATTACHED broadcasts (e.g. a flaky OTG connection re-enumerating)
+        // could otherwise start several overlapping probes that all race to open and add
+        // the same physical device, producing duplicate dropdown entries — most of which
+        // lose the race for the underlying connection and end up broken.
+        if (isProbingDevices) return
+        isProbingDevices = true
+        Thread {
+            try {
+                val excludeKeys = OtgMasterState.mountedDrives.mapNotNull { it.sourceDeviceName }.toSet() + openedDevices.keys
+                val openedList = try {
+                    LibaumsRawBlockDeviceOpener(this).openAllAvailable(excludeKeys)
+                } catch (e: Exception) {
+                    e.printStackTrace()
+                    runOnUiThread { appendLog(getString(R.string.log_error_probing_candidates, e.message)) }
+                    return@Thread
+                }
+
+                if (openedList.isEmpty()) {
+                    runOnUiThread { appendLog(getString(R.string.log_could_not_open_block_device)) }
+                    return@Thread
+                }
+
+                val baseIndex = _deviceCandidates.value.size
+                val newCandidates = openedList.mapIndexed { index, opened ->
+                    val displayName = UsbDeviceDescriber.friendlyName(opened.usbDevice, baseIndex + index)
+                    val candidates = try {
+                        VeraCryptUnlocker().probeCandidates(opened.blockDevice)
+                    } catch (e: Exception) {
+                        e.printStackTrace()
+                        emptyList()
+                    }
+                    UsbDeviceCandidate(opened.deviceKey, displayName, opened.blockDevice, candidates)
+                }
+
+                runOnUiThread {
+                    val existingKeys = _deviceCandidates.value.map { it.deviceName }.toSet()
+                    val (uniqueNew, duplicates) = newCandidates.partition { it.deviceName !in existingKeys }
+                    // Close rather than leak the redundant connections opened for devices
+                    // that turned out to already be in the dropdown by the time we got here.
+                    duplicates.forEach { it.blockDevice.close() }
+                    uniqueNew.forEach { openedDevices[it.deviceName] = it.blockDevice }
+                    _deviceCandidates.value = _deviceCandidates.value + uniqueNew
+                    if (uniqueNew.isNotEmpty()) {
+                        appendLog(getString(R.string.log_probed_devices, uniqueNew.joinToString(", ") { it.displayName }))
+                    }
+                }
+            } finally {
+                runOnUiThread { isProbingDevices = false }
             }
         }.start()
     }
 
     private fun attemptUnlock(
+        deviceName: String,
         candidate: VolumeCandidate,
         password: String,
         pim: Int?,
@@ -281,13 +362,15 @@ class MainActivity : ComponentActivity() {
         hash: app.fayaz.otgmaster.veracrypt.VeraCryptHash,
         onComplete: () -> Unit
     ) {
-        if (openedBlockDevice == null) {
+        val device = openedDevices[deviceName]
+        if (device == null) {
             appendLog(getString(R.string.log_no_block_device_opened))
             onComplete()
             return
         }
+        val deviceDisplayName = _deviceCandidates.value.find { it.deviceName == deviceName }?.displayName ?: deviceName
 
-        appendLog(getString(R.string.log_unlock_attempt, pim.toString(), cipher.displayName, hash.displayName))
+        appendLog(getString(R.string.log_unlock_attempt, deviceDisplayName, pim.toString(), cipher.displayName, hash.displayName))
 
         if (!cipher.isSupported || !hash.isSupported) {
             val unsupportedName = if (!cipher.isSupported) cipher.displayName else hash.displayName
@@ -299,7 +382,7 @@ class MainActivity : ComponentActivity() {
         Thread {
             try {
                 val decryptedDevice = VeraCryptUnlocker().unlock(
-                    openedBlockDevice!!, candidate, password.toCharArray(), pim, keyfiles, contentResolver,
+                    device, candidate, password.toCharArray(), pim, keyfiles, contentResolver,
                     cipher, hash
                 )
                 runOnUiThread { appendLog(getString(R.string.log_unlock_successful)) }
@@ -343,26 +426,35 @@ class MainActivity : ComponentActivity() {
                 val driveId = UUID.randomUUID().toString().substring(0, 8)
                 val mountedDrive = MountedDrive(
                     id = driveId,
-                    name = getString(R.string.mounted_drive_name, driveId),
+                    name = getString(R.string.mounted_drive_name, deviceDisplayName, driveId),
                     fileSystem = fileSystem,
-                    blockDevice = decryptedDevice
+                    blockDevice = decryptedDevice,
+                    sourceDeviceName = deviceName,
+                    sourceDeviceDisplayName = deviceDisplayName
                 )
 
                 OtgMasterState.addDrive(mountedDrive)
                 contentResolver.notifyChange(
                     android.provider.DocumentsContract.buildRootsUri("app.fayaz.otgmaster.documents"), null
                 )
-                
+
                 runOnUiThread {
                     onComplete()
                     updateMountedDrives()
-                    appendLog(getString(R.string.log_mounted_successfully, fileSystem.capacity / (1024 * 1024)))
+                    appendLog(getString(R.string.log_mounted_successfully, deviceDisplayName, fileSystem.capacity / (1024 * 1024)))
+                    // Stop tracking it as "available to unlock" — don't close it, it's now
+                    // owned by the mounted filesystem's underlying decrypted device chain.
+                    openedDevices.remove(deviceName)
+                    _deviceCandidates.value = _deviceCandidates.value.filterNot { it.deviceName == deviceName }
                 }
+                // Pick up any newly attached device since the last probe (and prompt for
+                // permission if needed) now that this one is out of the dropdown.
+                runOnUiThread { refreshDevices() }
             } catch (e: Exception) {
                 e.printStackTrace()
                 runOnUiThread {
                     onComplete()
-                    appendLog(getString(R.string.log_failed_to_unlock, e.message))
+                    appendLog(getString(R.string.log_failed_to_unlock, deviceDisplayName, e.message))
                 }
             }
         }.start()
@@ -377,6 +469,9 @@ class MainActivity : ComponentActivity() {
         drive.blockDevice?.close()
         updateMountedDrives()
         appendLog(getString(R.string.log_drive_unmounted, drive.name))
+        // The device's sourceDeviceName is now free (no longer in mountedDrives), so this
+        // picks it back up and re-probes it for the dropdown.
+        refreshDevices()
     }
 
     private fun updateMountedDrives() {
@@ -435,14 +530,14 @@ fun formatSize(bytes: Long): String {
 @OptIn(ExperimentalMaterial3Api::class, ExperimentalComposeUiApi::class)
 @Composable
 fun OtgMasterApp(
-    candidates: List<VolumeCandidate>,
+    deviceCandidates: List<UsbDeviceCandidate>,
     mountedDrives: List<MountedDrive>,
     logs: List<String>,
     themeMode: ThemeMode,
     versionName: String,
     versionCode: Long,
     onRefreshDevices: () -> Unit,
-    onUnlock: (VolumeCandidate, String, Int?, List<Uri>, app.fayaz.otgmaster.veracrypt.VeraCryptCipher, app.fayaz.otgmaster.veracrypt.VeraCryptHash, () -> Unit) -> Unit,
+    onUnlock: (String, VolumeCandidate, String, Int?, List<Uri>, app.fayaz.otgmaster.veracrypt.VeraCryptCipher, app.fayaz.otgmaster.veracrypt.VeraCryptHash, () -> Unit) -> Unit,
     onUnmount: (MountedDrive) -> Unit,
     onOpenFilesApp: () -> Unit,
     onClearLogs: () -> Unit,
@@ -502,15 +597,9 @@ fun OtgMasterApp(
                         val usedSpace = totalSpace - freeSpace
                         val progress = if (totalSpace > 0) usedSpace.toFloat() / totalSpace.toFloat() else 0f
                         
-                        Row(
-                            modifier = Modifier.fillMaxWidth(),
-                            horizontalArrangement = Arrangement.SpaceBetween,
-                            verticalAlignment = Alignment.CenterVertically
-                        ) {
-                            Text(text = drive.name, style = MaterialTheme.typography.titleMedium)
-                            Text(text = formatSize(totalSpace), style = MaterialTheme.typography.bodyMedium, color = MaterialTheme.colorScheme.onSurfaceVariant)
-                        }
-                        
+                        Text(text = drive.name, style = MaterialTheme.typography.titleMedium)
+                        Text(text = formatSize(totalSpace), style = MaterialTheme.typography.bodyMedium, color = MaterialTheme.colorScheme.onSurfaceVariant)
+
                         Spacer(modifier = Modifier.height(8.dp))
                         LinearProgressIndicator(
                             progress = progress,
@@ -563,7 +652,7 @@ fun OtgMasterApp(
                 }
 
                 AnimatedVisibility(visible = isVeraCryptExpanded) {
-                    VeraCryptMountSection(candidates, onUnlock = onUnlock)
+                    VeraCryptMountSection(deviceCandidates = deviceCandidates, onUnlock = onUnlock)
                 }
             }
         }
@@ -615,11 +704,14 @@ fun OtgMasterApp(
 
 @Composable
 fun VeraCryptMountSection(
-    candidates: List<VolumeCandidate>,
-    onUnlock: (VolumeCandidate, String, Int?, List<Uri>, app.fayaz.otgmaster.veracrypt.VeraCryptCipher, app.fayaz.otgmaster.veracrypt.VeraCryptHash, () -> Unit) -> Unit
+    deviceCandidates: List<UsbDeviceCandidate>,
+    onUnlock: (String, VolumeCandidate, String, Int?, List<Uri>, app.fayaz.otgmaster.veracrypt.VeraCryptCipher, app.fayaz.otgmaster.veracrypt.VeraCryptHash, () -> Unit) -> Unit
 ) {
     var isUnlocking by remember { mutableStateOf(false) }
-    var selectedCandidate by remember(candidates) { mutableStateOf(candidates.firstOrNull()) }
+    var selectedDevice by remember(deviceCandidates) { mutableStateOf(deviceCandidates.firstOrNull()) }
+    var deviceExpanded by remember { mutableStateOf(false) }
+    val candidates = selectedDevice?.candidates.orEmpty()
+    var selectedCandidate by remember(selectedDevice) { mutableStateOf(selectedDevice?.candidates?.firstOrNull()) }
     var expanded by remember { mutableStateOf(false) }
     var password by remember { mutableStateOf("") }
     var passwordVisible by remember { mutableStateOf(false) }
@@ -641,9 +733,51 @@ fun VeraCryptMountSection(
         modifier = Modifier.padding(top = 16.dp),
         verticalArrangement = Arrangement.spacedBy(8.dp)
     ) {
-        if (candidates.isEmpty()) {
-            Text(stringResource(R.string.no_candidates_found), color = MaterialTheme.colorScheme.error)
+        if (deviceCandidates.isEmpty()) {
+            Text(stringResource(R.string.no_devices_available), color = MaterialTheme.colorScheme.error)
         } else {
+            if (deviceCandidates.size == 1) {
+                Text(
+                    stringResource(R.string.unlocking_drive_label, selectedDevice?.displayName ?: ""),
+                    style = MaterialTheme.typography.titleSmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant
+                )
+            }
+            if (deviceCandidates.size > 1) {
+                @OptIn(ExperimentalMaterial3Api::class)
+                ExposedDropdownMenuBox(
+                    expanded = deviceExpanded,
+                    onExpandedChange = { deviceExpanded = !deviceExpanded }
+                ) {
+                    OutlinedTextField(
+                        value = selectedDevice?.displayName ?: "",
+                        onValueChange = {},
+                        readOnly = true,
+                        label = { Text(stringResource(R.string.label_usb_drive)) },
+                        trailingIcon = { ExposedDropdownMenuDefaults.TrailingIcon(expanded = deviceExpanded) },
+                        colors = ExposedDropdownMenuDefaults.outlinedTextFieldColors(),
+                        modifier = Modifier.menuAnchor().fillMaxWidth().semantics { contentDescription = "device_picker" }
+                    )
+                    ExposedDropdownMenu(
+                        expanded = deviceExpanded,
+                        onDismissRequest = { deviceExpanded = false }
+                    ) {
+                        deviceCandidates.forEach { device ->
+                            DropdownMenuItem(
+                                text = { Text(device.displayName) },
+                                onClick = {
+                                    selectedDevice = device
+                                    deviceExpanded = false
+                                }
+                            )
+                        }
+                    }
+                }
+            }
+
+            if (candidates.isEmpty()) {
+                Text(stringResource(R.string.no_candidates_found), color = MaterialTheme.colorScheme.error)
+            } else {
             @OptIn(ExperimentalMaterial3Api::class)
             ExposedDropdownMenuBox(
                 expanded = expanded,
@@ -779,12 +913,15 @@ fun VeraCryptMountSection(
                 onClick = {
                     focusManager.clearFocus()
                     isUnlocking = true
-                    selectedCandidate?.let {
-                        onUnlock(it, password, pim.toIntOrNull(), keyfiles, selectedCipher, selectedHash) { isUnlocking = false }
+                    val device = selectedDevice
+                    val candidate = selectedCandidate
+                    if (device != null && candidate != null) {
+                        onUnlock(device.deviceName, candidate, password, pim.toIntOrNull(), keyfiles, selectedCipher, selectedHash) { isUnlocking = false }
                     }
                 },
                 modifier = Modifier.fillMaxWidth().semantics { contentDescription = "mount_button" },
-                enabled = selectedCandidate != null && (password.isNotEmpty() || keyfiles.isNotEmpty()) && !isUnlocking
+                enabled = selectedDevice != null && selectedCandidate != null &&
+                    (password.isNotEmpty() || keyfiles.isNotEmpty()) && !isUnlocking
             ) {
                 if (isUnlocking) {
                     androidx.compose.material3.CircularProgressIndicator(modifier = Modifier.size(24.dp), color = MaterialTheme.colorScheme.onPrimary)
@@ -793,6 +930,7 @@ fun VeraCryptMountSection(
                 } else {
                     Text(stringResource(R.string.unlock_and_mount))
                 }
+            }
             }
         }
     }

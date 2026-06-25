@@ -26,10 +26,10 @@ class NativeDecryptedBlockDevice(
     override fun readBlocks(startBlock: Long, blockCount: Int): ByteArray {
         val physicalStartBlock = startBlock + volumeDataOffset
         val encryptedData = encryptedDevice.readBlocks(physicalStartBlock, blockCount)
-        
+
         val decryptedData = ByteArray(encryptedData.size)
         val sectorCount = encryptedData.size / 512
-        
+
         for (i in 0 until sectorCount) {
             val sectorEncrypted = encryptedData.copyOfRange(i * 512, (i + 1) * 512)
             val sectorDecrypted = VeraCryptNative.decryptSector(cipherNativeId, masterKey, physicalStartBlock + i, sectorEncrypted)
@@ -64,5 +64,8 @@ class NativeDecryptedBlockDevice(
 
     override fun close() {
         masterKey.fill(0)
+        // Without this, the underlying USB interface claim/connection is never released,
+        // so the device can't be reopened after unmounting until the app restarts.
+        encryptedDevice.close()
     }
 }
