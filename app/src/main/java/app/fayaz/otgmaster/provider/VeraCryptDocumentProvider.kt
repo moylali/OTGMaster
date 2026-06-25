@@ -173,7 +173,10 @@ class VeraCryptDocumentProvider : DocumentsProvider() {
         val row = result.newRow()
         row.add(DocumentsContract.Document.COLUMN_DOCUMENT_ID, docId)
         row.add(DocumentsContract.Document.COLUMN_DISPLAY_NAME, file.name)
-        row.add(DocumentsContract.Document.COLUMN_SIZE, file.length)
+        // libaums throws for several metadata accessors on directories and/or the root
+        // specifically (length: "This is a directory!", lastModified: "root dir!") — rather
+        // than chase each one individually, treat any failure here as "unknown" (0).
+        row.add(DocumentsContract.Document.COLUMN_SIZE, runCatching { if (file.isDirectory) 0L else file.length }.getOrDefault(0L))
 
         var flags = 0
         val mimeType: String
@@ -184,9 +187,9 @@ class VeraCryptDocumentProvider : DocumentsProvider() {
             val extension = file.name.substringAfterLast('.', "")
             mimeType = MimeTypeMap.getSingleton().getMimeTypeFromExtension(extension.lowercase()) ?: "application/octet-stream"
         }
-        
+
         row.add(DocumentsContract.Document.COLUMN_MIME_TYPE, mimeType)
-        row.add(DocumentsContract.Document.COLUMN_LAST_MODIFIED, file.lastModified())
+        row.add(DocumentsContract.Document.COLUMN_LAST_MODIFIED, runCatching { file.lastModified() }.getOrDefault(0L))
         row.add(DocumentsContract.Document.COLUMN_FLAGS, flags)
     }
 }
