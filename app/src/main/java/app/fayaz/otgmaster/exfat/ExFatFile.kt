@@ -16,7 +16,11 @@ class ExFatFile(
     override var name: String
         get() = node.name
         set(value) {
-            throw IOException("Rename not implemented yet for exFAT prototype.")
+            val parentPath = parent?.absolutePath ?: ""
+            val newPath = if (parentPath == UsbFile.separator) "/$value" else "$parentPath/$value"
+            val rc = ExFatNative.rename(fileSystem.exfatPtr, absolutePath, newPath)
+            if (rc != 0) throw IOException("Failed to rename exFAT file: $rc")
+            node.name = value
         }
 
     override val absolutePath: String
@@ -25,7 +29,10 @@ class ExFatFile(
     override var length: Long
         get() = node.size
         set(value) {
-            throw IOException("Setting length not implemented yet for exFAT prototype.")
+            if (isDirectory) throw IOException("Cannot set length on directory")
+            val rc = ExFatNative.setLength(fileSystem.exfatPtr, node.nodePtr, value)
+            if (rc != 0) throw IOException("Failed to set length on exFAT file: $rc")
+            node.size = value
         }
 
     override val isRoot: Boolean
@@ -71,26 +78,48 @@ class ExFatFile(
     }
 
     override fun write(offset: Long, source: ByteBuffer) {
-        throw IOException("Write not implemented yet for exFAT prototype.")
+        if (isDirectory) throw IOException("Cannot write to directory")
+        val size = source.remaining()
+        val tempBuffer = ByteArray(size)
+        source.get(tempBuffer)
+        val bytesWritten = ExFatNative.writeFile(fileSystem.exfatPtr, node.nodePtr, offset, size, tempBuffer)
+        if (bytesWritten < 0) {
+            throw IOException("Failed to write to exFAT file: $bytesWritten")
+        }
     }
 
-    override fun flush() {}
+    override fun flush() {
+        ExFatNative.flush(fileSystem.exfatPtr)
+    }
 
-    override fun close() {}
+    override fun close() {
+        flush()
+    }
 
     override fun createDirectory(name: String): UsbFile {
-        throw IOException("createDirectory not implemented yet for exFAT prototype.")
+        if (!isDirectory) throw IOException("Cannot create directory inside a file")
+        val newPath = if (absolutePath == UsbFile.separator) "/$name" else "$absolutePath/$name"
+        val rc = ExFatNative.createDirectory(fileSystem.exfatPtr, newPath)
+        if (rc != 0) throw IOException("Failed to create exFAT directory: $rc")
+        return search(name) ?: throw IOException("Failed to find newly created exFAT directory")
     }
 
     override fun createFile(name: String): UsbFile {
-        throw IOException("createFile not implemented yet for exFAT prototype.")
+        if (!isDirectory) throw IOException("Cannot create file inside a file")
+        val newPath = if (absolutePath == UsbFile.separator) "/$name" else "$absolutePath/$name"
+        val rc = ExFatNative.createFile(fileSystem.exfatPtr, newPath)
+        if (rc != 0) throw IOException("Failed to create exFAT file: $rc")
+        return search(name) ?: throw IOException("Failed to find newly created exFAT file")
     }
 
     override fun moveTo(destination: UsbFile) {
-        throw IOException("moveTo not implemented yet for exFAT prototype.")
+        val newPath = if (destination.absolutePath == UsbFile.separator) "/$name" else "${destination.absolutePath}/$name"
+        val rc = ExFatNative.rename(fileSystem.exfatPtr, absolutePath, newPath)
+        if (rc != 0) throw IOException("Failed to move exFAT file: $rc")
     }
 
     override fun delete() {
-        throw IOException("delete not implemented yet for exFAT prototype.")
+        val rc = ExFatNative.deleteNode(fileSystem.exfatPtr, node.nodePtr)
+        if (rc != 0) throw IOException("Failed to delete exFAT file/dir: $rc")
     }
 }

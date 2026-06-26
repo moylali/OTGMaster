@@ -33,6 +33,27 @@ object ExFatNative {
     @JvmStatic
     external fun readFile(exfatPtr: Long, nodePtr: Long, offset: Long, size: Int, buffer: ByteArray): Int
 
+    @JvmStatic
+    external fun writeFile(exfatPtr: Long, nodePtr: Long, offset: Long, size: Int, buffer: ByteArray): Int
+
+    @JvmStatic
+    external fun setLength(exfatPtr: Long, nodePtr: Long, length: Long): Int
+
+    @JvmStatic
+    external fun createFile(exfatPtr: Long, path: String): Int
+
+    @JvmStatic
+    external fun createDirectory(exfatPtr: Long, path: String): Int
+
+    @JvmStatic
+    external fun deleteNode(exfatPtr: Long, nodePtr: Long): Int
+
+    @JvmStatic
+    external fun rename(exfatPtr: Long, oldPath: String, newPath: String): Int
+
+    @JvmStatic
+    external fun flush(exfatPtr: Long): Int
+
     // These functions will be called FROM C via JNI to read/write the block device.
     
     @JvmStatic
