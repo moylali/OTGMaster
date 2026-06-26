@@ -57,6 +57,8 @@
     <string name="auto_mount_prompt_subtitle_multi">Auto mount %1$d drives</string>
     <string name="auto_mount_prompt_negative">Enter credentials manually</string>
     <string name="log_credentials_saved">Auto mount credentials saved for %1$s.</string>
+    <string name="log_cached_credentials_invalid">Cached credentials invalid for %1$s — cleared. Enter credentials again to re-enable Auto mount.</string>
+    <string name="auto_mount_exclude_device">Opt out of Auto mount for this device</string>
 
     <!-- Log/status messages -->
     <string name="log_usb_permission_granted">USB permission granted for %1$s.</string>

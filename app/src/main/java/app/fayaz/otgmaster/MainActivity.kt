@@ -116,6 +116,8 @@ class MainActivity : AppCompatActivity() {
     private val mountFormResetKey = mutableStateOf(0)
     private val autoMountAttempted = mutableSetOf<String>()
     private var isAutoMountPromptShowing = false
+    private val sessionPlaintextCreds = androidx.compose.runtime.snapshots.SnapshotStateMap<String, app.fayaz.otgmaster.security.CredentialStore.Credentials>()
+    private val excludedDeviceKeys = mutableStateOf<Set<String>>(emptySet())
 
     private val versionName: String by lazy {
         packageManager.getPackageInfo(packageName, 0).versionName ?: "?"
@@ -178,6 +180,7 @@ class MainActivity : AppCompatActivity() {
         _themeMode.value = ThemeMode.valueOf(savedTheme ?: ThemeMode.SYSTEM.name)
         credentialStore = app.fayaz.otgmaster.security.CredentialStore(this)
         autoMountEnabled.value = sharedPreferences.getBoolean("auto_mount", false)
+        excludedDeviceKeys.value = credentialStore.loadExcludedKeys()
 
         setContent {
             val themeMode = _themeMode.value
@@ -202,9 +205,12 @@ class MainActivity : AppCompatActivity() {
                         versionCode = versionCode,
                         formResetKey = mountFormResetKey.value,
                         autoMountEnabled = autoMountEnabled.value,
+                        sessionCredentials = sessionPlaintextCreds,
+                        hasCachedCreds = { deviceKey -> credentialStore.has(deviceKey) },
+                        isExcluded = { deviceKey -> deviceKey in excludedDeviceKeys.value },
                         onRefreshDevices = { refreshDevices() },
                         onUnlock = { deviceName, candidate, pwd, pim, keyfiles, cipher, hash, onComplete ->
-                            attemptUnlock(deviceName, candidate, pwd, pim, keyfiles, cipher, hash, onComplete)
+                            attemptUnlock(deviceName, candidate, pwd, pim, keyfiles, cipher, hash, onComplete = onComplete)
                         },
                         onUnmount = { drive -> unmountDrive(drive) },
                         onOpenFilesApp = { drive -> openFilesApp(drive) },
@@ -217,6 +223,10 @@ class MainActivity : AppCompatActivity() {
                         onAutoMountEnabledChange = { enabled ->
                             autoMountEnabled.value = enabled
                             sharedPreferences.edit().putBoolean("auto_mount", enabled).apply()
+                        },
+                        onSetExcluded = { deviceKey, excluded ->
+                            credentialStore.setExcluded(deviceKey, excluded)
+                            excludedDeviceKeys.value = credentialStore.loadExcludedKeys()
                         }
                     )
                 }
@@ -393,6 +403,7 @@ class MainActivity : AppCompatActivity() {
         keyfiles: List<Uri>,
         cipher: app.fayaz.otgmaster.veracrypt.VeraCryptCipher,
         hash: app.fayaz.otgmaster.veracrypt.VeraCryptHash,
+        fromCache: Boolean = false,
         onComplete: () -> Unit
     ) {
         val device = openedDevices[deviceName]
@@ -473,6 +484,9 @@ class MainActivity : AppCompatActivity() {
                     mountFormResetKey.value++
                     if (autoMountEnabled.value) {
                         credentialStore.save(deviceName, password, pim?.toString() ?: "", keyfiles, cipher.name, hash.name)
+                        sessionPlaintextCreds[deviceName] = app.fayaz.otgmaster.security.CredentialStore.Credentials(
+                            password, pim?.toString() ?: "", keyfiles, cipher.name, hash.name
+                        )
                         appendLog(getString(R.string.log_credentials_saved, deviceDisplayName))
                     }
                     updateMountedDrives()
@@ -489,6 +503,11 @@ class MainActivity : AppCompatActivity() {
                 e.printStackTrace()
                 withContext(Dispatchers.Main) {
                     onComplete()
+                    if (fromCache) {
+                        credentialStore.delete(deviceName)
+                        sessionPlaintextCreds.remove(deviceName)
+                        appendLog(getString(R.string.log_cached_credentials_invalid, deviceDisplayName))
+                    }
                     appendLog(getString(R.string.log_failed_to_unlock, deviceDisplayName, e.message))
                 }
             }
@@ -524,20 +543,19 @@ class MainActivity : AppCompatActivity() {
     }
 
     private fun openFilesApp(drive: MountedDrive) {
-        val rootDocUri = DocumentsContract.buildDocumentUri(
-            app.fayaz.otgmaster.provider.VeraCryptDocumentProvider.AUTHORITY,
-            app.fayaz.otgmaster.provider.VeraCryptDocumentProvider.rootDocIdForDrive(drive.id)
-        )
-        // android.provider.action.BROWSE tells DocumentsUI to navigate directly to this
-        // document location. ACTION_VIEW with MIME_TYPE_DIR is a fallback for third-party
-        // file managers that may not handle BROWSE.
+        val authority = app.fayaz.otgmaster.provider.VeraCryptDocumentProvider.AUTHORITY
+        val rootId = app.fayaz.otgmaster.provider.VeraCryptDocumentProvider.rootIdForDrive(drive.id)
+        // BROWSE with a root URI (content://authority/root/rootId) tells DocumentsUI to open
+        // directly at that root rather than its default Downloads location. A document URI
+        // doesn't pass the isRootUri() check in FilesActivity and falls back to Downloads.
+        val rootUri = Uri.parse("content://$authority/root/$rootId")
         val candidates = listOf(
             Intent("android.provider.action.BROWSE").apply {
-                data = rootDocUri
+                data = rootUri
                 addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION or Intent.FLAG_GRANT_WRITE_URI_PERMISSION)
             },
             Intent(Intent.ACTION_VIEW).apply {
-                setDataAndType(rootDocUri, DocumentsContract.Document.MIME_TYPE_DIR)
+                setDataAndType(rootUri, DocumentsContract.Document.MIME_TYPE_DIR)
                 addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION or Intent.FLAG_GRANT_WRITE_URI_PERMISSION)
             }
         )
@@ -554,8 +572,11 @@ class MainActivity : AppCompatActivity() {
 
     private fun triggerAutoMount(newCandidates: List<UsbDeviceCandidate>) {
         if (!autoMountEnabled.value) return
+        val excluded = excludedDeviceKeys.value
         val toMount = newCandidates.filter {
-            it.deviceName !in autoMountAttempted && credentialStore.has(it.deviceName)
+            it.deviceName !in autoMountAttempted &&
+            credentialStore.has(it.deviceName) &&
+            it.deviceName !in excluded
         }
         if (toMount.isEmpty()) return
         toMount.forEach { autoMountAttempted.add(it.deviceName) }
@@ -572,13 +593,14 @@ class MainActivity : AppCompatActivity() {
                 devices.forEach { device ->
                     val creds = credentialStore.load(device.deviceName) ?: return@forEach
                     val candidate = device.candidates.firstOrNull() ?: return@forEach
+                    sessionPlaintextCreds[device.deviceName] = creds
                     val cipher = app.fayaz.otgmaster.veracrypt.VeraCryptCipher.entries
                         .find { it.name == creds.cipherName }
                         ?: app.fayaz.otgmaster.veracrypt.VeraCryptCipher.DEFAULT
                     val hash = app.fayaz.otgmaster.veracrypt.VeraCryptHash.entries
                         .find { it.name == creds.hashName }
                         ?: app.fayaz.otgmaster.veracrypt.VeraCryptHash.DEFAULT
-                    attemptUnlock(device.deviceName, candidate, creds.password, creds.pim.toIntOrNull(), creds.keyfileUris, cipher, hash) {}
+                    attemptUnlock(device.deviceName, candidate, creds.password, creds.pim.toIntOrNull(), creds.keyfileUris, cipher, hash, fromCache = true) {}
                 }
             }
             override fun onAuthenticationError(errorCode: Int, errString: CharSequence) {
@@ -652,6 +674,9 @@ fun OtgMasterApp(
     versionCode: Long,
     formResetKey: Int,
     autoMountEnabled: Boolean,
+    sessionCredentials: Map<String, app.fayaz.otgmaster.security.CredentialStore.Credentials>,
+    hasCachedCreds: (String) -> Boolean,
+    isExcluded: (String) -> Boolean,
     onRefreshDevices: () -> Unit,
     onUnlock: (String, VolumeCandidate, String, Int?, List<Uri>, app.fayaz.otgmaster.veracrypt.VeraCryptCipher, app.fayaz.otgmaster.veracrypt.VeraCryptHash, () -> Unit) -> Unit,
     onUnmount: (MountedDrive) -> Unit,
@@ -659,7 +684,8 @@ fun OtgMasterApp(
     onClearLogs: () -> Unit,
     onCopyText: (String, String) -> Unit,
     onThemeChange: (ThemeMode) -> Unit,
-    onAutoMountEnabledChange: (Boolean) -> Unit
+    onAutoMountEnabledChange: (Boolean) -> Unit,
+    onSetExcluded: (String, Boolean) -> Unit
 ) {
     var showSettings by remember { mutableStateOf(false) }
     var isVeraCryptExpanded by remember { mutableStateOf(true) }
@@ -772,7 +798,12 @@ fun OtgMasterApp(
                     key(formResetKey) {
                         VeraCryptMountSection(
                             deviceCandidates = deviceCandidates,
-                            onUnlock = onUnlock
+                            onUnlock = onUnlock,
+                            autoMountEnabled = autoMountEnabled,
+                            sessionCredentials = sessionCredentials,
+                            hasCachedCreds = hasCachedCreds,
+                            isExcluded = isExcluded,
+                            onSetExcluded = onSetExcluded
                         )
                     }
                 }
@@ -829,7 +860,12 @@ fun OtgMasterApp(
 @Composable
 fun VeraCryptMountSection(
     deviceCandidates: List<UsbDeviceCandidate>,
-    onUnlock: (String, VolumeCandidate, String, Int?, List<Uri>, app.fayaz.otgmaster.veracrypt.VeraCryptCipher, app.fayaz.otgmaster.veracrypt.VeraCryptHash, () -> Unit) -> Unit
+    onUnlock: (String, VolumeCandidate, String, Int?, List<Uri>, app.fayaz.otgmaster.veracrypt.VeraCryptCipher, app.fayaz.otgmaster.veracrypt.VeraCryptHash, () -> Unit) -> Unit,
+    autoMountEnabled: Boolean = false,
+    sessionCredentials: Map<String, app.fayaz.otgmaster.security.CredentialStore.Credentials> = emptyMap(),
+    hasCachedCreds: (String) -> Boolean = { false },
+    isExcluded: (String) -> Boolean = { false },
+    onSetExcluded: (String, Boolean) -> Unit = { _, _ -> }
 ) {
     var isUnlocking by remember { mutableStateOf(false) }
     var selectedDevice by remember(deviceCandidates) { mutableStateOf(deviceCandidates.firstOrNull()) }
@@ -837,13 +873,23 @@ fun VeraCryptMountSection(
     val candidates = selectedDevice?.candidates.orEmpty()
     var selectedCandidate by remember(selectedDevice) { mutableStateOf(selectedDevice?.candidates?.firstOrNull()) }
     var expanded by remember { mutableStateOf(false) }
-    var password by remember { mutableStateOf("") }
+
+    val sessionCreds = sessionCredentials[selectedDevice?.deviceName]
+    val isPreFilled = sessionCreds != null
+
+    var password by remember(selectedDevice) { mutableStateOf(sessionCreds?.password ?: "") }
     var passwordVisible by remember { mutableStateOf(false) }
-    var pim by remember { mutableStateOf("") }
-    var keyfiles by remember { mutableStateOf<List<Uri>>(emptyList()) }
-    var selectedCipher by remember { mutableStateOf(app.fayaz.otgmaster.veracrypt.VeraCryptCipher.DEFAULT) }
+    var pim by remember(selectedDevice) { mutableStateOf(sessionCreds?.pim ?: "") }
+    var keyfiles by remember(selectedDevice) { mutableStateOf(sessionCreds?.keyfileUris ?: emptyList<Uri>()) }
+    var selectedCipher by remember(selectedDevice) { mutableStateOf(
+        sessionCreds?.cipherName?.let { n -> app.fayaz.otgmaster.veracrypt.VeraCryptCipher.entries.find { it.name == n } }
+            ?: app.fayaz.otgmaster.veracrypt.VeraCryptCipher.DEFAULT
+    ) }
     var cipherExpanded by remember { mutableStateOf(false) }
-    var selectedHash by remember { mutableStateOf(app.fayaz.otgmaster.veracrypt.VeraCryptHash.DEFAULT) }
+    var selectedHash by remember(selectedDevice) { mutableStateOf(
+        sessionCreds?.hashName?.let { n -> app.fayaz.otgmaster.veracrypt.VeraCryptHash.entries.find { it.name == n } }
+            ?: app.fayaz.otgmaster.veracrypt.VeraCryptHash.DEFAULT
+    ) }
     var hashExpanded by remember { mutableStateOf(false) }
     val focusManager = androidx.compose.ui.platform.LocalFocusManager.current
     val context = androidx.compose.ui.platform.LocalContext.current
@@ -942,12 +988,13 @@ fun VeraCryptMountSection(
             
             OutlinedTextField(
                 value = password,
-                onValueChange = { password = it },
+                onValueChange = { if (!isPreFilled) password = it },
                 label = { Text(stringResource(R.string.label_veracrypt_password)) },
                 singleLine = true,
+                readOnly = isPreFilled,
                 keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Password, autoCorrect = false, imeAction = androidx.compose.ui.text.input.ImeAction.Done),
-                keyboardActions = androidx.compose.foundation.text.KeyboardActions(onDone = { 
-                    focusManager.clearFocus() 
+                keyboardActions = androidx.compose.foundation.text.KeyboardActions(onDone = {
+                    focusManager.clearFocus()
                 }),
                 visualTransformation = if (passwordVisible) androidx.compose.ui.text.input.VisualTransformation.None else PasswordVisualTransformation(),
                 trailingIcon = {
@@ -962,21 +1009,23 @@ fun VeraCryptMountSection(
                     .fillMaxWidth()
                     .semantics { contentDescription = "password_input" }
             )
-            
+
             OutlinedTextField(
                 value = pim,
-                onValueChange = { pim = it },
+                onValueChange = { if (!isPreFilled) pim = it },
                 label = { Text(stringResource(R.string.label_pim)) },
                 singleLine = true,
+                readOnly = isPreFilled,
                 keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Number, autoCorrect = false, imeAction = androidx.compose.ui.text.input.ImeAction.Done),
-                keyboardActions = androidx.compose.foundation.text.KeyboardActions(onDone = { 
-                    focusManager.clearFocus() 
+                keyboardActions = androidx.compose.foundation.text.KeyboardActions(onDone = {
+                    focusManager.clearFocus()
                 }),
                 modifier = Modifier
                     .fillMaxWidth()
                     .semantics { contentDescription = "pim_input" }
             )
-            
+
+            if (!isPreFilled) {
             Row(
                 verticalAlignment = Alignment.CenterVertically,
                 horizontalArrangement = Arrangement.spacedBy(8.dp)
@@ -996,63 +1045,92 @@ fun VeraCryptMountSection(
                     }
                 }
             }
+            } else if (keyfiles.isNotEmpty()) {
+                Text(
+                    stringResource(R.string.select_keyfiles, keyfiles.size),
+                    style = MaterialTheme.typography.bodySmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant
+                )
+            }
+
+            val currentDeviceName = selectedDevice?.deviceName ?: ""
+            if (autoMountEnabled && (hasCachedCreds(currentDeviceName) || isPreFilled)) {
+                Row(
+                    verticalAlignment = Alignment.CenterVertically,
+                    modifier = Modifier.fillMaxWidth()
+                ) {
+                    Text(
+                        stringResource(R.string.auto_mount_exclude_device),
+                        modifier = Modifier.weight(1f),
+                        style = MaterialTheme.typography.bodyMedium
+                    )
+                    Switch(
+                        checked = isExcluded(currentDeviceName),
+                        onCheckedChange = { onSetExcluded(currentDeviceName, it) }
+                    )
+                }
+            }
 
             @OptIn(ExperimentalMaterial3Api::class)
             ExposedDropdownMenuBox(
-                expanded = cipherExpanded,
-                onExpandedChange = { cipherExpanded = !cipherExpanded }
+                expanded = if (isPreFilled) false else cipherExpanded,
+                onExpandedChange = { if (!isPreFilled) cipherExpanded = !cipherExpanded }
             ) {
                 OutlinedTextField(
                     value = selectedCipher.displayName,
                     onValueChange = {},
                     readOnly = true,
                     label = { Text(stringResource(R.string.label_encryption_algorithm)) },
-                    trailingIcon = { ExposedDropdownMenuDefaults.TrailingIcon(expanded = cipherExpanded) },
+                    trailingIcon = { if (!isPreFilled) ExposedDropdownMenuDefaults.TrailingIcon(expanded = cipherExpanded) },
                     colors = ExposedDropdownMenuDefaults.outlinedTextFieldColors(),
                     modifier = Modifier.menuAnchor().fillMaxWidth().semantics { contentDescription = "cipher_picker" }
                 )
-                ExposedDropdownMenu(
-                    expanded = cipherExpanded,
-                    onDismissRequest = { cipherExpanded = false }
-                ) {
-                    app.fayaz.otgmaster.veracrypt.VeraCryptCipher.entries.forEach { option ->
-                        DropdownMenuItem(
-                            text = { Text(if (option.isSupported) option.displayName else stringResource(R.string.algorithm_not_supported, option.displayName)) },
-                            onClick = {
-                                selectedCipher = option
-                                cipherExpanded = false
-                            }
-                        )
+                if (!isPreFilled) {
+                    ExposedDropdownMenu(
+                        expanded = cipherExpanded,
+                        onDismissRequest = { cipherExpanded = false }
+                    ) {
+                        app.fayaz.otgmaster.veracrypt.VeraCryptCipher.entries.forEach { option ->
+                            DropdownMenuItem(
+                                text = { Text(if (option.isSupported) option.displayName else stringResource(R.string.algorithm_not_supported, option.displayName)) },
+                                onClick = {
+                                    selectedCipher = option
+                                    cipherExpanded = false
+                                }
+                            )
+                        }
                     }
                 }
             }
 
             @OptIn(ExperimentalMaterial3Api::class)
             ExposedDropdownMenuBox(
-                expanded = hashExpanded,
-                onExpandedChange = { hashExpanded = !hashExpanded }
+                expanded = if (isPreFilled) false else hashExpanded,
+                onExpandedChange = { if (!isPreFilled) hashExpanded = !hashExpanded }
             ) {
                 OutlinedTextField(
                     value = selectedHash.displayName,
                     onValueChange = {},
                     readOnly = true,
                     label = { Text(stringResource(R.string.label_hash_algorithm)) },
-                    trailingIcon = { ExposedDropdownMenuDefaults.TrailingIcon(expanded = hashExpanded) },
+                    trailingIcon = { if (!isPreFilled) ExposedDropdownMenuDefaults.TrailingIcon(expanded = hashExpanded) },
                     colors = ExposedDropdownMenuDefaults.outlinedTextFieldColors(),
                     modifier = Modifier.menuAnchor().fillMaxWidth().semantics { contentDescription = "hash_picker" }
                 )
-                ExposedDropdownMenu(
-                    expanded = hashExpanded,
-                    onDismissRequest = { hashExpanded = false }
-                ) {
-                    app.fayaz.otgmaster.veracrypt.VeraCryptHash.entries.forEach { option ->
-                        DropdownMenuItem(
-                            text = { Text(if (option.isSupported) option.displayName else stringResource(R.string.algorithm_not_supported, option.displayName)) },
-                            onClick = {
-                                selectedHash = option
-                                hashExpanded = false
-                            }
-                        )
+                if (!isPreFilled) {
+                    ExposedDropdownMenu(
+                        expanded = hashExpanded,
+                        onDismissRequest = { hashExpanded = false }
+                    ) {
+                        app.fayaz.otgmaster.veracrypt.VeraCryptHash.entries.forEach { option ->
+                            DropdownMenuItem(
+                                text = { Text(if (option.isSupported) option.displayName else stringResource(R.string.algorithm_not_supported, option.displayName)) },
+                                onClick = {
+                                    selectedHash = option
+                                    hashExpanded = false
+                                }
+                            )
+                        }
                     }
                 }
             }

@@ -9,6 +9,24 @@ import org.json.JSONObject
 
 class CredentialStore(context: Context) {
 
+    private val exclusionPrefs = context.getSharedPreferences("otg_exclusions", Context.MODE_PRIVATE)
+
+    fun loadExcludedKeys(): Set<String> {
+        val json = exclusionPrefs.getString("excluded_devices", null) ?: return emptySet()
+        return try {
+            val arr = JSONArray(json)
+            (0 until arr.length()).map { arr.getString(it) }.toSet()
+        } catch (e: Exception) { emptySet() }
+    }
+
+    fun isExcluded(deviceKey: String): Boolean = deviceKey in loadExcludedKeys()
+
+    fun setExcluded(deviceKey: String, excluded: Boolean) {
+        val current = loadExcludedKeys().toMutableSet()
+        if (excluded) current.add(deviceKey) else current.remove(deviceKey)
+        exclusionPrefs.edit().putString("excluded_devices", JSONArray(current.toList()).toString()).apply()
+    }
+
     data class Credentials(
         val password: String,
         val pim: String,
