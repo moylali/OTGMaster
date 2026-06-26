@@ -518,8 +518,8 @@ class E2EAutomatedTest {
         android.os.SystemClock.sleep(500)
 
         // Crypto is slow on emulator; allow up to 120s for decryption + detection
-        val errorLog = device.wait(Until.findObject(By.textContains("Cannot mount:")), 120000L)
-        assertTrue("Expected 'Cannot mount:' in app log but it did not appear", errorLog != null)
+        val errorLog = device.wait(Until.findObject(By.textContains("Failed to mount")), 120000L)
+        assertTrue("Expected 'Failed to mount' in app log but it did not appear", errorLog != null)
 
         if (expectedFs.isNotEmpty()) {
             val fsLog = device.findObject(By.textContains("Detected filesystem: $expectedFs"))
