@@ -1,0 +1,4 @@
+- **exFAT Write Support**: Implemented comprehensive write capabilities for exFAT filesystems on VeraCrypt volumes.
+- Fixed a freeze occurring during successive mounting operations.
+- Fixed crashes during GC.
+- Fixed E2E test failures.
