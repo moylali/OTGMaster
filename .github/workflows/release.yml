@@ -65,7 +65,8 @@ jobs:
       - name: Verify signing key matches F-Droid
         run: |
           APK_PATH=$(find app/build/outputs/apk/release/ -name "*.apk" | head -n 1)
-          CERT_SHA256=$("$ANDROID_HOME"/build-tools/*/apksigner verify --print-certs "$APK_PATH" | grep -i 'SHA-256 digest:' | awk '{print $3}' | tr '[:upper:]' '[:lower:]' | head -n 1)
+          APKSIGNER=$(find "$ANDROID_HOME/build-tools" -name "apksigner" | sort -V | tail -n 1)
+          CERT_SHA256=$("$APKSIGNER" verify --print-certs "$APK_PATH" | grep -i 'SHA-256 digest:' | awk '{print $3}' | tr '[:upper:]' '[:lower:]' | head -n 1)
           EXPECTED_SHA256="fa2a19b4549dae6c8f71362a0d74be396beda870d9c6fee327ee290976388f3a"
           if [ "$CERT_SHA256" != "$EXPECTED_SHA256" ]; then
             echo "Error: APK signing key SHA-256 ($CERT_SHA256) does not match expected F-Droid key ($EXPECTED_SHA256)."
