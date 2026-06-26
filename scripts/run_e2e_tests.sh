@@ -45,7 +45,7 @@ ensure_testdata() {
         exit 1
     fi
 
-    for case_name in fat32 fat32_keyfile exfat exfat_keyfile fat16 ntfs ext4 serpent unsupported_cipher; do
+    for case_name in fat32 fat32_keyfile fat32_keyfile_pim exfat exfat_keyfile fat16 ntfs ext4 serpent unsupported_cipher partitioned_mbr; do
         local dir="$TESTDATA_DIR/$case_name"
         if [ ! -f "$dir/test.img" ] || [ ! -f "$dir/password.txt" ] || [ ! -f "$dir/pim.txt" ]; then
             echo "Missing artifacts for test case: $case_name (test.img / password.txt / pim.txt)"

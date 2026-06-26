@@ -152,22 +152,28 @@ create_partitioned_volume() {
     echo "Creating MBR partition table and partitions..."
     parted -s "$IMG_FILE" mklabel msdos
     parted -s "$IMG_FILE" mkpart primary 1MiB 6MiB
-    # Create the VeraCrypt volume in a separate file first
+    # Create the VeraCrypt volume in a separate file first (no filesystem so we can force FAT32)
     TMP_VC="$DIR/tmp_vc.img"
-    echo "Creating VeraCrypt volume..."
-    touch "$IMG_FILE" && chmod 666 "$IMG_FILE" && touch "$TMP_VC" && chmod 666 "$TMP_VC" && sudo veracrypt -t -c --volume-type=normal "$TMP_VC" --size="10M" --password="$PASSWORD" \
-        --encryption=AES --hash=SHA-512 --filesystem=fat --pim=1 \
+    echo "Creating VeraCrypt volume (filesystem=none, will format as FAT32)..."
+    touch "$TMP_VC" && chmod 666 "$TMP_VC" && sudo veracrypt -t -c --volume-type=normal "$TMP_VC" --size="10M" --password="$PASSWORD" \
+        --encryption=AES --hash=SHA-512 --filesystem=none --pim=1 \
         --random-source=/dev/urandom --non-interactive
-        
+
+    MAPPED_SLOT=$(sudo veracrypt -t --mount "$TMP_VC" --password="$PASSWORD" --pim=1 --filesystem=none --non-interactive | grep -o '/dev/mapper/veracrypt[0-9]*')
+    if [ -z "$MAPPED_SLOT" ]; then
+        MAPPED_SLOT=$(sudo veracrypt -t -l | grep "$TMP_VC" | awk '{print $4}')
+    fi
+    sudo mkfs.fat -F 32 "$MAPPED_SLOT"
+
     echo "Mounting to copy files..."
     mkdir -p "/tmp/mnt_part_vc"
-    sudo veracrypt -t --mount "$TMP_VC" "/tmp/mnt_part_vc" --password="$PASSWORD" --pim=1 \
-        --non-interactive --slot=1 --fs-options="uid=$(id -u),gid=$(id -g)"
-        
+    sudo mount -o "uid=$(id -u),gid=$(id -g)" "$MAPPED_SLOT" "/tmp/mnt_part_vc"
+
     populate_complex_files "/tmp/mnt_part_vc"
-    
+
     echo "Unmounting..."
-    sudo veracrypt -t -u "$TMP_VC" --non-interactive
+    sudo umount "/tmp/mnt_part_vc"
+    sudo veracrypt -t -d "$TMP_VC"
     rm -rf "/tmp/mnt_part_vc"
     
     echo "Formatting the first partition as normal FAT32..."
