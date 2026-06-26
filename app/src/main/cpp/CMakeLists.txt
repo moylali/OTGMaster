@@ -1,6 +1,18 @@
 cmake_minimum_required(VERSION 3.22.1)
 project("otgmaster")
 
+# Reproducible builds: canonicalize all host-absolute paths in compiled output.
+# Without this, absolute source paths end up in DWARF debug info, which is used
+# to compute .note.gnu.build-id. That hash survives llvm-strip and ends up in
+# the packaged APK, so builds at /home/fayaz vs /home/vagrant produce different
+# bytes even though the stripped .so has no DWARF sections. -ffile-prefix-map
+# remaps both -fdebug-prefix-map and -fmacro-prefix-map, covering __FILE__ too.
+add_compile_options(
+    -ffile-prefix-map=${CMAKE_SOURCE_DIR}=.
+    -ffile-prefix-map=${CMAKE_BINARY_DIR}=.
+    -ffile-prefix-map=${ANDROID_NDK}=ndk
+)
+
 # Configure mbedtls
 set(ENABLE_TESTING OFF CACHE BOOL "Disable mbedtls tests" FORCE)
 set(ENABLE_PROGRAMS OFF CACHE BOOL "Disable mbedtls programs" FORCE)
