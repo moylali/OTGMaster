@@ -17,6 +17,8 @@ class NativeDecryptedBlockDeviceTest {
                 return ByteArray(blockCount * blockSize)
             }
             
+            override fun writeBlocks(startBlock: Long, data: ByteArray) {}
+            override fun flush() {}
             override fun close() {}
         }
         
