@@ -117,6 +117,11 @@ class E2EAutomatedTest {
             assertTrue("USB device not detected — password input not shown within 30s", passwordField != null)
             passwordField!!.click()
             android.os.SystemClock.sleep(500)
+            if (i > 1) {
+                device.executeShellCommand("input keyevent KEYCODE_CTRL_A")
+                device.executeShellCommand("input keyevent KEYCODE_DEL")
+                android.os.SystemClock.sleep(200)
+            }
             device.executeShellCommand("input text $password")
             android.os.SystemClock.sleep(500)
 
@@ -124,6 +129,11 @@ class E2EAutomatedTest {
                 val pimField = device.wait(Until.findObject(By.descContains("pim_input")), timeout)
                 pimField?.click()
                 android.os.SystemClock.sleep(500)
+                if (i > 1) {
+                    device.executeShellCommand("input keyevent KEYCODE_CTRL_A")
+                    device.executeShellCommand("input keyevent KEYCODE_DEL")
+                    android.os.SystemClock.sleep(200)
+                }
                 device.executeShellCommand("input text $pim")
                 android.os.SystemClock.sleep(500)
             }
