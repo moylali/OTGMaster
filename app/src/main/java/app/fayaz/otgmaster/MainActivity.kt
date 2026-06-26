@@ -483,9 +483,9 @@ class MainActivity : AppCompatActivity() {
                     onComplete()
                     mountFormResetKey.value++
                     if (autoMountEnabled.value) {
-                        credentialStore.save(deviceName, password, pim?.toString() ?: "", keyfiles, cipher.name, hash.name)
+                        credentialStore.save(deviceName, password, pim?.toString() ?: "", keyfiles, cipher.name, hash.name, candidate.startBlock)
                         sessionPlaintextCreds[deviceName] = app.fayaz.otgmaster.security.CredentialStore.Credentials(
-                            password, pim?.toString() ?: "", keyfiles, cipher.name, hash.name
+                            password, pim?.toString() ?: "", keyfiles, cipher.name, hash.name, candidate.startBlock
                         )
                         appendLog(getString(R.string.log_credentials_saved, deviceDisplayName))
                     }
@@ -592,7 +592,8 @@ class MainActivity : AppCompatActivity() {
                 isAutoMountPromptShowing = false
                 devices.forEach { device ->
                     val creds = credentialStore.load(device.deviceName) ?: return@forEach
-                    val candidate = device.candidates.firstOrNull() ?: return@forEach
+                    val candidate = device.candidates.find { it.startBlock == creds.candidateStartBlock }
+                        ?: device.candidates.firstOrNull() ?: return@forEach
                     sessionPlaintextCreds[device.deviceName] = creds
                     val cipher = app.fayaz.otgmaster.veracrypt.VeraCryptCipher.entries
                         .find { it.name == creds.cipherName }
@@ -871,11 +872,15 @@ fun VeraCryptMountSection(
     var selectedDevice by remember(deviceCandidates) { mutableStateOf(deviceCandidates.firstOrNull()) }
     var deviceExpanded by remember { mutableStateOf(false) }
     val candidates = selectedDevice?.candidates.orEmpty()
-    var selectedCandidate by remember(selectedDevice) { mutableStateOf(selectedDevice?.candidates?.firstOrNull()) }
-    var expanded by remember { mutableStateOf(false) }
 
     val sessionCreds = sessionCredentials[selectedDevice?.deviceName]
     val isPreFilled = sessionCreds != null
+
+    var selectedCandidate by remember(selectedDevice) { mutableStateOf(
+        sessionCreds?.let { sc -> selectedDevice?.candidates?.find { it.startBlock == sc.candidateStartBlock } }
+            ?: selectedDevice?.candidates?.firstOrNull()
+    ) }
+    var expanded by remember { mutableStateOf(false) }
 
     var password by remember(selectedDevice) { mutableStateOf(sessionCreds?.password ?: "") }
     var passwordVisible by remember { mutableStateOf(false) }

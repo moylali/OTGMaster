@@ -32,7 +32,8 @@ class CredentialStore(context: Context) {
         val pim: String,
         val keyfileUris: List<Uri>,
         val cipherName: String,
-        val hashName: String
+        val hashName: String,
+        val candidateStartBlock: Long = 0L
     )
 
     private val prefs = try {
@@ -58,7 +59,8 @@ class CredentialStore(context: Context) {
         pim: String,
         keyfileUris: List<Uri>,
         cipherName: String,
-        hashName: String
+        hashName: String,
+        candidateStartBlock: Long
     ) {
         val json = JSONObject().apply {
             put("password", password)
@@ -66,6 +68,7 @@ class CredentialStore(context: Context) {
             put("keyfiles", JSONArray(keyfileUris.map { it.toString() }))
             put("cipher", cipherName)
             put("hash", hashName)
+            put("startBlock", candidateStartBlock)
         }.toString()
         prefs?.edit()?.putString(sanitize(deviceKey), json)?.apply()
     }
@@ -83,7 +86,8 @@ class CredentialStore(context: Context) {
                 pim = obj.optString("pim", ""),
                 keyfileUris = uris,
                 cipherName = obj.optString("cipher", "AES"),
-                hashName = obj.optString("hash", "SHA_512")
+                hashName = obj.optString("hash", "SHA_512"),
+                candidateStartBlock = obj.optLong("startBlock", 0L)
             )
         } catch (e: Exception) {
             null
