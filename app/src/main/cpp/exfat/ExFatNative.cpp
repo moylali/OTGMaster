@@ -115,7 +115,10 @@ Java_app_fayaz_otgmaster_exfat_ExFatNative_readDir(JNIEnv *env, jclass clazz, jl
     jclass nodeClass = env->FindClass("app/fayaz/otgmaster/exfat/ExFatNode");
     jobjectArray array = env->NewObjectArray(count, nodeClass, NULL);
     
-    exfat_opendir(ef, dir, &it);
+    if (exfat_opendir(ef, dir, &it) != 0) {
+        LOGE("exfat_opendir (fill pass) failed");
+        return array;
+    }
     int i = 0;
     while ((child = exfat_readdir(&it)) != NULL) {
         jobject jChild = createExFatNode(env, child);

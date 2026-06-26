@@ -104,7 +104,9 @@ class ExFatFile(
 
     override fun flush() {
         if (isClosed) return
-        ExFatNative.flush(fileSystem.exfatPtr)
+        if (!fileSystem.isUnmounted) {
+            ExFatNative.flush(fileSystem.exfatPtr)
+        }
     }
 
     override fun close() {
