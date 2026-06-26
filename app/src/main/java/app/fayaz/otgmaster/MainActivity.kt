@@ -12,7 +12,7 @@ import android.os.Build
 import android.provider.DocumentsContract
 import android.os.Bundle
 import android.util.Log
-import androidx.activity.ComponentActivity
+import androidx.appcompat.app.AppCompatActivity
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.compose.setContent
 import androidx.activity.result.contract.ActivityResultContracts
@@ -86,7 +86,7 @@ data class UsbDeviceCandidate(
     val candidates: List<VolumeCandidate>
 )
 
-class MainActivity : ComponentActivity() {
+class MainActivity : AppCompatActivity() {
     // Provider for USB device handling (real implementation)
     private lateinit var usbDeviceProvider: app.fayaz.otgmaster.usb.UsbDeviceProvider
     // Keyed by UsbDevice.deviceName. Kept open (not closed) while listed here, since the
@@ -110,6 +110,12 @@ class MainActivity : ComponentActivity() {
 
     private lateinit var sharedPreferences: SharedPreferences
     private val _themeMode = mutableStateOf(ThemeMode.SYSTEM)
+
+    private lateinit var credentialStore: app.fayaz.otgmaster.security.CredentialStore
+    private val autoMountEnabled = mutableStateOf(false)
+    private val mountFormResetKey = mutableStateOf(0)
+    private val autoMountAttempted = mutableSetOf<String>()
+    private var isAutoMountPromptShowing = false
 
     private val versionName: String by lazy {
         packageManager.getPackageInfo(packageName, 0).versionName ?: "?"
@@ -170,6 +176,8 @@ class MainActivity : ComponentActivity() {
         sharedPreferences = getSharedPreferences("otgmaster_prefs", Context.MODE_PRIVATE)
         val savedTheme = sharedPreferences.getString("theme_mode", ThemeMode.SYSTEM.name)
         _themeMode.value = ThemeMode.valueOf(savedTheme ?: ThemeMode.SYSTEM.name)
+        credentialStore = app.fayaz.otgmaster.security.CredentialStore(this)
+        autoMountEnabled.value = sharedPreferences.getBoolean("auto_mount", false)
 
         setContent {
             val themeMode = _themeMode.value
@@ -192,6 +200,8 @@ class MainActivity : ComponentActivity() {
                         themeMode = themeMode,
                         versionName = versionName,
                         versionCode = versionCode,
+                        formResetKey = mountFormResetKey.value,
+                        autoMountEnabled = autoMountEnabled.value,
                         onRefreshDevices = { refreshDevices() },
                         onUnlock = { deviceName, candidate, pwd, pim, keyfiles, cipher, hash, onComplete ->
                             attemptUnlock(deviceName, candidate, pwd, pim, keyfiles, cipher, hash, onComplete)
@@ -203,6 +213,10 @@ class MainActivity : ComponentActivity() {
                         onThemeChange = { newMode ->
                             _themeMode.value = newMode
                             sharedPreferences.edit().putString("theme_mode", newMode.name).apply()
+                        },
+                        onAutoMountEnabledChange = { enabled ->
+                            autoMountEnabled.value = enabled
+                            sharedPreferences.edit().putBoolean("auto_mount", enabled).apply()
                         }
                     )
                 }
@@ -298,11 +312,11 @@ class MainActivity : ComponentActivity() {
             try {
                 val candidates = app.fayaz.otgmaster.veracrypt.VeraCryptUnlocker().probeCandidates(device)
                 withContext(Dispatchers.Main) {
+                    val qemuCandidate = UsbDeviceCandidate(QEMU_DEVICE_KEY, getString(R.string.qemu_test_disk_label), device, candidates)
                     openedDevices[QEMU_DEVICE_KEY] = device
-                    _deviceCandidates.value = listOf(
-                        UsbDeviceCandidate(QEMU_DEVICE_KEY, getString(R.string.qemu_test_disk_label), device, candidates)
-                    )
+                    _deviceCandidates.value = listOf(qemuCandidate)
                     appendLog(getString(R.string.log_found_candidates_qemu, candidates.size))
+                    triggerAutoMount(listOf(qemuCandidate))
                 }
             } catch (e: Exception) {
                 e.printStackTrace()
@@ -362,6 +376,7 @@ class MainActivity : ComponentActivity() {
                     _deviceCandidates.value = _deviceCandidates.value + uniqueNew
                     if (uniqueNew.isNotEmpty()) {
                         appendLog(getString(R.string.log_probed_devices, uniqueNew.joinToString(", ") { it.displayName }))
+                        triggerAutoMount(uniqueNew)
                     }
                 }
             } finally {
@@ -455,6 +470,11 @@ class MainActivity : ComponentActivity() {
 
                 withContext(Dispatchers.Main) {
                     onComplete()
+                    mountFormResetKey.value++
+                    if (autoMountEnabled.value) {
+                        credentialStore.save(deviceName, password, pim?.toString() ?: "", keyfiles, cipher.name, hash.name)
+                        appendLog(getString(R.string.log_credentials_saved, deviceDisplayName))
+                    }
                     updateMountedDrives()
                     appendLog(getString(R.string.log_mounted_successfully, deviceDisplayName, fileSystem.capacity / (1024 * 1024)))
                     // Stop tracking it as "available to unlock" — don't close it, it's now
@@ -532,6 +552,60 @@ class MainActivity : ComponentActivity() {
 
 
 
+    private fun triggerAutoMount(newCandidates: List<UsbDeviceCandidate>) {
+        if (!autoMountEnabled.value) return
+        val toMount = newCandidates.filter {
+            it.deviceName !in autoMountAttempted && credentialStore.has(it.deviceName)
+        }
+        if (toMount.isEmpty()) return
+        toMount.forEach { autoMountAttempted.add(it.deviceName) }
+        showAutoMountPrompt(toMount)
+    }
+
+    private fun showAutoMountPrompt(devices: List<UsbDeviceCandidate>) {
+        if (isAutoMountPromptShowing) return
+        isAutoMountPromptShowing = true
+        val executor = androidx.core.content.ContextCompat.getMainExecutor(this)
+        val callback = object : androidx.biometric.BiometricPrompt.AuthenticationCallback() {
+            override fun onAuthenticationSucceeded(result: androidx.biometric.BiometricPrompt.AuthenticationResult) {
+                isAutoMountPromptShowing = false
+                devices.forEach { device ->
+                    val creds = credentialStore.load(device.deviceName) ?: return@forEach
+                    val candidate = device.candidates.firstOrNull() ?: return@forEach
+                    val cipher = app.fayaz.otgmaster.veracrypt.VeraCryptCipher.entries
+                        .find { it.name == creds.cipherName }
+                        ?: app.fayaz.otgmaster.veracrypt.VeraCryptCipher.DEFAULT
+                    val hash = app.fayaz.otgmaster.veracrypt.VeraCryptHash.entries
+                        .find { it.name == creds.hashName }
+                        ?: app.fayaz.otgmaster.veracrypt.VeraCryptHash.DEFAULT
+                    attemptUnlock(device.deviceName, candidate, creds.password, creds.pim.toIntOrNull(), creds.keyfileUris, cipher, hash) {}
+                }
+            }
+            override fun onAuthenticationError(errorCode: Int, errString: CharSequence) {
+                isAutoMountPromptShowing = false
+            }
+            override fun onAuthenticationFailed() {}
+        }
+        val prompt = androidx.biometric.BiometricPrompt(this, executor, callback)
+        val subtitle = if (devices.size == 1)
+            getString(R.string.auto_mount_prompt_subtitle_single, devices[0].displayName)
+        else
+            getString(R.string.auto_mount_prompt_subtitle_multi, devices.size)
+        val builder = androidx.biometric.BiometricPrompt.PromptInfo.Builder()
+            .setTitle(getString(R.string.auto_mount_prompt_title))
+            .setSubtitle(subtitle)
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.R) {
+            builder.setAllowedAuthenticators(
+                androidx.biometric.BiometricManager.Authenticators.BIOMETRIC_STRONG or
+                androidx.biometric.BiometricManager.Authenticators.DEVICE_CREDENTIAL
+            )
+        } else {
+            builder.setAllowedAuthenticators(androidx.biometric.BiometricManager.Authenticators.BIOMETRIC_STRONG)
+                .setNegativeButtonText(getString(R.string.auto_mount_prompt_negative))
+        }
+        prompt.authenticate(builder.build())
+    }
+
     private fun clearLogs() {
         logsState.clear()
     }
@@ -576,13 +650,16 @@ fun OtgMasterApp(
     themeMode: ThemeMode,
     versionName: String,
     versionCode: Long,
+    formResetKey: Int,
+    autoMountEnabled: Boolean,
     onRefreshDevices: () -> Unit,
     onUnlock: (String, VolumeCandidate, String, Int?, List<Uri>, app.fayaz.otgmaster.veracrypt.VeraCryptCipher, app.fayaz.otgmaster.veracrypt.VeraCryptHash, () -> Unit) -> Unit,
     onUnmount: (MountedDrive) -> Unit,
     onOpenFilesApp: (MountedDrive) -> Unit,
     onClearLogs: () -> Unit,
     onCopyText: (String, String) -> Unit,
-    onThemeChange: (ThemeMode) -> Unit
+    onThemeChange: (ThemeMode) -> Unit,
+    onAutoMountEnabledChange: (Boolean) -> Unit
 ) {
     var showSettings by remember { mutableStateOf(false) }
     var isVeraCryptExpanded by remember { mutableStateOf(true) }
@@ -692,7 +769,12 @@ fun OtgMasterApp(
                 }
 
                 AnimatedVisibility(visible = isVeraCryptExpanded) {
-                    VeraCryptMountSection(deviceCandidates = deviceCandidates, onUnlock = onUnlock)
+                    key(formResetKey) {
+                        VeraCryptMountSection(
+                            deviceCandidates = deviceCandidates,
+                            onUnlock = onUnlock
+                        )
+                    }
                 }
             }
         }
@@ -735,7 +817,9 @@ fun OtgMasterApp(
         currentTheme = themeMode,
         versionName = versionName,
         versionCode = versionCode,
+        autoMountEnabled = autoMountEnabled,
         onThemeSelected = onThemeChange,
+        onAutoMountEnabledChange = onAutoMountEnabledChange,
         onCopyText = onCopyText,
         onDismiss = { showSettings = false }
     )
@@ -762,10 +846,18 @@ fun VeraCryptMountSection(
     var selectedHash by remember { mutableStateOf(app.fayaz.otgmaster.veracrypt.VeraCryptHash.DEFAULT) }
     var hashExpanded by remember { mutableStateOf(false) }
     val focusManager = androidx.compose.ui.platform.LocalFocusManager.current
+    val context = androidx.compose.ui.platform.LocalContext.current
 
     val keyfileLauncher = rememberLauncherForActivityResult(
         contract = ActivityResultContracts.OpenMultipleDocuments()
     ) { uris ->
+        uris.forEach { uri ->
+            try {
+                context.contentResolver.takePersistableUriPermission(
+                    uri, android.content.Intent.FLAG_GRANT_READ_URI_PERMISSION
+                )
+            } catch (_: Exception) {}
+        }
         keyfiles = uris
     }
 
@@ -885,8 +977,24 @@ fun VeraCryptMountSection(
                     .semantics { contentDescription = "pim_input" }
             )
             
-            Button(onClick = { keyfileLauncher.launch(arrayOf("*/*")) }) {
-                Text(stringResource(R.string.select_keyfiles, keyfiles.size))
+            Row(
+                verticalAlignment = Alignment.CenterVertically,
+                horizontalArrangement = Arrangement.spacedBy(8.dp)
+            ) {
+                Button(
+                    onClick = { keyfileLauncher.launch(arrayOf("*/*")) },
+                    modifier = Modifier.weight(1f)
+                ) {
+                    Text(stringResource(R.string.select_keyfiles, keyfiles.size))
+                }
+                if (keyfiles.isNotEmpty()) {
+                    IconButton(onClick = { keyfiles = emptyList() }) {
+                        Icon(
+                            imageVector = Icons.Default.Close,
+                            contentDescription = stringResource(R.string.cd_clear_keyfiles)
+                        )
+                    }
+                }
             }
 
             @OptIn(ExperimentalMaterial3Api::class)
@@ -1032,7 +1140,9 @@ fun SettingsDrawer(
     currentTheme: ThemeMode,
     versionName: String,
     versionCode: Long,
+    autoMountEnabled: Boolean,
     onThemeSelected: (ThemeMode) -> Unit,
+    onAutoMountEnabledChange: (Boolean) -> Unit,
     onCopyText: (String, String) -> Unit,
     onDismiss: () -> Unit
 ) {
@@ -1098,6 +1208,31 @@ fun SettingsDrawer(
                                 Spacer(modifier = Modifier.width(8.dp))
                                 Text(stringResource(themeStringRes(mode)))
                             }
+                        }
+                    }
+
+                    SettingsExpandableRow(
+                        title = stringResource(R.string.auto_mount_title),
+                        summary = if (autoMountEnabled) "On" else "Off"
+                    ) {
+                        Text(
+                            stringResource(R.string.auto_mount_description),
+                            style = MaterialTheme.typography.bodySmall,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant,
+                            modifier = Modifier.padding(bottom = 8.dp)
+                        )
+                        Row(
+                            verticalAlignment = Alignment.CenterVertically,
+                            modifier = Modifier.fillMaxWidth()
+                        ) {
+                            Text(
+                                stringResource(R.string.auto_mount_title),
+                                modifier = Modifier.weight(1f)
+                            )
+                            Switch(
+                                checked = autoMountEnabled,
+                                onCheckedChange = onAutoMountEnabledChange
+                            )
                         }
                     }
 
