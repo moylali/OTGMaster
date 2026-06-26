@@ -44,6 +44,12 @@ class VeraCryptDocumentProvider : DocumentsProvider() {
         fun rootIdForDrive(driveId: String): String = "root_$driveId"
 
         fun rootDocIdForDrive(driveId: String): String = "$driveId:/"
+
+        private val proxyHandler: android.os.Handler by lazy {
+            val thread = android.os.HandlerThread("ProxyFileDescriptorThread")
+            thread.start()
+            android.os.Handler(thread.looper)
+        }
     }
 
     override fun onCreate(): Boolean {
@@ -174,7 +180,7 @@ class VeraCryptDocumentProvider : DocumentsProvider() {
             }
 
             val pfdMode = ParcelFileDescriptor.parseMode(mode ?: "r")
-            return storageManager.openProxyFileDescriptor(pfdMode, callback, null)
+            return storageManager.openProxyFileDescriptor(pfdMode, callback, proxyHandler)
         }
 
         // To stream data from libaums to the OS, we use a pipe
