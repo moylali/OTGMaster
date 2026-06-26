@@ -1,0 +1,1 @@
+AES-encrypted VeraCrypt volume (10 MB) formatted as FAT32, PIM=1. Includes a full remount cycle (mount → verify → unmount → scan again → mount again) to verify the app resets state correctly between sessions.

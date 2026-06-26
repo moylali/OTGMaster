@@ -58,6 +58,11 @@ class E2EAutomatedTest {
     fun testMountUsbDrive() {
         val arguments = InstrumentationRegistry.getArguments()
         val password = arguments.getString("password", "password123")
+        val testCase = arguments.getString("testCase", "exfat")
+
+        // The slot device (/dev/block/sda) is already overwritten by the bash script before this test runs.
+        android.os.SystemClock.sleep(1000)
+
         val keyfile = arguments.getString("keyfile", "")
         val pim = arguments.getString("pim", "")
         val expectMount = arguments.getString("expect_mount", "true") == "true"
@@ -110,22 +115,46 @@ class E2EAutomatedTest {
             }
 
             assertTrue("USB device not detected — password input not shown within 30s", passwordField != null)
+
+            // For partitioned disks, the VeraCrypt volume is on a specific partition.
+            // Select it from the candidate picker before unlocking.
+            if (testCase == "partitioned_mbr") {
+                val candidatePicker = device.findObject(By.descContains("candidate_picker"))
+                if (candidatePicker != null) {
+                    candidatePicker.click()
+                    android.os.SystemClock.sleep(500)
+                    val partitionOptions = device.findObjects(By.textContains("MBR partition"))
+                    partitionOptions.lastOrNull()?.click()
+                    android.os.SystemClock.sleep(500)
+                }
+            }
+
             passwordField!!.click()
             android.os.SystemClock.sleep(500)
+            if (i > 1) {
+                // Ctrl-A doesn't reliably select-all on Compose TextFields; send enough
+                // backspaces to wipe whatever was left from the previous iteration instead.
+                repeat(50) { device.executeShellCommand("input keyevent KEYCODE_DEL") }
+                android.os.SystemClock.sleep(200)
+            }
             device.executeShellCommand("input text $password")
-            android.os.SystemClock.sleep(500)
-            device.pressEnter()
             android.os.SystemClock.sleep(500)
 
             if (pim.isNotEmpty()) {
                 val pimField = device.wait(Until.findObject(By.descContains("pim_input")), timeout)
                 pimField?.click()
                 android.os.SystemClock.sleep(500)
+                if (i > 1) {
+                    repeat(20) { device.executeShellCommand("input keyevent KEYCODE_DEL") }
+                    android.os.SystemClock.sleep(200)
+                }
                 device.executeShellCommand("input text $pim")
                 android.os.SystemClock.sleep(500)
-                device.pressEnter()
-                android.os.SystemClock.sleep(500)
             }
+            
+            // Press enter after all text fields are filled to clear focus if needed
+            device.pressEnter()
+            android.os.SystemClock.sleep(500)
 
             if (keyfile.isNotEmpty()) {
                 val selectKeyfileBtn = device.wait(Until.findObject(By.textContains("Select Keyfile")), timeout)

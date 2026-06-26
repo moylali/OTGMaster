@@ -793,7 +793,7 @@ fun VeraCryptMountSection(
                     label = { Text(stringResource(R.string.label_volume_to_unlock)) },
                     trailingIcon = { ExposedDropdownMenuDefaults.TrailingIcon(expanded = expanded) },
                     colors = ExposedDropdownMenuDefaults.outlinedTextFieldColors(),
-                    modifier = Modifier.menuAnchor().fillMaxWidth()
+                    modifier = Modifier.menuAnchor().fillMaxWidth().semantics { contentDescription = "candidate_picker" }
                 )
                 ExposedDropdownMenu(
                     expanded = expanded,

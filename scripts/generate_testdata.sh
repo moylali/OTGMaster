@@ -39,39 +39,45 @@ create_fat32_volume() {
     echo "$PIM_VAL" > "$DIR/pim.txt"
     echo "$CIPHER" > "$DIR/cipher.txt"
 
+    local desc="AES-encrypted VeraCrypt volume (10 MB) formatted as FAT32, PIM=${PIM_VAL}."
+    [ "$HAS_KEYFILE" = "true" ] && desc="$desc Requires a keyfile (test.key) in addition to the password."
+    [ "$PIM_VAL" != "1" ] && desc="$desc Custom PIM tests that the key-derivation iteration count is honoured."
+    [ "$CIPHER" != "AES" ] && desc="AES replaced by $CIPHER cipher; otherwise identical to the base fat32 case."
+    echo "$desc" > "$DIR/description.txt"
+
     KEY_ARG=""
     if [ "$HAS_KEYFILE" = "true" ]; then
         dd if=/dev/urandom of="$DIR/test.key" bs=64 count=1 2>/dev/null
         KEY_ARG="-k $DIR/test.key"
     fi
 
-    # Create container without inner filesystem first
-    echo "Creating $IMG_FILE (no filesystem, cipher=$CIPHER, pim=$PIM_VAL)..."
-    veracrypt -t -c --volume-type=normal "$IMG_FILE" --size="10M" --password="$PASSWORD" \
+    # Create container without filesystem
+    echo "Creating $IMG_FILE (fs: fat32, cipher=$CIPHER, pim=$PIM_VAL)..."
+    touch "$IMG_FILE" && chmod 666 "$IMG_FILE" && sudo veracrypt -t -c --volume-type=normal "$IMG_FILE" --size="10M" --password="$PASSWORD" \
         --encryption=$CIPHER --hash=SHA-512 --filesystem=none --pim=$PIM_VAL $KEY_ARG \
         --random-source=/dev/urandom --non-interactive
 
-    # Mount with no-filesystem to get raw decrypted block device
-    echo "Mounting $IMG_FILE for FAT32 formatting..."
-    veracrypt -t --mount "$IMG_FILE" --password="$PASSWORD" --pim=$PIM_VAL $KEY_ARG \
-        --non-interactive --filesystem=none --slot=1
+    # Mount it to format manually.
+    # Run mount and device-list as separate commands: piping into grep returns exit code 1
+    # when veracrypt produces no stdout (--non-interactive), which kills the script under set -e.
+    # veracrypt -l format: "  1: /path/to.img /dev/mapper/veracryptN - "  → field 3 is the device.
+    sudo veracrypt -t --mount "$IMG_FILE" --password="$PASSWORD" --pim=$PIM_VAL $KEY_ARG --filesystem=none --non-interactive
+    MAPPED_SLOT=$(sudo veracrypt -t -l | grep "$IMG_FILE" | awk '{print $3}')
+    
+    sudo mkfs.fat -F 32 "$MAPPED_SLOT"
 
-    # Format the decrypted block device as FAT32 explicitly
-    echo "Formatting /dev/mapper/veracrypt1 as FAT32..."
-    mkfs.fat -F 32 /dev/mapper/veracrypt1
-
-    veracrypt -t -u "$IMG_FILE" --non-interactive
-
-    # Remount so veracrypt auto-detects and mounts the FAT32
-    echo "Remounting $IMG_FILE to copy files..."
     mkdir -p "/tmp/mnt_fat32_vc"
-    veracrypt -t --mount "$IMG_FILE" "/tmp/mnt_fat32_vc" --password="$PASSWORD" --pim=$PIM_VAL $KEY_ARG \
-        --non-interactive --slot=1
+    sudo mount -o "uid=$(id -u),gid=$(id -g)" "$MAPPED_SLOT" "/tmp/mnt_fat32_vc"
 
     populate_complex_files "/tmp/mnt_fat32_vc"
 
-    echo "Unmounting $IMG_FILE..."
-    veracrypt -t -u "$IMG_FILE" --non-interactive
+    sudo sync
+    sudo umount "/tmp/mnt_fat32_vc"
+    sudo sync
+    # veracrypt -d can race with the kernel releasing the device; fall back to dmsetup
+    sudo veracrypt -t -d "$IMG_FILE" 2>/dev/null \
+        || sudo dmsetup remove "$(basename "$MAPPED_SLOT")" 2>/dev/null \
+        || true
     rm -rf "/tmp/mnt_fat32_vc"
 }
 
@@ -83,6 +89,10 @@ create_exfat_volume() {
     echo "$PASSWORD" > "$DIR/password.txt"
     echo "1" > "$DIR/pim.txt"
 
+    local desc="AES-encrypted VeraCrypt volume (10 MB) formatted as exFAT — the primary supported filesystem."
+    [ "$HAS_KEYFILE" = "true" ] && desc="$desc Requires a keyfile (test.key); tests the SAF keyfile-picker UI flow."
+    echo "$desc" > "$DIR/description.txt"
+
     KEY_ARG=""
     if [ "$HAS_KEYFILE" = "true" ]; then
         dd if=/dev/urandom of="$DIR/test.key" bs=64 count=1 2>/dev/null
@@ -90,94 +100,114 @@ create_exfat_volume() {
     fi
 
     echo "Creating $IMG_FILE with fs exfat..."
-    veracrypt -t -c --volume-type=normal "$IMG_FILE" --size="10M" --password="$PASSWORD" \
+    touch "$IMG_FILE" && chmod 666 "$IMG_FILE" && sudo veracrypt -t -c --volume-type=normal "$IMG_FILE" --size="10M" --password="$PASSWORD" \
         --encryption=AES --hash=SHA-512 --filesystem=exfat --pim=1 $KEY_ARG \
         --random-source=/dev/urandom --non-interactive
 
     echo "Mounting $IMG_FILE..."
     mkdir -p "/tmp/mnt_exfat_vc"
-    veracrypt -t --mount "$IMG_FILE" "/tmp/mnt_exfat_vc" --password="$PASSWORD" --pim=1 $KEY_ARG \
-        --non-interactive
+    sudo veracrypt -t --mount "$IMG_FILE" "/tmp/mnt_exfat_vc" --password="$PASSWORD" --pim=1 $KEY_ARG \
+        --non-interactive --fs-options="uid=$(id -u),gid=$(id -g)"
 
     populate_complex_files "/tmp/mnt_exfat_vc"
 
     echo "Unmounting $IMG_FILE..."
-    veracrypt -t -u "$IMG_FILE" --non-interactive
+    sudo veracrypt -t -u "$IMG_FILE" --non-interactive
     rm -rf "/tmp/mnt_exfat_vc"
 }
 
 create_unsupported_volume() {
     DIR=$1
     FS_DISPLAY_NAME=$2
-    MKFS_CMD=$3
+    FS_VERACRYPT=$3
     IMG_FILE="$DIR/test.img"
 
     echo "$PASSWORD" > "$DIR/password.txt"
     echo "1" > "$DIR/pim.txt"
     echo "true" > "$DIR/expects_error.txt"
     echo "$FS_DISPLAY_NAME" > "$DIR/expected_fs.txt"
+    echo "AES-encrypted VeraCrypt volume formatted as $FS_DISPLAY_NAME (not supported by the app). Verifies the app detects the filesystem type and shows 'Cannot mount' without mounting." > "$DIR/description.txt"
 
     echo "Creating $IMG_FILE (inner: $FS_DISPLAY_NAME)..."
-    veracrypt -t -c --volume-type=normal "$IMG_FILE" --size="10M" --password="$PASSWORD" \
-        --encryption=AES --hash=SHA-512 --filesystem=none --pim=1 \
+    touch "$IMG_FILE" && chmod 666 "$IMG_FILE" && sudo veracrypt -t -c --volume-type=normal "$IMG_FILE" --size="10M" --password="$PASSWORD" \
+        --encryption=AES --hash=SHA-512 --filesystem=$FS_VERACRYPT --pim=1 \
         --random-source=/dev/urandom --non-interactive
 
     echo "Mounting $IMG_FILE..."
-    veracrypt -t --mount "$IMG_FILE" --password="$PASSWORD" --pim=1 \
-        --non-interactive --filesystem=none --slot=1
+    mkdir -p "/tmp/mnt_other_vc"
+    sudo veracrypt -t --mount "$IMG_FILE" "/tmp/mnt_other_vc" --password="$PASSWORD" --pim=1 \
+        --non-interactive --slot=1
+    
+    # if [ "$FS_VERACRYPT" = "ext4" ]; then
+    #     sudo chown -R $(id -u):$(id -g) "/tmp/mnt_other_vc"
+    # fi
 
-    echo "Formatting /dev/mapper/veracrypt1 as $FS_DISPLAY_NAME..."
-    eval "$MKFS_CMD /dev/mapper/veracrypt1"
+    # Create dummy files only if we can write to it
+    if [ "$FS_VERACRYPT" != "ext4" ]; then
+        echo "Hello $FS_DISPLAY_NAME" > "/tmp/mnt_other_vc/hello.txt"
+        mkdir -p "/tmp/mnt_other_vc/folder"
+        echo "World" > "/tmp/mnt_other_vc/folder/world.txt"
+    fi
 
     echo "Unmounting..."
-    veracrypt -t -u "$IMG_FILE" --non-interactive
+    sudo veracrypt -t -u "$IMG_FILE" --non-interactive
+    rm -rf "/tmp/mnt_other_vc"
 }
 
 create_partitioned_volume() {
     DIR=$1
     IMG_FILE="$DIR/test.img"
-    
+
     echo "$PASSWORD" > "$DIR/password.txt"
     echo "1" > "$DIR/pim.txt"
     echo "AES" > "$DIR/cipher.txt"
+    echo "Raw disk image (20 MB) with an MBR partition table. Partition 1 (1–5 MiB) is a plain FAT32 partition; partition 2 (5–15 MiB) is an AES-encrypted VeraCrypt volume formatted as FAT32. Tests MBR partition scanning, the candidate-picker UI, and mounting a VeraCrypt volume embedded in a partitioned disk." > "$DIR/description.txt"
     
     echo "Creating 20M raw disk image for partitioned volume..."
     dd if=/dev/zero of="$IMG_FILE" bs=1M count=20 2>/dev/null
     
     echo "Creating MBR partition table and partitions..."
     parted -s "$IMG_FILE" mklabel msdos
-    parted -s "$IMG_FILE" mkpart primary 1MiB 6MiB
-    parted -s "$IMG_FILE" mkpart primary 6MiB 19MiB
-    
-    # Map to loop devices
-    LOOP_DEV=$(losetup -P -f --show "$IMG_FILE")
-    
-    echo "Creating VeraCrypt volume on partition 2 (${LOOP_DEV}p2)..."
-    veracrypt -t -c --volume-type=normal "${LOOP_DEV}p2" --password="$PASSWORD" \
+    parted -s "$IMG_FILE" mkpart primary fat32 1MiB 5MiB
+    parted -s "$IMG_FILE" mkpart primary 5MiB 15MiB
+    # Create the VeraCrypt volume in a separate file first (no filesystem so we can force FAT32)
+    TMP_VC="$DIR/tmp_vc.img"
+    echo "Creating VeraCrypt volume (filesystem=none, will format as FAT32)..."
+    touch "$TMP_VC" && chmod 666 "$TMP_VC" && sudo veracrypt -t -c --volume-type=normal "$TMP_VC" --size="10M" --password="$PASSWORD" \
         --encryption=AES --hash=SHA-512 --filesystem=none --pim=1 \
         --random-source=/dev/urandom --non-interactive
-        
-    echo "Mounting ${LOOP_DEV}p2 to format FAT32..."
-    veracrypt -t --mount "${LOOP_DEV}p2" --password="$PASSWORD" --pim=1 \
-        --non-interactive --filesystem=none --slot=1
-        
-    mkfs.fat -F 32 /dev/mapper/veracrypt1
-    veracrypt -t -u "${LOOP_DEV}p2" --non-interactive
-    
-    echo "Remounting ${LOOP_DEV}p2 to copy files..."
+
+    sudo veracrypt -t --mount "$TMP_VC" --password="$PASSWORD" --pim=1 --filesystem=none --non-interactive
+    MAPPED_SLOT=$(sudo veracrypt -t -l | grep "$TMP_VC" | awk '{print $3}')
+    sudo mkfs.fat -F 32 "$MAPPED_SLOT"
+
+    echo "Mounting to copy files..."
     mkdir -p "/tmp/mnt_part_vc"
-    veracrypt -t --mount "${LOOP_DEV}p2" "/tmp/mnt_part_vc" --password="$PASSWORD" --pim=1 \
-        --non-interactive --slot=1
-        
+    sudo mount -o "uid=$(id -u),gid=$(id -g)" "$MAPPED_SLOT" "/tmp/mnt_part_vc"
+
     populate_complex_files "/tmp/mnt_part_vc"
-    
-    veracrypt -t -u "${LOOP_DEV}p2" --non-interactive
+
+    echo "Unmounting..."
+    sudo sync
+    sudo umount "/tmp/mnt_part_vc"
+    sudo sync
+    sudo veracrypt -t -d "$TMP_VC" 2>/dev/null \
+        || sudo dmsetup remove "$(basename "$MAPPED_SLOT")" 2>/dev/null \
+        || true
     rm -rf "/tmp/mnt_part_vc"
     
     echo "Formatting the first partition as normal FAT32..."
-    mkfs.fat -F 32 "${LOOP_DEV}p1"
+    TMP_FAT="$DIR/tmp_fat.img"
+    dd if=/dev/zero of="$TMP_FAT" bs=1M count=4 2>/dev/null
+    mkfs.fat -F 32 "$TMP_FAT"
+    echo "Hello from regular boot partition" > "$DIR/boot.txt"
+    # We can use mcopy to copy boot.txt if needed, but not strictly necessary for test
     
-    losetup -d "$LOOP_DEV"
+    echo "Injecting partitions into MBR..."
+    dd if="$TMP_FAT" of="$IMG_FILE" bs=1M seek=1 conv=notrunc 2>/dev/null
+    dd if="$TMP_VC" of="$IMG_FILE" bs=1M seek=5 conv=notrunc 2>/dev/null
+    
+    rm -f "$TMP_VC" "$TMP_FAT"
 }
 
 mkdir -p testdata/fat32_keyfile_pim
@@ -196,12 +226,13 @@ mkdir -p testdata/unsupported_cipher
 create_fat32_volume "testdata/unsupported_cipher" "false"
 echo "Twofish" > "testdata/unsupported_cipher/cipher.txt"
 echo "true" > "testdata/unsupported_cipher/expects_error.txt"
+echo "AES-encrypted FAT32 VeraCrypt volume, but the UI cipher picker is set to Twofish before mounting. The app must reject the attempt immediately (header cannot be decrypted) and show 'Cannot mount' — no I/O on the actual volume data occurs." > "testdata/unsupported_cipher/description.txt"
 
 create_exfat_volume "testdata/exfat" "false"
 create_exfat_volume "testdata/exfat_keyfile" "true"
-create_unsupported_volume "testdata/fat16" "FAT16" "mkfs.fat -F 16"
-create_unsupported_volume "testdata/ntfs" "NTFS" "mkfs.ntfs -f -q"
-create_unsupported_volume "testdata/ext4" "ext4" "mkfs.ext4 -F"
+create_unsupported_volume "testdata/fat16" "FAT16" "fat"
+create_unsupported_volume "testdata/ntfs" "NTFS" "ntfs"
+create_unsupported_volume "testdata/ext4" "ext4" "ext4"
 
 # Create a dummy image to act as a second simultaneous USB drive (for multi-drive testing)
 dd if=/dev/zero of="testdata/dummy.img" bs=1M count=2 2>/dev/null

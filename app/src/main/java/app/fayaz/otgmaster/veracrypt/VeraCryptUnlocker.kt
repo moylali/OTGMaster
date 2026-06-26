@@ -131,11 +131,26 @@ class VeraCryptUnlocker {
             passwordBytes = combined
         }
 
-        val iterations = if (pim != null && pim > 0) 15000 + (pim * 1000) else 500000
-
+        // Non-system encryption (OTGMaster only supports non-system volumes)
+        val iterations = if (pim != null && pim > 0) {
+            15000 + (pim * 1000)
+        } else {
+            when (hash) {
+                VeraCryptHash.SHA512 -> 500000
+                VeraCryptHash.WHIRLPOOL -> 500000
+                VeraCryptHash.SHA256 -> 500000
+                else -> 500000
+            }
+        }
+        
         android.util.Log.i("VeraCryptUnlocker", "Iterations: $iterations")
 
+        android.util.Log.i("VeraCryptUnlocker", "Password length: ${password.size}, PIM: $pim, Iterations: $iterations")
+        
         val headerSector = device.readBlocks(candidate.startBlock, 1)
+        android.util.Log.i("VeraCryptUnlocker", "startBlock: ${candidate.startBlock}, header length: ${headerSector.size}")
+        android.util.Log.i("VeraCryptUnlocker", "Header first 16 bytes: " + headerSector.take(16).joinToString("") { "%02x".format(it) })
+        
         val salt = headerSector.copyOfRange(0, 64)
         val encryptedHeader = headerSector.copyOfRange(64, 512)
 

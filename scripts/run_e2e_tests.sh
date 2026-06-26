@@ -45,7 +45,7 @@ ensure_testdata() {
         exit 1
     fi
 
-    for case_name in fat32 fat32_keyfile exfat exfat_keyfile fat16 ntfs ext4 serpent unsupported_cipher; do
+    for case_name in fat32 fat32_keyfile fat32_keyfile_pim exfat exfat_keyfile fat16 ntfs ext4 serpent unsupported_cipher partitioned_mbr; do
         local dir="$TESTDATA_DIR/$case_name"
         if [ ! -f "$dir/test.img" ] || [ ! -f "$dir/password.txt" ] || [ ! -f "$dir/pim.txt" ]; then
             echo "Missing artifacts for test case: $case_name (test.img / password.txt / pim.txt)"
@@ -62,43 +62,7 @@ ensure_testdata() {
     if [ "$missing" = true ]; then
         echo "Generating test data (requires sudo for VeraCrypt mount and mkfs operations)..."
         sudo bash scripts/generate_testdata.sh || { echo "Test data generation failed!"; exit 1; }
-    else
-        echo "All test data artifacts present."
     fi
-}
-
-# Swap the slot file content and reconnect the USB device via QEMU HMP.
-# The drive backend (slot_dev) stays alive throughout; only the USB frontend
-# device is removed and re-added so Android re-enumerates with the new content.
-usb_swap() {
-    local img_abs="$1"
-    echo "Swapping USB to: $img_abs"
-
-    # Disconnect the USB device from Android
-    python3 scripts/qemu_hmp.py "device_del usbdev0"
-    sleep 1
-
-    # Replace slot file content with the new test image (same 10 MB size)
-    cp "$img_abs" "$SLOT_FILE"
-    sync
-
-    # Reconnect — QEMU re-reads from slot_dev which now maps to updated slot file
-    python3 scripts/qemu_hmp.py "device_add usb-storage,id=usbdev0,drive=slot_dev,bus=xhci.0,removable=on"
-
-    # Wait for Android to enumerate /dev/block/sda (up to 20s)
-    local found=false
-    for i in $(seq 1 20); do
-        if $CMD_ADB -s emulator-5554 shell "ls /dev/block/sda 2>/dev/null" | grep -q sda; then
-            found=true
-            break
-        fi
-        sleep 1
-    done
-    if [ "$found" = false ]; then
-        echo "ERROR: /dev/block/sda did not appear after USB swap"
-        exit 1
-    fi
-    $CMD_ADB -s emulator-5554 shell "su 0 chmod 666 /dev/block/sda"
 }
 
 ensure_testdata
@@ -109,6 +73,8 @@ echo "Building Android Test APKs..."
 # Kill any leftover emulators from a previous run
 $CMD_ADB devices | grep emulator | cut -f1 | while read line; do $CMD_ADB -s "$line" emu kill 2>/dev/null; done
 sleep 2
+
+
 
 # Find the first test image (alphabetically, or the one matching --only) to pre-load into the slot at boot
 FIRST_IMG=""
@@ -124,21 +90,16 @@ if [ -z "$FIRST_IMG" ]; then
     echo "Error: no test image found in $TESTDATA_DIR"
     exit 1
 fi
-cp "$FIRST_IMG" "$SLOT_FILE"
-echo "Slot file initialised with: $FIRST_IMG"
+dd if=/dev/zero of="$SLOT_FILE" bs=1M count=25
+echo "Slot file initialised to 25MB"
 
 # Launch the emulator once with the slot file as a persistent USB drive backend.
-# The drive backend (slot_dev) stays alive for the full run; we only hot-remove
-# and re-add the USB storage device between tests.
-DUMMY_FILE="$TESTDATA_DIR/dummy.img"
+# The drive backend (slot_dev) stays alive for the full run; we overwrite it inside Android.
 echo "Launching Emulator with Multi-Drive support..."
 QEMU_USB_FLAGS="-qemu -usb -device qemu-xhci,id=xhci \
-  -blockdev driver=file,node-name=dummy_file,filename=$DUMMY_FILE \
-  -blockdev driver=raw,node-name=dummy_dev,file=dummy_file \
-  -device usb-storage,bus=xhci.0,drive=dummy_dev,id=dummy_usb,removable=true \
   -blockdev driver=file,node-name=slot_file,filename=$SLOT_FILE \
   -blockdev driver=raw,node-name=slot_dev,file=slot_file \
-  -device usb-storage,bus=xhci.0,drive=slot_dev,id=usbdev0,removable=true"
+  -device usb-storage,bus=xhci.0,drive=slot_dev,id=usbdev0,removable=on"
 
 if [ $SHOW_EMULATOR -eq 1 ]; then
   $CMD_EMULATOR -avd $AVD_NAME -wipe-data -no-audio -no-boot-anim \
@@ -161,6 +122,10 @@ $CMD_ADB -s emulator-5554 shell "su 0 setenforce 0"
 $CMD_ADB -s emulator-5554 shell "su 0 chmod a+rx /dev/block"
 $CMD_ADB -s emulator-5554 shell "su 0 chmod 666 /dev/block/sda"
 
+echo "Pushing testdata to device for inside-Android swapping..."
+$CMD_ADB -s emulator-5554 shell "rm -rf /data/local/tmp/testdata"
+$CMD_ADB -s emulator-5554 push "$TESTDATA_DIR" /data/local/tmp/
+
 # Install APKs once
 echo "Installing App and Test APK..."
 $CMD_ADB -s emulator-5554 install -t app/build/outputs/apk/debug/app-debug.apk
@@ -168,8 +133,33 @@ $CMD_ADB -s emulator-5554 install -t app/build/outputs/apk/androidTest/debug/app
 
 echo "Starting E2E Tests..."
 
+# Collect version/commit info for the report
+APP_VERSION=$(grep 'versionName' app/build.gradle.kts 2>/dev/null | head -1 | grep -o '"[^"]*"' | tr -d '"' || echo "unknown")
+GIT_COMMIT=$(git rev-parse --short HEAD 2>/dev/null || echo "unknown")
+RUN_DATE=$(date '+%Y-%m-%d %H:%M:%S')
+REPORT_FILE="e2e_report_v${APP_VERSION}_${GIT_COMMIT}_$(date +%Y%m%d_%H%M%S).md"
+
+# Write report header
+cat > "$REPORT_FILE" << REPORT_HEADER
+# OTGMaster E2E Test Report
+
+| Field | Value |
+|-------|-------|
+| Version | $APP_VERSION |
+| Commit | \`$GIT_COMMIT\` |
+| Date | $RUN_DATE |
+
+## Results
+
+| # | Test Case | Description | Result | Duration |
+|---|-----------|-------------|--------|----------|
+REPORT_HEADER
+
 OVERALL_EXIT=0
 IS_FIRST_TEST=true
+TEST_NUM=0
+PASSED_COUNT=0
+FAILED_COUNT=0
 
 for test_dir in "$TESTDATA_DIR"/*/; do
     if [ ! -d "$test_dir" ]; then continue; fi
@@ -222,6 +212,13 @@ for test_dir in "$TESTDATA_DIR"/*/; do
         REMOUNT_ARG="-e remount_test true"
     fi
 
+    TEST_NUM=$((TEST_NUM + 1))
+    DESCRIPTION=""
+    if [ -f "$test_dir/description.txt" ]; then
+        DESCRIPTION=$(cat "$test_dir/description.txt")
+    fi
+    TEST_START=$(date +%s)
+
     echo "=================================================="
     echo "Running Test Case: $TEST_NAME"
     echo "Image: $IMG_FILE"
@@ -230,16 +227,10 @@ for test_dir in "$TESTDATA_DIR"/*/; do
     else
         echo "Expects: successful mount (cipher: $CIPHER)"
     fi
+    [ -n "$DESCRIPTION" ] && echo "Description: $DESCRIPTION"
     echo "=================================================="
 
-    if [ "$IS_FIRST_TEST" = true ]; then
-        IS_FIRST_TEST=false
-        # Slot was already loaded at emulator startup; nothing to swap
-        echo "Using pre-loaded slot image (first test)"
-    else
-        # Swap the slot file content and reconnect the USB device
-        usb_swap "$(realpath "$IMG_FILE")"
-    fi
+    # QEMU hotplug is no longer used; Android E2EAutomatedTest directly overwrites /dev/block/sda using dd.
 
     # Clear any leftover keyfile; push the current test's keyfile if needed
     $CMD_ADB -s emulator-5554 shell "rm -f /sdcard/Download/*.key"
@@ -255,9 +246,17 @@ for test_dir in "$TESTDATA_DIR"/*/; do
     $CMD_ADB -s emulator-5554 logcat -c
 
     # Run test
+    # Overwrite the slot device with the specific test image
+    echo "Writing test image: ./testdata/${TEST_NAME}/test.img to /dev/block/sda"
+    $CMD_ADB -s emulator-5554 shell "su 0 dd if=/data/local/tmp/testdata/${TEST_NAME}/test.img of=/dev/block/sda bs=1M conv=fsync"
+    $CMD_ADB -s emulator-5554 shell "su 0 sync"
+    $CMD_ADB -s emulator-5554 shell "su 0 sync"
+    sleep 2
+
     echo "Running UI Automator Test..."
     TEST_OUT=$($CMD_ADB -s emulator-5554 shell am instrument -w \
         -e password "$PASSWORD" \
+        -e testCase "$TEST_NAME" \
         $KEYFILE_ARG \
         $PIM_ARG \
         $EXPECT_MOUNT_ARG \
@@ -282,18 +281,43 @@ for test_dir in "$TESTDATA_DIR"/*/; do
     # Force-stop app to reset state; USB stays connected until the next test's usb_swap
     $CMD_ADB -s emulator-5554 shell am force-stop "$PACKAGE_NAME"
 
+    TEST_END=$(date +%s)
+    DURATION=$((TEST_END - TEST_START))
+
     if [ $TEST_EXIT_CODE -ne 0 ]; then
         echo "TEST FAILED: $TEST_NAME"
         OVERALL_EXIT=1
+        FAILED_COUNT=$((FAILED_COUNT + 1))
+        echo "| $TEST_NUM | \`$TEST_NAME\` | $DESCRIPTION | ❌ FAILED | ${DURATION}s |" >> "$REPORT_FILE"
         break
     else
         echo "TEST PASSED: $TEST_NAME"
+        PASSED_COUNT=$((PASSED_COUNT + 1))
+        echo "| $TEST_NUM | \`$TEST_NAME\` | $DESCRIPTION | ✅ PASSED | ${DURATION}s |" >> "$REPORT_FILE"
     fi
 done
 
 echo "Killing emulator..."
 $CMD_ADB -s emulator-5554 emu kill
 wait $EMU_PID 2>/dev/null
+
+TOTAL_COUNT=$((PASSED_COUNT + FAILED_COUNT))
+OVERALL_STATUS=$([ $OVERALL_EXIT -eq 0 ] && echo "✅ ALL PASSED" || echo "❌ FAILED")
+
+cat >> "$REPORT_FILE" << REPORT_FOOTER
+
+## Summary
+
+| Metric | Value |
+|--------|-------|
+| Total run | $TOTAL_COUNT |
+| Passed | $PASSED_COUNT |
+| Failed | $FAILED_COUNT |
+| Overall | $OVERALL_STATUS |
+REPORT_FOOTER
+
+echo ""
+echo "Report saved to: $REPORT_FILE"
 
 if [ $OVERALL_EXIT -eq 0 ]; then
     echo "All tests completed successfully!"

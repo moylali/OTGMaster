@@ -1,0 +1,1 @@
+AES-encrypted VeraCrypt volume (10 MB) formatted as FAT32 with a keyfile and custom PIM=123. Tests all three authentication factors simultaneously: password, keyfile, and a non-default PIM that changes the key-derivation iteration count.
