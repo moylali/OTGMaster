@@ -46,3 +46,13 @@ Real-device testing surfaced several bugs that the existing e2e suite (`E2EAutom
 - [x] **File/directory combinations inside the mounted volume**: nested/deeply-nested directories, empty directories, empty files, files spanning multiple clusters, many small files in one directory, filenames with spaces/unicode/special characters. The root-directory DocumentsProvider crash (`file.length`/`file.lastModified()` throwing for the root) specifically went unnoticed because no test ever actually queried the root document through the Files-app-facing provider path, only through the app's own internal mount flow.
 - [x] **Mount → unmount → remount cycles**: Verify a device can be unlocked, unmounted, and successfully re-unlocked again without an app restart — this is the regression class for resource-leak bugs (e.g. the underlying USB connection never being released on unmount).
 - [x] **Keyfile + PIM combinations**: Volumes created with a custom PIM, with one or more keyfiles, and with both together, since these multiply the password-derivation path independently of cipher/hash selection and have been a recurring source of "wrong password" false negatives during manual testing.
+
+## Phase 6: Pending E2E Testcases (Upcoming Support)
+
+As new filesystem support is rolled out (see Phase 3 & 4), the E2E test suite must be expanded to cover these formats:
+
+- [ ] **NTFS volumes**: Verify successful detection and mount of NTFS formatted volumes.
+- [ ] **FAT16/FAT12 volumes**: Verify legacy FAT variants are mounted successfully.
+- [ ] **ext2/ext3/ext4 volumes**: Add end-to-end tests for Linux native filesystems.
+- [ ] **LUKS encrypted volumes**: Verify that standard LUKS volumes can be decrypted, mounted, and interact seamlessly alongside VeraCrypt volumes.
+- [ ] **Write operations**: Once write access is enabled, add tests that write to FAT32/exFAT (create, delete, modify) and verify state persistence by reading it back from the host.

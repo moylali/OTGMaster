@@ -58,6 +58,11 @@ class E2EAutomatedTest {
     fun testMountUsbDrive() {
         val arguments = InstrumentationRegistry.getArguments()
         val password = arguments.getString("password", "password123")
+        val testCase = arguments.getString("testCase", "exfat")
+
+        // The slot device (/dev/block/sda) is already overwritten by the bash script before this test runs.
+        android.os.SystemClock.sleep(1000)
+
         val keyfile = arguments.getString("keyfile", "")
         val pim = arguments.getString("pim", "")
         val expectMount = arguments.getString("expect_mount", "true") == "true"
@@ -114,8 +119,6 @@ class E2EAutomatedTest {
             android.os.SystemClock.sleep(500)
             device.executeShellCommand("input text $password")
             android.os.SystemClock.sleep(500)
-            device.pressEnter()
-            android.os.SystemClock.sleep(500)
 
             if (pim.isNotEmpty()) {
                 val pimField = device.wait(Until.findObject(By.descContains("pim_input")), timeout)
@@ -123,9 +126,11 @@ class E2EAutomatedTest {
                 android.os.SystemClock.sleep(500)
                 device.executeShellCommand("input text $pim")
                 android.os.SystemClock.sleep(500)
-                device.pressEnter()
-                android.os.SystemClock.sleep(500)
             }
+            
+            // Press enter after all text fields are filled to clear focus if needed
+            device.pressEnter()
+            android.os.SystemClock.sleep(500)
 
             if (keyfile.isNotEmpty()) {
                 val selectKeyfileBtn = device.wait(Until.findObject(By.textContains("Select Keyfile")), timeout)

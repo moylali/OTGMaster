@@ -25,3 +25,5 @@ testdata/**/cipher.txt
 # Test run artifacts
 logcat_*.txt
 test_out.log
+session_summary.txt
+testdata/**/password.txt
