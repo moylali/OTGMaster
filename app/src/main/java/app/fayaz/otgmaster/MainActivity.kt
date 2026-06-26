@@ -189,7 +189,7 @@ class MainActivity : ComponentActivity() {
                             attemptUnlock(deviceName, candidate, pwd, pim, keyfiles, cipher, hash, onComplete)
                         },
                         onUnmount = { drive -> unmountDrive(drive) },
-                        onOpenFilesApp = { openFilesApp() },
+                        onOpenFilesApp = { drive -> openFilesApp(drive) },
                         onClearLogs = { clearLogs() },
                         onCopyText = { text, label -> copyText(text, label) },
                         onThemeChange = { newMode ->
@@ -420,9 +420,6 @@ class MainActivity : ComponentActivity() {
                     }
                     return@Thread
                 }
-                
-                app.fayaz.otgmaster.provider.VeraCryptDocumentProvider.mountedFileSystem = fileSystem
-                
                 val driveId = UUID.randomUUID().toString().substring(0, 8)
                 val mountedDrive = MountedDrive(
                     id = driveId,
@@ -462,7 +459,6 @@ class MainActivity : ComponentActivity() {
 
     private fun unmountDrive(drive: MountedDrive) {
         OtgMasterState.removeDrive(drive.id)
-        app.fayaz.otgmaster.provider.VeraCryptDocumentProvider.mountedFileSystem = null
         contentResolver.notifyChange(
             android.provider.DocumentsContract.buildRootsUri("app.fayaz.otgmaster.documents"), null
         )
@@ -478,8 +474,11 @@ class MainActivity : ComponentActivity() {
         mountedDrivesState.value = OtgMasterState.mountedDrives.toList()
     }
 
-    private fun openFilesApp() {
-        val rootUri = DocumentsContract.buildRootUri("app.fayaz.otgmaster.documents", "veracrypt_root")
+    private fun openFilesApp(drive: MountedDrive) {
+        val rootUri = DocumentsContract.buildRootUri(
+            app.fayaz.otgmaster.provider.VeraCryptDocumentProvider.AUTHORITY,
+            app.fayaz.otgmaster.provider.VeraCryptDocumentProvider.rootIdForDrive(drive.id)
+        )
         val intent = Intent(Intent.ACTION_VIEW)
         intent.setDataAndType(rootUri, "vnd.android.document/root")
         intent.addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION)
@@ -539,7 +538,7 @@ fun OtgMasterApp(
     onRefreshDevices: () -> Unit,
     onUnlock: (String, VolumeCandidate, String, Int?, List<Uri>, app.fayaz.otgmaster.veracrypt.VeraCryptCipher, app.fayaz.otgmaster.veracrypt.VeraCryptHash, () -> Unit) -> Unit,
     onUnmount: (MountedDrive) -> Unit,
-    onOpenFilesApp: () -> Unit,
+    onOpenFilesApp: (MountedDrive) -> Unit,
     onClearLogs: () -> Unit,
     onCopyText: (String, String) -> Unit,
     onThemeChange: (ThemeMode) -> Unit
@@ -618,7 +617,7 @@ fun OtgMasterApp(
 
                         Spacer(modifier = Modifier.height(16.dp))
                         Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                            Button(onClick = { onOpenFilesApp() }) {
+                            Button(onClick = { onOpenFilesApp(drive) }) {
                                 Text(stringResource(R.string.open_files_app))
                             }
                             Button(

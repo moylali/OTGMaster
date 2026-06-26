@@ -7,7 +7,7 @@ import android.os.ParcelFileDescriptor
 import android.provider.DocumentsContract
 import android.provider.DocumentsProvider
 import android.webkit.MimeTypeMap
-import me.jahnen.libaums.core.fs.FileSystem
+import app.fayaz.otgmaster.OtgMasterState
 import me.jahnen.libaums.core.fs.UsbFile
 import java.io.FileNotFoundException
 import java.io.FileOutputStream
@@ -17,12 +17,7 @@ import java.nio.ByteBuffer
 class VeraCryptDocumentProvider : DocumentsProvider() {
 
     companion object {
-        private const val AUTHORITY = "app.fayaz.otgmaster.documents"
-        private const val ROOT_DOCUMENT_ID = "root"
-        
-        // We hold a global reference to the mounted filesystem.
-        // In a real app, you might want to handle multiple devices or pass this via a more robust state manager.
-        var mountedFileSystem: FileSystem? = null
+        const val AUTHORITY = "app.fayaz.otgmaster.documents"
         
         private val DEFAULT_DOCUMENT_PROJECTION = arrayOf(
             DocumentsContract.Document.COLUMN_DOCUMENT_ID,
@@ -43,6 +38,10 @@ class VeraCryptDocumentProvider : DocumentsProvider() {
             DocumentsContract.Root.COLUMN_DOCUMENT_ID,
             DocumentsContract.Root.COLUMN_AVAILABLE_BYTES
         )
+
+        fun rootIdForDrive(driveId: String): String = "root_$driveId"
+
+        fun rootDocIdForDrive(driveId: String): String = "$driveId:/"
     }
 
     override fun onCreate(): Boolean {
@@ -52,16 +51,18 @@ class VeraCryptDocumentProvider : DocumentsProvider() {
     override fun queryRoots(projection: Array<out String>?): Cursor {
         val result = MatrixCursor(projection ?: DEFAULT_ROOT_PROJECTION)
 
-        val fs = mountedFileSystem
-        if (fs != null) {
+        for (drive in OtgMasterState.mountedDrives) {
             val row = result.newRow()
-            row.add(DocumentsContract.Root.COLUMN_ROOT_ID, "veracrypt_root")
+            row.add(DocumentsContract.Root.COLUMN_ROOT_ID, rootIdForDrive(drive.id))
             row.add(DocumentsContract.Root.COLUMN_SUMMARY, "Unlocked Volume")
-            row.add(DocumentsContract.Root.COLUMN_FLAGS, DocumentsContract.Root.FLAG_SUPPORTS_IS_CHILD)
-            row.add(DocumentsContract.Root.COLUMN_TITLE, "OTGMaster (Unlocked)")
-            row.add(DocumentsContract.Root.COLUMN_DOCUMENT_ID, ROOT_DOCUMENT_ID)
+            row.add(
+                DocumentsContract.Root.COLUMN_FLAGS,
+                DocumentsContract.Root.FLAG_SUPPORTS_IS_CHILD or DocumentsContract.Root.FLAG_LOCAL_ONLY
+            )
+            row.add(DocumentsContract.Root.COLUMN_TITLE, drive.name)
+            row.add(DocumentsContract.Root.COLUMN_DOCUMENT_ID, rootDocIdForDrive(drive.id))
             row.add(DocumentsContract.Root.COLUMN_MIME_TYPES, "*/*")
-            row.add(DocumentsContract.Root.COLUMN_AVAILABLE_BYTES, fs.freeSpace)
+            row.add(DocumentsContract.Root.COLUMN_AVAILABLE_BYTES, drive.fileSystem.freeSpace)
             // Use the standard launcher icon
             row.add(DocumentsContract.Root.COLUMN_ICON, app.fayaz.otgmaster.R.mipmap.ic_launcher)
         }
@@ -88,11 +89,7 @@ class VeraCryptDocumentProvider : DocumentsProvider() {
 
         if (parent != null && parent.isDirectory) {
             for (child in parent.listFiles()) {
-                val childId = if (parentDocumentId == ROOT_DOCUMENT_ID) {
-                    child.name
-                } else {
-                    "$parentDocumentId/${child.name}"
-                }
+                val childId = getDocIdForChild(parentDocumentId, child)
                 includeFile(result, childId, child)
             }
         }
@@ -105,9 +102,6 @@ class VeraCryptDocumentProvider : DocumentsProvider() {
         signal: CancellationSignal?
     ): ParcelFileDescriptor {
         val file = getFileForDocId(documentId) ?: throw FileNotFoundException("File not found")
-        
-        // We only support reading for now
-        val accessMode = ParcelFileDescriptor.parseMode(mode)
         
         val isWrite = mode?.contains("w") == true
         if (isWrite) {
@@ -147,13 +141,12 @@ class VeraCryptDocumentProvider : DocumentsProvider() {
     }
     
     private fun getFileForDocId(docId: String?): UsbFile? {
-        val fs = mountedFileSystem ?: return null
-        if (docId == null || docId == ROOT_DOCUMENT_ID) {
-            return fs.rootDirectory
-        }
+        val parsed = parseDocId(docId) ?: return null
+        val drive = OtgMasterState.getDrive(parsed.driveId) ?: return null
+        if (parsed.path == "/") return drive.fileSystem.rootDirectory
         
-        var currentFile = fs.rootDirectory
-        val parts = docId.split("/")
+        var currentFile = drive.fileSystem.rootDirectory
+        val parts = parsed.path.split("/")
         for (part in parts) {
             if (part.isEmpty()) continue
             var found = false
@@ -169,10 +162,17 @@ class VeraCryptDocumentProvider : DocumentsProvider() {
         return currentFile
     }
 
+    override fun isChildDocument(parentDocumentId: String?, documentId: String?): Boolean {
+        val parent = parseDocId(parentDocumentId) ?: return false
+        val child = parseDocId(documentId) ?: return false
+        if (parent.driveId != child.driveId) return false
+        return child.path == parent.path || child.path.startsWith(parent.path.ensureTrailingSlash())
+    }
+
     private fun includeFile(result: MatrixCursor, docId: String?, file: UsbFile) {
         val row = result.newRow()
         row.add(DocumentsContract.Document.COLUMN_DOCUMENT_ID, docId)
-        row.add(DocumentsContract.Document.COLUMN_DISPLAY_NAME, file.name)
+        row.add(DocumentsContract.Document.COLUMN_DISPLAY_NAME, if (file.isRoot) "VeraCrypt Drive" else file.name)
         // libaums throws for several metadata accessors on directories and/or the root
         // specifically (length: "This is a directory!", lastModified: "root dir!") — rather
         // than chase each one individually, treat any failure here as "unknown" (0).
@@ -192,4 +192,23 @@ class VeraCryptDocumentProvider : DocumentsProvider() {
         row.add(DocumentsContract.Document.COLUMN_LAST_MODIFIED, runCatching { file.lastModified() }.getOrDefault(0L))
         row.add(DocumentsContract.Document.COLUMN_FLAGS, flags)
     }
+
+    private data class ParsedDocId(val driveId: String, val path: String)
+
+    private fun parseDocId(docId: String?): ParsedDocId? {
+        if (docId == null) return null
+        val parts = docId.split(":", limit = 2)
+        if (parts.size != 2 || parts[0].isBlank()) return null
+        val path = parts[1].ifBlank { "/" }
+        return ParsedDocId(parts[0], if (path.startsWith("/")) path else "/$path")
+    }
+
+    private fun getDocIdForChild(parentDocId: String?, child: UsbFile): String {
+        val parsed = parseDocId(parentDocId) ?: return child.name
+        val childPath = if (parsed.path == "/") "/${child.name}" else "${parsed.path}/${child.name}"
+        return "${parsed.driveId}:$childPath"
+    }
+
+    private fun String.ensureTrailingSlash(): String = if (endsWith("/")) this else "$this/"
+
 }
