@@ -1,4 +1,5 @@
 #!/bin/bash
+cd "$(dirname "$0")/.." || exit 1
 set -e
 
 SDK_DIR="/home/fayaz/android-sdk-local"

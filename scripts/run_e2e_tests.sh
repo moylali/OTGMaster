@@ -1,4 +1,5 @@
 #!/bin/bash
+cd "$(dirname "$0")/.." || exit 1
 
 # Configuration
 TESTDATA_DIR="./testdata"
@@ -60,7 +61,7 @@ ensure_testdata() {
 
     if [ "$missing" = true ]; then
         echo "Generating test data (requires sudo for VeraCrypt mount and mkfs operations)..."
-        sudo bash ./generate_testdata.sh || { echo "Test data generation failed!"; exit 1; }
+        sudo bash scripts/generate_testdata.sh || { echo "Test data generation failed!"; exit 1; }
     else
         echo "All test data artifacts present."
     fi
@@ -74,7 +75,7 @@ usb_swap() {
     echo "Swapping USB to: $img_abs"
 
     # Disconnect the USB device from Android
-    python3 qemu_hmp.py "device_del usbdev0"
+    python3 scripts/qemu_hmp.py "device_del usbdev0"
     sleep 1
 
     # Replace slot file content with the new test image (same 10 MB size)
@@ -82,7 +83,7 @@ usb_swap() {
     sync
 
     # Reconnect — QEMU re-reads from slot_dev which now maps to updated slot file
-    python3 qemu_hmp.py "device_add usb-storage,id=usbdev0,drive=slot_dev,bus=xhci.0,removable=on"
+    python3 scripts/qemu_hmp.py "device_add usb-storage,id=usbdev0,drive=slot_dev,bus=xhci.0,removable=on"
 
     # Wait for Android to enumerate /dev/block/sda (up to 20s)
     local found=false
