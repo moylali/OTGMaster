@@ -1,4 +1,4 @@
-# Builds a signed release APK and publishes it as a GitHub Release whenever a
+# Builds a signed release APK and AAB and publishes them as a GitHub Release whenever a
 # tag matching v*.*.* is pushed. Before tagging, bump the version first:
 #   scripts/bump-version.sh <new-version-name>
 #   git add app/build.gradle.kts && git commit -m "chore: bump version to ..."
@@ -62,8 +62,8 @@ jobs:
           keyPassword=${{ secrets.RELEASE_KEY_PASSWORD }}
           EOF
 
-      - name: Build signed release APK
-        run: ./gradlew assembleRelease
+      - name: Build signed release APK and AAB
+        run: ./gradlew assembleRelease bundleRelease
 
       - name: Verify signing key matches F-Droid
         run: |
@@ -84,5 +84,7 @@ jobs:
       - name: Create GitHub Release
         uses: softprops/action-gh-release@v2
         with:
-          files: app/build/outputs/apk/release/*.apk
+          files: |
+            app/build/outputs/apk/release/*.apk
+            app/build/outputs/bundle/release/*.aab
           generate_release_notes: true
