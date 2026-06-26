@@ -51,12 +51,12 @@ create_fat32_volume() {
         --encryption=$CIPHER --hash=SHA-512 --filesystem=none --pim=$PIM_VAL $KEY_ARG \
         --random-source=/dev/urandom --non-interactive
 
-    # Mount it to format manually
-    MAPPED_SLOT=$(sudo veracrypt -t --mount "$IMG_FILE" --password="$PASSWORD" --pim=$PIM_VAL $KEY_ARG --filesystem=none --non-interactive | grep -o '/dev/mapper/veracrypt[0-9]*')
-    if [ -z "$MAPPED_SLOT" ]; then
-        # Try to find it if stdout was empty
-        MAPPED_SLOT=$(sudo veracrypt -t -l | grep "$IMG_FILE" | awk '{print $4}')
-    fi
+    # Mount it to format manually.
+    # Run mount and device-list as separate commands: piping into grep returns exit code 1
+    # when veracrypt produces no stdout (--non-interactive), which kills the script under set -e.
+    # veracrypt -l format: "  1: /path/to.img /dev/mapper/veracryptN - "  → field 3 is the device.
+    sudo veracrypt -t --mount "$IMG_FILE" --password="$PASSWORD" --pim=$PIM_VAL $KEY_ARG --filesystem=none --non-interactive
+    MAPPED_SLOT=$(sudo veracrypt -t -l | grep "$IMG_FILE" | awk '{print $3}')
     
     sudo mkfs.fat -F 32 "$MAPPED_SLOT"
 
@@ -164,10 +164,8 @@ create_partitioned_volume() {
         --encryption=AES --hash=SHA-512 --filesystem=none --pim=1 \
         --random-source=/dev/urandom --non-interactive
 
-    MAPPED_SLOT=$(sudo veracrypt -t --mount "$TMP_VC" --password="$PASSWORD" --pim=1 --filesystem=none --non-interactive | grep -o '/dev/mapper/veracrypt[0-9]*')
-    if [ -z "$MAPPED_SLOT" ]; then
-        MAPPED_SLOT=$(sudo veracrypt -t -l | grep "$TMP_VC" | awk '{print $4}')
-    fi
+    sudo veracrypt -t --mount "$TMP_VC" --password="$PASSWORD" --pim=1 --filesystem=none --non-interactive
+    MAPPED_SLOT=$(sudo veracrypt -t -l | grep "$TMP_VC" | awk '{print $3}')
     sudo mkfs.fat -F 32 "$MAPPED_SLOT"
 
     echo "Mounting to copy files..."
