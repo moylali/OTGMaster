@@ -14,7 +14,7 @@ The app cannot perform a kernel mount on non-rooted Android. Instead it:
 5. Feeds the decrypted block device into a userspace filesystem reader (FAT32 via libaums, exFAT via a vendored native `libexfat`).
 6. Surfaces files through the app UI and a `DocumentsProvider`, so other apps (Files, Gallery, etc.) can browse the unlocked volume.
 
-See [ROADMAP.md](ROADMAP.md) for planned filesystem and encryption-algorithm support.
+See [ROADMAP.md](docs/ROADMAP.md) for planned filesystem and encryption-algorithm support.
 
 ## Build
 
