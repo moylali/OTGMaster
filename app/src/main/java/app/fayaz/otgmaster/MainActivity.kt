@@ -143,6 +143,13 @@ class MainActivity : ComponentActivity() {
                     refreshDevices()
                 }
                 UsbManager.ACTION_USB_DEVICE_DETACHED -> {
+                    val detached = intent.getParcelableExtraCompat<UsbDevice>(UsbManager.EXTRA_DEVICE)
+                    if (detached != null) {
+                        val detachedKey = UsbDeviceDescriber.stableKey(detached, usbDeviceProvider.hasPermission(detached))
+                        OtgMasterState.mountedDrives
+                            .filter { it.sourceDeviceName == detachedKey }
+                            .forEach { unmountDrive(it) }
+                    }
                     appendLog(getString(R.string.log_usb_device_detached))
                     refreshDevices()
                 }
@@ -463,15 +470,23 @@ class MainActivity : ComponentActivity() {
         contentResolver.notifyChange(
             android.provider.DocumentsContract.buildRootsUri("app.fayaz.otgmaster.documents"), null
         )
-        if (drive.fileSystem is app.fayaz.otgmaster.exfat.ExFatFileSystem) {
-            drive.fileSystem.unmount()
-        }
-        drive.blockDevice?.close()
         updateMountedDrives()
-        appendLog(getString(R.string.log_drive_unmounted, drive.name))
-        // The device's sourceDeviceName is now free (no longer in mountedDrives), so this
-        // picks it back up and re-probes it for the dropdown.
-        refreshDevices()
+        lifecycleScope.launch(Dispatchers.IO) {
+            // Wait for any in-flight ProxyFileDescriptor onRelease() callbacks to finish
+            // before unmounting — prevents a use-after-free if the OS is still flushing a
+            // file write when exfat_unmount frees the ef pointer.
+            app.fayaz.otgmaster.provider.VeraCryptDocumentProvider.drainCallbacks()
+            if (drive.fileSystem is app.fayaz.otgmaster.exfat.ExFatFileSystem) {
+                drive.fileSystem.unmount()
+            }
+            drive.blockDevice?.close()
+            withContext(Dispatchers.Main) {
+                appendLog(getString(R.string.log_drive_unmounted, drive.name))
+                // The device's sourceDeviceName is now free (no longer in mountedDrives), so
+                // this picks it back up and re-probes it for the dropdown.
+                refreshDevices()
+            }
+        }
     }
 
     private fun updateMountedDrives() {

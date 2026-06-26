@@ -50,6 +50,18 @@ class VeraCryptDocumentProvider : DocumentsProvider() {
             thread.start()
             android.os.Handler(thread.looper)
         }
+
+        /**
+         * Blocks until all previously-queued proxyHandler messages have run, then returns.
+         * Call this on a background thread before unmounting a filesystem to ensure any
+         * in-flight onRelease() callbacks (which call file.close()) finish before the
+         * native exfat_unmount frees the ef pointer.
+         */
+        fun drainCallbacks(timeoutSeconds: Long = 5) {
+            val latch = java.util.concurrent.CountDownLatch(1)
+            proxyHandler.post { latch.countDown() }
+            latch.await(timeoutSeconds, java.util.concurrent.TimeUnit.SECONDS)
+        }
     }
 
     override fun onCreate(): Boolean {
