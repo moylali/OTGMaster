@@ -1,0 +1,10 @@
+Initial release on Google Play.
+
+OTG Master lets you mount VeraCrypt-encrypted USB drives on Android without root access. Connect a USB drive via OTG cable, enter your VeraCrypt password, and browse the decrypted volume in any file manager through Android's Storage Access Framework.
+
+Features:
+- Unlock VeraCrypt volumes with password, PIM, and/or keyfiles
+- AES and Serpent ciphers with SHA-512 key derivation
+- Read FAT32 and exFAT filesystems
+- No root required — uses Android USB Host API
+- No internet access, no analytics, no ads

@@ -1,0 +1,4 @@
+- Fix VeraCrypt decryption for volumes with non-standard XTS tweak calculations
+- Fix memory leaks in exFAT filesystem handling
+- Fix out-of-bounds reads during VeraCrypt header parsing
+- Support multiple simultaneously mounted USB drives via DocumentsProvider
