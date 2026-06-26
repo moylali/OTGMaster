@@ -243,8 +243,6 @@ Java_app_fayaz_otgmaster_exfat_ExFatNative_putNode(JNIEnv *env, jclass clazz, jl
         exfat_put_node(ef, node);
         if (node->references == 0 && node->is_unlinked) {
             exfat_cleanup_node(ef, node);
-            free(node->name);
-            free(node);
         }
     }
 }
