@@ -223,6 +223,16 @@ class MainActivity : AppCompatActivity() {
                         onAutoMountEnabledChange = { enabled ->
                             autoMountEnabled.value = enabled
                             sharedPreferences.edit().putBoolean("auto_mount", enabled).apply()
+                            if (!enabled) {
+                                credentialStore.clearAll()
+                                sessionPlaintextCreds.clear()
+                                appendLog(getString(R.string.log_auto_mount_credentials_cleared))
+                            }
+                        },
+                        onClearAllCredentials = {
+                            credentialStore.clearAll()
+                            sessionPlaintextCreds.clear()
+                            appendLog(getString(R.string.log_auto_mount_credentials_cleared))
                         },
                         onSetExcluded = { deviceKey, excluded ->
                             credentialStore.setExcluded(deviceKey, excluded)
@@ -686,6 +696,7 @@ fun OtgMasterApp(
     onCopyText: (String, String) -> Unit,
     onThemeChange: (ThemeMode) -> Unit,
     onAutoMountEnabledChange: (Boolean) -> Unit,
+    onClearAllCredentials: () -> Unit,
     onSetExcluded: (String, Boolean) -> Unit
 ) {
     var showSettings by remember { mutableStateOf(false) }
@@ -852,6 +863,7 @@ fun OtgMasterApp(
         autoMountEnabled = autoMountEnabled,
         onThemeSelected = onThemeChange,
         onAutoMountEnabledChange = onAutoMountEnabledChange,
+        onClearAllCredentials = onClearAllCredentials,
         onCopyText = onCopyText,
         onDismiss = { showSettings = false }
     )
@@ -1226,6 +1238,7 @@ fun SettingsDrawer(
     autoMountEnabled: Boolean,
     onThemeSelected: (ThemeMode) -> Unit,
     onAutoMountEnabledChange: (Boolean) -> Unit,
+    onClearAllCredentials: () -> Unit,
     onCopyText: (String, String) -> Unit,
     onDismiss: () -> Unit
 ) {
@@ -1316,6 +1329,15 @@ fun SettingsDrawer(
                                 checked = autoMountEnabled,
                                 onCheckedChange = onAutoMountEnabledChange
                             )
+                        }
+                        if (autoMountEnabled) {
+                            Spacer(modifier = Modifier.height(8.dp))
+                            OutlinedButton(
+                                onClick = onClearAllCredentials,
+                                modifier = Modifier.fillMaxWidth()
+                            ) {
+                                Text(stringResource(R.string.auto_mount_clear_credentials))
+                            }
                         }
                     }
 

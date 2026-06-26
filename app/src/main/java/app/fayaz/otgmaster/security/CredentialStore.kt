@@ -98,6 +98,10 @@ class CredentialStore(context: Context) {
         prefs?.edit()?.remove(sanitize(deviceKey))?.apply()
     }
 
+    fun clearAll() {
+        prefs?.edit()?.clear()?.apply()
+    }
+
     // SharedPreferences keys can't contain certain characters
     private fun sanitize(key: String): String =
         "cred_${key.replace(Regex("[^a-zA-Z0-9_]"), "_")}"
