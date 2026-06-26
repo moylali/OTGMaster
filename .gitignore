@@ -27,6 +27,10 @@ logcat_*.txt
 test_out.log
 session_summary.txt
 testdata/**/password.txt
+testdata/**/boot.txt
+r*.log
+test.img
+*_strategy.txt
 
 # E2E test reports
 e2e_report_*.md
