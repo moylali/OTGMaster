@@ -133,11 +133,7 @@ class VeraCryptUnlocker {
 
         val iterations = if (pim != null && pim > 0) 15000 + (pim * 1000) else 500000
 
-        android.util.Log.i("VeraCryptUnlocker", "Iterations: $iterations, PasswordBytes Size: ${passwordBytes.size}")
-        if (passwordBytes.size >= 64) {
-            val poolHex = passwordBytes.takeLast(64).toByteArray().joinToString("") { String.format("%02X", it) }
-            android.util.Log.i("VeraCryptUnlocker", "Appended Keyfile Pool Hex: $poolHex")
-        }
+        android.util.Log.i("VeraCryptUnlocker", "Iterations: $iterations")
 
         val headerSector = device.readBlocks(candidate.startBlock, 1)
         val salt = headerSector.copyOfRange(0, 64)
@@ -177,6 +173,7 @@ class VeraCryptUnlocker {
             device,
             masterKey,
             volumeDataOffset = candidate.startBlock + dataOffsetSectors,
+            decryptedBlockCount = (candidate.blockCount ?: (device.blockCount - candidate.startBlock)) - dataOffsetSectors,
             cipherNativeId = cipherNativeId,
             tweakDataOffset = dataOffsetSectors
         )

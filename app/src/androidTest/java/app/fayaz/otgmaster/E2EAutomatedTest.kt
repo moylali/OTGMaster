@@ -140,9 +140,34 @@ class E2EAutomatedTest {
         val freeTextObj = device.findObject(By.textContains("Free:"))
         assertTrue("Free capacity should be visible", freeTextObj != null)
 
-        // Copy the flower.jpg to /sdcard/Download/flower.jpg via the DocumentsProvider
         val context = ApplicationProvider.getApplicationContext<Context>()
-        val providerUri = android.provider.DocumentsContract.buildDocumentUri("app.fayaz.otgmaster.documents", "flower.jpg")
+        
+        // Dynamically find the docId for flower.jpg since it is now prepended with a dynamic drive ID
+        val rootsUri = android.provider.DocumentsContract.buildRootsUri("app.fayaz.otgmaster.documents")
+        var rootDocId: String? = null
+        context.contentResolver.query(rootsUri, null, null, null, null)?.use { cursor ->
+            if (cursor.moveToFirst()) {
+                val index = cursor.getColumnIndex(android.provider.DocumentsContract.Root.COLUMN_DOCUMENT_ID)
+                if (index != -1) rootDocId = cursor.getString(index)
+            }
+        }
+        assertTrue("No roots found from DocumentsProvider", rootDocId != null)
+
+        val childrenUri = android.provider.DocumentsContract.buildChildDocumentsUri("app.fayaz.otgmaster.documents", rootDocId)
+        var flowerDocId: String? = null
+        context.contentResolver.query(childrenUri, null, null, null, null)?.use { cursor ->
+            while (cursor.moveToNext()) {
+                val docIdIndex = cursor.getColumnIndex(android.provider.DocumentsContract.Document.COLUMN_DOCUMENT_ID)
+                val docId = cursor.getString(docIdIndex)
+                if (docId != null && docId.endsWith("flower.jpg")) {
+                    flowerDocId = docId
+                    break
+                }
+            }
+        }
+        assertTrue("flower.jpg not found in the root directory", flowerDocId != null)
+
+        val providerUri = android.provider.DocumentsContract.buildDocumentUri("app.fayaz.otgmaster.documents", flowerDocId)
         val outFile = java.io.File("/sdcard/Download/flower.jpg")
         try {
             val inputStream = context.contentResolver.openInputStream(providerUri)

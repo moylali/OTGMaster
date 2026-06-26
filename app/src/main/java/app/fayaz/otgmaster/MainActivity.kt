@@ -16,6 +16,7 @@ import androidx.activity.ComponentActivity
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.compose.setContent
 import androidx.activity.result.contract.ActivityResultContracts
+import androidx.lifecycle.lifecycleScope
 import androidx.compose.animation.AnimatedVisibility
 import androidx.compose.animation.slideInHorizontally
 import androidx.compose.animation.slideOutHorizontally
@@ -276,10 +277,10 @@ class MainActivity : ComponentActivity() {
 
     private fun probeQemuDisk(sda: java.io.File) {
         val device = app.fayaz.otgmaster.block.FileBlockDevice(sda)
-        Thread {
+        lifecycleScope.launch(Dispatchers.IO) {
             try {
                 val candidates = app.fayaz.otgmaster.veracrypt.VeraCryptUnlocker().probeCandidates(device)
-                runOnUiThread {
+                withContext(Dispatchers.Main) {
                     openedDevices[QEMU_DEVICE_KEY] = device
                     _deviceCandidates.value = listOf(
                         UsbDeviceCandidate(QEMU_DEVICE_KEY, getString(R.string.qemu_test_disk_label), device, candidates)
@@ -289,9 +290,9 @@ class MainActivity : ComponentActivity() {
             } catch (e: Exception) {
                 e.printStackTrace()
                 device.close()
-                runOnUiThread { appendLog(getString(R.string.log_error_probing_qemu_candidates, e.message)) }
+                withContext(Dispatchers.Main) { appendLog(getString(R.string.log_error_probing_qemu_candidates, e.message)) }
             }
-        }.start()
+        }
     }
 
     /**
@@ -306,20 +307,20 @@ class MainActivity : ComponentActivity() {
         // lose the race for the underlying connection and end up broken.
         if (isProbingDevices) return
         isProbingDevices = true
-        Thread {
+        lifecycleScope.launch(Dispatchers.IO) {
             try {
                 val excludeKeys = OtgMasterState.mountedDrives.mapNotNull { it.sourceDeviceName }.toSet() + openedDevices.keys
                 val openedList = try {
-                    LibaumsRawBlockDeviceOpener(this).openAllAvailable(excludeKeys)
+                    LibaumsRawBlockDeviceOpener(this@MainActivity).openAllAvailable(excludeKeys)
                 } catch (e: Exception) {
                     e.printStackTrace()
-                    runOnUiThread { appendLog(getString(R.string.log_error_probing_candidates, e.message)) }
-                    return@Thread
+                    withContext(Dispatchers.Main) { appendLog(getString(R.string.log_error_probing_candidates, e.message)) }
+                    return@launch
                 }
 
                 if (openedList.isEmpty()) {
-                    runOnUiThread { appendLog(getString(R.string.log_could_not_open_block_device)) }
-                    return@Thread
+                    withContext(Dispatchers.Main) { appendLog(getString(R.string.log_could_not_open_block_device)) }
+                    return@launch
                 }
 
                 val baseIndex = _deviceCandidates.value.size
@@ -334,7 +335,7 @@ class MainActivity : ComponentActivity() {
                     UsbDeviceCandidate(opened.deviceKey, displayName, opened.blockDevice, candidates)
                 }
 
-                runOnUiThread {
+                withContext(Dispatchers.Main) {
                     val existingKeys = _deviceCandidates.value.map { it.deviceName }.toSet()
                     val (uniqueNew, duplicates) = newCandidates.partition { it.deviceName !in existingKeys }
                     // Close rather than leak the redundant connections opened for devices
@@ -347,9 +348,9 @@ class MainActivity : ComponentActivity() {
                     }
                 }
             } finally {
-                runOnUiThread { isProbingDevices = false }
+                withContext(Dispatchers.Main) { isProbingDevices = false }
             }
-        }.start()
+        }
     }
 
     private fun attemptUnlock(
@@ -379,27 +380,27 @@ class MainActivity : ComponentActivity() {
             return
         }
 
-        Thread {
+        lifecycleScope.launch(Dispatchers.IO) {
             try {
                 val decryptedDevice = VeraCryptUnlocker().unlock(
                     device, candidate, password.toCharArray(), pim, keyfiles, contentResolver,
                     cipher, hash
                 )
-                runOnUiThread { appendLog(getString(R.string.log_unlock_successful)) }
+                withContext(Dispatchers.Main) { appendLog(getString(R.string.log_unlock_successful)) }
 
                 val detected = FilesystemDetector.detect(decryptedDevice)
-                runOnUiThread { appendLog(getString(R.string.log_detected_filesystem, detected.displayName)) }
+                withContext(Dispatchers.Main) { appendLog(getString(R.string.log_detected_filesystem, detected.displayName)) }
 
                 if (detected is DetectedFilesystem.Unsupported) {
-                    runOnUiThread {
+                    withContext(Dispatchers.Main) {
                         onComplete()
                         appendLog(getString(R.string.log_cannot_mount_reason, detected.reason))
                     }
-                    return@Thread
+                    return@launch
                 }
 
                 if (detected is DetectedFilesystem.Unknown) {
-                    runOnUiThread { appendLog(getString(R.string.log_filesystem_unrecognized)) }
+                    withContext(Dispatchers.Main) { appendLog(getString(R.string.log_filesystem_unrecognized)) }
                 }
 
                 val dummyEntry = PartitionTableEntry(0, 0, 0)
@@ -414,11 +415,11 @@ class MainActivity : ComponentActivity() {
                         getString(R.string.log_unrecognized_fs_not_mounted)
                     else
                         getString(R.string.log_failed_to_mount, detected.displayName, e.message)
-                    runOnUiThread {
+                    withContext(Dispatchers.Main) {
                         onComplete()
                         appendLog(msg)
                     }
-                    return@Thread
+                    return@launch
                 }
                 val driveId = UUID.randomUUID().toString().substring(0, 8)
                 val mountedDrive = MountedDrive(
@@ -435,7 +436,7 @@ class MainActivity : ComponentActivity() {
                     android.provider.DocumentsContract.buildRootsUri("app.fayaz.otgmaster.documents"), null
                 )
 
-                runOnUiThread {
+                withContext(Dispatchers.Main) {
                     onComplete()
                     updateMountedDrives()
                     appendLog(getString(R.string.log_mounted_successfully, deviceDisplayName, fileSystem.capacity / (1024 * 1024)))
@@ -446,15 +447,15 @@ class MainActivity : ComponentActivity() {
                 }
                 // Pick up any newly attached device since the last probe (and prompt for
                 // permission if needed) now that this one is out of the dropdown.
-                runOnUiThread { refreshDevices() }
+                withContext(Dispatchers.Main) { refreshDevices() }
             } catch (e: Exception) {
                 e.printStackTrace()
-                runOnUiThread {
+                withContext(Dispatchers.Main) {
                     onComplete()
                     appendLog(getString(R.string.log_failed_to_unlock, deviceDisplayName, e.message))
                 }
             }
-        }.start()
+        }
     }
 
     private fun unmountDrive(drive: MountedDrive) {
@@ -462,6 +463,9 @@ class MainActivity : ComponentActivity() {
         contentResolver.notifyChange(
             android.provider.DocumentsContract.buildRootsUri("app.fayaz.otgmaster.documents"), null
         )
+        if (drive.fileSystem is app.fayaz.otgmaster.exfat.ExFatFileSystem) {
+            drive.fileSystem.unmount()
+        }
         drive.blockDevice?.close()
         updateMountedDrives()
         appendLog(getString(R.string.log_drive_unmounted, drive.name))
