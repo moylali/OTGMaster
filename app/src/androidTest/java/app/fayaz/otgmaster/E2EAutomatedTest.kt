@@ -118,8 +118,9 @@ class E2EAutomatedTest {
             passwordField!!.click()
             android.os.SystemClock.sleep(500)
             if (i > 1) {
-                device.executeShellCommand("input keyevent KEYCODE_CTRL_A")
-                device.executeShellCommand("input keyevent KEYCODE_DEL")
+                // Ctrl-A doesn't reliably select-all on Compose TextFields; send enough
+                // backspaces to wipe whatever was left from the previous iteration instead.
+                repeat(50) { device.executeShellCommand("input keyevent KEYCODE_DEL") }
                 android.os.SystemClock.sleep(200)
             }
             device.executeShellCommand("input text $password")
@@ -130,8 +131,7 @@ class E2EAutomatedTest {
                 pimField?.click()
                 android.os.SystemClock.sleep(500)
                 if (i > 1) {
-                    device.executeShellCommand("input keyevent KEYCODE_CTRL_A")
-                    device.executeShellCommand("input keyevent KEYCODE_DEL")
+                    repeat(20) { device.executeShellCommand("input keyevent KEYCODE_DEL") }
                     android.os.SystemClock.sleep(200)
                 }
                 device.executeShellCommand("input text $pim")
