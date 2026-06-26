@@ -28,8 +28,8 @@ android {
         // Static literals, not computed at build time — F-Droid's checkupdates tool statically
         // parses this file's text per-tag and can't resolve a dynamic expression. Bump via
         // scripts/bump-version.sh as part of cutting a release, before tagging.
-        versionCode = 31
-        versionName = "0.2.5"
+        versionCode = 32
+        versionName = "0.2.6"
         testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
         externalNativeBuild {
             cmake {

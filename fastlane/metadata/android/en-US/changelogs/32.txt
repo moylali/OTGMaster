@@ -1,0 +1,1 @@
+- Build improvements for reproducible F-Droid builds; no user-facing changes
