@@ -1,0 +1,57 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Privacy Policy — OTG Master</title>
+  <style>
+    body { font-family: sans-serif; max-width: 680px; margin: 48px auto; padding: 0 24px; color: #222; line-height: 1.6; }
+    h1 { font-size: 1.5rem; }
+    h2 { font-size: 1.1rem; margin-top: 2rem; }
+    p, li { font-size: 0.95rem; }
+  </style>
+</head>
+<body>
+  <h1>Privacy Policy — OTG Master</h1>
+  <p><em>Last updated: 2026-06-26</em></p>
+
+  <p>OTG Master is an open-source Android application that mounts VeraCrypt-encrypted USB drives
+  without root access. This policy explains what data the app does and does not collect.</p>
+
+  <h2>Data collection</h2>
+  <p>OTG Master collects <strong>no personal data</strong> of any kind. Specifically:</p>
+  <ul>
+    <li>No account, name, or email address is ever requested or stored.</li>
+    <li>No usage analytics or crash reports are sent anywhere.</li>
+    <li>No advertising SDKs or third-party tracking libraries are included.</li>
+    <li>No data from your USB drive or its contents is transmitted off your device.</li>
+  </ul>
+
+  <h2>Permissions</h2>
+  <p>The app requests the following Android permission:</p>
+  <ul>
+    <li><strong>USB Host</strong> — required to communicate with USB mass-storage devices attached
+    via OTG cable. The app reads raw sectors from the device solely to decrypt and mount the
+    VeraCrypt volume locally on your device.</li>
+  </ul>
+  <p>The app does not request internet, location, camera, microphone, contacts, or any other
+  sensitive permission.</p>
+
+  <h2>Data storage</h2>
+  <p>All cryptographic operations (decryption, key derivation) happen entirely on-device and
+  in-memory. No passwords, PINs, keyfiles, or decrypted data are written to your device's
+  internal storage by the app.</p>
+
+  <h2>Third-party services</h2>
+  <p>OTG Master uses no third-party services, SDKs, or cloud backends.</p>
+
+  <h2>Open source</h2>
+  <p>The full source code is available at
+  <a href="https://github.com/moylali/OTGMaster">github.com/moylali/OTGMaster</a>
+  under the GPL-2.0-or-later license. You can verify these claims by reading the code directly.</p>
+
+  <h2>Contact</h2>
+  <p>If you have questions about this policy, open an issue at
+  <a href="https://github.com/moylali/OTGMaster/issues">github.com/moylali/OTGMaster/issues</a>.</p>
+</body>
+</html>
