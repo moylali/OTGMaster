@@ -1,0 +1,1 @@
+Write support for FAT32 and exFAT volumes. Fixed a crash on exFAT unmount and corrected exFAT write corruption after remount.

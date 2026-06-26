@@ -6,8 +6,8 @@ Features:
 
 * Unlock VeraCrypt volumes with a password, PIM, and/or keyfiles
 * AES and Serpent ciphers, SHA-512 key derivation
-* Read FAT32 and exFAT filesystems
-* Browse unlocked volumes through any file manager via Android's Storage Access Framework
+* Read and write FAT32 and exFAT filesystems
+* Browse and edit unlocked volumes through any file manager via Android's Storage Access Framework
 * Support for multiple simultaneously attached USB drives, with a picker when more than one is detected
 
-This app is currently read-only and does not support writing to mounted volumes. Filesystems other than FAT32 and exFAT (such as NTFS or ext4) are detected but not yet supported. See the project's roadmap in the source repository for planned support.
+Filesystems other than FAT32 and exFAT (such as NTFS or ext4) are detected but not yet supported for mounting.
