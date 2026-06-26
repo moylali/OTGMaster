@@ -156,7 +156,8 @@ create_partitioned_volume() {
     
     echo "Creating MBR partition table and partitions..."
     parted -s "$IMG_FILE" mklabel msdos
-    parted -s "$IMG_FILE" mkpart primary 1MiB 6MiB
+    parted -s "$IMG_FILE" mkpart primary fat32 1MiB 5MiB
+    parted -s "$IMG_FILE" mkpart primary 5MiB 15MiB
     # Create the VeraCrypt volume in a separate file first (no filesystem so we can force FAT32)
     TMP_VC="$DIR/tmp_vc.img"
     echo "Creating VeraCrypt volume (filesystem=none, will format as FAT32)..."

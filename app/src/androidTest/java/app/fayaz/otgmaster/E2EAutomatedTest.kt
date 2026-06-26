@@ -115,6 +115,20 @@ class E2EAutomatedTest {
             }
 
             assertTrue("USB device not detected — password input not shown within 30s", passwordField != null)
+
+            // For partitioned disks, the VeraCrypt volume is on a specific partition.
+            // Select it from the candidate picker before unlocking.
+            if (testCase == "partitioned_mbr") {
+                val candidatePicker = device.findObject(By.descContains("candidate_picker"))
+                if (candidatePicker != null) {
+                    candidatePicker.click()
+                    android.os.SystemClock.sleep(500)
+                    val partitionOptions = device.findObjects(By.textContains("MBR partition"))
+                    partitionOptions.lastOrNull()?.click()
+                    android.os.SystemClock.sleep(500)
+                }
+            }
+
             passwordField!!.click()
             android.os.SystemClock.sleep(500)
             if (i > 1) {
