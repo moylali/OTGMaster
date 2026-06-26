@@ -27,8 +27,8 @@ class ExFatFileSystemCreator : FileSystemCreator {
                 override val blockSize: Int = blockDevice.blockSize
                 override val blockCount: Long = blockDevice.blocks
                 
-                override fun readBlocks(startBlock: Long, count: Int): ByteArray {
-                    val bytes = ByteArray(count * blockSize)
+                override fun readBlocks(startBlock: Long, blockCount: Int): ByteArray {
+                    val bytes = ByteArray(blockCount * blockSize)
                     val bb = ByteBuffer.wrap(bytes)
                     blockDevice.read(startBlock * blockSize, bb)
                     return bytes
@@ -43,7 +43,6 @@ class ExFatFileSystemCreator : FileSystemCreator {
             }
             
             val exfatPtr = ExFatNative.mount(rawBlockDevice)
-            android.util.Log.d("OTG_EXFAT", "ExFatNative.mount returned $exfatPtr")
             if (exfatPtr == 0L) return null
             
             return ExFatFileSystem(rawBlockDevice, exfatPtr)

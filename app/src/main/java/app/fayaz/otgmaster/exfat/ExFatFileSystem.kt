@@ -36,6 +36,7 @@ class ExFatFileSystem(private val blockDevice: RawBlockDevice, val exfatPtr: Lon
 
     fun unmount() {
         synchronized(this) {
+            if (isUnmounted) return
             isUnmounted = true
             ExFatNative.unmount(exfatPtr)
         }

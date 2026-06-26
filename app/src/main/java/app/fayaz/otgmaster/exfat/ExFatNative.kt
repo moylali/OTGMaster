@@ -82,8 +82,6 @@ object ExFatNative {
 
     @JvmStatic
     fun pwrite(blockDevice: RawBlockDevice, offset: Long, size: Int, srcBuffer: ByteArray): Int {
-        // Phase 3 asks for Write access, but RawBlockDevice currently throws UnsupportedOperationException.
-        // We will implement writeBlocks in RawBlockDevice later.
         return try {
             val blockSize = blockDevice.blockSize
             val startBlock = offset / blockSize
