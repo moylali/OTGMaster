@@ -504,21 +504,30 @@ class MainActivity : ComponentActivity() {
     }
 
     private fun openFilesApp(drive: MountedDrive) {
-        // Use a document URI (not a root URI) so Files app navigates directly into the
-        // root directory rather than treating it as a provider entry in its sidebar —
-        // the sidebar entry behaviour varies by Files app and often opens OTGMaster instead.
         val rootDocUri = DocumentsContract.buildDocumentUri(
             app.fayaz.otgmaster.provider.VeraCryptDocumentProvider.AUTHORITY,
             app.fayaz.otgmaster.provider.VeraCryptDocumentProvider.rootDocIdForDrive(drive.id)
         )
-        val intent = Intent(Intent.ACTION_VIEW)
-        intent.setDataAndType(rootDocUri, DocumentsContract.Document.MIME_TYPE_DIR)
-        intent.addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION or Intent.FLAG_GRANT_WRITE_URI_PERMISSION)
-        try {
-            startActivity(intent)
-        } catch (e: Exception) {
-            appendLog(getString(R.string.log_could_not_open_files_app, e.message))
+        // android.provider.action.BROWSE tells DocumentsUI to navigate directly to this
+        // document location. ACTION_VIEW with MIME_TYPE_DIR is a fallback for third-party
+        // file managers that may not handle BROWSE.
+        val candidates = listOf(
+            Intent("android.provider.action.BROWSE").apply {
+                data = rootDocUri
+                addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION or Intent.FLAG_GRANT_WRITE_URI_PERMISSION)
+            },
+            Intent(Intent.ACTION_VIEW).apply {
+                setDataAndType(rootDocUri, DocumentsContract.Document.MIME_TYPE_DIR)
+                addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION or Intent.FLAG_GRANT_WRITE_URI_PERMISSION)
+            }
+        )
+        for (intent in candidates) {
+            try {
+                startActivity(intent)
+                return
+            } catch (_: Exception) {}
         }
+        appendLog(getString(R.string.log_could_not_open_files_app, "no handler found"))
     }
 
 
