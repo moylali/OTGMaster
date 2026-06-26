@@ -365,9 +365,9 @@ static void finalize_super_block(struct exfat* ef)
 void exfat_unmount(struct exfat* ef)
 {
 	exfat_flush_nodes(ef);	/* ignore return code */
-	exfat_flush(ef);		/* ignore return code */
 	exfat_put_node(ef, ef->root);
 	exfat_reset_cache(ef);
+	exfat_flush(ef);		/* ignore return code */
 	finalize_super_block(ef);
 	exfat_free(ef);			/* will close the descriptor */
 }

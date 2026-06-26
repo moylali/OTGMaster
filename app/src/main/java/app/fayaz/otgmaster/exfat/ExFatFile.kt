@@ -9,13 +9,19 @@ class ExFatFile(
     override val parent: UsbFile?,
     private val node: ExFatNode
 ) : UsbFile {
+    private var isClosed = false
+
+    private fun checkNotClosed() {
+        if (isClosed) throw IOException("File is closed")
+    }
 
     override val isDirectory: Boolean
-        get() = node.isDirectory
+        get() { checkNotClosed(); return node.isDirectory }
 
     override var name: String
-        get() = node.name
+        get() { checkNotClosed(); return node.name }
         set(value) {
+            checkNotClosed()
             val parentPath = parent?.absolutePath ?: ""
             val newPath = if (parentPath == UsbFile.separator) "/$value" else "$parentPath/$value"
             val rc = ExFatNative.rename(fileSystem.exfatPtr, absolutePath, newPath)
@@ -24,11 +30,12 @@ class ExFatFile(
         }
 
     override val absolutePath: String
-        get() = if (isRoot) UsbFile.separator else parent!!.absolutePath + (if (parent.isRoot) "" else UsbFile.separator) + name
+        get() { checkNotClosed(); return if (isRoot) UsbFile.separator else parent!!.absolutePath + (if (parent.isRoot) "" else UsbFile.separator) + name }
 
     override var length: Long
-        get() = node.size
+        get() { checkNotClosed(); return node.size }
         set(value) {
+            checkNotClosed()
             if (isDirectory) throw IOException("Cannot set length on directory")
             val rc = ExFatNative.setLength(fileSystem.exfatPtr, node.nodePtr, value)
             if (rc != 0) throw IOException("Failed to set length on exFAT file: $rc")
@@ -39,6 +46,7 @@ class ExFatFile(
         get() = parent == null
 
     override fun search(path: String): UsbFile? {
+        checkNotClosed()
         val parts = path.split(UsbFile.separator).filter { it.isNotEmpty() }
         var current: UsbFile = this
         for (part in parts) {
@@ -51,23 +59,26 @@ class ExFatFile(
         return current
     }
 
-    override fun createdAt(): Long = node.createdAt
+    override fun createdAt(): Long { checkNotClosed(); return node.createdAt }
 
-    override fun lastModified(): Long = node.lastModified
+    override fun lastModified(): Long { checkNotClosed(); return node.lastModified }
 
-    override fun lastAccessed(): Long = node.lastModified // Fallback
+    override fun lastAccessed(): Long { checkNotClosed(); return node.lastModified } // Fallback
 
     override fun list(): Array<String> {
+        checkNotClosed()
         return listFiles().map { it.name }.toTypedArray()
     }
 
     override fun listFiles(): Array<UsbFile> {
+        checkNotClosed()
         if (!isDirectory) throw IOException("Not a directory")
         val nodes = ExFatNative.readDir(fileSystem.exfatPtr, node.nodePtr)
         return nodes.map { ExFatFile(fileSystem, this, it) }.toTypedArray()
     }
 
     override fun read(offset: Long, destination: ByteBuffer) {
+        checkNotClosed()
         if (isDirectory) throw IOException("Cannot read directory as file")
         val size = destination.remaining()
         val tempBuffer = ByteArray(size)
@@ -78,6 +89,7 @@ class ExFatFile(
     }
 
     override fun write(offset: Long, source: ByteBuffer) {
+        checkNotClosed()
         if (isDirectory) throw IOException("Cannot write to directory")
         val size = source.remaining()
         val tempBuffer = ByteArray(size)
@@ -88,15 +100,26 @@ class ExFatFile(
         }
     }
 
+
+
     override fun flush() {
+        if (isClosed) return
         ExFatNative.flush(fileSystem.exfatPtr)
     }
 
     override fun close() {
-        flush()
+        if (isClosed) return
+        synchronized(fileSystem) {
+            if (!fileSystem.isUnmounted) {
+                flush()
+                ExFatNative.putNode(fileSystem.exfatPtr, node.nodePtr)
+            }
+        }
+        isClosed = true
     }
 
     override fun createDirectory(name: String): UsbFile {
+        checkNotClosed()
         if (!isDirectory) throw IOException("Cannot create directory inside a file")
         val newPath = if (absolutePath == UsbFile.separator) "/$name" else "$absolutePath/$name"
         val rc = ExFatNative.createDirectory(fileSystem.exfatPtr, newPath)
@@ -105,6 +128,7 @@ class ExFatFile(
     }
 
     override fun createFile(name: String): UsbFile {
+        checkNotClosed()
         if (!isDirectory) throw IOException("Cannot create file inside a file")
         val newPath = if (absolutePath == UsbFile.separator) "/$name" else "$absolutePath/$name"
         val rc = ExFatNative.createFile(fileSystem.exfatPtr, newPath)
@@ -113,13 +137,21 @@ class ExFatFile(
     }
 
     override fun moveTo(destination: UsbFile) {
+        checkNotClosed()
         val newPath = if (destination.absolutePath == UsbFile.separator) "/$name" else "${destination.absolutePath}/$name"
         val rc = ExFatNative.rename(fileSystem.exfatPtr, absolutePath, newPath)
         if (rc != 0) throw IOException("Failed to move exFAT file: $rc")
     }
 
     override fun delete() {
+        checkNotClosed()
         val rc = ExFatNative.deleteNode(fileSystem.exfatPtr, node.nodePtr)
         if (rc != 0) throw IOException("Failed to delete exFAT file/dir: $rc")
+    }
+
+    protected fun finalize() {
+        if (!isClosed) {
+            close()
+        }
     }
 }

@@ -234,3 +234,17 @@ Java_app_fayaz_otgmaster_exfat_ExFatNative_flush(JNIEnv *env, jclass clazz, jlon
     exfat_flush_nodes(ef);
     return exfat_fsync(ef->dev);
 }
+
+extern "C" JNIEXPORT void JNICALL
+Java_app_fayaz_otgmaster_exfat_ExFatNative_putNode(JNIEnv *env, jclass clazz, jlong exfatPtr, jlong nodePtr) {
+    struct exfat *ef = (struct exfat *) exfatPtr;
+    struct exfat_node *node = (struct exfat_node *) nodePtr;
+    if (ef && node) {
+        exfat_put_node(ef, node);
+        if (node->references == 0 && node->is_unlinked) {
+            exfat_cleanup_node(ef, node);
+            free(node->name);
+            free(node);
+        }
+    }
+}

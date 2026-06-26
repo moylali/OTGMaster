@@ -616,6 +616,15 @@ static void reset_cache(struct exfat* ef, struct exfat_node* node)
 		exfat_get_name(node, buffer);
 		exfat_bug("node '%s' is dirty", buffer);
 	}
+	if (node->is_unlinked)
+	{
+		node->references = 0; // force cleanup
+		// exfat_cleanup_node frees the node internally, so we don't need to do it.
+		// BUT reset_cache caller also frees it!
+		// Let's NOT call exfat_cleanup_node here.
+		// INSTEAD, just do exfat_truncate to free clusters!
+		exfat_truncate(ef, node, 0, true);
+	}
 	while (node->references)
 		exfat_put_node(ef, node);
 }

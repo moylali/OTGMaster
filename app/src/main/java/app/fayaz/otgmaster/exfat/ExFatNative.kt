@@ -54,6 +54,9 @@ object ExFatNative {
     @JvmStatic
     external fun flush(exfatPtr: Long): Int
 
+    @JvmStatic
+    external fun putNode(exfatPtr: Long, nodePtr: Long)
+
     // These functions will be called FROM C via JNI to read/write the block device.
     
     @JvmStatic

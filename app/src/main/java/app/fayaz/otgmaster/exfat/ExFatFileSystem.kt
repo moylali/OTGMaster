@@ -5,6 +5,9 @@ import me.jahnen.libaums.core.fs.FileSystem
 import me.jahnen.libaums.core.fs.UsbFile
 
 class ExFatFileSystem(private val blockDevice: RawBlockDevice, val exfatPtr: Long) : FileSystem {
+    @Volatile
+    var isUnmounted = false
+        private set
     private val _rootDirectory: ExFatFile by lazy {
         val rootNode = ExFatNative.getRootNode(exfatPtr)
         ExFatFile(this, null, rootNode!!)
@@ -32,6 +35,9 @@ class ExFatFileSystem(private val blockDevice: RawBlockDevice, val exfatPtr: Lon
         get() = 0 // exfat partition type, maybe just 0 or custom
 
     fun unmount() {
-        ExFatNative.unmount(exfatPtr)
+        synchronized(this) {
+            isUnmounted = true
+            ExFatNative.unmount(exfatPtr)
+        }
     }
 }
