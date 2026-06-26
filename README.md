@@ -39,8 +39,41 @@ JVM unit tests (e.g. `FilesystemDetector`) run without a device:
 ```
 
 The full device end-to-end suite (VeraCrypt unlock + mount against generated test volumes,
-run on a QEMU Android emulator) is documented in `run_e2e_tests.sh` and is not part of CI,
+run on a QEMU Android emulator) is documented in `scripts/run_e2e_tests.sh` and is not part of CI,
 since it needs real USB-device emulation that isn't available on hosted runners.
+
+### Running E2E Tests
+
+The E2E tests run on a local Android emulator via QEMU, which allows us to emulate USB mass-storage devices.
+To run the full suite:
+
+```bash
+./scripts/run_e2e_tests.sh
+```
+
+**Options:**
+- `--headless`: Run the emulator in the background without a window.
+- `--only <test_name>`: Run only a specific test directory (e.g., `--only fat32`).
+
+### Adding New Test Cases
+
+Test cases are defined dynamically based on the contents of the `testdata/` directory.
+
+To add a new test case:
+1. Update `scripts/generate_testdata.sh` to generate a new directory under `testdata/` (e.g., `testdata/my_new_case`).
+2. The generator must create a `test.img` (the VeraCrypt volume) inside this directory.
+3. The generator must also output the following configuration files into the directory to tell the test runner what to expect:
+   - `password.txt` (Required): The decryption password.
+   - `pim.txt` (Optional): The PIM value, defaults to empty if not present.
+   - `test.key` (Optional): The keyfile.
+   - `cipher.txt` (Optional): The cipher to select (e.g., `Serpent`), defaults to `AES`.
+   - `expects_error.txt` (Optional): If present, the test expects the mount to fail (e.g., for unsupported filesystems).
+   - `expected_fs.txt` (Optional): Used with `expects_error.txt` to verify the app correctly identified the filesystem before rejecting it.
+
+### Verifying Test Failures
+
+During the test run, each test case outputs its state to the terminal.
+If a test fails, you can find the complete Android `logcat` dump for that specific test run in the root directory, named `logcat_<test_name>.txt` (e.g., `logcat_fat32.txt`). This allows you to inspect the exception stack traces or debug logs that caused the failure.
 
 ## CI/CD
 

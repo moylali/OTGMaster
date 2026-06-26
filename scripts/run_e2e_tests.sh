@@ -130,8 +130,12 @@ echo "Slot file initialised with: $FIRST_IMG"
 # Launch the emulator once with the slot file as a persistent USB drive backend.
 # The drive backend (slot_dev) stays alive for the full run; we only hot-remove
 # and re-add the USB storage device between tests.
-echo "Launching Emulator..."
+DUMMY_FILE="$TESTDATA_DIR/dummy.img"
+echo "Launching Emulator with Multi-Drive support..."
 QEMU_USB_FLAGS="-qemu -usb -device qemu-xhci,id=xhci \
+  -blockdev driver=file,node-name=dummy_file,filename=$DUMMY_FILE \
+  -blockdev driver=raw,node-name=dummy_dev,file=dummy_file \
+  -device usb-storage,bus=xhci.0,drive=dummy_dev,id=dummy_usb,removable=true \
   -blockdev driver=file,node-name=slot_file,filename=$SLOT_FILE \
   -blockdev driver=raw,node-name=slot_dev,file=slot_file \
   -device usb-storage,bus=xhci.0,drive=slot_dev,id=usbdev0,removable=true"
@@ -213,6 +217,11 @@ for test_dir in "$TESTDATA_DIR"/*/; do
         CIPHER_ARG="-e cipher $CIPHER"
     fi
 
+    REMOUNT_ARG=""
+    if [ "$TEST_NAME" = "fat32" ]; then
+        REMOUNT_ARG="-e remount_test true"
+    fi
+
     echo "=================================================="
     echo "Running Test Case: $TEST_NAME"
     echo "Image: $IMG_FILE"
@@ -254,6 +263,7 @@ for test_dir in "$TESTDATA_DIR"/*/; do
         $EXPECT_MOUNT_ARG \
         $EXPECTED_FS_ARG \
         $CIPHER_ARG \
+        $REMOUNT_ARG \
         -e class app.fayaz.otgmaster.E2EAutomatedTest \
         $PACKAGE_NAME.test/androidx.test.runner.AndroidJUnitRunner)
 

@@ -78,94 +78,125 @@ class E2EAutomatedTest {
             Log.d("E2E", "USB permission dialog not present, proceeding")
         }
 
-        // Type password (wait up to 30s because probing USB takes time)
-        val passwordField = device.wait(Until.findObject(By.descContains("password_input")), 30000L)
-        assertTrue("USB device not detected — password input not shown within 30s", passwordField != null)
-        passwordField!!.click()
-        android.os.SystemClock.sleep(500)
-        device.executeShellCommand("input text $password")
-        android.os.SystemClock.sleep(500)
-        device.pressEnter()
-        android.os.SystemClock.sleep(500)
+        val isRemountTest = arguments.getString("remount_test", "false") == "true"
+        
+        // Loop at least once, or twice if remount test
+        val iterations = if (isRemountTest) 2 else 1
+        
+        for (i in 1..iterations) {
+            if (i > 1) {
+                // Click Scan again for remount
+                val scanButton = device.wait(Until.findObject(By.textContains("Scan")), timeout)
+                    ?: device.wait(Until.findObject(By.descContains("Scan")), timeout)
+                scanButton?.click()
+                android.os.SystemClock.sleep(2000)
+            }
 
-        if (pim.isNotEmpty()) {
-            val pimField = device.wait(Until.findObject(By.descContains("pim_input")), timeout)
-            pimField?.click()
+            // The app might default to the dummy drive which has no candidates.
+            // Wait up to 15s to see if password input appears. If not, and there's a device picker, pick the other one.
+            var passwordField = device.wait(Until.findObject(By.descContains("password_input")), 15000L)
+            if (passwordField == null) {
+                val devicePicker = device.findObject(By.descContains("device_picker"))
+                if (devicePicker != null) {
+                    devicePicker.click()
+                    android.os.SystemClock.sleep(500)
+                    val options = device.findObjects(By.textContains("QEMU"))
+                    if (options.size > 1) {
+                        options.last().click()
+                        android.os.SystemClock.sleep(1000)
+                    }
+                }
+                passwordField = device.wait(Until.findObject(By.descContains("password_input")), 15000L)
+            }
+
+            assertTrue("USB device not detected — password input not shown within 30s", passwordField != null)
+            passwordField!!.click()
             android.os.SystemClock.sleep(500)
-            device.executeShellCommand("input text $pim")
+            device.executeShellCommand("input text $password")
             android.os.SystemClock.sleep(500)
             device.pressEnter()
             android.os.SystemClock.sleep(500)
-        }
 
-        if (keyfile.isNotEmpty()) {
-            val selectKeyfileBtn = device.wait(Until.findObject(By.textContains("Select Keyfile")), timeout)
-            selectKeyfileBtn?.click()
-
-            // Wait for SAF picker
-            val fileObject = device.wait(Until.findObject(By.textContains(keyfile)), timeout * 2)
-            fileObject?.click()
-        }
-
-        if (cipher.isNotEmpty() && cipher != "AES") {
-            val cipherPicker = device.wait(Until.findObject(By.descContains("cipher_picker")), timeout)
-            assertTrue("Cipher picker not found", cipherPicker != null)
-            cipherPicker?.click()
-            android.os.SystemClock.sleep(500)
-            val cipherOption = device.wait(Until.findObject(By.textContains(cipher)), timeout)
-            assertTrue("Cipher option '$cipher' not found in picker", cipherOption != null)
-            cipherOption?.click()
-            android.os.SystemClock.sleep(500)
-        }
-
-        // Click Mount
-        val mountButton = device.wait(Until.findObject(By.descContains("mount_button")), timeout)
-            ?: device.wait(Until.findObject(By.textContains("Unlock & Mount")), timeout)
-        assertTrue("Mount button not found", mountButton != null)
-        assertTrue("Mount button is not enabled", mountButton!!.isEnabled)
-        mountButton.click()
-
-        if (!expectMount) {
-            assertCannotMountError(expectedFs)
-            return
-        }
-
-        // Wait for "Mounted" state. Increase timeout to 300s due to slow emulator crypto performance.
-        val mountedText = device.wait(Until.findObject(By.textContains("Used")), 300000L)
-        assertTrue("Drive was not successfully mounted!", mountedText != null)
-
-        // Verify capacity is populated
-        val usedText = mountedText?.text ?: ""
-        assertTrue("Used capacity should not be empty", usedText.contains("Used:"))
-        val freeTextObj = device.findObject(By.textContains("Free:"))
-        assertTrue("Free capacity should be visible", freeTextObj != null)
-
-        val context = ApplicationProvider.getApplicationContext<Context>()
-        
-        // Dynamically find the docId for flower.jpg since it is now prepended with a dynamic drive ID
-        val rootsUri = android.provider.DocumentsContract.buildRootsUri("app.fayaz.otgmaster.documents")
-        var rootDocId: String? = null
-        context.contentResolver.query(rootsUri, null, null, null, null)?.use { cursor ->
-            if (cursor.moveToFirst()) {
-                val index = cursor.getColumnIndex(android.provider.DocumentsContract.Root.COLUMN_DOCUMENT_ID)
-                if (index != -1) rootDocId = cursor.getString(index)
+            if (pim.isNotEmpty()) {
+                val pimField = device.wait(Until.findObject(By.descContains("pim_input")), timeout)
+                pimField?.click()
+                android.os.SystemClock.sleep(500)
+                device.executeShellCommand("input text $pim")
+                android.os.SystemClock.sleep(500)
+                device.pressEnter()
+                android.os.SystemClock.sleep(500)
             }
-        }
-        assertTrue("No roots found from DocumentsProvider", rootDocId != null)
 
-        val childrenUri = android.provider.DocumentsContract.buildChildDocumentsUri("app.fayaz.otgmaster.documents", rootDocId)
-        var flowerDocId: String? = null
-        context.contentResolver.query(childrenUri, null, null, null, null)?.use { cursor ->
-            while (cursor.moveToNext()) {
-                val docIdIndex = cursor.getColumnIndex(android.provider.DocumentsContract.Document.COLUMN_DOCUMENT_ID)
-                val docId = cursor.getString(docIdIndex)
-                if (docId != null && docId.endsWith("flower.jpg")) {
-                    flowerDocId = docId
-                    break
+            if (keyfile.isNotEmpty()) {
+                val selectKeyfileBtn = device.wait(Until.findObject(By.textContains("Select Keyfile")), timeout)
+                selectKeyfileBtn?.click()
+
+                // Wait for SAF picker
+                val fileObject = device.wait(Until.findObject(By.textContains(keyfile)), timeout * 2)
+                fileObject?.click()
+            }
+
+            if (cipher.isNotEmpty() && cipher != "AES") {
+                val cipherPicker = device.wait(Until.findObject(By.descContains("cipher_picker")), timeout)
+                assertTrue("Cipher picker not found", cipherPicker != null)
+                cipherPicker?.click()
+                android.os.SystemClock.sleep(500)
+                val cipherOption = device.wait(Until.findObject(By.textContains(cipher)), timeout)
+                assertTrue("Cipher option '$cipher' not found in picker", cipherOption != null)
+                cipherOption?.click()
+                android.os.SystemClock.sleep(500)
+            }
+
+            // Click Mount
+            val mountButton = device.wait(Until.findObject(By.descContains("mount_button")), timeout)
+                ?: device.wait(Until.findObject(By.textContains("Unlock & Mount")), timeout)
+            assertTrue("Mount button not found", mountButton != null)
+            assertTrue("Mount button is not enabled", mountButton!!.isEnabled)
+            mountButton.click()
+
+            if (!expectMount) {
+                assertCannotMountError(expectedFs)
+                return
+            }
+
+            // Wait for "Mounted" state. Increase timeout to 300s due to slow emulator crypto performance.
+            val mountedText = device.wait(Until.findObject(By.textContains("Used")), 300000L)
+            assertTrue("Drive was not successfully mounted!", mountedText != null)
+
+            // Verify capacity is populated
+            val usedText = mountedText?.text ?: ""
+            assertTrue("Used capacity should not be empty", usedText.contains("Used:"))
+            val freeTextObj = device.findObject(By.textContains("Free:"))
+            assertTrue("Free capacity should be visible", freeTextObj != null)
+
+            val context = ApplicationProvider.getApplicationContext<Context>()
+            
+            // Dynamically find the docId for flower.jpg since it is now prepended with a dynamic drive ID
+            val rootsUri = android.provider.DocumentsContract.buildRootsUri("app.fayaz.otgmaster.documents")
+            var rootDocId: String? = null
+            context.contentResolver.query(rootsUri, null, null, null, null)?.use { cursor ->
+                if (cursor.moveToFirst()) {
+                    val index = cursor.getColumnIndex(android.provider.DocumentsContract.Root.COLUMN_DOCUMENT_ID)
+                    if (index != -1) rootDocId = cursor.getString(index)
                 }
             }
-        }
-        assertTrue("flower.jpg not found in the root directory", flowerDocId != null)
+            assertTrue("No roots found from DocumentsProvider", rootDocId != null)
+
+            val childrenUri = android.provider.DocumentsContract.buildChildDocumentsUri("app.fayaz.otgmaster.documents", rootDocId)
+            var flowerDocId: String? = null
+            var spaceFileDocId: String? = null
+            context.contentResolver.query(childrenUri, null, null, null, null)?.use { cursor ->
+                while (cursor.moveToNext()) {
+                    val docIdIndex = cursor.getColumnIndex(android.provider.DocumentsContract.Document.COLUMN_DOCUMENT_ID)
+                    val docId = cursor.getString(docIdIndex)
+                    if (docId != null) {
+                        if (docId.endsWith("flower.jpg")) flowerDocId = docId
+                        if (docId.endsWith("file with spaces.txt")) spaceFileDocId = docId
+                    }
+                }
+            }
+            assertTrue("flower.jpg not found in the root directory", flowerDocId != null)
+            assertTrue("file with spaces.txt not found in the root directory", spaceFileDocId != null)
 
         val providerUri = android.provider.DocumentsContract.buildDocumentUri("app.fayaz.otgmaster.documents", flowerDocId)
         val outFile = java.io.File("/sdcard/Download/flower.jpg")
@@ -215,6 +246,7 @@ class E2EAutomatedTest {
 
         val unmountGone = device.wait(Until.gone(By.descContains("unmount_button")), timeout)
         assertTrue("Drive was not successfully unmounted!", unmountGone)
+        }
     }
 
     private fun assertCannotMountError(expectedFs: String) {
