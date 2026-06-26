@@ -59,14 +59,19 @@ create_fat32_volume() {
     fi
     
     sudo mkfs.fat -F 32 "$MAPPED_SLOT"
-    
+
     mkdir -p "/tmp/mnt_fat32_vc"
     sudo mount -o "uid=$(id -u),gid=$(id -g)" "$MAPPED_SLOT" "/tmp/mnt_fat32_vc"
-    
+
     populate_complex_files "/tmp/mnt_fat32_vc"
-    
+
+    sudo sync
     sudo umount "/tmp/mnt_fat32_vc"
-    sudo veracrypt -t -d "$IMG_FILE"
+    sudo sync
+    # veracrypt -d can race with the kernel releasing the device; fall back to dmsetup
+    sudo veracrypt -t -d "$IMG_FILE" 2>/dev/null \
+        || sudo dmsetup remove "$(basename "$MAPPED_SLOT")" 2>/dev/null \
+        || true
     rm -rf "/tmp/mnt_fat32_vc"
 }
 
@@ -172,8 +177,12 @@ create_partitioned_volume() {
     populate_complex_files "/tmp/mnt_part_vc"
 
     echo "Unmounting..."
+    sudo sync
     sudo umount "/tmp/mnt_part_vc"
-    sudo veracrypt -t -d "$TMP_VC"
+    sudo sync
+    sudo veracrypt -t -d "$TMP_VC" 2>/dev/null \
+        || sudo dmsetup remove "$(basename "$MAPPED_SLOT")" 2>/dev/null \
+        || true
     rm -rf "/tmp/mnt_part_vc"
     
     echo "Formatting the first partition as normal FAT32..."
