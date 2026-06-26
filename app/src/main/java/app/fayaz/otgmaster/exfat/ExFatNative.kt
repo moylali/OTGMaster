@@ -28,7 +28,7 @@ object ExFatNative {
     external fun getRootNode(exfatPtr: Long): ExFatNode?
 
     @JvmStatic
-    external fun readDir(exfatPtr: Long, nodePtr: Long): Array<ExFatNode>
+    external fun readDir(exfatPtr: Long, nodePtr: Long): Array<ExFatNode>?
 
     @JvmStatic
     external fun readFile(exfatPtr: Long, nodePtr: Long, offset: Long, size: Int, buffer: ByteArray): Int

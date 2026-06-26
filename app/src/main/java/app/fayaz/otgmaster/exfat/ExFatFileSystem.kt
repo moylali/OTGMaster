@@ -26,7 +26,9 @@ class ExFatFileSystem(private val blockDevice: RawBlockDevice, val exfatPtr: Lon
         get() = capacity - freeSpace
 
     override val freeSpace: Long
-        get() = if (isUnmounted) 0L else ExFatNative.getFreeSpace(exfatPtr)
+        get() = synchronized(this) {
+            if (isUnmounted) 0L else ExFatNative.getFreeSpace(exfatPtr)
+        }
 
     override val chunkSize: Int
         get() = blockDevice.blockSize
