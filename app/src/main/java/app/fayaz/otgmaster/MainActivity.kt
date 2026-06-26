@@ -213,6 +213,16 @@ class MainActivity : ComponentActivity() {
         refreshDevices()
     }
 
+    override fun onNewIntent(intent: Intent) {
+        super.onNewIntent(intent)
+        // With singleTop launch mode, a USB_DEVICE_ATTACHED intent delivered while this
+        // activity is already at the top of the stack arrives here instead of creating a
+        // new instance. Trigger a device refresh so the newly attached drive is probed.
+        if (intent.action == UsbManager.ACTION_USB_DEVICE_ATTACHED) {
+            refreshDevices()
+        }
+    }
+
     override fun onDestroy() {
         closeOpenedDevices()
         unregisterReceiver(usbReceiver)
