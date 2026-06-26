@@ -1341,6 +1341,25 @@ fun SettingsDrawer(
                         }
                     }
 
+                    val uriHandler = androidx.compose.ui.platform.LocalUriHandler.current
+                    val donateUrl = stringResource(R.string.donate_url)
+                    SettingsExpandableRow(
+                        title = stringResource(R.string.donate_title),
+                        summary = stringResource(R.string.donate_summary)
+                    ) {
+                        TextButton(
+                            onClick = { uriHandler.openUri(donateUrl) },
+                            modifier = Modifier.fillMaxWidth()
+                        ) {
+                            Text(donateUrl)
+                        }
+                        Text(
+                            stringResource(R.string.donate_thank_you),
+                            style = MaterialTheme.typography.bodyMedium,
+                            modifier = Modifier.padding(horizontal = 8.dp, vertical = 4.dp)
+                        )
+                    }
+
                     SettingsExpandableRow(
                         title = stringResource(R.string.app_version_label),
                         summary = versionText
