@@ -144,9 +144,9 @@ create_unsupported_volume() {
 
     # Create dummy files only if we can write to it
     if [ "$FS_VERACRYPT" != "ext4" ]; then
-        echo "Hello $FS_DISPLAY_NAME" > "/tmp/mnt_other_vc/hello.txt"
-        mkdir -p "/tmp/mnt_other_vc/folder"
-        echo "World" > "/tmp/mnt_other_vc/folder/world.txt"
+        echo "Hello $FS_DISPLAY_NAME" | sudo tee "/tmp/mnt_other_vc/hello.txt" > /dev/null
+        sudo mkdir -p "/tmp/mnt_other_vc/folder"
+        echo "World" | sudo tee "/tmp/mnt_other_vc/folder/world.txt" > /dev/null
     fi
 
     echo "Unmounting..."

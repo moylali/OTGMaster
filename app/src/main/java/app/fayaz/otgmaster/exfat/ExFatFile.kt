@@ -110,12 +110,17 @@ class ExFatFile(
     override fun close() {
         if (isClosed) return
         synchronized(fileSystem) {
+            if (isClosed) return
+            isClosed = true
             if (!fileSystem.isUnmounted) {
                 flush()
-                ExFatNative.putNode(fileSystem.exfatPtr, node.nodePtr)
+                // Root node ref count is NOT incremented by getRootNode (it just wraps the
+                // pointer), so putNode must not be called on root — exfat_unmount handles it.
+                if (!isRoot) {
+                    ExFatNative.putNode(fileSystem.exfatPtr, node.nodePtr)
+                }
             }
         }
-        isClosed = true
     }
 
     override fun createDirectory(name: String): UsbFile {

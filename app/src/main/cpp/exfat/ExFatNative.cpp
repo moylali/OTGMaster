@@ -107,6 +107,7 @@ Java_app_fayaz_otgmaster_exfat_ExFatNative_readDir(JNIEnv *env, jclass clazz, jl
     int count = 0;
     while ((child = exfat_readdir(&it)) != NULL) {
         count++;
+        exfat_put_node(ef, child);  /* balance exfat_readdir's get_node; node stays in cache */
     }
     
     exfat_closedir(ef, &it);
@@ -232,6 +233,7 @@ Java_app_fayaz_otgmaster_exfat_ExFatNative_flush(JNIEnv *env, jclass clazz, jlon
     if (!ef) return -1;
     
     exfat_flush_nodes(ef);
+    exfat_flush(ef);  /* write cluster allocation bitmap */
     return exfat_fsync(ef->dev);
 }
 
