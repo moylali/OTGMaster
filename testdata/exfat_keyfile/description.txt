@@ -1,0 +1,1 @@
+AES-encrypted VeraCrypt volume (10 MB) formatted as exFAT. Requires a keyfile (test.key) in addition to the password; tests the SAF keyfile-picker UI flow.

@@ -1,0 +1,1 @@
+VeraCrypt volume (10 MB) formatted as FAT32, encrypted with the Serpent cipher instead of AES. Tests that the app correctly handles a non-default symmetric cipher end-to-end.

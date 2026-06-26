@@ -1,0 +1,1 @@
+Raw disk image (20 MB) with an MBR partition table. Partition 1 (1–5 MiB) is a plain FAT32 partition; partition 2 (5–15 MiB) is an AES-encrypted VeraCrypt volume formatted as FAT32. Tests MBR partition scanning, the candidate-picker UI, and mounting a VeraCrypt volume embedded in a partitioned disk.

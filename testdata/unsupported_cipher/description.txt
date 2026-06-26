@@ -1,0 +1,1 @@
+AES-encrypted FAT32 VeraCrypt volume, but the UI cipher picker is set to Twofish before mounting. The app must reject the attempt immediately (header cannot be decrypted) and show 'Cannot mount' — no I/O on the actual volume data occurs.

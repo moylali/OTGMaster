@@ -39,6 +39,12 @@ create_fat32_volume() {
     echo "$PIM_VAL" > "$DIR/pim.txt"
     echo "$CIPHER" > "$DIR/cipher.txt"
 
+    local desc="AES-encrypted VeraCrypt volume (10 MB) formatted as FAT32, PIM=${PIM_VAL}."
+    [ "$HAS_KEYFILE" = "true" ] && desc="$desc Requires a keyfile (test.key) in addition to the password."
+    [ "$PIM_VAL" != "1" ] && desc="$desc Custom PIM tests that the key-derivation iteration count is honoured."
+    [ "$CIPHER" != "AES" ] && desc="AES replaced by $CIPHER cipher; otherwise identical to the base fat32 case."
+    echo "$desc" > "$DIR/description.txt"
+
     KEY_ARG=""
     if [ "$HAS_KEYFILE" = "true" ]; then
         dd if=/dev/urandom of="$DIR/test.key" bs=64 count=1 2>/dev/null
@@ -83,6 +89,10 @@ create_exfat_volume() {
     echo "$PASSWORD" > "$DIR/password.txt"
     echo "1" > "$DIR/pim.txt"
 
+    local desc="AES-encrypted VeraCrypt volume (10 MB) formatted as exFAT — the primary supported filesystem."
+    [ "$HAS_KEYFILE" = "true" ] && desc="$desc Requires a keyfile (test.key); tests the SAF keyfile-picker UI flow."
+    echo "$desc" > "$DIR/description.txt"
+
     KEY_ARG=""
     if [ "$HAS_KEYFILE" = "true" ]; then
         dd if=/dev/urandom of="$DIR/test.key" bs=64 count=1 2>/dev/null
@@ -116,6 +126,7 @@ create_unsupported_volume() {
     echo "1" > "$DIR/pim.txt"
     echo "true" > "$DIR/expects_error.txt"
     echo "$FS_DISPLAY_NAME" > "$DIR/expected_fs.txt"
+    echo "AES-encrypted VeraCrypt volume formatted as $FS_DISPLAY_NAME (not supported by the app). Verifies the app detects the filesystem type and shows 'Cannot mount' without mounting." > "$DIR/description.txt"
 
     echo "Creating $IMG_FILE (inner: $FS_DISPLAY_NAME)..."
     touch "$IMG_FILE" && chmod 666 "$IMG_FILE" && sudo veracrypt -t -c --volume-type=normal "$IMG_FILE" --size="10M" --password="$PASSWORD" \
@@ -146,10 +157,11 @@ create_unsupported_volume() {
 create_partitioned_volume() {
     DIR=$1
     IMG_FILE="$DIR/test.img"
-    
+
     echo "$PASSWORD" > "$DIR/password.txt"
     echo "1" > "$DIR/pim.txt"
     echo "AES" > "$DIR/cipher.txt"
+    echo "Raw disk image (20 MB) with an MBR partition table. Partition 1 (1–5 MiB) is a plain FAT32 partition; partition 2 (5–15 MiB) is an AES-encrypted VeraCrypt volume formatted as FAT32. Tests MBR partition scanning, the candidate-picker UI, and mounting a VeraCrypt volume embedded in a partitioned disk." > "$DIR/description.txt"
     
     echo "Creating 20M raw disk image for partitioned volume..."
     dd if=/dev/zero of="$IMG_FILE" bs=1M count=20 2>/dev/null
@@ -214,6 +226,7 @@ mkdir -p testdata/unsupported_cipher
 create_fat32_volume "testdata/unsupported_cipher" "false"
 echo "Twofish" > "testdata/unsupported_cipher/cipher.txt"
 echo "true" > "testdata/unsupported_cipher/expects_error.txt"
+echo "AES-encrypted FAT32 VeraCrypt volume, but the UI cipher picker is set to Twofish before mounting. The app must reject the attempt immediately (header cannot be decrypted) and show 'Cannot mount' — no I/O on the actual volume data occurs." > "testdata/unsupported_cipher/description.txt"
 
 create_exfat_volume "testdata/exfat" "false"
 create_exfat_volume "testdata/exfat_keyfile" "true"

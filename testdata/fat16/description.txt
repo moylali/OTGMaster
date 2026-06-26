@@ -1,0 +1,1 @@
+AES-encrypted VeraCrypt volume formatted as FAT16 (not supported by the app). Verifies FAT16 detection and rejection with the expected 'Cannot mount' message.

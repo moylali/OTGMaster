@@ -1,0 +1,1 @@
+AES-encrypted VeraCrypt volume (10 MB) formatted as FAT32, PIM=1. Requires a keyfile (test.key); tests keyfile authentication combined with the FAT32 filesystem path.

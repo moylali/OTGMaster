@@ -1,0 +1,1 @@
+AES-encrypted VeraCrypt volume (10 MB) formatted as exFAT — the primary supported filesystem. Covers the standard happy path: scan → password → mount → verify files (flower.jpg, file with spaces.txt) → open in viewer → unmount.

@@ -1,0 +1,1 @@
+AES-encrypted VeraCrypt volume formatted as ext4 (not supported by the app). Verifies the app detects the filesystem type and shows 'Cannot mount' without mounting.

@@ -133,8 +133,33 @@ $CMD_ADB -s emulator-5554 install -t app/build/outputs/apk/androidTest/debug/app
 
 echo "Starting E2E Tests..."
 
+# Collect version/commit info for the report
+APP_VERSION=$(grep 'versionName' app/build.gradle.kts 2>/dev/null | head -1 | grep -o '"[^"]*"' | tr -d '"' || echo "unknown")
+GIT_COMMIT=$(git rev-parse --short HEAD 2>/dev/null || echo "unknown")
+RUN_DATE=$(date '+%Y-%m-%d %H:%M:%S')
+REPORT_FILE="e2e_report_v${APP_VERSION}_${GIT_COMMIT}_$(date +%Y%m%d_%H%M%S).md"
+
+# Write report header
+cat > "$REPORT_FILE" << REPORT_HEADER
+# OTGMaster E2E Test Report
+
+| Field | Value |
+|-------|-------|
+| Version | $APP_VERSION |
+| Commit | \`$GIT_COMMIT\` |
+| Date | $RUN_DATE |
+
+## Results
+
+| # | Test Case | Description | Result | Duration |
+|---|-----------|-------------|--------|----------|
+REPORT_HEADER
+
 OVERALL_EXIT=0
 IS_FIRST_TEST=true
+TEST_NUM=0
+PASSED_COUNT=0
+FAILED_COUNT=0
 
 for test_dir in "$TESTDATA_DIR"/*/; do
     if [ ! -d "$test_dir" ]; then continue; fi
@@ -187,6 +212,13 @@ for test_dir in "$TESTDATA_DIR"/*/; do
         REMOUNT_ARG="-e remount_test true"
     fi
 
+    TEST_NUM=$((TEST_NUM + 1))
+    DESCRIPTION=""
+    if [ -f "$test_dir/description.txt" ]; then
+        DESCRIPTION=$(cat "$test_dir/description.txt")
+    fi
+    TEST_START=$(date +%s)
+
     echo "=================================================="
     echo "Running Test Case: $TEST_NAME"
     echo "Image: $IMG_FILE"
@@ -195,6 +227,7 @@ for test_dir in "$TESTDATA_DIR"/*/; do
     else
         echo "Expects: successful mount (cipher: $CIPHER)"
     fi
+    [ -n "$DESCRIPTION" ] && echo "Description: $DESCRIPTION"
     echo "=================================================="
 
     # QEMU hotplug is no longer used; Android E2EAutomatedTest directly overwrites /dev/block/sda using dd.
@@ -248,18 +281,43 @@ for test_dir in "$TESTDATA_DIR"/*/; do
     # Force-stop app to reset state; USB stays connected until the next test's usb_swap
     $CMD_ADB -s emulator-5554 shell am force-stop "$PACKAGE_NAME"
 
+    TEST_END=$(date +%s)
+    DURATION=$((TEST_END - TEST_START))
+
     if [ $TEST_EXIT_CODE -ne 0 ]; then
         echo "TEST FAILED: $TEST_NAME"
         OVERALL_EXIT=1
+        FAILED_COUNT=$((FAILED_COUNT + 1))
+        echo "| $TEST_NUM | \`$TEST_NAME\` | $DESCRIPTION | ❌ FAILED | ${DURATION}s |" >> "$REPORT_FILE"
         break
     else
         echo "TEST PASSED: $TEST_NAME"
+        PASSED_COUNT=$((PASSED_COUNT + 1))
+        echo "| $TEST_NUM | \`$TEST_NAME\` | $DESCRIPTION | ✅ PASSED | ${DURATION}s |" >> "$REPORT_FILE"
     fi
 done
 
 echo "Killing emulator..."
 $CMD_ADB -s emulator-5554 emu kill
 wait $EMU_PID 2>/dev/null
+
+TOTAL_COUNT=$((PASSED_COUNT + FAILED_COUNT))
+OVERALL_STATUS=$([ $OVERALL_EXIT -eq 0 ] && echo "✅ ALL PASSED" || echo "❌ FAILED")
+
+cat >> "$REPORT_FILE" << REPORT_FOOTER
+
+## Summary
+
+| Metric | Value |
+|--------|-------|
+| Total run | $TOTAL_COUNT |
+| Passed | $PASSED_COUNT |
+| Failed | $FAILED_COUNT |
+| Overall | $OVERALL_STATUS |
+REPORT_FOOTER
+
+echo ""
+echo "Report saved to: $REPORT_FILE"
 
 if [ $OVERALL_EXIT -eq 0 ]; then
     echo "All tests completed successfully!"
