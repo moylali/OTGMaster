@@ -504,13 +504,16 @@ class MainActivity : ComponentActivity() {
     }
 
     private fun openFilesApp(drive: MountedDrive) {
-        val rootUri = DocumentsContract.buildRootUri(
+        // Use a document URI (not a root URI) so Files app navigates directly into the
+        // root directory rather than treating it as a provider entry in its sidebar —
+        // the sidebar entry behaviour varies by Files app and often opens OTGMaster instead.
+        val rootDocUri = DocumentsContract.buildDocumentUri(
             app.fayaz.otgmaster.provider.VeraCryptDocumentProvider.AUTHORITY,
-            app.fayaz.otgmaster.provider.VeraCryptDocumentProvider.rootIdForDrive(drive.id)
+            app.fayaz.otgmaster.provider.VeraCryptDocumentProvider.rootDocIdForDrive(drive.id)
         )
         val intent = Intent(Intent.ACTION_VIEW)
-        intent.setDataAndType(rootUri, "vnd.android.document/root")
-        intent.addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION)
+        intent.setDataAndType(rootDocUri, DocumentsContract.Document.MIME_TYPE_DIR)
+        intent.addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION or Intent.FLAG_GRANT_WRITE_URI_PERMISSION)
         try {
             startActivity(intent)
         } catch (e: Exception) {
