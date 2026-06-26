@@ -1,0 +1,1 @@
+FAT32 write support test: mounts an AES-encrypted FAT32 VeraCrypt volume, creates a file and directory via SAF, unmounts and remounts to verify persistence, deletes the file, then unmounts and remounts to verify the deletion was persisted.

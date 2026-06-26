@@ -4,7 +4,7 @@ import java.io.File
 import java.io.RandomAccessFile
 
 class FileBlockDevice(file: File) : RawBlockDevice {
-    private val randomAccessFile = RandomAccessFile(file, "r")
+    private val randomAccessFile = RandomAccessFile(file, "rw")
     
     override val blockSize: Int = 512
     override val blockCount: Long = run {
@@ -28,7 +28,8 @@ class FileBlockDevice(file: File) : RawBlockDevice {
     }
 
     override fun writeBlocks(startBlock: Long, data: ByteArray) {
-        throw UnsupportedOperationException("Write support is intentionally disabled.")
+        randomAccessFile.seek(startBlock * blockSize)
+        randomAccessFile.write(data)
     }
 
     override fun close() {

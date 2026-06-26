@@ -1,0 +1,604 @@
+All test data artifacts present.
+Building Android Test APKs...
+> Task :app:preBuild UP-TO-DATE
+> Task :app:preDebugBuild UP-TO-DATE
+> Task :app:mergeDebugNativeDebugMetadata NO-SOURCE
+> Task :app:checkKotlinGradlePluginConfigurationErrors
+> Task :libaums:preBuild UP-TO-DATE
+> Task :libaums:preDebugBuild UP-TO-DATE
+> Task :libaums:writeDebugAarMetadata UP-TO-DATE
+> Task :app:checkDebugAarMetadata UP-TO-DATE
+> Task :app:generateDebugResValues UP-TO-DATE
+> Task :libaums:generateDebugResValues UP-TO-DATE
+> Task :libaums:generateDebugResources UP-TO-DATE
+> Task :libaums:packageDebugResources UP-TO-DATE
+> Task :app:mapDebugSourceSetPaths UP-TO-DATE
+> Task :app:generateDebugResources UP-TO-DATE
+> Task :app:mergeDebugResources UP-TO-DATE
+> Task :app:packageDebugResources UP-TO-DATE
+> Task :app:parseDebugLocalResources UP-TO-DATE
+> Task :app:createDebugCompatibleScreenManifests UP-TO-DATE
+> Task :app:extractDeepLinksDebug UP-TO-DATE
+> Task :libaums:extractDeepLinksDebug UP-TO-DATE
+> Task :libaums:processDebugManifest UP-TO-DATE
+> Task :app:processDebugMainManifest UP-TO-DATE
+> Task :app:processDebugManifest UP-TO-DATE
+> Task :app:processDebugManifestForPackage UP-TO-DATE
+> Task :libaums:compileDebugLibraryResources UP-TO-DATE
+> Task :libaums:parseDebugLocalResources UP-TO-DATE
+> Task :libaums:generateDebugRFile UP-TO-DATE
+> Task :app:processDebugResources UP-TO-DATE
+> Task :libaums:checkKotlinGradlePluginConfigurationErrors
+> Task :libaums:generateDebugBuildConfig UP-TO-DATE
+> Task :libaums:compileDebugKotlin UP-TO-DATE
+> Task :libaums:javaPreCompileDebug UP-TO-DATE
+> Task :libaums:compileDebugJavaWithJavac UP-TO-DATE
+> Task :libaums:bundleLibCompileToJarDebug UP-TO-DATE
+> Task :app:compileDebugKotlin UP-TO-DATE
+> Task :app:javaPreCompileDebug UP-TO-DATE
+> Task :app:compileDebugJavaWithJavac NO-SOURCE
+> Task :app:mergeDebugShaders UP-TO-DATE
+> Task :app:compileDebugShaders NO-SOURCE
+> Task :app:generateDebugAssets UP-TO-DATE
+> Task :libaums:mergeDebugShaders UP-TO-DATE
+> Task :libaums:compileDebugShaders NO-SOURCE
+> Task :libaums:generateDebugAssets UP-TO-DATE
+> Task :libaums:packageDebugAssets UP-TO-DATE
+> Task :app:mergeDebugAssets UP-TO-DATE
+> Task :app:compressDebugAssets UP-TO-DATE
+> Task :libaums:bundleLibRuntimeToJarDebug UP-TO-DATE
+> Task :app:desugarDebugFileDependencies UP-TO-DATE
+> Task :app:dexBuilderDebug UP-TO-DATE
+> Task :app:mergeDebugGlobalSynthetics UP-TO-DATE
+> Task :app:processDebugJavaRes UP-TO-DATE
+> Task :libaums:processDebugJavaRes UP-TO-DATE
+> Task :app:mergeDebugJavaResource UP-TO-DATE
+> Task :app:checkDebugDuplicateClasses UP-TO-DATE
+> Task :app:mergeDebugStartupProfile UP-TO-DATE
+> Task :app:mergeExtDexDebug UP-TO-DATE
+> Task :libaums:bundleLibRuntimeToDirDebug UP-TO-DATE
+> Task :app:mergeProjectDexDebug UP-TO-DATE
+> Task :app:mergeLibDexDebug UP-TO-DATE
+> Task :app:configureCMakeDebug[arm64-v8a]
+
+> Task :app:buildCMakeDebug[arm64-v8a]
+C/C++: ninja: Entering directory `/home/fayaz/workspaces/OTGMaster/app/.cxx/Debug/1ju4y6d2/arm64-v8a'
+C/C++: /home/fayaz/workspaces/OTGMaster/app/src/main/cpp/serpent/serpent-aux.c:101:27: warning: format specifies type 'unsigned long *' but the argument has type 'WORD *' (aka 'unsigned int *') [-Wformat]
+C/C++:     sscanf(buffer, "%lx", &w[i]);
+C/C++:                     ~~~   ^~~~~
+C/C++:                     %x
+C/C++: /home/fayaz/workspaces/OTGMaster/app/src/main/cpp/serpent/serpent-aux.c:130:34: warning: format specifies type 'unsigned long' but the argument has type 'WORD' (aka 'unsigned int') [-Wformat]
+C/C++:     sprintf(&buffer[j], "%08lx", x[i]);
+C/C++:                          ~~~~~   ^~~~
+C/C++:                          %08x
+C/C++: /home/fayaz/workspaces/OTGMaster/app/src/main/cpp/serpent/serpent-aux.c:146:21: warning: format specifies type 'unsigned long' but the argument has type 'WORD' (aka 'unsigned int') [-Wformat]
+C/C++:     printf("%08lx", x[i]);
+C/C++:             ~~~~~   ^~~~
+C/C++:             %08x
+C/C++: 3 warnings generated.
+C/C++: In file included from /home/fayaz/workspaces/OTGMaster/app/src/main/cpp/VeraCryptNative.cpp:5:
+C/C++: In file included from /home/fayaz/workspaces/OTGMaster/app/src/main/cpp/serpent/serpent_adapter.h:5:
+C/C++: /home/fayaz/workspaces/OTGMaster/app/src/main/cpp/serpent/serpent-api.h:221:11: warning: ISO C++11 does not allow conversion from string literal to 'char *' [-Wwritable-strings]
+C/C++:           "$Id: serpent-api.h,v 1.14 1998/06/07 11:47:49 fms Exp $")
+C/C++:           ^
+C/C++: 1 warning generated.
+
+> Task :app:configureCMakeDebug[armeabi-v7a]
+
+> Task :app:buildCMakeDebug[armeabi-v7a]
+C/C++: ninja: Entering directory `/home/fayaz/workspaces/OTGMaster/app/.cxx/Debug/1ju4y6d2/armeabi-v7a'
+C/C++: /home/fayaz/workspaces/OTGMaster/app/src/main/cpp/serpent/serpent-aux.c:101:27: warning: format specifies type 'unsigned long *' but the argument has type 'WORD *' (aka 'unsigned int *') [-Wformat]
+C/C++:     sscanf(buffer, "%lx", &w[i]);
+C/C++:                     ~~~   ^~~~~
+C/C++:                     %x
+C/C++: /home/fayaz/workspaces/OTGMaster/app/src/main/cpp/serpent/serpent-aux.c:130:34: warning: format specifies type 'unsigned long' but the argument has type 'WORD' (aka 'unsigned int') [-Wformat]
+C/C++:     sprintf(&buffer[j], "%08lx", x[i]);
+C/C++:                          ~~~~~   ^~~~
+C/C++:                          %08x
+C/C++: /home/fayaz/workspaces/OTGMaster/app/src/main/cpp/serpent/serpent-aux.c:146:21: warning: format specifies type 'unsigned long' but the argument has type 'WORD' (aka 'unsigned int') [-Wformat]
+C/C++:     printf("%08lx", x[i]);
+C/C++:             ~~~~~   ^~~~
+C/C++:             %08x
+C/C++: 3 warnings generated.
+C/C++: In file included from /home/fayaz/workspaces/OTGMaster/app/src/main/cpp/VeraCryptNative.cpp:5:
+C/C++: In file included from /home/fayaz/workspaces/OTGMaster/app/src/main/cpp/serpent/serpent_adapter.h:5:
+C/C++: /home/fayaz/workspaces/OTGMaster/app/src/main/cpp/serpent/serpent-api.h:221:11: warning: ISO C++11 does not allow conversion from string literal to 'char *' [-Wwritable-strings]
+C/C++:           "$Id: serpent-api.h,v 1.14 1998/06/07 11:47:49 fms Exp $")
+C/C++:           ^
+C/C++: 1 warning generated.
+
+> Task :app:configureCMakeDebug[x86]
+
+> Task :app:buildCMakeDebug[x86]
+C/C++: ninja: Entering directory `/home/fayaz/workspaces/OTGMaster/app/.cxx/Debug/1ju4y6d2/x86'
+C/C++: /home/fayaz/workspaces/OTGMaster/app/src/main/cpp/serpent/serpent-aux.c:101:27: warning: format specifies type 'unsigned long *' but the argument has type 'WORD *' (aka 'unsigned int *') [-Wformat]
+C/C++:     sscanf(buffer, "%lx", &w[i]);
+C/C++:                     ~~~   ^~~~~
+C/C++:                     %x
+C/C++: /home/fayaz/workspaces/OTGMaster/app/src/main/cpp/serpent/serpent-aux.c:130:34: warning: format specifies type 'unsigned long' but the argument has type 'WORD' (aka 'unsigned int') [-Wformat]
+C/C++:     sprintf(&buffer[j], "%08lx", x[i]);
+C/C++:                          ~~~~~   ^~~~
+C/C++:                          %08x
+C/C++: /home/fayaz/workspaces/OTGMaster/app/src/main/cpp/serpent/serpent-aux.c:146:21: warning: format specifies type 'unsigned long' but the argument has type 'WORD' (aka 'unsigned int') [-Wformat]
+C/C++:     printf("%08lx", x[i]);
+C/C++:             ~~~~~   ^~~~
+C/C++:             %08x
+C/C++: 3 warnings generated.
+C/C++: In file included from /home/fayaz/workspaces/OTGMaster/app/src/main/cpp/VeraCryptNative.cpp:5:
+C/C++: In file included from /home/fayaz/workspaces/OTGMaster/app/src/main/cpp/serpent/serpent_adapter.h:5:
+C/C++: /home/fayaz/workspaces/OTGMaster/app/src/main/cpp/serpent/serpent-api.h:221:11: warning: ISO C++11 does not allow conversion from string literal to 'char *' [-Wwritable-strings]
+C/C++:           "$Id: serpent-api.h,v 1.14 1998/06/07 11:47:49 fms Exp $")
+C/C++:           ^
+C/C++: 1 warning generated.
+
+> Task :app:configureCMakeDebug[x86_64]
+
+> Task :app:buildCMakeDebug[x86_64]
+C/C++: ninja: Entering directory `/home/fayaz/workspaces/OTGMaster/app/.cxx/Debug/1ju4y6d2/x86_64'
+C/C++: /home/fayaz/workspaces/OTGMaster/app/src/main/cpp/serpent/serpent-aux.c:101:27: warning: format specifies type 'unsigned long *' but the argument has type 'WORD *' (aka 'unsigned int *') [-Wformat]
+C/C++:     sscanf(buffer, "%lx", &w[i]);
+C/C++:                     ~~~   ^~~~~
+C/C++:                     %x
+C/C++: /home/fayaz/workspaces/OTGMaster/app/src/main/cpp/serpent/serpent-aux.c:130:34: warning: format specifies type 'unsigned long' but the argument has type 'WORD' (aka 'unsigned int') [-Wformat]
+C/C++:     sprintf(&buffer[j], "%08lx", x[i]);
+C/C++:                          ~~~~~   ^~~~
+C/C++:                          %08x
+C/C++: /home/fayaz/workspaces/OTGMaster/app/src/main/cpp/serpent/serpent-aux.c:146:21: warning: format specifies type 'unsigned long' but the argument has type 'WORD' (aka 'unsigned int') [-Wformat]
+C/C++:     printf("%08lx", x[i]);
+C/C++:             ~~~~~   ^~~~
+C/C++:             %08x
+C/C++: 3 warnings generated.
+C/C++: In file included from /home/fayaz/workspaces/OTGMaster/app/src/main/cpp/VeraCryptNative.cpp:5:
+C/C++: In file included from /home/fayaz/workspaces/OTGMaster/app/src/main/cpp/serpent/serpent_adapter.h:5:
+C/C++: /home/fayaz/workspaces/OTGMaster/app/src/main/cpp/serpent/serpent-api.h:221:11: warning: ISO C++11 does not allow conversion from string literal to 'char *' [-Wwritable-strings]
+C/C++:           "$Id: serpent-api.h,v 1.14 1998/06/07 11:47:49 fms Exp $")
+C/C++:           ^
+C/C++: 1 warning generated.
+
+> Task :app:mergeDebugJniLibFolders UP-TO-DATE
+> Task :libaums:configureCMakeDebug[arm64-v8a]
+> Task :libaums:buildCMakeDebug[arm64-v8a]
+> Task :libaums:configureCMakeDebug[armeabi-v7a]
+> Task :libaums:buildCMakeDebug[armeabi-v7a]
+> Task :libaums:configureCMakeDebug[x86]
+> Task :libaums:buildCMakeDebug[x86]
+> Task :libaums:configureCMakeDebug[x86_64]
+> Task :libaums:buildCMakeDebug[x86_64]
+> Task :libaums:mergeDebugJniLibFolders UP-TO-DATE
+> Task :libaums:mergeDebugNativeLibs UP-TO-DATE
+> Task :libaums:copyDebugJniLibsProjectOnly UP-TO-DATE
+> Task :app:validateSigningDebug UP-TO-DATE
+> Task :app:writeDebugAppMetadata UP-TO-DATE
+> Task :app:writeDebugSigningConfigVersions UP-TO-DATE
+> Task :libaums:stripDebugDebugSymbols UP-TO-DATE
+> Task :libaums:copyDebugJniLibsProjectAndLocalJars UP-TO-DATE
+> Task :libaums:extractDebugAnnotations UP-TO-DATE
+> Task :libaums:extractDeepLinksForAarDebug UP-TO-DATE
+> Task :app:mergeDebugNativeLibs
+> Task :libaums:mergeDebugGeneratedProguardFiles UP-TO-DATE
+> Task :libaums:mergeDebugConsumerProguardFiles UP-TO-DATE
+> Task :libaums:prepareDebugArtProfile UP-TO-DATE
+> Task :libaums:prepareLintJarForPublish UP-TO-DATE
+> Task :libaums:mergeDebugJavaResource UP-TO-DATE
+> Task :libaums:syncDebugLibJars UP-TO-DATE
+> Task :libaums:bundleDebugAar UP-TO-DATE
+> Task :libaums:assembleDebug UP-TO-DATE
+> Task :app:bundleDebugClassesToCompileJar UP-TO-DATE
+> Task :app:preDebugAndroidTestBuild SKIPPED
+> Task :app:checkDebugAndroidTestAarMetadata UP-TO-DATE
+> Task :app:generateDebugAndroidTestResValues UP-TO-DATE
+> Task :app:mapDebugAndroidTestSourceSetPaths UP-TO-DATE
+> Task :app:stripDebugDebugSymbols
+> Task :app:generateDebugAndroidTestResources UP-TO-DATE
+> Task :app:mergeDebugAndroidTestResources UP-TO-DATE
+> Task :app:processDebugAndroidTestManifest UP-TO-DATE
+> Task :app:processDebugAndroidTestResources UP-TO-DATE
+> Task :app:compileDebugAndroidTestKotlin UP-TO-DATE
+> Task :app:javaPreCompileDebugAndroidTest UP-TO-DATE
+> Task :app:compileDebugAndroidTestJavaWithJavac NO-SOURCE
+> Task :app:mergeDebugAndroidTestShaders UP-TO-DATE
+> Task :app:compileDebugAndroidTestShaders NO-SOURCE
+> Task :app:generateDebugAndroidTestAssets UP-TO-DATE
+> Task :app:mergeDebugAndroidTestAssets UP-TO-DATE
+> Task :app:compressDebugAndroidTestAssets UP-TO-DATE
+> Task :app:desugarDebugAndroidTestFileDependencies UP-TO-DATE
+> Task :app:dexBuilderDebugAndroidTest UP-TO-DATE
+> Task :app:mergeDebugAndroidTestGlobalSynthetics UP-TO-DATE
+> Task :app:processDebugAndroidTestJavaRes UP-TO-DATE
+> Task :app:mergeDebugAndroidTestJavaResource UP-TO-DATE
+> Task :app:checkDebugAndroidTestDuplicateClasses UP-TO-DATE
+> Task :app:mergeExtDexDebugAndroidTest UP-TO-DATE
+> Task :app:mergeLibDexDebugAndroidTest UP-TO-DATE
+> Task :app:mergeProjectDexDebugAndroidTest UP-TO-DATE
+> Task :app:mergeDebugAndroidTestJniLibFolders UP-TO-DATE
+> Task :app:mergeDebugAndroidTestNativeLibs NO-SOURCE
+> Task :app:stripDebugAndroidTestDebugSymbols NO-SOURCE
+> Task :app:validateSigningDebugAndroidTest UP-TO-DATE
+> Task :app:writeDebugAndroidTestSigningConfigVersions UP-TO-DATE
+> Task :app:packageDebugAndroidTest UP-TO-DATE
+> Task :app:packageDebug
+> Task :app:createDebugApkListingFileRedirect UP-TO-DATE
+> Task :app:assembleDebug
+> Task :app:createDebugAndroidTestApkListingFileRedirect UP-TO-DATE
+> Task :app:assembleDebugAndroidTest UP-TO-DATE
+> Task :libaums:preDebugAndroidTestBuild UP-TO-DATE
+> Task :libaums:processDebugAndroidTestManifest UP-TO-DATE
+> Task :libaums:generateDebugAndroidTestBuildConfig UP-TO-DATE
+> Task :libaums:checkDebugAndroidTestAarMetadata UP-TO-DATE
+> Task :libaums:generateDebugAndroidTestResValues UP-TO-DATE
+> Task :libaums:mapDebugAndroidTestSourceSetPaths UP-TO-DATE
+> Task :libaums:generateDebugAndroidTestResources UP-TO-DATE
+> Task :libaums:mergeDebugAndroidTestResources UP-TO-DATE
+> Task :libaums:processDebugAndroidTestResources UP-TO-DATE
+> Task :libaums:compileDebugAndroidTestKotlin NO-SOURCE
+> Task :libaums:javaPreCompileDebugAndroidTest UP-TO-DATE
+> Task :libaums:compileDebugAndroidTestJavaWithJavac UP-TO-DATE
+> Task :libaums:mergeDebugAndroidTestShaders UP-TO-DATE
+> Task :libaums:compileDebugAndroidTestShaders NO-SOURCE
+> Task :libaums:generateDebugAndroidTestAssets UP-TO-DATE
+> Task :libaums:mergeDebugAndroidTestAssets UP-TO-DATE
+> Task :libaums:compressDebugAndroidTestAssets UP-TO-DATE
+> Task :libaums:desugarDebugAndroidTestFileDependencies UP-TO-DATE
+> Task :libaums:dexBuilderDebugAndroidTest UP-TO-DATE
+> Task :libaums:mergeDebugAndroidTestGlobalSynthetics UP-TO-DATE
+> Task :libaums:processDebugAndroidTestJavaRes NO-SOURCE
+> Task :libaums:mergeDebugAndroidTestJavaResource UP-TO-DATE
+> Task :libaums:checkDebugAndroidTestDuplicateClasses UP-TO-DATE
+> Task :libaums:mergeExtDexDebugAndroidTest UP-TO-DATE
+> Task :libaums:mergeLibDexDebugAndroidTest UP-TO-DATE
+> Task :libaums:mergeProjectDexDebugAndroidTest UP-TO-DATE
+> Task :libaums:mergeDebugAndroidTestJniLibFolders UP-TO-DATE
+> Task :libaums:mergeDebugAndroidTestNativeLibs UP-TO-DATE
+> Task :libaums:stripDebugAndroidTestDebugSymbols UP-TO-DATE
+> Task :libaums:validateSigningDebugAndroidTest UP-TO-DATE
+> Task :libaums:writeDebugAndroidTestSigningConfigVersions UP-TO-DATE
+> Task :libaums:packageDebugAndroidTest UP-TO-DATE
+> Task :libaums:createDebugAndroidTestApkListingFileRedirect UP-TO-DATE
+> Task :libaums:assembleDebugAndroidTest UP-TO-DATE
+
+BUILD SUCCESSFUL in 1s
+142 actionable tasks: 21 executed, 121 up-to-date
+Slot file initialised with: ./testdata/exfat/test.img
+Launching Emulator...
+Waiting for emulator to boot...
+INFO         | Android emulator version 36.6.11.0 (build_id 15507667) (CL:N/A)
+INFO         | Graphics backend: gfxstream
+INFO         | Found systemPath /home/fayaz/android-sdk-local/system-images/android-34/google_apis/x86_64/
+INFO         | Saving last run QEMU version for the AVD to 2
+INFO         | Increasing RAM size to 2560MB
+INFO         | Guest GLES Driver: Auto (ext controls)
+WARNING      | Your GPU drivers may have a bug. Switching to software rendering.
+INFO         | emuglConfig_init: vulkan_mode_selected:lavapipe gles_mode_selected:swangle
+INFO         | Checking system compatibility:
+INFO         |   Checking: hasSufficientDiskSpace
+INFO         |      Ok: Disk space requirements to run avd: `OTG_Test_Device` are met
+INFO         |   Checking: hasSufficientHwGpu
+INFO         |      Ok: Hardware GPU compatibility checks are not required
+INFO         |   Checking: hasSufficientSystem
+INFO         |      Ok: System requirements to run avd: `OTG_Test_Device` are met
+WARNING      | Feature QuickbootFileBacked is disabled due to stability issues, if you really want that, the environment variable ANDROID_EMU_FORCE_QUICKBOOT_FILE_BACKED need to set to 1
+INFO         | Warning: Could not find the Qt platform plugin "wayland" in "/home/fayaz/android-sdk-local/emulator/lib64/qt/plugins" (:0, )
+INFO         | Warning: QMetaObject::connectSlotsByName: No matching signal for on_default_environment_selected() (:0, )
+INFO         | Warning: QMetaObject::connectSlotsByName: No matching signal for on_none_selected() (:0, )
+INFO         | Warning: QMetaObject::connectSlotsByName: No matching signal for on_custom_image_selected() (:0, )
+INFO         | Warning: QMetaObject::connectSlotsByName: No matching signal for on_custom_video_selected() (:0, )
+INFO         | Warning: QMetaObject::connectSlotsByName: No matching signal for on_custom_360_image_selected() (:0, )
+INFO         | Storing crashdata in: /tmp/android-fayaz/emu-crash-36.6.11.db, detection is enabled for process: 160230
+INFO         | Initializing gfxstream backend
+INFO         | startOpenglesRendererImpl: gpu info
+INFO         | 
+INFO         | initIcdPaths: ICD set to 'lavapipe', using Lavapipe ICD
+INFO         | Setting ICD filenames for the loader = /home/fayaz/android-sdk-local/emulator/lib64/vulkan/lvp_icd.json
+INFO         | SharedLibrary::open for [/home/fayaz/android-sdk-local/emulator/qemu/linux-x86_64/lib64/vulkan/libvulkan.so]
+INFO         | SharedLibrary::open for [/home/fayaz/android-sdk-local/emulator/qemu/linux-x86_64/lib64/vulkan/libvulkan.so.1]
+INFO         | SharedLibrary::open for [/home/fayaz/android-sdk-local/emulator/lib64/vulkan/libvulkan.so]
+INFO         | Added library: /home/fayaz/android-sdk-local/emulator/lib64/vulkan/libvulkan.so
+INFO         | Selecting Vulkan device: llvmpipe (LLVM 21.0.0, 256 bits), Version: 1.4.318
+INFO         | Using Vulkan externalMemoryMode: OpaqueFd for VkEmulation
+INFO         | SharedLibrary::open for [libX11]
+INFO         | SharedLibrary::open for [libX11-xcb]
+WARNING      | Could not open libX11-xcb.so, try libX11-xcb.so.1
+INFO         | SharedLibrary::open for [libX11-xcb.so.1]
+INFO         | Initializing VkEmulation features:
+INFO         |     glInteropSupported: false
+INFO         |     useDeferredCommands: true
+INFO         |     createResourceWithRequirements: true
+INFO         |     useVulkanComposition: false
+INFO         |     useVulkanNativeSwapchain: false
+INFO         |     enable guestRenderDoc: false
+INFO         |     ASTC LDR emulation mode: Gpu
+INFO         |     enable ETC2 emulation: true
+INFO         |     enable Ycbcr emulation: false
+INFO         |     guestVulkanOnly: false
+INFO         |     useDedicatedAllocations: false
+INFO         |     guestVulkanMaxApiVersion: 1.3.0
+INFO         |     enableProtectedMemoryEmulation: false
+INFO         | Graphics Adapter Vendor Google (Google Inc.)
+INFO         | Graphics Adapter Android Emulator OpenGL ES Translator (Google SwiftShader)
+INFO         | Graphics API Version OpenGL ES 3.0 (OpenGL ES 3.0 SwiftShader 4.0.0.1)
+INFO         | Graphics API Extensions GL_OES_EGL_sync GL_OES_EGL_image GL_OES_EGL_image_external GL_OES_depth24 GL_OES_depth32 GL_OES_element_index_uint GL_OES_texture_float GL_OES_texture_float_linear GL_OES_compressed_paletted_texture GL_OES_compressed_ETC1_RGB8_texture GL_OES_depth_texture GL_OES_texture_half_float GL_OES_texture_half_float_linear GL_OES_packed_depth_stencil GL_OES_vertex_half_float GL_OES_standard_derivatives GL_OES_texture_npot GL_OES_rgb8_rgba8 GL_EXT_color_buffer_float GL_EXT_color_buffer_half_float GL_EXT_texture_format_BGRA8888 GL_APPLE_texture_format_BGRA8888 
+INFO         | Graphics Device Extensions N/A
+INFO         | Disabling sparse binding feature support
+ERROR        | Setting read-only feature 'GLAsyncSwap' to '0'
+INFO         | Feature 'GLAsyncSwap' (50) is overridden to 'disabled'
+INFO         | Sending adb public key [QAAAAKmpE65n9fghLlVriWVKjpJISWdjCUZ+szGWatsQHFS2Gb2g36BoKdfHM6LetFlo0D0jVXtkGTqbPtq7g9Co4yYK0oALKOSp4q7qv5TCWAQl+tfMNkv2dkvbfvyP4/HwjyTlES4dy2GSUR7Hn4VYqB8rFMp0j8LELEIVOgJiT3dG3NJ3D3niRoswtTyWQ2+9RVBOqlky3/dpqvHK3scjhcBwHOtIPgsmyXY3f0jLkfNuslo2NYjD+oNPQYSkgZIRwLLHmfErfDoVlB54H4dSQUZ7pVUfIaYp1cb2uGijlgtGEnKQcyTk98he2+y1Z9/QjkJrDpviYxottCxPoP090VqlwH7iyNGr/OPDKa3+BzT3hWa24dkybdVKSehfe2DN2VEKnXuRXETRBLELszLdq/Fw7Ygp1m3kpqItoKlfnfHoceyb0Nyr6nzSIUxS1PugXCpY7pIDjgJJMj/jTs1X5ZSWscAuYDniWWpbz8bvybe0GXyLJOVfuTU3Nr1u39e8Djk8SUMfvCpw/5vEJvZUZfq7C2gkbsKQr9N/3CMkgpCKEHmsIE7uKOsmiQSgUOK35uXFNMPpIDGp5cXcJOPGNVM34l2Oig327vAZhh4v+tqV8WFsBipy43h9AZbR9kxsTLkrRUDWtjeeglKlBQ94xJjN7TOH1uVhPK+5JqDSm+EIH9cvbAEAAQA= fayaz@unknown]
+INFO         | Userspace boot properties:
+INFO         |   androidboot.boot_devices=pci0000:00/0000:00:03.0 pci0000:00/0000:00:06.0
+INFO         |   androidboot.dalvik.vm.heapsize=576m
+INFO         |   androidboot.debug.hwui.renderer=skiagl
+INFO         |   androidboot.debug.sf.nobootanimation=1
+INFO         |   androidboot.hardware=ranchu
+INFO         |   androidboot.hardware.gltransport=pipe
+INFO         |   androidboot.hardware.vulkan=ranchu
+INFO         |   androidboot.logcat=*:V
+INFO         |   androidboot.opengles.version=196608
+INFO         |   androidboot.qemu=1
+INFO         |   androidboot.qemu.adb.pubkey=QAAAAKmpE65n9fghLlVriWVKjpJISWdjCUZ+szGWatsQHFS2Gb2g36BoKdfHM6LetFlo0D0jVXtkGTqbPtq7g9Co4yYK0oALKOSp4q7qv5TCWAQl+tfMNkv2dkvbfvyP4/HwjyTlES4dy2GSUR7Hn4VYqB8rFMp0j8LELEIVOgJiT3dG3NJ3D3niRoswtTyWQ2+9RVBOqlky3/dpqvHK3scjhcBwHOtIPgsmyXY3f0jLkfNuslo2NYjD+oNPQYSkgZIRwLLHmfErfDoVlB54H4dSQUZ7pVUfIaYp1cb2uGijlgtGEnKQcyTk98he2+y1Z9/QjkJrDpviYxottCxPoP090VqlwH7iyNGr/OPDKa3+BzT3hWa24dkybdVKSehfe2DN2VEKnXuRXETRBLELszLdq/Fw7Ygp1m3kpqItoKlfnfHoceyb0Nyr6nzSIUxS1PugXCpY7pIDjgJJMj/jTs1X5ZSWscAuYDniWWpbz8bvybe0GXyLJOVfuTU3Nr1u39e8Djk8SUMfvCpw/5vEJvZUZfq7C2gkbsKQr9N/3CMkgpCKEHmsIE7uKOsmiQSgUOK35uXFNMPpIDGp5cXcJOPGNVM34l2Oig327vAZhh4v+tqV8WFsBipy43h9AZbR9kxsTLkrRUDWtjeeglKlBQ94xJjN7TOH1uVhPK+5JqDSm+EIH9cvbAEAAQA= fayaz@unknown
+INFO         |   androidboot.qemu.avd_name=OTG_Test_Device
+INFO         |   androidboot.qemu.camera_hq_edge_processing=0
+INFO         |   androidboot.qemu.camera_protocol_ver=1
+INFO         |   androidboot.qemu.cpuvulkan.version=4206592
+INFO         |   androidboot.qemu.gltransport.drawFlushInterval=800
+INFO         |   androidboot.qemu.gltransport.name=pipe
+INFO         |   androidboot.qemu.hwcodec.avcdec=2
+INFO         |   androidboot.qemu.hwcodec.hevcdec=2
+INFO         |   androidboot.qemu.hwcodec.vpxdec=2
+INFO         |   androidboot.qemu.settings.system.screen_off_timeout=2147483647
+INFO         |   androidboot.qemu.skin=1080x2400
+INFO         |   androidboot.qemu.virtiowifi=1
+INFO         |   androidboot.qemu.vsync=60
+INFO         |   androidboot.serialno=EMULATOR36X6X11X0
+INFO         |   androidboot.vbmeta.digest=451e57ed688ff746d2c636d52169ade253e2bc5bb30a5c3ff23679ca15d3bcd3
+INFO         |   androidboot.vbmeta.hash_alg=sha256
+INFO         |   androidboot.vbmeta.size=6656
+INFO         |   androidboot.veritymode=enforcing
+INFO         | Monitoring duration of emulator setup.
+WARNING      | The emulator now requires a signed jwt token for gRPC access! Use the -grpc flag if you really want an open unprotected grpc port
+INFO         | Using security allow list from: /home/fayaz/android-sdk-local/emulator/lib/emulator_access.json
+INFO         | The active JSON Web Key Sets can be found here: /run/user/1000/avd/running/160230/jwks/bb558b7a-bf59-448e-859c-31eaf744f4fa/active.jwk
+INFO         | Scanning /run/user/1000/avd/running/160230/jwks/bb558b7a-bf59-448e-859c-31eaf744f4fa for jwk keys.
+INFO         | Started GRPC server at 127.0.0.1:8554, security: Local, auth: +token
+INFO         | Advertising in: /run/user/1000/avd/running/pid_160230.ini
+INFO         | Activated packet streamer for bluetooth emulation
+INFO         | Successfully initialized netsim WiFi
+INFO         | Setting display: 0 configuration to: 1080x2400, dpi: 420x420 
+INFO         | setDisplayActiveConfig: id:0, 1080x2400
+INFO         | emulatorSetupEnvironment: Environment scene is not required
+INFO         | Checking system compatibility:
+INFO         |   Checking: hasSufficientDiskSpace
+INFO         |      Ok: Disk space requirements to run avd: `OTG_Test_Device` are met
+INFO         |   Checking: hasSufficientHwGpu
+INFO         |      Ok: Hardware GPU compatibility checks are not required
+INFO         |   Checking: hasSufficientSystem
+INFO         |      Ok: System requirements to run avd: `OTG_Test_Device` are met
+INFO         | Loading snapshot 'default_boot'...
+WARNING      | Device '' is writable but does not support snapshots.
+
+WARNING      | Failed to load snapshot 'default_boot'
+USER_INFO    | The emulator is starting from scratch. Reason: current configuration doesn't support snapshots
+INFO         | Warning: QMetaObject::connectSlotsByName: No matching signal for on_rgbcSensorValueWidget_valueChanged() (:0, )
+INFO         | Warning: QMetaObject::connectSlotsByName: No matching signal for on_posture_valueChanged(int) (:0, )
+INFO         | Warning: QObject::connect: Cannot queue arguments of type 'std::vector<android::emulation::control::SnapshotInfo>'
+(Make sure 'std::vector<android::emulation::control::SnapshotInfo>' is registered using qRegisterMetaType().) (:0, )
+INFO         | AVD supportsNativeGLES=1, supportsGuestAngle=0
+INFO         | Platform does not support Guest Angle
+INFO         | Created extended window in 134.902ms
+INFO         | Boot completed in 20742 ms
+INFO         | Increasing screen off timeout, logcat buffer size to 2M.
+Emulator booted!
+Installing App and Test APK...
+Performing Streamed Install
+Success
+Performing Streamed Install
+Success
+Starting E2E Tests...
+==================================================
+Running Test Case: exfat
+Image: ./testdata/exfat/test.img
+Expects: successful mount (cipher: )
+==================================================
+Using pre-loaded slot image (first test)
+Running UI Automator Test...
+
+app.fayaz.otgmaster.E2EAutomatedTest:.
+
+Time: 31.584
+
+OK (1 test)
+Dumping logcat for analysis:
+Logcat saved to logcat_exfat.txt
+TEST PASSED: exfat
+==================================================
+Running Test Case: exfat_keyfile
+Image: ./testdata/exfat_keyfile/test.img
+Expects: successful mount (cipher: )
+==================================================
+Swapping USB to: /home/fayaz/workspaces/OTGMaster/testdata/exfat_keyfile/test.img
+[HMP] auth -> "Android Console: type 'help' for a list of commands\r\nOK"
+[HMP] qemu monitor -> 'KO: QEMU support no longer available'
+[HMP] 'device_del usbdev0' -> "KO: unknown command, try 'help'"
+[HMP] auth -> "Android Console: type 'help' for a list of commands\r\nOK"
+[HMP] qemu monitor -> 'KO: QEMU support no longer available'
+[HMP] 'device_add usb-storage,id=usbdev0,drive=slot_dev,bus=xhci.0,removable=on' -> "KO: unknown command, try 'help'"
+Pushing keyfile to device...
+Broadcasting: Intent { act=android.intent.action.MEDIA_SCANNER_SCAN_FILE dat=file:///... flg=0x400000 }
+Broadcast completed: result=0
+Running UI Automator Test...
+
+app.fayaz.otgmaster.E2EAutomatedTest:.
+
+Time: 32.763
+
+OK (1 test)
+Dumping logcat for analysis:
+Logcat saved to logcat_exfat_keyfile.txt
+TEST PASSED: exfat_keyfile
+==================================================
+Running Test Case: ext4
+Image: ./testdata/ext4/test.img
+Expects: error (filesystem: ext4, cipher: )
+==================================================
+Swapping USB to: /home/fayaz/workspaces/OTGMaster/testdata/ext4/test.img
+[HMP] auth -> "Android Console: type 'help' for a list of commands\r\nOK"
+[HMP] qemu monitor -> 'KO: QEMU support no longer available'
+[HMP] 'device_del usbdev0' -> "KO: unknown command, try 'help'"
+[HMP] auth -> "Android Console: type 'help' for a list of commands\r\nOK"
+[HMP] qemu monitor -> 'KO: QEMU support no longer available'
+[HMP] 'device_add usb-storage,id=usbdev0,drive=slot_dev,bus=xhci.0,removable=on' -> "KO: unknown command, try 'help'"
+Running UI Automator Test...
+
+app.fayaz.otgmaster.E2EAutomatedTest:.
+
+Time: 22.617
+
+OK (1 test)
+Dumping logcat for analysis:
+Logcat saved to logcat_ext4.txt
+TEST PASSED: ext4
+==================================================
+Running Test Case: fat16
+Image: ./testdata/fat16/test.img
+Expects: error (filesystem: FAT16, cipher: )
+==================================================
+Swapping USB to: /home/fayaz/workspaces/OTGMaster/testdata/fat16/test.img
+[HMP] auth -> "Android Console: type 'help' for a list of commands\r\nOK"
+[HMP] qemu monitor -> 'KO: QEMU support no longer available'
+[HMP] 'device_del usbdev0' -> "KO: unknown command, try 'help'"
+[HMP] auth -> "Android Console: type 'help' for a list of commands\r\nOK"
+[HMP] qemu monitor -> 'KO: QEMU support no longer available'
+[HMP] 'device_add usb-storage,id=usbdev0,drive=slot_dev,bus=xhci.0,removable=on' -> "KO: unknown command, try 'help'"
+Running UI Automator Test...
+
+app.fayaz.otgmaster.E2EAutomatedTest:.
+
+Time: 23.987
+
+OK (1 test)
+Dumping logcat for analysis:
+Logcat saved to logcat_fat16.txt
+TEST PASSED: fat16
+==================================================
+Running Test Case: fat32
+Image: ./testdata/fat32/test.img
+Expects: successful mount (cipher: AES)
+==================================================
+Swapping USB to: /home/fayaz/workspaces/OTGMaster/testdata/fat32/test.img
+[HMP] auth -> "Android Console: type 'help' for a list of commands\r\nOK"
+[HMP] qemu monitor -> 'KO: QEMU support no longer available'
+[HMP] 'device_del usbdev0' -> "KO: unknown command, try 'help'"
+[HMP] auth -> "Android Console: type 'help' for a list of commands\r\nOK"
+[HMP] qemu monitor -> 'KO: QEMU support no longer available'
+[HMP] 'device_add usb-storage,id=usbdev0,drive=slot_dev,bus=xhci.0,removable=on' -> "KO: unknown command, try 'help'"
+Running UI Automator Test...
+
+app.fayaz.otgmaster.E2EAutomatedTest:.
+
+Time: 30.887
+
+OK (1 test)
+Dumping logcat for analysis:
+Logcat saved to logcat_fat32.txt
+TEST PASSED: fat32
+==================================================
+Running Test Case: fat32_keyfile
+Image: ./testdata/fat32_keyfile/test.img
+Expects: successful mount (cipher: AES)
+==================================================
+Swapping USB to: /home/fayaz/workspaces/OTGMaster/testdata/fat32_keyfile/test.img
+[HMP] auth -> "Android Console: type 'help' for a list of commands\r\nOK"
+[HMP] qemu monitor -> 'KO: QEMU support no longer available'
+[HMP] 'device_del usbdev0' -> "KO: unknown command, try 'help'"
+[HMP] auth -> "Android Console: type 'help' for a list of commands\r\nOK"
+[HMP] qemu monitor -> 'KO: QEMU support no longer available'
+[HMP] 'device_add usb-storage,id=usbdev0,drive=slot_dev,bus=xhci.0,removable=on' -> "KO: unknown command, try 'help'"
+Pushing keyfile to device...
+Broadcasting: Intent { act=android.intent.action.MEDIA_SCANNER_SCAN_FILE dat=file:///... flg=0x400000 }
+Broadcast completed: result=0
+Running UI Automator Test...
+
+app.fayaz.otgmaster.E2EAutomatedTest:.
+
+Time: 32.083
+
+OK (1 test)
+Dumping logcat for analysis:
+Logcat saved to logcat_fat32_keyfile.txt
+TEST PASSED: fat32_keyfile
+==================================================
+Running Test Case: ntfs
+Image: ./testdata/ntfs/test.img
+Expects: error (filesystem: NTFS, cipher: )
+==================================================
+Swapping USB to: /home/fayaz/workspaces/OTGMaster/testdata/ntfs/test.img
+[HMP] auth -> "Android Console: type 'help' for a list of commands\r\nOK"
+[HMP] qemu monitor -> 'KO: QEMU support no longer available'
+[HMP] 'device_del usbdev0' -> "KO: unknown command, try 'help'"
+[HMP] auth -> "Android Console: type 'help' for a list of commands\r\nOK"
+[HMP] qemu monitor -> 'KO: QEMU support no longer available'
+[HMP] 'device_add usb-storage,id=usbdev0,drive=slot_dev,bus=xhci.0,removable=on' -> "KO: unknown command, try 'help'"
+Running UI Automator Test...
+
+app.fayaz.otgmaster.E2EAutomatedTest:.
+
+Time: 22.233
+
+OK (1 test)
+Dumping logcat for analysis:
+Logcat saved to logcat_ntfs.txt
+TEST PASSED: ntfs
+==================================================
+Running Test Case: serpent
+Image: ./testdata/serpent/test.img
+Expects: successful mount (cipher: Serpent)
+==================================================
+Swapping USB to: /home/fayaz/workspaces/OTGMaster/testdata/serpent/test.img
+[HMP] auth -> "Android Console: type 'help' for a list of commands\r\nOK"
+[HMP] qemu monitor -> 'KO: QEMU support no longer available'
+[HMP] 'device_del usbdev0' -> "KO: unknown command, try 'help'"
+[HMP] auth -> "Android Console: type 'help' for a list of commands\r\nOK"
+[HMP] qemu monitor -> 'KO: QEMU support no longer available'
+[HMP] 'device_add usb-storage,id=usbdev0,drive=slot_dev,bus=xhci.0,removable=on' -> "KO: unknown command, try 'help'"
+Running UI Automator Test...
+
+app.fayaz.otgmaster.E2EAutomatedTest:.
+
+Time: 38.706
+
+OK (1 test)
+Dumping logcat for analysis:
+Logcat saved to logcat_serpent.txt
+TEST PASSED: serpent
+==================================================
+Running Test Case: unsupported_cipher
+Image: ./testdata/unsupported_cipher/test.img
+Expects: error (filesystem: , cipher: Twofish)
+==================================================
+Swapping USB to: /home/fayaz/workspaces/OTGMaster/testdata/unsupported_cipher/test.img
+[HMP] auth -> "Android Console: type 'help' for a list of commands\r\nOK"
+[HMP] qemu monitor -> 'KO: QEMU support no longer available'
+[HMP] 'device_del usbdev0' -> "KO: unknown command, try 'help'"
+[HMP] auth -> "Android Console: type 'help' for a list of commands\r\nOK"
+[HMP] qemu monitor -> 'KO: QEMU support no longer available'
+[HMP] 'device_add usb-storage,id=usbdev0,drive=slot_dev,bus=xhci.0,removable=on' -> "KO: unknown command, try 'help'"
+Running UI Automator Test...
+
+app.fayaz.otgmaster.E2EAutomatedTest:.
+
+Time: 24.441
+
+OK (1 test)
+Dumping logcat for analysis:
+Logcat saved to logcat_unsupported_cipher.txt
+TEST PASSED: unsupported_cipher
+Killing emulator...
+OK: killing emulator, bye bye
+OK
+INFO         | Wait for emulator (pid 160230) 20 seconds to shutdown gracefully before kill;you can set environment variable ANDROID_EMULATOR_WAIT_TIME_BEFORE_KILL(in seconds) to change the default value (20 seconds)
+
+INFO         | Wait for emulator (pid 160230) 20 seconds to shutdown gracefully before kill;you can set environment variable ANDROID_EMULATOR_WAIT_TIME_BEFORE_KILL(in seconds) to change the default value (20 seconds)
+
+INFO         | Saving snapshot 'default_boot' using 45 ms
+ERROR        | stop: Not implemented
+INFO         | removeAll
+WARNING      | Netsim Wifi localhost:42861 is gone due to CANCELLED
+All tests completed successfully!

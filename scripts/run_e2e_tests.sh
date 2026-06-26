@@ -20,12 +20,12 @@ SLOT_FILE="/tmp/otg_usb_slot.img"
 
 # Parse optional flags
 SHOW_EMULATOR=1   # 1 = show UI (default), 0 = headless
-ONLY_TEST=""       # if set, run just this one test case directory name
+ONLY_TESTS=""      # space-separated list of test case names to run (empty = all)
 while [[ "$#" -gt 0 ]]; do
   case $1 in
     --show) SHOW_EMULATOR=1 ;;
     --headless) SHOW_EMULATOR=0 ;;
-    --only) ONLY_TEST="$2"; shift ;;
+    --only) ONLY_TESTS="$ONLY_TESTS $2"; shift ;;
     *) echo "Unknown option: $1" ; exit 1 ;;
   esac
   shift
@@ -45,7 +45,7 @@ ensure_testdata() {
         exit 1
     fi
 
-    for case_name in fat32 fat32_keyfile fat32_keyfile_pim exfat exfat_keyfile fat16 ntfs ext4 serpent unsupported_cipher partitioned_mbr; do
+    for case_name in fat32 fat32_keyfile fat32_keyfile_pim exfat exfat_keyfile exfat_write fat16 ntfs ext4 serpent unsupported_cipher partitioned_mbr fat32_write; do
         local dir="$TESTDATA_DIR/$case_name"
         if [ ! -f "$dir/test.img" ] || [ ! -f "$dir/password.txt" ] || [ ! -f "$dir/pim.txt" ]; then
             echo "Missing artifacts for test case: $case_name (test.img / password.txt / pim.txt)"
@@ -79,7 +79,11 @@ sleep 2
 # Find the first test image (alphabetically, or the one matching --only) to pre-load into the slot at boot
 FIRST_IMG=""
 for d in "$TESTDATA_DIR"/*/; do
-    if [ -n "$ONLY_TEST" ] && [ "$(basename "$d")" != "$ONLY_TEST" ]; then continue; fi
+    if [ -n "$ONLY_TESTS" ]; then
+        _matched=false
+        for _t in $ONLY_TESTS; do [ "$(basename "$d")" = "$_t" ] && _matched=true && break; done
+        [ "$_matched" = false ] && continue
+    fi
     img=$(find "$d" -maxdepth 1 -name "*.img" | head -n 1)
     if [ -n "$img" ]; then
         FIRST_IMG="$img"
@@ -165,7 +169,11 @@ for test_dir in "$TESTDATA_DIR"/*/; do
     if [ ! -d "$test_dir" ]; then continue; fi
 
     TEST_NAME=$(basename "$test_dir")
-    if [ -n "$ONLY_TEST" ] && [ "$TEST_NAME" != "$ONLY_TEST" ]; then continue; fi
+    if [ -n "$ONLY_TESTS" ]; then
+        _matched=false
+        for _t in $ONLY_TESTS; do [ "$TEST_NAME" = "$_t" ] && _matched=true && break; done
+        [ "$_matched" = false ] && continue
+    fi
     IMG_FILE=$(find "$test_dir" -maxdepth 1 -name "*.img" | head -n 1)
     PASSWORD_FILE="$test_dir/password.txt"
     KEYFILE=$(find "$test_dir" -maxdepth 1 -name "*.key" | head -n 1)
@@ -210,6 +218,11 @@ for test_dir in "$TESTDATA_DIR"/*/; do
     REMOUNT_ARG=""
     if [ "$TEST_NAME" = "fat32" ]; then
         REMOUNT_ARG="-e remount_test true"
+    fi
+
+    WRITE_TEST_ARG=""
+    if [ -f "$test_dir/write_test.txt" ]; then
+        WRITE_TEST_ARG="-e write_test true"
     fi
 
     TEST_NUM=$((TEST_NUM + 1))
@@ -263,6 +276,7 @@ for test_dir in "$TESTDATA_DIR"/*/; do
         $EXPECTED_FS_ARG \
         $CIPHER_ARG \
         $REMOUNT_ARG \
+        $WRITE_TEST_ARG \
         -e class app.fayaz.otgmaster.E2EAutomatedTest \
         $PACKAGE_NAME.test/androidx.test.runner.AndroidJUnitRunner)
 

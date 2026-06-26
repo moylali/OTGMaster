@@ -1,1 +1,1 @@
-AES-encrypted VeraCrypt volume formatted as NTFS (not supported by the app). Verifies NTFS detection and rejection with the expected 'Cannot mount' message.
+AES-encrypted VeraCrypt volume formatted as NTFS (not supported by the app). Verifies the app detects the filesystem type and shows 'Cannot mount' without mounting.

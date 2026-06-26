@@ -2,6 +2,7 @@ package app.fayaz.otgmaster
 
 import android.content.Context
 import android.content.Intent
+import android.provider.DocumentsContract
 import androidx.test.core.app.ApplicationProvider
 import androidx.test.ext.junit.runners.AndroidJUnit4
 import androidx.test.platform.app.InstrumentationRegistry
@@ -9,6 +10,8 @@ import androidx.test.uiautomator.By
 import androidx.test.uiautomator.UiDevice
 import androidx.test.uiautomator.Until
 import android.util.Log
+import org.junit.Assert.assertEquals
+import org.junit.Assert.assertFalse
 import org.junit.Assert.assertNotNull
 import org.junit.Assert.assertNull
 import org.junit.Assert.assertTrue
@@ -21,6 +24,10 @@ import org.hamcrest.MatcherAssert.assertThat
 
 @RunWith(AndroidJUnit4::class)
 class E2EAutomatedTest {
+
+    companion object {
+        private const val AUTHORITY = "app.fayaz.otgmaster.documents"
+    }
 
     private lateinit var device: UiDevice
     private val timeout = 5000L
@@ -57,6 +64,7 @@ class E2EAutomatedTest {
     @Test
     fun testMountUsbDrive() {
         val arguments = InstrumentationRegistry.getArguments()
+        if (arguments.getString("write_test", "false") == "true") return
         val password = arguments.getString("password", "password123")
         val testCase = arguments.getString("testCase", "exfat")
 
@@ -276,6 +284,229 @@ class E2EAutomatedTest {
         val unmountGone = device.wait(Until.gone(By.descContains("unmount_button")), timeout)
         assertTrue("Drive was not successfully unmounted!", unmountGone)
         }
+    }
+
+    @Test
+    fun testWriteOperations() {
+        val arguments = InstrumentationRegistry.getArguments()
+        if (arguments.getString("write_test", "false") != "true") return
+
+        val password = arguments.getString("password", "password123")
+        val pim = arguments.getString("pim", "")
+        val testCase = arguments.getString("testCase", "fat32_write")
+        val context = ApplicationProvider.getApplicationContext<Context>()
+
+        android.os.SystemClock.sleep(1000)
+
+        // ── MOUNT #1 ──────────────────────────────────────────────────────────
+        val scanBtn1 = device.wait(Until.findObject(By.textContains("Scan")), timeout)
+            ?: device.wait(Until.findObject(By.descContains("Scan")), timeout)
+        scanBtn1?.click()
+        device.wait(Until.findObject(By.text(java.util.regex.Pattern.compile("(?i)Allow|OK"))), 5000L)?.click()
+
+        assertTrue("Mount #1 failed", doMount(password, pim, testCase, clearFields = false))
+
+        // ── WRITE: create file + directory + nested file ───────────────────────
+        val rootDocId1 = getRootDocId(context)
+        assertNotNull("No root after mount #1", rootDocId1)
+        val rootUri1 = DocumentsContract.buildDocumentUri(AUTHORITY, rootDocId1!!)
+
+        val fileContent = "OTGMaster write-test content"
+        val newFileUri = DocumentsContract.createDocument(
+            context.contentResolver, rootUri1, "text/plain", "write_test.txt"
+        )
+        assertNotNull("createDocument(write_test.txt) returned null", newFileUri)
+        context.contentResolver.openOutputStream(newFileUri!!)?.use { it.write(fileContent.toByteArray()) }
+            ?: fail("openOutputStream for write_test.txt returned null")
+
+        val newDirUri = DocumentsContract.createDocument(
+            context.contentResolver, rootUri1, DocumentsContract.Document.MIME_TYPE_DIR, "write_dir"
+        )
+        assertNotNull("createDocument(write_dir) returned null", newDirUri)
+
+        val nestedContent = "nested content"
+        val nestedUri = DocumentsContract.createDocument(
+            context.contentResolver, newDirUri!!, "text/plain", "nested.txt"
+        )
+        assertNotNull("createDocument(nested.txt) returned null", nestedUri)
+        context.contentResolver.openOutputStream(nestedUri!!)?.use { it.write(nestedContent.toByteArray()) }
+            ?: fail("openOutputStream for nested.txt returned null")
+
+        doUnmount()
+
+        // ── REMOUNT #2 — verify write persistence ─────────────────────────────
+        val scanBtn2 = device.wait(Until.findObject(By.textContains("Scan")), timeout)
+            ?: device.wait(Until.findObject(By.descContains("Scan")), timeout)
+        scanBtn2?.click()
+        android.os.SystemClock.sleep(2000)
+
+        assertTrue("Mount #2 failed", doMount(password, pim, testCase, clearFields = true))
+
+        val rootDocId2 = getRootDocId(context)
+        assertNotNull("No root after mount #2", rootDocId2)
+        val childrenUri2 = DocumentsContract.buildChildDocumentsUri(AUTHORITY, rootDocId2!!)
+
+        var writeTxtId: String? = null
+        var writeDirId: String? = null
+        context.contentResolver.query(childrenUri2, null, null, null, null)?.use { cur ->
+            while (cur.moveToNext()) {
+                val id = cur.getString(cur.getColumnIndex(DocumentsContract.Document.COLUMN_DOCUMENT_ID)) ?: continue
+                if (id.endsWith("write_test.txt")) writeTxtId = id
+                if (id.endsWith("write_dir")) writeDirId = id
+            }
+        }
+        assertNotNull("write_test.txt missing after remount #2", writeTxtId)
+        assertNotNull("write_dir missing after remount #2", writeDirId)
+
+        // verify nested.txt inside write_dir
+        var nestedId: String? = null
+        context.contentResolver.query(
+            DocumentsContract.buildChildDocumentsUri(AUTHORITY, writeDirId!!), null, null, null, null
+        )?.use { cur ->
+            while (cur.moveToNext()) {
+                val id = cur.getString(cur.getColumnIndex(DocumentsContract.Document.COLUMN_DOCUMENT_ID)) ?: continue
+                if (id.endsWith("nested.txt")) nestedId = id
+            }
+        }
+        assertNotNull("nested.txt missing inside write_dir after remount #2", nestedId)
+
+        // verify file content survived remount
+        val writeTxtUri2 = DocumentsContract.buildDocumentUri(AUTHORITY, writeTxtId!!)
+        val readBack = context.contentResolver.openInputStream(writeTxtUri2)
+            ?.use { it.readBytes().toString(Charsets.UTF_8) }
+        assertEquals("write_test.txt content changed after remount #2", fileContent, readBack)
+
+        // ── DELETE write_test.txt ──────────────────────────────────────────────
+        DocumentsContract.deleteDocument(context.contentResolver, writeTxtUri2)
+
+        var goneImmediately = true
+        context.contentResolver.query(childrenUri2, null, null, null, null)?.use { cur ->
+            while (cur.moveToNext()) {
+                val id = cur.getString(cur.getColumnIndex(DocumentsContract.Document.COLUMN_DOCUMENT_ID))
+                if (id?.endsWith("write_test.txt") == true) goneImmediately = false
+            }
+        }
+        assertTrue("write_test.txt still visible immediately after deletion", goneImmediately)
+
+        doUnmount()
+
+        // ── REMOUNT #3 — verify deletion persisted ────────────────────────────
+        val scanBtn3 = device.wait(Until.findObject(By.textContains("Scan")), timeout)
+            ?: device.wait(Until.findObject(By.descContains("Scan")), timeout)
+        scanBtn3?.click()
+        android.os.SystemClock.sleep(2000)
+
+        assertTrue("Mount #3 failed", doMount(password, pim, testCase, clearFields = true))
+
+        val rootDocId3 = getRootDocId(context)
+        assertNotNull("No root after mount #3", rootDocId3)
+        var reappeared = false
+        context.contentResolver.query(
+            DocumentsContract.buildChildDocumentsUri(AUTHORITY, rootDocId3!!), null, null, null, null
+        )?.use { cur ->
+            while (cur.moveToNext()) {
+                val id = cur.getString(cur.getColumnIndex(DocumentsContract.Document.COLUMN_DOCUMENT_ID))
+                if (id?.endsWith("write_test.txt") == true) reappeared = true
+            }
+        }
+        assertFalse("write_test.txt reappeared after remount #3 — deletion not persisted!", reappeared)
+
+        doUnmount()
+    }
+
+    // ── helpers ──────────────────────────────────────────────────────────────
+
+    private fun doMount(password: String, pim: String, testCase: String, clearFields: Boolean): Boolean {
+        // First pass: check if password field is visible; if not, try the device picker.
+        if (device.wait(Until.findObject(By.descContains("password_input")), 15000L) == null) {
+            val devicePicker = device.findObject(By.descContains("device_picker"))
+            if (devicePicker != null) {
+                devicePicker.click()
+                android.os.SystemClock.sleep(500)
+                val options = device.findObjects(By.textContains("QEMU"))
+                if (options.size > 1) {
+                    options.last().click()
+                    android.os.SystemClock.sleep(1000)
+                }
+            }
+        }
+
+        if (testCase == "partitioned_mbr") {
+            val candidatePicker = device.findObject(By.descContains("candidate_picker"))
+            if (candidatePicker != null) {
+                candidatePicker.click()
+                android.os.SystemClock.sleep(500)
+                device.findObjects(By.textContains("MBR partition")).lastOrNull()?.click()
+                android.os.SystemClock.sleep(500)
+            }
+        }
+
+        // Re-find and click the password field with retry: a UiObject2 can go stale
+        // between findObject() and click() if Compose recomposes in that window.
+        if (!clickByDesc("password_input", waitMs = 10000L)) return false
+        android.os.SystemClock.sleep(500)
+        if (clearFields) {
+            repeat(50) { device.executeShellCommand("input keyevent KEYCODE_DEL") }
+            android.os.SystemClock.sleep(200)
+        }
+        device.executeShellCommand("input text $password")
+        android.os.SystemClock.sleep(500)
+
+        if (pim.isNotEmpty()) {
+            val pimField = device.wait(Until.findObject(By.descContains("pim_input")), timeout)
+            pimField?.click()
+            android.os.SystemClock.sleep(500)
+            if (clearFields) {
+                repeat(20) { device.executeShellCommand("input keyevent KEYCODE_DEL") }
+                android.os.SystemClock.sleep(200)
+            }
+            device.executeShellCommand("input text $pim")
+            android.os.SystemClock.sleep(500)
+        }
+
+        device.pressEnter()
+        android.os.SystemClock.sleep(500)
+
+        val mountButton = device.wait(Until.findObject(By.descContains("mount_button")), timeout)
+            ?: device.wait(Until.findObject(By.textContains("Unlock & Mount")), timeout)
+        if (mountButton == null || !mountButton.isEnabled) return false
+        mountButton.click()
+
+        return device.wait(Until.findObject(By.textContains("Used")), 300000L) != null
+    }
+
+    private fun clickByDesc(desc: String, waitMs: Long = timeout, retries: Int = 3): Boolean {
+        repeat(retries) { attempt ->
+            try {
+                val obj = device.wait(Until.findObject(By.descContains(desc)), waitMs) ?: return false
+                obj.click()
+                return true
+            } catch (e: androidx.test.uiautomator.StaleObjectException) {
+                if (attempt == retries - 1) return false
+                android.os.SystemClock.sleep(200)
+            }
+        }
+        return false
+    }
+
+    private fun doUnmount() {
+        val unmountButton = device.wait(Until.findObject(By.descContains("unmount_button")), timeout)
+        assertTrue("Unmount button not found", unmountButton != null)
+        unmountButton?.click()
+        val gone = device.wait(Until.gone(By.descContains("unmount_button")), timeout)
+        assertTrue("Drive was not successfully unmounted!", gone)
+    }
+
+    private fun getRootDocId(context: Context): String? {
+        val rootsUri = DocumentsContract.buildRootsUri(AUTHORITY)
+        var rootDocId: String? = null
+        context.contentResolver.query(rootsUri, null, null, null, null)?.use { cursor ->
+            if (cursor.moveToFirst()) {
+                val index = cursor.getColumnIndex(DocumentsContract.Root.COLUMN_DOCUMENT_ID)
+                if (index != -1) rootDocId = cursor.getString(index)
+            }
+        }
+        return rootDocId
     }
 
     private fun assertCannotMountError(expectedFs: String) {

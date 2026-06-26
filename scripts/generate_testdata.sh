@@ -212,6 +212,8 @@ create_partitioned_volume() {
 
 mkdir -p testdata/fat32_keyfile_pim
 mkdir -p testdata/partitioned_mbr
+mkdir -p testdata/fat32_write
+mkdir -p testdata/exfat_write
 
 create_fat32_volume "testdata/fat32" "false"
 create_fat32_volume "testdata/fat32_keyfile" "true"
@@ -230,6 +232,14 @@ echo "AES-encrypted FAT32 VeraCrypt volume, but the UI cipher picker is set to T
 
 create_exfat_volume "testdata/exfat" "false"
 create_exfat_volume "testdata/exfat_keyfile" "true"
+
+create_fat32_volume "testdata/fat32_write" "false"
+touch "testdata/fat32_write/write_test.txt"
+echo "FAT32 write support test: mounts an AES-encrypted FAT32 VeraCrypt volume, creates a file and directory via SAF, unmounts and remounts to verify persistence, deletes the file, then unmounts and remounts to verify the deletion was persisted." > "testdata/fat32_write/description.txt"
+
+create_exfat_volume "testdata/exfat_write" "false"
+touch "testdata/exfat_write/write_test.txt"
+echo "exFAT write support test: same lifecycle as fat32_write (create, persist across remount, delete, verify deletion persists) but using an exFAT-formatted VeraCrypt volume." > "testdata/exfat_write/description.txt"
 create_unsupported_volume "testdata/fat16" "FAT16" "fat"
 create_unsupported_volume "testdata/ntfs" "NTFS" "ntfs"
 create_unsupported_volume "testdata/ext4" "ext4" "ext4"

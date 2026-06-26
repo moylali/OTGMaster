@@ -1,0 +1,1 @@
+exFAT write support test: same lifecycle as fat32_write (create, persist across remount, delete, verify deletion persists) but using an exFAT-formatted VeraCrypt volume.
