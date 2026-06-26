@@ -20,4 +20,11 @@ object VeraCryptNative {
         sectorNum: Long,
         encryptedSector: ByteArray
     ): ByteArray?
+
+    external fun encryptSector(
+        cipher: Int,
+        masterKey: ByteArray,
+        sectorNum: Long,
+        unencryptedSector: ByteArray
+    ): ByteArray?
 }

@@ -8,7 +8,5 @@ interface RawBlockDevice : Closeable {
 
     fun readBlocks(startBlock: Long, blockCount: Int): ByteArray
 
-    fun writeBlocks(startBlock: Long, data: ByteArray) {
-        throw UnsupportedOperationException("Write support is intentionally disabled for the first prototype.")
-    }
+    fun writeBlocks(startBlock: Long, data: ByteArray)
 }

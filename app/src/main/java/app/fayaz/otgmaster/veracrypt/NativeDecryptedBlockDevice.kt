@@ -73,8 +73,36 @@ class NativeDecryptedBlockDevice(
         buffer.put(data)
     }
 
+    override fun writeBlocks(startBlock: Long, data: ByteArray) {
+        val physicalStartBlock = startBlock + volumeDataOffset
+        val sectorCount = data.size / 512
+        val encryptedData = ByteArray(data.size)
+        
+        val sectorsPerBlock = blockSize / 512L
+        val tweakDataOffsetSectors = tweakDataOffset * sectorsPerBlock
+        val startBlockSectors = startBlock * sectorsPerBlock
+
+        for (i in 0 until sectorCount) {
+            val sectorDecrypted = data.copyOfRange(i * 512, (i + 1) * 512)
+            val tweak = tweakDataOffsetSectors + startBlockSectors + i
+            val sectorEncrypted = VeraCryptNative.encryptSector(cipherNativeId, masterKey, tweak, sectorDecrypted)
+
+            if (sectorEncrypted != null) {
+                System.arraycopy(sectorEncrypted, 0, encryptedData, i * 512, 512)
+            } else {
+                throw IllegalStateException("Encryption failed at physical sector ${physicalStartBlock + i}")
+            }
+        }
+        
+        encryptedDevice.writeBlocks(physicalStartBlock, encryptedData)
+    }
+
     override fun write(deviceOffset: Long, buffer: ByteBuffer) {
-        throw UnsupportedOperationException("Read-only prototype")
+        val bytesToWrite = buffer.remaining()
+        require(bytesToWrite % blockSize == 0) { "buffer.remaining() must be multiple of blockSize" }
+        val data = ByteArray(bytesToWrite)
+        buffer.get(data)
+        writeBlocks(deviceOffset, data)
     }
 
     override fun close() {

@@ -14,5 +14,11 @@ class SlicedBlockDevice(
         return delegate.readBlocks(firstBlock + startBlock, blockCount)
     }
 
+    override fun writeBlocks(startBlock: Long, data: ByteArray) {
+        require(startBlock >= 0) { "startBlock must be non-negative" }
+        require(startBlock + (data.size / blockSize) <= this.blockCount) { "Write exceeds slice bounds" }
+        delegate.writeBlocks(firstBlock + startBlock, data)
+    }
+
     override fun close() = delegate.close()
 }

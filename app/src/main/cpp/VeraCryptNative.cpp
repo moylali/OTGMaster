@@ -131,3 +131,32 @@ Java_app_fayaz_otgmaster_veracrypt_VeraCryptNative_decryptSector(JNIEnv *env, jo
     env->SetByteArrayRegion(result, 0, 512, (const jbyte*)decSector);
     return result;
 }
+
+extern "C" JNIEXPORT jbyteArray JNICALL
+Java_app_fayaz_otgmaster_veracrypt_VeraCryptNative_encryptSector(JNIEnv *env, jobject thiz, jint cipher, jbyteArray jMasterKey, jlong sectorNum, jbyteArray jUnencSector) {
+    jsize keyLen = env->GetArrayLength(jMasterKey);
+    jbyte* masterKey = env->GetByteArrayElements(jMasterKey, NULL);
+
+    jsize sectorLen = env->GetArrayLength(jUnencSector);
+    jbyte* unencSector = env->GetByteArrayElements(jUnencSector, NULL);
+
+    unsigned char encSector[512];
+    unsigned char data_unit[16] = {0};
+
+    // Copy little-endian sector number into data_unit
+    for (int i = 0; i < 8; i++) {
+        data_unit[i] = (sectorNum >> (i * 8)) & 0xFF;
+    }
+
+    int ret = xtsCrypt(cipher, MBEDTLS_AES_ENCRYPT, (const unsigned char*)masterKey, data_unit,
+                        (const unsigned char*)unencSector, encSector, 512);
+
+    env->ReleaseByteArrayElements(jMasterKey, masterKey, JNI_ABORT);
+    env->ReleaseByteArrayElements(jUnencSector, unencSector, JNI_ABORT);
+
+    if (ret != 0) return nullptr;
+
+    jbyteArray result = env->NewByteArray(512);
+    env->SetByteArrayRegion(result, 0, 512, (const jbyte*)encSector);
+    return result;
+}

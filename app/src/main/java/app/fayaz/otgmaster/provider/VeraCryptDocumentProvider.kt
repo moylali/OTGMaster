@@ -13,6 +13,8 @@ import java.io.FileNotFoundException
 import java.io.FileOutputStream
 import java.io.IOException
 import java.nio.ByteBuffer
+import android.os.ProxyFileDescriptorCallback
+import android.os.storage.StorageManager
 
 class VeraCryptDocumentProvider : DocumentsProvider() {
 
@@ -48,6 +50,37 @@ class VeraCryptDocumentProvider : DocumentsProvider() {
         return true
     }
 
+    override fun createDocument(
+        documentId: String?,
+        mimeType: String?,
+        displayName: String?
+    ): String {
+        if (displayName == null) throw IllegalArgumentException("displayName cannot be null")
+        val parent = getFileForDocId(documentId) ?: throw FileNotFoundException("Parent not found")
+        val newFile = if (mimeType == DocumentsContract.Document.MIME_TYPE_DIR) {
+            parent.createDirectory(displayName)
+        } else {
+            parent.createFile(displayName)
+        }
+        return getDocIdForChild(documentId, newFile)
+    }
+
+    override fun deleteDocument(documentId: String?) {
+        val file = getFileForDocId(documentId) ?: throw FileNotFoundException("File not found")
+        file.delete()
+    }
+
+    override fun renameDocument(documentId: String?, displayName: String?): String {
+        val file = getFileForDocId(documentId) ?: throw FileNotFoundException("File not found")
+        if (displayName == null) throw IllegalArgumentException("Display name cannot be null")
+        file.name = displayName
+        
+        val parsed = parseDocId(documentId) ?: throw FileNotFoundException("Invalid document ID")
+        val parentPath = parsed.path.substringBeforeLast('/')
+        val newPath = if (parentPath.isEmpty()) "/" + displayName else parentPath + "/" + displayName
+        return parsed.driveId + ":" + newPath
+    }
+
     override fun queryRoots(projection: Array<out String>?): Cursor {
         val result = MatrixCursor(projection ?: DEFAULT_ROOT_PROJECTION)
 
@@ -57,7 +90,9 @@ class VeraCryptDocumentProvider : DocumentsProvider() {
             row.add(DocumentsContract.Root.COLUMN_SUMMARY, "Unlocked Volume")
             row.add(
                 DocumentsContract.Root.COLUMN_FLAGS,
-                DocumentsContract.Root.FLAG_SUPPORTS_IS_CHILD or DocumentsContract.Root.FLAG_LOCAL_ONLY
+                DocumentsContract.Root.FLAG_SUPPORTS_IS_CHILD or 
+                DocumentsContract.Root.FLAG_LOCAL_ONLY or 
+                DocumentsContract.Root.FLAG_SUPPORTS_CREATE
             )
             row.add(DocumentsContract.Root.COLUMN_TITLE, drive.name)
             row.add(DocumentsContract.Root.COLUMN_DOCUMENT_ID, rootDocIdForDrive(drive.id))
@@ -103,9 +138,43 @@ class VeraCryptDocumentProvider : DocumentsProvider() {
     ): ParcelFileDescriptor {
         val file = getFileForDocId(documentId) ?: throw FileNotFoundException("File not found")
         
-        val isWrite = mode?.contains("w") == true
+        val isWrite = mode?.contains("w") == true || mode?.contains("a") == true || mode?.contains("t") == true
         if (isWrite) {
-            throw FileNotFoundException("Read-only file system")
+            val storageManager = context?.getSystemService(StorageManager::class.java)
+                ?: throw IllegalStateException("StorageManager not available")
+
+            if (mode?.contains("t") == true) {
+                file.length = 0 // truncate
+            }
+            
+            val callback = object : ProxyFileDescriptorCallback() {
+                override fun onGetSize(): Long {
+                    return file.length
+                }
+
+                override fun onRead(offset: Long, size: Int, data: ByteArray): Int {
+                    if (offset >= file.length) return 0
+                    val toRead = Math.min(size.toLong(), file.length - offset).toInt()
+                    file.read(offset, ByteBuffer.wrap(data, 0, toRead))
+                    return toRead
+                }
+
+                override fun onWrite(offset: Long, size: Int, data: ByteArray): Int {
+                    file.write(offset, ByteBuffer.wrap(data, 0, size))
+                    return size
+                }
+
+                override fun onFsync() {
+                    file.flush()
+                }
+
+                override fun onRelease() {
+                    file.close()
+                }
+            }
+
+            val pfdMode = ParcelFileDescriptor.parseMode(mode ?: "r")
+            return storageManager.openProxyFileDescriptor(pfdMode, callback, null)
         }
 
         // To stream data from libaums to the OS, we use a pipe
@@ -178,14 +247,15 @@ class VeraCryptDocumentProvider : DocumentsProvider() {
         // than chase each one individually, treat any failure here as "unknown" (0).
         row.add(DocumentsContract.Document.COLUMN_SIZE, runCatching { if (file.isDirectory) 0L else file.length }.getOrDefault(0L))
 
-        var flags = 0
+        var flags = DocumentsContract.Document.FLAG_SUPPORTS_DELETE or DocumentsContract.Document.FLAG_SUPPORTS_RENAME
         val mimeType: String
         if (file.isDirectory) {
             mimeType = DocumentsContract.Document.MIME_TYPE_DIR
-            // No WRITE flag for now
+            flags = flags or DocumentsContract.Document.FLAG_DIR_SUPPORTS_CREATE
         } else {
             val extension = file.name.substringAfterLast('.', "")
             mimeType = MimeTypeMap.getSingleton().getMimeTypeFromExtension(extension.lowercase()) ?: "application/octet-stream"
+            flags = flags or DocumentsContract.Document.FLAG_SUPPORTS_WRITE
         }
 
         row.add(DocumentsContract.Document.COLUMN_MIME_TYPE, mimeType)
