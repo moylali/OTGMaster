@@ -119,6 +119,22 @@ class MainActivity : AppCompatActivity() {
     private val sessionPlaintextCreds = androidx.compose.runtime.snapshots.SnapshotStateMap<String, app.fayaz.otgmaster.security.CredentialStore.Credentials>()
     private val excludedDeviceKeys = mutableStateOf<Set<String>>(emptySet())
 
+    // Debounce buffer: collects hub devices that arrive in rapid succession so they
+    // all go into a single biometric prompt rather than triggering separate ones.
+    private val pendingAutoMountDevices = mutableListOf<UsbDeviceCandidate>()
+    private val autoMountDebounceHandler = android.os.Handler(android.os.Looper.getMainLooper())
+    private val autoMountDebounceRunnable = Runnable {
+        val batch = pendingAutoMountDevices.toList()
+        pendingAutoMountDevices.clear()
+        if (batch.isNotEmpty()) showAutoMountPrompt(batch)
+    }
+
+    // Guard against concurrent probeQemuDisk calls: the underlying block device can
+    // still be flushing after an ExFAT unmount, making a second concurrent probe slow
+    // and producing a different FileBlockDevice instance that causes a stale
+    // accessibility node in the Compose form (UiAutomator StaleObjectException).
+    private var isQemuProbing = false
+
     private val versionName: String by lazy {
         packageManager.getPackageInfo(packageName, 0).versionName ?: "?"
     }
@@ -296,7 +312,9 @@ class MainActivity : AppCompatActivity() {
         }
 
         if (devices.isEmpty()) {
-            val qemuAlreadyHandled = QEMU_DEVICE_KEY in mountedDeviceKeys || QEMU_DEVICE_KEY in openedDevices
+            val qemuAlreadyHandled = QEMU_DEVICE_KEY in mountedDeviceKeys ||
+                QEMU_DEVICE_KEY in openedDevices ||
+                isQemuProbing
             if (!qemuAlreadyHandled) {
                 val sda = java.io.File("/dev/block/sda")
                 if (sda.exists() && sda.canRead()) {
@@ -327,11 +345,13 @@ class MainActivity : AppCompatActivity() {
     }
 
     private fun probeQemuDisk(sda: java.io.File) {
+        isQemuProbing = true
         val device = app.fayaz.otgmaster.block.FileBlockDevice(sda)
         lifecycleScope.launch(Dispatchers.IO) {
             try {
                 val candidates = app.fayaz.otgmaster.veracrypt.VeraCryptUnlocker().probeCandidates(device)
                 withContext(Dispatchers.Main) {
+                    isQemuProbing = false
                     val qemuCandidate = UsbDeviceCandidate(QEMU_DEVICE_KEY, getString(R.string.qemu_test_disk_label), device, candidates)
                     openedDevices[QEMU_DEVICE_KEY] = device
                     _deviceCandidates.value = listOf(qemuCandidate)
@@ -341,7 +361,10 @@ class MainActivity : AppCompatActivity() {
             } catch (e: Exception) {
                 e.printStackTrace()
                 device.close()
-                withContext(Dispatchers.Main) { appendLog(getString(R.string.log_error_probing_qemu_candidates, e.message)) }
+                withContext(Dispatchers.Main) {
+                    isQemuProbing = false
+                    appendLog(getString(R.string.log_error_probing_qemu_candidates, e.message))
+                }
             }
         }
     }
@@ -585,12 +608,19 @@ class MainActivity : AppCompatActivity() {
         val excluded = excludedDeviceKeys.value
         val toMount = newCandidates.filter {
             it.deviceName !in autoMountAttempted &&
+            // If credentials are already in session memory the form will pre-fill —
+            // no biometric needed (handles the "unmount then reconnect same session" case).
+            it.deviceName !in sessionPlaintextCreds &&
             credentialStore.has(it.deviceName) &&
             it.deviceName !in excluded
         }
         if (toMount.isEmpty()) return
         toMount.forEach { autoMountAttempted.add(it.deviceName) }
-        showAutoMountPrompt(toMount)
+        // Debounce: accumulate hub devices that arrive in rapid succession, then
+        // fire one combined biometric prompt for all of them after a short delay.
+        pendingAutoMountDevices.addAll(toMount)
+        autoMountDebounceHandler.removeCallbacks(autoMountDebounceRunnable)
+        autoMountDebounceHandler.postDelayed(autoMountDebounceRunnable, 400L)
     }
 
     private fun showAutoMountPrompt(devices: List<UsbDeviceCandidate>) {
