@@ -18,18 +18,18 @@ val keystoreProperties = Properties().apply {
 
 android {
     namespace = "app.fayaz.otgmaster"
-    compileSdk = 34
+    compileSdk = 35
     ndkVersion = "26.1.10909125"
 
     defaultConfig {
         applicationId = "app.fayaz.otgmaster"
         minSdk = 26
-        targetSdk = 34
+        targetSdk = 35
         // Static literals, not computed at build time — F-Droid's checkupdates tool statically
         // parses this file's text per-tag and can't resolve a dynamic expression. Bump via
         // scripts/bump-version.sh as part of cutting a release, before tagging.
-        versionCode = 37
-        versionName = "0.3.4"
+        versionCode = 38
+        versionName = "0.3.5"
         testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
         externalNativeBuild {
             cmake {

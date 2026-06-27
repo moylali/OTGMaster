@@ -1,5 +1,10 @@
 # Changelog
 
+## [v0.3.5] - 2026-06-27
+
+### Fixed
+- Bumped target SDK to 35 (required by Google Play).
+
 ## [v0.3.4] - 2026-06-27
 
 ### Added

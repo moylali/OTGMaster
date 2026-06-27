@@ -1,0 +1,1 @@
+Auto Mount: automatically mounts known VeraCrypt volumes on USB connect using biometric authentication. Hub support: multiple devices connected via a hub are prompted together in a single biometric prompt. Fixed drive corruption on unmount, several exFAT crash paths, and Files app navigation.
