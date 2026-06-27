@@ -10,8 +10,6 @@ import android.webkit.MimeTypeMap
 import app.fayaz.otgmaster.OtgMasterState
 import me.jahnen.libaums.core.fs.UsbFile
 import java.io.FileNotFoundException
-import java.io.FileOutputStream
-import java.io.IOException
 import java.nio.ByteBuffer
 import android.os.ProxyFileDescriptorCallback
 import android.os.storage.StorageManager
@@ -195,36 +193,27 @@ class VeraCryptDocumentProvider : DocumentsProvider() {
             return storageManager.openProxyFileDescriptor(pfdMode, callback, proxyHandler)
         }
 
-        // To stream data from libaums to the OS, we use a pipe
-        val pipe = ParcelFileDescriptor.createPipe()
-        val readFd = pipe[0]
-        val writeFd = pipe[1]
+        val storageManager = context?.getSystemService(StorageManager::class.java)
+            ?: throw IllegalStateException("StorageManager not available")
 
-        Thread {
-            try {
-                FileOutputStream(writeFd.fileDescriptor).use { out ->
-                    val buffer = ByteArray(65536)
-                    var offset: Long = 0
-                    while (offset < file.length) {
-                        if (signal?.isCanceled == true) break
-                        
-                        val toRead = Math.min(65536.toLong(), file.length - offset).toInt()
-                        file.read(offset, ByteBuffer.wrap(buffer, 0, toRead))
-                        out.write(buffer, 0, toRead)
-                        offset += toRead
-                    }
-                }
-            } catch (e: Exception) {
-                e.printStackTrace()
-            } finally {
-                try {
-                    writeFd.close()
-                } catch (e: IOException) {
-                }
+        val callback = object : ProxyFileDescriptorCallback() {
+            override fun onGetSize(): Long = file.length
+
+            override fun onRead(offset: Long, size: Int, data: ByteArray): Int {
+                if (offset >= file.length) return 0
+                val toRead = Math.min(size.toLong(), file.length - offset).toInt()
+                file.read(offset, ByteBuffer.wrap(data, 0, toRead))
+                return toRead
             }
-        }.start()
 
-        return readFd
+            override fun onRelease() {
+                file.close()
+            }
+        }
+
+        return storageManager.openProxyFileDescriptor(
+            ParcelFileDescriptor.MODE_READ_ONLY, callback, proxyHandler
+        )
     }
     
     private fun getFileForDocId(docId: String?): UsbFile? {
