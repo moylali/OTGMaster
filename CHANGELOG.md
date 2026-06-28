@@ -1,5 +1,17 @@
 # Changelog
 
+## [v0.3.7] - 2026-06-28
+
+### Fixed
+- Restored hub batch auto-mount: all drives connected via a USB hub are now shown in a single biometric prompt again (regression introduced in v0.3.6).
+- Cancelling the auto-mount biometric prompt no longer crashes; all devices remain listed in the dropdown.
+- The "Opt out of Auto mount" switch no longer appears on the quick-unlock view (devices with cached credentials); it now only shows in the full credential form.
+- After selecting keyfiles from the file picker, the keyboard no longer reopens on the PIM field.
+
+### Added
+- **Clear credentials per device**: mounted drive cards now show a "Clear credentials" button when that device has cached auto-mount credentials, allowing individual credential removal without clearing all devices.
+- Mounted drive card buttons now wrap to a second row on narrow screens instead of clipping.
+
 ## [v0.3.6] - 2026-06-28
 
 ### Fixed
