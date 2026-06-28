@@ -907,7 +907,8 @@ fun OtgMasterApp(
                         }
 
                         Spacer(modifier = Modifier.height(16.dp))
-                        Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                        @OptIn(androidx.compose.foundation.layout.ExperimentalLayoutApi::class)
+                        FlowRow(horizontalArrangement = Arrangement.spacedBy(8.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
                             Button(onClick = { onOpenFilesApp(drive) }) {
                                 Text(stringResource(R.string.open_files_app))
                             }
@@ -919,7 +920,7 @@ fun OtgMasterApp(
                             }
                             val deviceKey = drive.sourceDeviceName
                             if (deviceKey != null && hasCachedCreds(deviceKey)) {
-                                OutlinedButton(onClick = { onClearDeviceCreds(deviceKey) }) {
+                                Button(onClick = { onClearDeviceCreds(deviceKey) }) {
                                     Text(stringResource(R.string.clear_cached_credentials))
                                 }
                             }
