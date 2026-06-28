@@ -1,5 +1,10 @@
 # Changelog
 
+## [v0.3.6] - 2026-06-28
+
+### Fixed
+- Fixed opening files (PDFs, videos, documents) from mounted drives in third-party apps; the previous pipe-based implementation did not support seeking, causing apps like Google Drive and PDF viewers to fail.
+
 ## [v0.3.5] - 2026-06-27
 
 ### Fixed
