@@ -1136,22 +1136,6 @@ fun VeraCryptMountSection(
             if (candidates.isEmpty()) {
                 Text(stringResource(R.string.no_candidates_found), color = MaterialTheme.colorScheme.error)
             } else if (showQuickUnlock) {
-                if (autoMountEnabled) {
-                    Row(
-                        verticalAlignment = Alignment.CenterVertically,
-                        modifier = Modifier.fillMaxWidth()
-                    ) {
-                        Text(
-                            stringResource(R.string.auto_mount_exclude_device),
-                            modifier = Modifier.weight(1f),
-                            style = MaterialTheme.typography.bodyMedium
-                        )
-                        Switch(
-                            checked = isExcluded(currentDeviceName),
-                            onCheckedChange = { onSetExcluded(currentDeviceName, it) }
-                        )
-                    }
-                }
                 Button(
                     onClick = {
                         isUnlocking = true
@@ -1271,7 +1255,7 @@ fun VeraCryptMountSection(
                 )
             }
 
-            if (autoMountEnabled && (hasCachedCreds(currentDeviceName) || isPreFilled)) {
+            if (autoMountEnabled) {
                 Row(
                     verticalAlignment = Alignment.CenterVertically,
                     modifier = Modifier.fillMaxWidth()
