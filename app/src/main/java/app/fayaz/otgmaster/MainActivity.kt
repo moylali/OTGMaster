@@ -42,6 +42,7 @@ import androidx.compose.material.icons.filled.VisibilityOff
 import androidx.compose.material.icons.filled.Delete
 import androidx.compose.material.icons.filled.ContentCopy
 import androidx.compose.material.icons.filled.Close
+import androidx.compose.material.icons.filled.Fingerprint
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.platform.LocalContext
 
@@ -270,6 +271,9 @@ class MainActivity : AppCompatActivity() {
                         onSetExcluded = { deviceKey, excluded ->
                             credentialStore.setExcluded(deviceKey, excluded)
                             excludedDeviceKeys.value = credentialStore.loadExcludedKeys()
+                        },
+                        onQuickUnlock = { deviceName, onComplete ->
+                            showQuickUnlockPrompt(deviceName, onComplete)
                         },
                         toastMessage = toastState.value?.first,
                         toastIsSuccess = toastState.value?.second ?: true,
@@ -697,6 +701,53 @@ class MainActivity : AppCompatActivity() {
         prompt.authenticate(builder.build())
     }
 
+    private fun showQuickUnlockPrompt(deviceName: String, onComplete: () -> Unit) {
+        val creds = sessionPlaintextCreds[deviceName] ?: credentialStore.load(deviceName) ?: run {
+            appendLog("No credentials found for $deviceName")
+            onComplete()
+            return
+        }
+        val device = _deviceCandidates.value.find { it.deviceName == deviceName } ?: run {
+            appendLog("Device not found: $deviceName")
+            onComplete()
+            return
+        }
+        val candidate = device.candidates.find { it.startBlock == creds.candidateStartBlock }
+            ?: device.candidates.firstOrNull() ?: run {
+            appendLog("No volume candidate found for $deviceName")
+            onComplete()
+            return
+        }
+        val cipher = app.fayaz.otgmaster.veracrypt.VeraCryptCipher.entries
+            .find { it.name == creds.cipherName } ?: app.fayaz.otgmaster.veracrypt.VeraCryptCipher.DEFAULT
+        val hash = app.fayaz.otgmaster.veracrypt.VeraCryptHash.entries
+            .find { it.name == creds.hashName } ?: app.fayaz.otgmaster.veracrypt.VeraCryptHash.DEFAULT
+
+        val executor = androidx.core.content.ContextCompat.getMainExecutor(this)
+        val callback = object : androidx.biometric.BiometricPrompt.AuthenticationCallback() {
+            override fun onAuthenticationSucceeded(result: androidx.biometric.BiometricPrompt.AuthenticationResult) {
+                attemptUnlock(deviceName, candidate, creds.password, creds.pim.toIntOrNull(),
+                    creds.keyfileUris, cipher, hash, fromCache = true, onComplete = onComplete)
+            }
+            override fun onAuthenticationError(errorCode: Int, errString: CharSequence) { onComplete() }
+            override fun onAuthenticationFailed() {}
+        }
+        val prompt = androidx.biometric.BiometricPrompt(this, executor, callback)
+        val builder = androidx.biometric.BiometricPrompt.PromptInfo.Builder()
+            .setTitle(getString(R.string.auto_mount_prompt_title))
+            .setSubtitle(device.displayName)
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.R) {
+            builder.setAllowedAuthenticators(
+                androidx.biometric.BiometricManager.Authenticators.BIOMETRIC_STRONG or
+                androidx.biometric.BiometricManager.Authenticators.DEVICE_CREDENTIAL
+            )
+        } else {
+            builder.setAllowedAuthenticators(androidx.biometric.BiometricManager.Authenticators.BIOMETRIC_STRONG)
+                .setNegativeButtonText(getString(R.string.auto_mount_prompt_negative))
+        }
+        prompt.authenticate(builder.build())
+    }
+
     private fun clearLogs() {
         logsState.clear()
     }
@@ -756,6 +807,7 @@ fun OtgMasterApp(
     onAutoMountEnabledChange: (Boolean) -> Unit,
     onClearAllCredentials: () -> Unit,
     onSetExcluded: (String, Boolean) -> Unit,
+    onQuickUnlock: (String, () -> Unit) -> Unit = { _, cb -> cb() },
     toastMessage: String? = null,
     toastIsSuccess: Boolean = true,
     onToastDismiss: () -> Unit = {},
@@ -893,7 +945,8 @@ fun OtgMasterApp(
                             sessionCredentials = sessionCredentials,
                             hasCachedCreds = hasCachedCreds,
                             isExcluded = isExcluded,
-                            onSetExcluded = onSetExcluded
+                            onSetExcluded = onSetExcluded,
+                            onQuickUnlock = onQuickUnlock
                         )
                     }
                 }
@@ -984,7 +1037,8 @@ fun VeraCryptMountSection(
     sessionCredentials: Map<String, app.fayaz.otgmaster.security.CredentialStore.Credentials> = emptyMap(),
     hasCachedCreds: (String) -> Boolean = { false },
     isExcluded: (String) -> Boolean = { false },
-    onSetExcluded: (String, Boolean) -> Unit = { _, _ -> }
+    onSetExcluded: (String, Boolean) -> Unit = { _, _ -> },
+    onQuickUnlock: ((String, () -> Unit) -> Unit)? = null
 ) {
     var isUnlocking by remember { mutableStateOf(false) }
     var selectedDevice by remember(deviceCandidates) { mutableStateOf(deviceCandidates.firstOrNull()) }
@@ -1076,8 +1130,49 @@ fun VeraCryptMountSection(
                 }
             }
 
+            val currentDeviceName = selectedDevice?.deviceName ?: ""
+            val showQuickUnlock = (isPreFilled || hasCachedCreds(currentDeviceName)) && onQuickUnlock != null
+
             if (candidates.isEmpty()) {
                 Text(stringResource(R.string.no_candidates_found), color = MaterialTheme.colorScheme.error)
+            } else if (showQuickUnlock) {
+                if (autoMountEnabled) {
+                    Row(
+                        verticalAlignment = Alignment.CenterVertically,
+                        modifier = Modifier.fillMaxWidth()
+                    ) {
+                        Text(
+                            stringResource(R.string.auto_mount_exclude_device),
+                            modifier = Modifier.weight(1f),
+                            style = MaterialTheme.typography.bodyMedium
+                        )
+                        Switch(
+                            checked = isExcluded(currentDeviceName),
+                            onCheckedChange = { onSetExcluded(currentDeviceName, it) }
+                        )
+                    }
+                }
+                Button(
+                    onClick = {
+                        isUnlocking = true
+                        val device = selectedDevice
+                        if (device != null) {
+                            onQuickUnlock!!(device.deviceName) { isUnlocking = false }
+                        }
+                    },
+                    modifier = Modifier.fillMaxWidth().semantics { contentDescription = "mount_button" },
+                    enabled = selectedDevice != null && !isUnlocking
+                ) {
+                    if (isUnlocking) {
+                        androidx.compose.material3.CircularProgressIndicator(modifier = Modifier.size(24.dp), color = MaterialTheme.colorScheme.onPrimary)
+                        Spacer(modifier = Modifier.width(8.dp))
+                        Text(stringResource(R.string.unlocking_in_progress))
+                    } else {
+                        Icon(Icons.Default.Fingerprint, contentDescription = null)
+                        Spacer(modifier = Modifier.width(8.dp))
+                        Text(stringResource(R.string.unlock_and_mount))
+                    }
+                }
             } else {
             @OptIn(ExperimentalMaterial3Api::class)
             ExposedDropdownMenuBox(
@@ -1176,7 +1271,6 @@ fun VeraCryptMountSection(
                 )
             }
 
-            val currentDeviceName = selectedDevice?.deviceName ?: ""
             if (autoMountEnabled && (hasCachedCreds(currentDeviceName) || isPreFilled)) {
                 Row(
                     verticalAlignment = Alignment.CenterVertically,
