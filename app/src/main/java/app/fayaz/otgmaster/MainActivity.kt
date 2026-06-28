@@ -1095,6 +1095,7 @@ fun VeraCryptMountSection(
             } catch (_: Exception) {}
         }
         keyfiles = uris
+        focusManager.clearFocus()
     }
 
     Column(
