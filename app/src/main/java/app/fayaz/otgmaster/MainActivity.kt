@@ -268,6 +268,11 @@ class MainActivity : AppCompatActivity() {
                             sessionPlaintextCreds.clear()
                             appendLog(getString(R.string.log_auto_mount_credentials_cleared))
                         },
+                        onClearDeviceCreds = { deviceKey ->
+                            credentialStore.delete(deviceKey)
+                            sessionPlaintextCreds.remove(deviceKey)
+                            appendLog(getString(R.string.log_credentials_cleared_for, deviceKey))
+                        },
                         onSetExcluded = { deviceKey, excluded ->
                             credentialStore.setExcluded(deviceKey, excluded)
                             excludedDeviceKeys.value = credentialStore.loadExcludedKeys()
@@ -806,6 +811,7 @@ fun OtgMasterApp(
     onThemeChange: (ThemeMode) -> Unit,
     onAutoMountEnabledChange: (Boolean) -> Unit,
     onClearAllCredentials: () -> Unit,
+    onClearDeviceCreds: (String) -> Unit = {},
     onSetExcluded: (String, Boolean) -> Unit,
     onQuickUnlock: (String, () -> Unit) -> Unit = { _, cb -> cb() },
     toastMessage: String? = null,
@@ -910,6 +916,12 @@ fun OtgMasterApp(
                                 modifier = Modifier.semantics { contentDescription = "unmount_button" }
                             ) {
                                 Text(stringResource(R.string.unmount))
+                            }
+                            val deviceKey = drive.sourceDeviceName
+                            if (deviceKey != null && hasCachedCreds(deviceKey)) {
+                                OutlinedButton(onClick = { onClearDeviceCreds(deviceKey) }) {
+                                    Text(stringResource(R.string.clear_cached_credentials))
+                                }
                             }
                         }
                     }
