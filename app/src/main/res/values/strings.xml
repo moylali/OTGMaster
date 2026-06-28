@@ -57,9 +57,9 @@
     <string name="auto_mount_description">When a known device is connected, OTG Master will prompt for your device lock and then mount all recognized VeraCrypt drives automatically. Credentials are stored in AES-256 encrypted form in Android Keystore — they cannot be extracted without your device lock.</string>
     <string name="cd_clear_keyfiles">Clear keyfiles</string>
     <string name="auto_mount_prompt_title">Authenticate to mount</string>
-    <string name="auto_mount_prompt_subtitle_single">Auto mount %1$s — cancel to mount individually</string>
-    <string name="auto_mount_prompt_subtitle_multi">Auto mount %1$d drives — cancel to mount individually</string>
-    <string name="auto_mount_prompt_negative">Mount individually</string>
+    <string name="auto_mount_prompt_subtitle_single">Auto mount %1$s</string>
+    <string name="auto_mount_prompt_subtitle_multi">Auto mount %1$d drives</string>
+    <string name="auto_mount_prompt_negative">Enter credentials manually</string>
     <string name="log_credentials_saved">Auto mount credentials saved for %1$s.</string>
     <string name="log_cached_credentials_invalid">Cached credentials invalid for %1$s — cleared. Enter credentials again to re-enable Auto mount.</string>
     <string name="auto_mount_exclude_device">Opt out of Auto mount for this device</string>
