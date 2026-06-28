@@ -18,8 +18,15 @@ import androidx.activity.compose.setContent
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.lifecycle.lifecycleScope
 import androidx.compose.animation.AnimatedVisibility
+import androidx.compose.animation.core.Animatable
+import androidx.compose.animation.core.tween
 import androidx.compose.animation.slideInHorizontally
 import androidx.compose.animation.slideOutHorizontally
+import androidx.compose.animation.slideInVertically
+import androidx.compose.animation.slideOutVertically
+import androidx.compose.foundation.shape.RoundedCornerShape
+import androidx.compose.ui.graphics.lerp
+import kotlinx.coroutines.delay
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.*
@@ -101,6 +108,16 @@ class MainActivity : AppCompatActivity() {
     // For Compose state hoisting
     private val mountedDrivesState = mutableStateOf<List<MountedDrive>>(emptyList())
     private val logsState = mutableStateListOf<String>()
+    private val toastState = mutableStateOf<Pair<String, Boolean>?>(null) // message to isSuccess
+    private val newlyMountedDriveIds = mutableStateOf<Set<String>>(emptySet())
+    private val pendingToastMountNames = mutableListOf<String>()
+    private val toastMountHandler = android.os.Handler(android.os.Looper.getMainLooper())
+    private val toastMountRunnable = Runnable {
+        val names = pendingToastMountNames.toList()
+        pendingToastMountNames.clear()
+        toastState.value = if (names.size == 1) Pair("Mounted: ${names[0]}", true)
+                           else Pair("Mounted ${names.size} drives", true)
+    }
 
     companion object {
         const val TAG = "OTGMaster"
@@ -253,7 +270,12 @@ class MainActivity : AppCompatActivity() {
                         onSetExcluded = { deviceKey, excluded ->
                             credentialStore.setExcluded(deviceKey, excluded)
                             excludedDeviceKeys.value = credentialStore.loadExcludedKeys()
-                        }
+                        },
+                        toastMessage = toastState.value?.first,
+                        toastIsSuccess = toastState.value?.second ?: true,
+                        onToastDismiss = { toastState.value = null },
+                        newlyMountedDriveIds = newlyMountedDriveIds.value,
+                        onHighlightConsumed = { driveId -> newlyMountedDriveIds.value = newlyMountedDriveIds.value - driveId }
                     )
                 }
             }
@@ -522,6 +544,10 @@ class MainActivity : AppCompatActivity() {
                         )
                         appendLog(getString(R.string.log_credentials_saved, deviceDisplayName))
                     }
+                    newlyMountedDriveIds.value = newlyMountedDriveIds.value + driveId
+                    pendingToastMountNames.add(deviceDisplayName)
+                    toastMountHandler.removeCallbacks(toastMountRunnable)
+                    toastMountHandler.postDelayed(toastMountRunnable, 300L)
                     updateMountedDrives()
                     appendLog(getString(R.string.log_mounted_successfully, deviceDisplayName, fileSystem.capacity / (1024 * 1024)))
                     // Stop tracking it as "available to unlock" — don't close it, it's now
@@ -541,6 +567,7 @@ class MainActivity : AppCompatActivity() {
                         sessionPlaintextCreds.remove(deviceName)
                         appendLog(getString(R.string.log_cached_credentials_invalid, deviceDisplayName))
                     }
+                    toastState.value = Pair("Mount failed: ${e.message ?: "Unknown error"}", false)
                     appendLog(getString(R.string.log_failed_to_unlock, deviceDisplayName, e.message))
                 }
             }
@@ -563,6 +590,7 @@ class MainActivity : AppCompatActivity() {
             }
             drive.blockDevice?.close()
             withContext(Dispatchers.Main) {
+                toastState.value = Pair("Unmounted: ${drive.name}", true)
                 appendLog(getString(R.string.log_drive_unmounted, drive.name))
                 // The device's sourceDeviceName is now free (no longer in mountedDrives), so
                 // this picks it back up and re-probes it for the dropdown.
@@ -727,7 +755,12 @@ fun OtgMasterApp(
     onThemeChange: (ThemeMode) -> Unit,
     onAutoMountEnabledChange: (Boolean) -> Unit,
     onClearAllCredentials: () -> Unit,
-    onSetExcluded: (String, Boolean) -> Unit
+    onSetExcluded: (String, Boolean) -> Unit,
+    toastMessage: String? = null,
+    toastIsSuccess: Boolean = true,
+    onToastDismiss: () -> Unit = {},
+    newlyMountedDriveIds: Set<String> = emptySet(),
+    onHighlightConsumed: (String) -> Unit = {}
 ) {
     var showSettings by remember { mutableStateOf(false) }
     var isVeraCryptExpanded by remember { mutableStateOf(true) }
@@ -772,9 +805,23 @@ fun OtgMasterApp(
         if (mountedDrives.isNotEmpty()) {
             Text(stringResource(R.string.mounted_devices), style = MaterialTheme.typography.titleLarge)
             mountedDrives.forEach { drive ->
+                key(drive.id) {
+                val highlightAlpha = remember { Animatable(0f) }
+                val isNewlyMounted = drive.id in newlyMountedDriveIds
+                LaunchedEffect(isNewlyMounted) {
+                    if (isNewlyMounted) {
+                        repeat(3) {
+                            highlightAlpha.animateTo(1f, tween(250))
+                            highlightAlpha.animateTo(0f, tween(250))
+                        }
+                        onHighlightConsumed(drive.id)
+                    }
+                }
+                val normalColor = MaterialTheme.colorScheme.secondaryContainer
+                val cardColor = lerp(normalColor, Color(0xFF2E7D32), highlightAlpha.value * 0.6f)
                 Card(
                     modifier = Modifier.fillMaxWidth(),
-                    colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.secondaryContainer)
+                    colors = CardDefaults.cardColors(containerColor = cardColor)
                 ) {
                     Column(modifier = Modifier.padding(16.dp)) {
                         val totalSpace = drive.fileSystem.capacity
@@ -815,6 +862,7 @@ fun OtgMasterApp(
                         }
                     }
                 }
+                } // key(drive.id)
             }
             Spacer(modifier = Modifier.height(16.dp))
         }
@@ -897,6 +945,34 @@ fun OtgMasterApp(
         onCopyText = onCopyText,
         onDismiss = { showSettings = false }
     )
+
+    AnimatedVisibility(
+        visible = toastMessage != null,
+        enter = slideInVertically(initialOffsetY = { it }),
+        exit = slideOutVertically(targetOffsetY = { it }),
+        modifier = Modifier
+            .align(Alignment.BottomCenter)
+            .padding(16.dp)
+    ) {
+        toastMessage?.let { msg ->
+            LaunchedEffect(msg) {
+                delay(2500)
+                onToastDismiss()
+            }
+            Surface(
+                color = if (toastIsSuccess) Color(0xFF2E7D32) else Color(0xFFC62828),
+                shape = RoundedCornerShape(8.dp),
+                shadowElevation = 6.dp
+            ) {
+                Text(
+                    text = msg,
+                    color = Color.White,
+                    modifier = Modifier.padding(horizontal = 20.dp, vertical = 12.dp),
+                    style = MaterialTheme.typography.bodyMedium
+                )
+            }
+        }
+    }
     }
 }
 
