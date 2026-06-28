@@ -686,19 +686,13 @@ class MainActivity : AppCompatActivity() {
             getString(R.string.auto_mount_prompt_subtitle_single, devices[0].displayName)
         else
             getString(R.string.auto_mount_prompt_subtitle_multi, devices.size)
-        val builder = androidx.biometric.BiometricPrompt.PromptInfo.Builder()
+        val promptInfo = androidx.biometric.BiometricPrompt.PromptInfo.Builder()
             .setTitle(getString(R.string.auto_mount_prompt_title))
             .setSubtitle(subtitle)
-        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.R) {
-            builder.setAllowedAuthenticators(
-                androidx.biometric.BiometricManager.Authenticators.BIOMETRIC_STRONG or
-                androidx.biometric.BiometricManager.Authenticators.DEVICE_CREDENTIAL
-            )
-        } else {
-            builder.setAllowedAuthenticators(androidx.biometric.BiometricManager.Authenticators.BIOMETRIC_STRONG)
-                .setNegativeButtonText(getString(R.string.auto_mount_prompt_negative))
-        }
-        prompt.authenticate(builder.build())
+            .setAllowedAuthenticators(androidx.biometric.BiometricManager.Authenticators.BIOMETRIC_STRONG)
+            .setNegativeButtonText(getString(R.string.auto_mount_prompt_negative))
+            .build()
+        prompt.authenticate(promptInfo)
     }
 
     private fun showQuickUnlockPrompt(deviceName: String, onComplete: () -> Unit) {
