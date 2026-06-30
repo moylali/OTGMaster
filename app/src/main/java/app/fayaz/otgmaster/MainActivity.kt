@@ -124,6 +124,8 @@ class MainActivity : AppCompatActivity() {
         const val TAG = "OTGMaster"
         private const val REQUEST_USB_PERMISSION = "app.fayaz.otgmaster.USB_PERMISSION"
         private const val QEMU_DEVICE_KEY = "qemu:/dev/block/sda"
+        const val EXTRA_DRIVE_ID = "app.fayaz.otgmaster.EXTRA_DRIVE_ID"
+        private const val SHARE_TARGET_CATEGORY = "app.fayaz.otgmaster.category.SHARE_TARGET"
     }
 
     private lateinit var sharedPreferences: SharedPreferences
@@ -159,6 +161,45 @@ class MainActivity : AppCompatActivity() {
     private val versionCode: Long by lazy {
         val info = packageManager.getPackageInfo(packageName, 0)
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.P) info.longVersionCode else @Suppress("DEPRECATION") info.versionCode.toLong()
+    }
+
+    // Pending URIs from incoming share intents, held until the picker result returns.
+    private var pendingShareSingleUri: Uri? = null
+    private var pendingShareMultipleUris: List<Uri> = emptyList()
+
+    private val createDocumentLauncher = registerForActivityResult(
+        object : androidx.activity.result.contract.ActivityResultContract<Pair<String, Uri?>, Uri?>() {
+            override fun createIntent(context: Context, input: Pair<String, Uri?>): Intent =
+                Intent(Intent.ACTION_CREATE_DOCUMENT).apply {
+                    addCategory(Intent.CATEGORY_OPENABLE)
+                    type = "*/*"
+                    putExtra(Intent.EXTRA_TITLE, input.first)
+                    input.second?.let { putExtra(DocumentsContract.EXTRA_INITIAL_URI, it) }
+                }
+            override fun parseResult(resultCode: Int, intent: Intent?): Uri? =
+                if (resultCode == android.app.Activity.RESULT_OK) intent?.data else null
+        }
+    ) { destUri ->
+        destUri ?: return@registerForActivityResult
+        val src = pendingShareSingleUri ?: return@registerForActivityResult
+        pendingShareSingleUri = null
+        copyFileTo(src, destUri)
+    }
+
+    private val openDocumentTreeLauncher = registerForActivityResult(
+        object : androidx.activity.result.contract.ActivityResultContract<Uri?, Uri?>() {
+            override fun createIntent(context: Context, input: Uri?): Intent =
+                Intent(Intent.ACTION_OPEN_DOCUMENT_TREE).apply {
+                    input?.let { putExtra(DocumentsContract.EXTRA_INITIAL_URI, it) }
+                }
+            override fun parseResult(resultCode: Int, intent: Intent?): Uri? =
+                if (resultCode == android.app.Activity.RESULT_OK) intent?.data else null
+        }
+    ) { treeUri ->
+        treeUri ?: return@registerForActivityResult
+        val sources = pendingShareMultipleUris.toList()
+        pendingShareMultipleUris = emptyList()
+        copyFilesToTree(sources, treeUri)
     }
 
     private val permissionIntent: PendingIntent by lazy {
@@ -292,16 +333,16 @@ class MainActivity : AppCompatActivity() {
         
         updateMountedDrives()
         refreshDevices()
+        handleShareIntent(intent)
     }
 
     override fun onNewIntent(intent: Intent) {
         super.onNewIntent(intent)
-        // With singleTop launch mode, a USB_DEVICE_ATTACHED intent delivered while this
-        // activity is already at the top of the stack arrives here instead of creating a
-        // new instance. Trigger a device refresh so the newly attached drive is probed.
+        setIntent(intent)
         if (intent.action == UsbManager.ACTION_USB_DEVICE_ATTACHED) {
             refreshDevices()
         }
+        handleShareIntent(intent)
     }
 
     override fun onDestroy() {
@@ -558,6 +599,8 @@ class MainActivity : AppCompatActivity() {
                     toastMountHandler.removeCallbacks(toastMountRunnable)
                     toastMountHandler.postDelayed(toastMountRunnable, 300L)
                     updateMountedDrives()
+                    updateShareComponent()
+                    pushDriveShortcut(mountedDrive)
                     appendLog(getString(R.string.log_mounted_successfully, deviceDisplayName, fileSystem.capacity / (1024 * 1024)))
                     // Stop tracking it as "available to unlock" — don't close it, it's now
                     // owned by the mounted filesystem's underlying decrypted device chain.
@@ -589,6 +632,8 @@ class MainActivity : AppCompatActivity() {
             android.provider.DocumentsContract.buildRootsUri("app.fayaz.otgmaster.documents"), null
         )
         updateMountedDrives()
+        updateShareComponent()
+        removeDriveShortcut(drive.id)
         lifecycleScope.launch(Dispatchers.IO) {
             // Wait for any in-flight ProxyFileDescriptor onRelease() callbacks to finish
             // before unmounting — prevents a use-after-free if the OS is still flushing a
@@ -767,6 +812,141 @@ class MainActivity : AppCompatActivity() {
     private fun appendLog(line: String) {
         if (logsState.size > 50) logsState.removeAt(0)
         logsState.add(line)
+    }
+
+    private fun handleShareIntent(intent: Intent) {
+        val uris: List<Uri> = when (intent.action) {
+            Intent.ACTION_SEND ->
+                listOfNotNull(intent.getParcelableExtraCompat<Uri>(Intent.EXTRA_STREAM))
+            Intent.ACTION_SEND_MULTIPLE -> {
+                if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
+                    intent.getParcelableArrayListExtra(Intent.EXTRA_STREAM, Uri::class.java)
+                } else {
+                    @Suppress("DEPRECATION")
+                    intent.getParcelableArrayListExtra(Intent.EXTRA_STREAM)
+                } ?: emptyList()
+            }
+            else -> return
+        }
+        if (uris.isEmpty()) return
+
+        val driveId = intent.getStringExtra(EXTRA_DRIVE_ID)
+        val initialUri = driveId?.let { id ->
+            DocumentsContract.buildDocumentUri(
+                app.fayaz.otgmaster.provider.VeraCryptDocumentProvider.AUTHORITY,
+                app.fayaz.otgmaster.provider.VeraCryptDocumentProvider.rootDocIdForDrive(id)
+            )
+        }
+
+        if (uris.size == 1) {
+            pendingShareSingleUri = uris[0]
+            createDocumentLauncher.launch(Pair(getFileNameFromUri(uris[0]) ?: "file", initialUri))
+        } else {
+            pendingShareMultipleUris = uris
+            openDocumentTreeLauncher.launch(initialUri)
+        }
+    }
+
+    private fun copyFileTo(sourceUri: Uri, destUri: Uri) {
+        lifecycleScope.launch(Dispatchers.IO) {
+            try {
+                contentResolver.openInputStream(sourceUri)?.use { input ->
+                    contentResolver.openOutputStream(destUri)?.use { output ->
+                        input.copyTo(output)
+                    }
+                }
+                val name = getFileNameFromUri(destUri) ?: getFileNameFromUri(sourceUri) ?: "file"
+                withContext(Dispatchers.Main) {
+                    toastState.value = Pair(getString(R.string.share_saved, name), true)
+                }
+            } catch (e: Exception) {
+                withContext(Dispatchers.Main) {
+                    toastState.value = Pair(getString(R.string.share_save_failed, e.message ?: "Unknown error"), false)
+                }
+            }
+        }
+    }
+
+    private fun copyFilesToTree(sourceUris: List<Uri>, treeUri: Uri) {
+        lifecycleScope.launch(Dispatchers.IO) {
+            var successCount = 0
+            var errorMsg: String? = null
+            try {
+                val treeDocId = DocumentsContract.getTreeDocumentId(treeUri)
+                val parentDocUri = DocumentsContract.buildDocumentUriUsingTree(treeUri, treeDocId)
+                for (sourceUri in sourceUris) {
+                    val fileName = getFileNameFromUri(sourceUri) ?: "file_${System.currentTimeMillis()}"
+                    val mimeType = contentResolver.getType(sourceUri) ?: "*/*"
+                    val destDoc = DocumentsContract.createDocument(contentResolver, parentDocUri, mimeType, fileName)
+                    if (destDoc != null) {
+                        contentResolver.openInputStream(sourceUri)?.use { input ->
+                            contentResolver.openOutputStream(destDoc)?.use { output ->
+                                input.copyTo(output)
+                            }
+                        }
+                        successCount++
+                    }
+                }
+            } catch (e: Exception) {
+                errorMsg = e.message
+            }
+            withContext(Dispatchers.Main) {
+                toastState.value = if (errorMsg != null) {
+                    Pair(getString(R.string.share_save_failed, errorMsg), false)
+                } else if (successCount == 1) {
+                    Pair(getString(R.string.share_saved, getFileNameFromUri(sourceUris[0]) ?: "file"), true)
+                } else {
+                    Pair(getString(R.string.share_saved_multiple, successCount), true)
+                }
+            }
+        }
+    }
+
+    private fun getFileNameFromUri(uri: Uri): String? {
+        contentResolver.query(uri, arrayOf(android.provider.OpenableColumns.DISPLAY_NAME), null, null, null)?.use { cursor ->
+            if (cursor.moveToFirst()) {
+                val idx = cursor.getColumnIndex(android.provider.OpenableColumns.DISPLAY_NAME)
+                if (idx != -1) return cursor.getString(idx)
+            }
+        }
+        return uri.lastPathSegment
+    }
+
+    private fun updateShareComponent() {
+        val hasMounts = OtgMasterState.mountedDrives.isNotEmpty()
+        val alias = android.content.ComponentName(this, "app.fayaz.otgmaster.ShareReceiverAlias")
+        val state = if (hasMounts)
+            android.content.pm.PackageManager.COMPONENT_ENABLED_STATE_ENABLED
+        else
+            android.content.pm.PackageManager.COMPONENT_ENABLED_STATE_DISABLED
+        packageManager.setComponentEnabledSetting(alias, state, android.content.pm.PackageManager.DONT_KILL_APP)
+    }
+
+    private fun pushDriveShortcut(drive: MountedDrive) {
+        if (Build.VERSION.SDK_INT < Build.VERSION_CODES.Q) return
+        val shortcutManager = getSystemService(android.content.pm.ShortcutManager::class.java) ?: return
+        val intent = Intent(this, MainActivity::class.java).apply {
+            action = Intent.ACTION_DEFAULT
+            putExtra(EXTRA_DRIVE_ID, drive.id)
+        }
+        val shortcut = android.content.pm.ShortcutInfo.Builder(this, "drive_share_${drive.id}")
+            .setShortLabel(drive.name)
+            .setLongLabel(drive.name)
+            .setIcon(android.graphics.drawable.Icon.createWithResource(this, R.mipmap.ic_launcher))
+            .setIntent(intent)
+            .setCategories(setOf(SHARE_TARGET_CATEGORY))
+            .build()
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.R) {
+            shortcutManager.pushDynamicShortcut(shortcut)
+        } else {
+            shortcutManager.addDynamicShortcuts(listOf(shortcut))
+        }
+    }
+
+    private fun removeDriveShortcut(driveId: String) {
+        if (Build.VERSION.SDK_INT < Build.VERSION_CODES.Q) return
+        val shortcutManager = getSystemService(android.content.pm.ShortcutManager::class.java) ?: return
+        shortcutManager.removeDynamicShortcuts(listOf("drive_share_$driveId"))
     }
 
     private inline fun <reified T> Intent.getParcelableExtraCompat(name: String): T? {
