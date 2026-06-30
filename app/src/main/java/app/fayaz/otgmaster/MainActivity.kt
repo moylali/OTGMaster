@@ -126,6 +126,7 @@ class MainActivity : AppCompatActivity() {
         private const val QEMU_DEVICE_KEY = "qemu:/dev/block/sda"
         const val EXTRA_DRIVE_ID = "app.fayaz.otgmaster.EXTRA_DRIVE_ID"
         private const val SHARE_TARGET_CATEGORY = "app.fayaz.otgmaster.category.SHARE_TARGET"
+        private const val PREF_MANUALLY_UNMOUNTED = "manually_unmounted_devices"
     }
 
     private lateinit var sharedPreferences: SharedPreferences
@@ -135,6 +136,9 @@ class MainActivity : AppCompatActivity() {
     private val autoMountEnabled = mutableStateOf(false)
     private val mountFormResetKey = mutableStateOf(0)
     private val autoMountAttempted = mutableSetOf<String>()
+    // Devices the user has explicitly unmounted while still connected. Auto-mount is
+    // suppressed for these until the device is physically detached and re-attached.
+    private val manuallyUnmountedDevices = mutableSetOf<String>()
     private var isAutoMountPromptShowing = false
     private val sessionPlaintextCreds = androidx.compose.runtime.snapshots.SnapshotStateMap<String, app.fayaz.otgmaster.security.CredentialStore.Credentials>()
     private val excludedDeviceKeys = mutableStateOf<Set<String>>(emptySet())
@@ -213,6 +217,10 @@ class MainActivity : AppCompatActivity() {
                     val detached = intent.getParcelableExtraCompat<UsbDevice>(UsbManager.EXTRA_DEVICE)
                     if (detached != null) {
                         val detachedKey = UsbDeviceDescriber.stableKey(detached, usbDeviceProvider.hasPermission(detached))
+                        // Clear suppression flags so the next plug-in triggers auto-mount again.
+                        manuallyUnmountedDevices.remove(detachedKey)
+                        autoMountAttempted.remove(detachedKey)
+                        saveManuallyUnmountedDevices()
                         OtgMasterState.mountedDrives
                             .filter { it.sourceDeviceName == detachedKey }
                             .forEach { unmountDrive(it) }
@@ -240,6 +248,7 @@ class MainActivity : AppCompatActivity() {
         credentialStore = app.fayaz.otgmaster.security.CredentialStore(this)
         autoMountEnabled.value = sharedPreferences.getBoolean("auto_mount", false)
         excludedDeviceKeys.value = credentialStore.loadExcludedKeys()
+        loadManuallyUnmountedDevices(usbMgr)
 
         setContent {
             val themeMode = _themeMode.value
@@ -271,7 +280,7 @@ class MainActivity : AppCompatActivity() {
                         onUnlock = { deviceName, candidate, pwd, pim, keyfiles, cipher, hash, onComplete ->
                             attemptUnlock(deviceName, candidate, pwd, pim, keyfiles, cipher, hash, onComplete = onComplete)
                         },
-                        onUnmount = { drive -> unmountDrive(drive) },
+                        onUnmount = { drive -> unmountDrive(drive, isManual = true) },
                         onOpenFilesApp = { drive -> openFilesApp(drive) },
                         onClearLogs = { clearLogs() },
                         onCopyText = { text, label -> copyText(text, label) },
@@ -609,7 +618,30 @@ class MainActivity : AppCompatActivity() {
         }
     }
 
-    private fun unmountDrive(drive: MountedDrive) {
+    private fun loadManuallyUnmountedDevices(usbMgr: UsbManager) {
+        val persisted = sharedPreferences.getStringSet(PREF_MANUALLY_UNMOUNTED, emptySet()) ?: emptySet()
+        // Drop keys whose device is no longer physically attached — it was unplugged while
+        // the app was dead, so the next plug-in should be treated as a fresh connection.
+        val currentKeys = usbMgr.deviceList.values.map {
+            UsbDeviceDescriber.stableKey(it, usbMgr.hasPermission(it))
+        }.toSet()
+        val stillConnected = persisted.filter { it in currentKeys }.toSet()
+        manuallyUnmountedDevices.clear()
+        manuallyUnmountedDevices.addAll(stillConnected)
+        if (stillConnected != persisted) saveManuallyUnmountedDevices()
+    }
+
+    private fun saveManuallyUnmountedDevices() {
+        sharedPreferences.edit().putStringSet(PREF_MANUALLY_UNMOUNTED, manuallyUnmountedDevices.toSet()).apply()
+    }
+
+    private fun unmountDrive(drive: MountedDrive, isManual: Boolean = false) {
+        if (isManual) {
+            drive.sourceDeviceName?.let {
+                manuallyUnmountedDevices.add(it)
+                saveManuallyUnmountedDevices()
+            }
+        }
         OtgMasterState.removeDrive(drive.id)
         contentResolver.notifyChange(
             android.provider.DocumentsContract.buildRootsUri("app.fayaz.otgmaster.documents"), null
@@ -672,6 +704,7 @@ class MainActivity : AppCompatActivity() {
         val excluded = excludedDeviceKeys.value
         val toMount = newCandidates.filter {
             it.deviceName !in autoMountAttempted &&
+            it.deviceName !in manuallyUnmountedDevices &&
             // If credentials are already in session memory the form will pre-fill —
             // no biometric needed (handles the "unmount then reconnect same session" case).
             it.deviceName !in sessionPlaintextCreds &&
