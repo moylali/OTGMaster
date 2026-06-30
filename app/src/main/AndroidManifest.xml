@@ -22,6 +22,17 @@
             <intent-filter>
                 <action android:name="android.hardware.usb.action.USB_DEVICE_ATTACHED" />
             </intent-filter>
+
+            <!-- Share target: ACTION_SEND must be on the real activity (not an alias) so
+                 Android 11+ can validate it against the <share-target> in shortcuts.xml,
+                 allowing individual drive names to appear as direct-share shortcuts. -->
+            <intent-filter>
+                <action android:name="android.intent.action.SEND" />
+                <action android:name="android.intent.action.SEND_MULTIPLE" />
+                <category android:name="android.intent.category.DEFAULT" />
+                <data android:mimeType="*/*" />
+            </intent-filter>
+
             <meta-data
                 android:name="android.hardware.usb.action.USB_DEVICE_ATTACHED"
                 android:resource="@xml/usb_device_filter" />
@@ -30,21 +41,6 @@
                 android:resource="@xml/shortcuts" />
         </activity>
 
-        <!-- Disabled by default; enabled dynamically when drives are mounted so the app
-             appears in the share sheet only when it has somewhere to save to. -->
-        <activity-alias
-            android:name=".ShareReceiverAlias"
-            android:targetActivity=".MainActivity"
-            android:enabled="false"
-            android:exported="true">
-            <intent-filter>
-                <action android:name="android.intent.action.SEND" />
-                <action android:name="android.intent.action.SEND_MULTIPLE" />
-                <category android:name="android.intent.category.DEFAULT" />
-                <data android:mimeType="*/*" />
-            </intent-filter>
-        </activity-alias>
-        
         <provider
             android:name=".provider.VeraCryptDocumentProvider"
             android:authorities="app.fayaz.otgmaster.documents"

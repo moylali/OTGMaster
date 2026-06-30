@@ -164,32 +164,16 @@ class MainActivity : AppCompatActivity() {
     }
 
     // Pending URIs from incoming share intents, held until the picker result returns.
-    private var pendingShareSingleUri: Uri? = null
-    private var pendingShareMultipleUris: List<Uri> = emptyList()
+    private var pendingShareUris: List<Uri> = emptyList()
 
-    private val createDocumentLauncher = registerForActivityResult(
-        object : androidx.activity.result.contract.ActivityResultContract<Pair<String, Uri?>, Uri?>() {
-            override fun createIntent(context: Context, input: Pair<String, Uri?>): Intent =
-                Intent(Intent.ACTION_CREATE_DOCUMENT).apply {
-                    addCategory(Intent.CATEGORY_OPENABLE)
-                    type = "*/*"
-                    putExtra(Intent.EXTRA_TITLE, input.first)
-                    input.second?.let { putExtra(DocumentsContract.EXTRA_INITIAL_URI, it) }
-                }
-            override fun parseResult(resultCode: Int, intent: Intent?): Uri? =
-                if (resultCode == android.app.Activity.RESULT_OK) intent?.data else null
-        }
-    ) { destUri ->
-        destUri ?: return@registerForActivityResult
-        val src = pendingShareSingleUri ?: return@registerForActivityResult
-        pendingShareSingleUri = null
-        copyFileTo(src, destUri)
-    }
-
+    // Single launcher for all share-to-drive flows (single or multiple files).
     private val openDocumentTreeLauncher = registerForActivityResult(
         object : androidx.activity.result.contract.ActivityResultContract<Uri?, Uri?>() {
             override fun createIntent(context: Context, input: Uri?): Intent =
                 Intent(Intent.ACTION_OPEN_DOCUMENT_TREE).apply {
+                    // content://authority/root/rootId passes DocumentsUI's isRootUri() check
+                    // and opens the picker directly at that root. /tree/ and /document/ URIs
+                    // fail this check and fall back to Downloads.
                     input?.let { putExtra(DocumentsContract.EXTRA_INITIAL_URI, it) }
                 }
             override fun parseResult(resultCode: Int, intent: Intent?): Uri? =
@@ -197,8 +181,8 @@ class MainActivity : AppCompatActivity() {
         }
     ) { treeUri ->
         treeUri ?: return@registerForActivityResult
-        val sources = pendingShareMultipleUris.toList()
-        pendingShareMultipleUris = emptyList()
+        val sources = pendingShareUris.toList()
+        pendingShareUris = emptyList()
         copyFilesToTree(sources, treeUri)
     }
 
@@ -599,7 +583,6 @@ class MainActivity : AppCompatActivity() {
                     toastMountHandler.removeCallbacks(toastMountRunnable)
                     toastMountHandler.postDelayed(toastMountRunnable, 300L)
                     updateMountedDrives()
-                    updateShareComponent()
                     pushDriveShortcut(mountedDrive)
                     appendLog(getString(R.string.log_mounted_successfully, deviceDisplayName, fileSystem.capacity / (1024 * 1024)))
                     // Stop tracking it as "available to unlock" — don't close it, it's now
@@ -632,7 +615,6 @@ class MainActivity : AppCompatActivity() {
             android.provider.DocumentsContract.buildRootsUri("app.fayaz.otgmaster.documents"), null
         )
         updateMountedDrives()
-        updateShareComponent()
         removeDriveShortcut(drive.id)
         lifecycleScope.launch(Dispatchers.IO) {
             // Wait for any in-flight ProxyFileDescriptor onRelease() callbacks to finish
@@ -830,42 +812,26 @@ class MainActivity : AppCompatActivity() {
         }
         if (uris.isEmpty()) return
 
+        if (OtgMasterState.mountedDrives.isEmpty()) {
+            toastState.value = Pair("No drives mounted. Mount a drive first.", false)
+            return
+        }
+
+        pendingShareUris = uris
+        // Use the same /root/ URI format that openFilesApp uses successfully — this passes
+        // DocumentsUI's isRootUri() check and opens the picker at our drive root directly.
+        // If a specific drive was tapped via a sharing shortcut use that drive's root;
+        // otherwise use the first mounted drive (single drive = no ambiguity).
         val driveId = intent.getStringExtra(EXTRA_DRIVE_ID)
+            ?: OtgMasterState.mountedDrives.firstOrNull()?.id
         val initialUri = driveId?.let { id ->
-            DocumentsContract.buildDocumentUri(
-                app.fayaz.otgmaster.provider.VeraCryptDocumentProvider.AUTHORITY,
-                app.fayaz.otgmaster.provider.VeraCryptDocumentProvider.rootDocIdForDrive(id)
-            )
+            val rootId = app.fayaz.otgmaster.provider.VeraCryptDocumentProvider.rootIdForDrive(id)
+            Uri.parse("content://${app.fayaz.otgmaster.provider.VeraCryptDocumentProvider.AUTHORITY}/root/$rootId")
         }
-
-        if (uris.size == 1) {
-            pendingShareSingleUri = uris[0]
-            createDocumentLauncher.launch(Pair(getFileNameFromUri(uris[0]) ?: "file", initialUri))
-        } else {
-            pendingShareMultipleUris = uris
-            openDocumentTreeLauncher.launch(initialUri)
-        }
+        openDocumentTreeLauncher.launch(initialUri)
     }
 
-    private fun copyFileTo(sourceUri: Uri, destUri: Uri) {
-        lifecycleScope.launch(Dispatchers.IO) {
-            try {
-                contentResolver.openInputStream(sourceUri)?.use { input ->
-                    contentResolver.openOutputStream(destUri)?.use { output ->
-                        input.copyTo(output)
-                    }
-                }
-                val name = getFileNameFromUri(destUri) ?: getFileNameFromUri(sourceUri) ?: "file"
-                withContext(Dispatchers.Main) {
-                    toastState.value = Pair(getString(R.string.share_saved, name), true)
-                }
-            } catch (e: Exception) {
-                withContext(Dispatchers.Main) {
-                    toastState.value = Pair(getString(R.string.share_save_failed, e.message ?: "Unknown error"), false)
-                }
-            }
-        }
-    }
+
 
     private fun copyFilesToTree(sourceUris: List<Uri>, treeUri: Uri) {
         lifecycleScope.launch(Dispatchers.IO) {
@@ -912,16 +878,6 @@ class MainActivity : AppCompatActivity() {
         return uri.lastPathSegment
     }
 
-    private fun updateShareComponent() {
-        val hasMounts = OtgMasterState.mountedDrives.isNotEmpty()
-        val alias = android.content.ComponentName(this, "app.fayaz.otgmaster.ShareReceiverAlias")
-        val state = if (hasMounts)
-            android.content.pm.PackageManager.COMPONENT_ENABLED_STATE_ENABLED
-        else
-            android.content.pm.PackageManager.COMPONENT_ENABLED_STATE_DISABLED
-        packageManager.setComponentEnabledSetting(alias, state, android.content.pm.PackageManager.DONT_KILL_APP)
-    }
-
     private fun pushDriveShortcut(drive: MountedDrive) {
         if (Build.VERSION.SDK_INT < Build.VERSION_CODES.Q) return
         val shortcutManager = getSystemService(android.content.pm.ShortcutManager::class.java) ?: return
@@ -935,6 +891,7 @@ class MainActivity : AppCompatActivity() {
             .setIcon(android.graphics.drawable.Icon.createWithResource(this, R.mipmap.ic_launcher))
             .setIntent(intent)
             .setCategories(setOf(SHARE_TARGET_CATEGORY))
+            .setLongLived(true)
             .build()
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.R) {
             shortcutManager.pushDynamicShortcut(shortcut)
