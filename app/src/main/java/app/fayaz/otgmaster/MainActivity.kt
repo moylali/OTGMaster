@@ -127,6 +127,7 @@ class MainActivity : AppCompatActivity() {
         const val EXTRA_DRIVE_ID = "app.fayaz.otgmaster.EXTRA_DRIVE_ID"
         private const val SHARE_TARGET_CATEGORY = "app.fayaz.otgmaster.category.SHARE_TARGET"
         private const val PREF_MANUALLY_UNMOUNTED = "manually_unmounted_devices"
+        private const val PREF_LAST_BOOT_TIME = "last_boot_time_ms"
     }
 
     private lateinit var sharedPreferences: SharedPreferences
@@ -619,6 +620,20 @@ class MainActivity : AppCompatActivity() {
     }
 
     private fun loadManuallyUnmountedDevices(usbMgr: UsbManager) {
+        // Detect reboot: boot epoch = wall clock minus uptime. If it differs from the saved
+        // value by more than 60 s, the device was rebooted — clear the suppression set so
+        // auto-mount fires again on first open after boot.
+        val bootEpoch = System.currentTimeMillis() - android.os.SystemClock.elapsedRealtime()
+        val savedBootEpoch = sharedPreferences.getLong(PREF_LAST_BOOT_TIME, 0L)
+        val rebooted = Math.abs(bootEpoch - savedBootEpoch) > 60_000L
+        if (rebooted) {
+            sharedPreferences.edit()
+                .putStringSet(PREF_MANUALLY_UNMOUNTED, emptySet())
+                .putLong(PREF_LAST_BOOT_TIME, bootEpoch)
+                .apply()
+            return
+        }
+
         val persisted = sharedPreferences.getStringSet(PREF_MANUALLY_UNMOUNTED, emptySet()) ?: emptySet()
         // Drop keys whose device is no longer physically attached — it was unplugged while
         // the app was dead, so the next plug-in should be treated as a fresh connection.
