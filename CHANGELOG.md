@@ -1,5 +1,13 @@
 # Changelog
 
+## [v0.3.8] - 2026-06-30
+
+### Added
+- **Save to drive from any app**: OTG Master now appears as a share target. Share any file from any app, pick your mounted VeraCrypt drive as the destination, and the system folder picker opens directly at that drive's root. Individual drive names appear as direct-share shortcuts on Android 10+.
+
+### Fixed
+- After manually unmounting a drive, auto-mount no longer re-triggers while the device remains connected. The suppression persists across app restarts and is cleared when the device is physically unplugged, replugged, or the phone is rebooted.
+
 ## [v0.3.7] - 2026-06-28
 
 ### Fixed

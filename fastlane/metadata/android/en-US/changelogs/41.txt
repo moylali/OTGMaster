@@ -1,0 +1,3 @@
+• New: Save files to your mounted VeraCrypt drives directly from any app's share sheet — folder picker opens at your drive root automatically
+• Individual drive names appear as direct-share shortcuts (Android 10+)
+• Fixed: manually unmounting a drive no longer triggers auto-mount again while the device stays connected; suppression survives app restarts and clears on unplug or reboot
