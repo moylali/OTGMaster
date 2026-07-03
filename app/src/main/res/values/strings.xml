@@ -13,6 +13,7 @@
     <string name="used_label">Used: %1$s</string>
     <string name="free_label">Free: %1$s</string>
     <string name="mounted_drive_name">%1$s — VeraCrypt Drive (%2$s)</string>
+    <string name="mounted_drive_name_plain">%1$s — %2$s Drive (%3$s)</string>
 
     <!-- VeraCrypt mount section -->
     <string name="mount_veracrypt_drive">Mount VeraCrypt Encrypted Drive</string>

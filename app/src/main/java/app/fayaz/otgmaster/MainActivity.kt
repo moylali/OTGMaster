@@ -86,12 +86,24 @@ import java.util.UUID
  * One attached, not-yet-mounted USB mass-storage device that's been opened and probed for
  * VeraCrypt volume candidates, with a human-readable [displayName] so the user can tell
  * devices apart in a dropdown when more than one is plugged in.
+ *
+ * [plainPartitions] is non-empty when a recognised plain filesystem (FAT32, exFAT) was
+ * detected directly on one of the device's candidates — the device will be auto-mounted
+ * without any VeraCrypt credentials and will not appear in the unlock form.
  */
 data class UsbDeviceCandidate(
     val deviceName: String,
     val displayName: String,
     val blockDevice: RawBlockDevice,
-    val candidates: List<VolumeCandidate>
+    val candidates: List<VolumeCandidate>,
+    val plainPartitions: List<PlainPartition> = emptyList()
+)
+
+data class PlainPartition(
+    val label: String,
+    val startBlock: Long,
+    val blockCount: Long,
+    val filesystemName: String
 )
 
 class MainActivity : AppCompatActivity() {
@@ -416,13 +428,18 @@ class MainActivity : AppCompatActivity() {
         lifecycleScope.launch(Dispatchers.IO) {
             try {
                 val candidates = app.fayaz.otgmaster.veracrypt.VeraCryptUnlocker().probeCandidates(device)
+                val plainPartitions = detectPlainPartitions(device, candidates)
                 withContext(Dispatchers.Main) {
                     isQemuProbing = false
-                    val qemuCandidate = UsbDeviceCandidate(QEMU_DEVICE_KEY, getString(R.string.qemu_test_disk_label), device, candidates)
+                    val qemuCandidate = UsbDeviceCandidate(QEMU_DEVICE_KEY, getString(R.string.qemu_test_disk_label), device, candidates, plainPartitions)
                     openedDevices[QEMU_DEVICE_KEY] = device
-                    _deviceCandidates.value = listOf(qemuCandidate)
-                    appendLog(getString(R.string.log_found_candidates_qemu, candidates.size))
-                    triggerAutoMount(listOf(qemuCandidate))
+                    if (plainPartitions.isNotEmpty()) {
+                        mountPlainDevice(qemuCandidate, plainPartitions.first())
+                    } else {
+                        _deviceCandidates.value = listOf(qemuCandidate)
+                        appendLog(getString(R.string.log_found_candidates_qemu, candidates.size))
+                        triggerAutoMount(listOf(qemuCandidate))
+                    }
                 }
             } catch (e: Exception) {
                 e.printStackTrace()
@@ -472,7 +489,9 @@ class MainActivity : AppCompatActivity() {
                         e.printStackTrace()
                         emptyList()
                     }
-                    UsbDeviceCandidate(opened.deviceKey, displayName, opened.blockDevice, candidates)
+                    // Detect plain filesystems on IO thread (readBlocks is blocking).
+                    val plainPartitions = detectPlainPartitions(opened.blockDevice, candidates)
+                    UsbDeviceCandidate(opened.deviceKey, displayName, opened.blockDevice, candidates, plainPartitions)
                 }
 
                 withContext(Dispatchers.Main) {
@@ -481,11 +500,19 @@ class MainActivity : AppCompatActivity() {
                     // Close rather than leak the redundant connections opened for devices
                     // that turned out to already be in the dropdown by the time we got here.
                     duplicates.forEach { it.blockDevice.close() }
-                    uniqueNew.forEach { openedDevices[it.deviceName] = it.blockDevice }
-                    _deviceCandidates.value = _deviceCandidates.value + uniqueNew
-                    if (uniqueNew.isNotEmpty()) {
-                        appendLog(getString(R.string.log_probed_devices, uniqueNew.joinToString(", ") { it.displayName }))
-                        triggerAutoMount(uniqueNew)
+
+                    // Plain (unencrypted) drives are auto-mounted immediately; encrypted
+                    // drives go into the candidate dropdown for the VeraCrypt form.
+                    val (plainNew, encryptedNew) = uniqueNew.partition { it.plainPartitions.isNotEmpty() }
+                    encryptedNew.forEach { openedDevices[it.deviceName] = it.blockDevice }
+                    _deviceCandidates.value = _deviceCandidates.value + encryptedNew
+                    if (encryptedNew.isNotEmpty()) {
+                        appendLog(getString(R.string.log_probed_devices, encryptedNew.joinToString(", ") { it.displayName }))
+                        triggerAutoMount(encryptedNew)
+                    }
+                    plainNew.forEach { candidate ->
+                        openedDevices[candidate.deviceName] = candidate.blockDevice
+                        mountPlainDevice(candidate, candidate.plainPartitions.first())
                     }
                 }
             } finally {
@@ -678,6 +705,73 @@ class MainActivity : AppCompatActivity() {
                 // The device's sourceDeviceName is now free (no longer in mountedDrives), so
                 // this picks it back up and re-probes it for the dropdown.
                 refreshDevices()
+            }
+        }
+    }
+
+    private fun detectPlainPartitions(device: RawBlockDevice, candidates: List<VolumeCandidate>): List<PlainPartition> {
+        return candidates.mapNotNull { candidate ->
+            val startBlock = candidate.startBlock
+            val available = device.blockCount - startBlock
+            if (available <= 0) return@mapNotNull null
+            val data = try {
+                device.readBlocks(startBlock, minOf(4, available).toInt())
+            } catch (_: Exception) { return@mapNotNull null }
+            val fs = FilesystemDetector.detectFromBytes(data)
+            if (fs is DetectedFilesystem.Supported) {
+                PlainPartition(
+                    label = candidate.label,
+                    startBlock = startBlock,
+                    blockCount = candidate.blockCount ?: available,
+                    filesystemName = fs.displayName
+                )
+            } else null
+        }
+    }
+
+    private fun mountPlainDevice(candidate: UsbDeviceCandidate, plain: PlainPartition) {
+        val rawDevice = candidate.blockDevice
+        val sliced: RawBlockDevice = if (plain.startBlock == 0L) rawDevice
+            else app.fayaz.otgmaster.block.SlicedBlockDevice(rawDevice, plain.startBlock, plain.blockCount)
+        val adapter = app.fayaz.otgmaster.block.RawBlockDeviceAdapter(sliced)
+        val deviceDisplayName = candidate.displayName
+        appendLog("Mounting ${plain.filesystemName} on $deviceDisplayName…")
+        lifecycleScope.launch(Dispatchers.IO) {
+            try {
+                val dummyEntry = PartitionTableEntry(0, 0, 0)
+                val byteDevice = me.jahnen.libaums.core.driver.ByteBlockDevice(adapter)
+                val fileSystem = FileSystemFactory.createFileSystem(dummyEntry, byteDevice)
+                val driveId = UUID.randomUUID().toString().substring(0, 8)
+                val mountedDrive = MountedDrive(
+                    id = driveId,
+                    name = getString(R.string.mounted_drive_name_plain, deviceDisplayName, plain.filesystemName, driveId),
+                    fileSystem = fileSystem,
+                    blockDevice = adapter,
+                    sourceDeviceName = candidate.deviceName,
+                    sourceDeviceDisplayName = deviceDisplayName,
+                    isPlain = true
+                )
+                OtgMasterState.addDrive(mountedDrive)
+                contentResolver.notifyChange(
+                    android.provider.DocumentsContract.buildRootsUri("app.fayaz.otgmaster.documents"), null
+                )
+                withContext(Dispatchers.Main) {
+                    newlyMountedDriveIds.value = newlyMountedDriveIds.value + driveId
+                    pendingToastMountNames.add(deviceDisplayName)
+                    toastMountHandler.removeCallbacks(toastMountRunnable)
+                    toastMountHandler.postDelayed(toastMountRunnable, 300L)
+                    updateMountedDrives()
+                    pushDriveShortcut(mountedDrive)
+                    appendLog(getString(R.string.log_mounted_successfully, deviceDisplayName, fileSystem.capacity / (1024 * 1024)))
+                    openedDevices.remove(candidate.deviceName)
+                }
+            } catch (e: Exception) {
+                e.printStackTrace()
+                withContext(Dispatchers.Main) {
+                    toastState.value = Pair("Mount failed: ${e.message ?: "Unknown error"}", false)
+                    appendLog("Failed to mount ${candidate.displayName}: ${e.message}")
+                    openedDevices.remove(candidate.deviceName)
+                }
             }
         }
     }
@@ -1097,11 +1191,13 @@ fun OtgMasterApp(
                             Button(onClick = { onOpenFilesApp(drive) }) {
                                 Text(stringResource(R.string.open_files_app))
                             }
-                            Button(
-                                onClick = { onUnmount(drive) },
-                                modifier = Modifier.semantics { contentDescription = "unmount_button" }
-                            ) {
-                                Text(stringResource(R.string.unmount))
+                            if (!drive.isPlain) {
+                                Button(
+                                    onClick = { onUnmount(drive) },
+                                    modifier = Modifier.semantics { contentDescription = "unmount_button" }
+                                ) {
+                                    Text(stringResource(R.string.unmount))
+                                }
                             }
                             val deviceKey = drive.sourceDeviceName
                             if (deviceKey != null && hasCachedCreds(deviceKey)) {

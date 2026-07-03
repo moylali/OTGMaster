@@ -13,7 +13,9 @@ data class MountedDrive(
      * from, used to avoid re-probing/re-mounting the same physical device while it's mounted. */
     val sourceDeviceName: String? = null,
     /** Human-readable USB device name (e.g. "Kingston DataTraveler") for display purposes. */
-    val sourceDeviceDisplayName: String? = null
+    val sourceDeviceDisplayName: String? = null,
+    /** True for auto-mounted plain (unencrypted) drives — no unmount action shown. */
+    val isPlain: Boolean = false
 )
 
 object OtgMasterState {

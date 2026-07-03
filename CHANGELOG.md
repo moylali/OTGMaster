@@ -1,5 +1,10 @@
 # Changelog
 
+## [v0.3.9] - 2026-07-03
+
+### Added
+- **Unencrypted USB support**: Plain FAT32 and exFAT drives are now auto-mounted on plug-in and shown in the Mounted Devices card — no password needed and no VeraCrypt form shown. The drive is accessible immediately via the Files app.
+
 ## [v0.3.8] - 2026-06-30
 
 ### Added
