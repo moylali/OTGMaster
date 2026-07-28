@@ -1,5 +1,10 @@
 # Changelog
 
+## [v0.3.10] - 2026-07-28
+
+### Changed
+- Updated target SDK to Android 16 (API level 36) to meet Google Play requirements.
+
 ## [v0.3.9] - 2026-07-03
 
 ### Added
