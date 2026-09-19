@@ -1,8 +1,9 @@
 repo:   https://github.com/magnusja/libaums
-commit: af89120aa434ccd97b985a6d66420c1b7e30a1ad
-link:   https://github.com/magnusja/libaums/commit/af89120aa434ccd97b985a6d66420c1b7e30a1ad
-date:   2023-03-11
-note:   "Merge pull request #381 from magnusja/develop"
+commit: 57fa4826b792d46073a3329a303a6c9bec430fc8
+link:   https://github.com/magnusja/libaums/commit/57fa4826b792d46073a3329a303a6c9bec430fc8
+date:   2025-05-30
+note:   "fix: report UsbRequest transfer counts on API 26+" (HEAD at time of update)
+forked-from: af89120aa434ccd97b985a6d66420c1b7e30a1ad
 
 Vendored into: libaums/
 Files live at libaums/src/ in our repo; upstream paths are libaums/src/ too

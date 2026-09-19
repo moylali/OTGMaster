@@ -143,7 +143,15 @@ class ScsiRequestSenseResponse private constructor() {
             MEDIUM_ERROR -> handleMediumError()
             HARDWARE_ERROR -> throw HardwareError(this)
             ILLEGAL_REQUEST -> throw IllegalCommand(this)
-            UNIT_ATTENTION -> throw UnitAttention(this)
+            UNIT_ATTENTION -> {
+                // Non-exhaustively handle recoverable unit attention conditions
+                if (additionalSenseCode.toInt() == RESET_OCCURRED ||
+                    additionalSenseCode.toInt() == COMMANDS_CLEARED) {
+                    throw NotReadyTryAgain(this)
+                } else {
+                    throw UnitAttention(this)
+                }
+            }
             DATA_PROTECT -> throw DataProtect(this)
             BLANK_CHECK -> throw BlankCheck(this)
             COPY_ABORTED -> throw CopyAborted(this)
@@ -229,5 +237,33 @@ class ScsiRequestSenseResponse private constructor() {
         const val VOLUME_OVERFLOW = 13
         const val MISCOMPARE = 14
         const val COMPLETED = 15
+
+        /**
+         * Unit attention condition additional sense code for general device reset conditions.
+         * It should be safe to handle these conditions with a retry.
+         *
+         * ASCQs indicate:
+         * - 0x00: Power on, reset, or bus device reset occurred
+         * - 0x01: Power on occurred
+         * - 0x02: SCSI bus reset occurred
+         * - 0x03: Bus device reset function occurred
+         * - 0x04: Device internal reset
+         * - 0x05: Transceiver mode changed to single-ended
+         * - 0x06: Transceiver mode changed to LVD
+         * - 0x07: I_T nexus loss occurred
+         */
+        const val RESET_OCCURRED = 0x29
+
+        /**
+         * Unit attention condition additional sense code for command queue clear conditions.
+         * It should be safe to handle these conditions with a retry.
+         *
+         * ASCQs indicate:
+         * - 0x00: Commands cleared by another initiator
+         * - 0x01: Commands cleared by power loss notification
+         * - 0x02: Commands cleared by device server
+         * - 0x03: Some commands cleaered by queuing layer event
+         */
+        const val COMMANDS_CLEARED = 0x2F
     }
 }
