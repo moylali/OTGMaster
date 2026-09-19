@@ -1,6 +1,7 @@
 repo:   https://github.com/Mbed-TLS/mbedtls
 tag:    v2.28.8
 commit: 5a764e5555c64337ed17444410269ff21cb617b1
+link:   https://github.com/Mbed-TLS/mbedtls/commit/5a764e5555c64337ed17444410269ff21cb617b1
 
 Vendored into: app/src/main/cpp/mbedtls/
 

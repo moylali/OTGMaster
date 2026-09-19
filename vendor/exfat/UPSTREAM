@@ -1,5 +1,6 @@
 repo:   https://github.com/relan/exfat
 commit: 8cffe412eadd2d9f22ed8ee114b72cc8c6dbfa14
+link:   https://github.com/relan/exfat/commit/8cffe412eadd2d9f22ed8ee114b72cc8c6dbfa14
 date:   2025-06-11
 note:   "Include config.h before all other headers." (post-v1.4.0, unreleased)
 
