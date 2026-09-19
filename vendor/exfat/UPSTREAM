@@ -1,6 +1,7 @@
 repo:   https://github.com/relan/exfat
-tag:    1.4.0
-commit: 0372fdeab2b878736fa20c9c510a0766a7996cdc
+commit: 8cffe412eadd2d9f22ed8ee114b72cc8c6dbfa14
+date:   2025-06-11
+note:   "Include config.h before all other headers." (post-v1.4.0, unreleased)
 
 Vendored into: app/src/main/cpp/exfat/
 Upstream sources live under libexfat/ in the upstream repo.
@@ -17,10 +18,12 @@ Files NOT from upstream (project-specific, do not overwrite on update):
 
 Modified upstream files (covered by patches/0001-jni-android-port.patch):
   io.c      — completely replaced with JNI implementation
-  exfat.h   — removed Android-specific #ifndef ANDROID / config.h guard
   mount.c   — added OEM name to "file system not found" error; moved exfat_flush()
   node.c    — added unlinked-node cluster cleanup on reset_cache
   log.c     — changed log tag from PACKAGE macro to hardcoded "ExFatNative"
+
+Note: exfat.h is unmodified at this base commit — the config.h guard was
+already removed upstream in 8cffe412 itself.
 
 To update:
   1. Clone upstream, checkout the new tag.

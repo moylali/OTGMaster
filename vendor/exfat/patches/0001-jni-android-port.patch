@@ -1,16 +1,3 @@
---- a/libexfat/exfat.h
-+++ b/libexfat/exfat.h
-@@ -24,10 +24,6 @@
- #ifndef EXFAT_H_INCLUDED
- #define EXFAT_H_INCLUDED
- 
--#ifndef ANDROID
--/* Android.bp is used instead of autotools when targeting Android */
--#include "config.h"
--#endif
- #include "compiler.h"
- #include "exfatfs.h"
- #include <stdio.h>
 --- a/libexfat/mount.c
 +++ b/libexfat/mount.c
 @@ -224,7 +224,7 @@
