@@ -78,8 +78,8 @@ class E2EAutomatedTest {
         val cipher = arguments.getString("cipher", "")
 
         // Click "Scan USB Devices"
-        val scanButton = device.wait(Until.findObject(By.textContains("Scan")), timeout)
-            ?: device.wait(Until.findObject(By.descContains("Scan")), timeout)
+        val scanButton = device.wait(Until.findObject(By.textContains("Scan").clickable(true)), timeout)
+            ?: device.wait(Until.findObject(By.descContains("Scan").clickable(true)), timeout)
         scanButton?.click()
 
         // Wait for USB permission dialog (optional – may not appear if no device)
@@ -299,8 +299,8 @@ class E2EAutomatedTest {
         android.os.SystemClock.sleep(1000)
 
         // ── MOUNT #1 ──────────────────────────────────────────────────────────
-        val scanBtn1 = device.wait(Until.findObject(By.textContains("Scan")), timeout)
-            ?: device.wait(Until.findObject(By.descContains("Scan")), timeout)
+        val scanBtn1 = device.wait(Until.findObject(By.textContains("Scan").clickable(true)), timeout)
+            ?: device.wait(Until.findObject(By.descContains("Scan").clickable(true)), timeout)
         scanBtn1?.click()
         device.wait(Until.findObject(By.text(java.util.regex.Pattern.compile("(?i)Allow|OK"))), 5000L)?.click()
 
@@ -335,8 +335,8 @@ class E2EAutomatedTest {
         doUnmount()
 
         // ── REMOUNT #2 — verify write persistence ─────────────────────────────
-        val scanBtn2 = device.wait(Until.findObject(By.textContains("Scan")), timeout)
-            ?: device.wait(Until.findObject(By.descContains("Scan")), timeout)
+        val scanBtn2 = device.wait(Until.findObject(By.textContains("Scan").clickable(true)), timeout)
+            ?: device.wait(Until.findObject(By.descContains("Scan").clickable(true)), timeout)
         scanBtn2?.click()
         android.os.SystemClock.sleep(2000)
 
@@ -391,8 +391,8 @@ class E2EAutomatedTest {
         doUnmount()
 
         // ── REMOUNT #3 — verify deletion persisted ────────────────────────────
-        val scanBtn3 = device.wait(Until.findObject(By.textContains("Scan")), timeout)
-            ?: device.wait(Until.findObject(By.descContains("Scan")), timeout)
+        val scanBtn3 = device.wait(Until.findObject(By.textContains("Scan").clickable(true)), timeout)
+            ?: device.wait(Until.findObject(By.descContains("Scan").clickable(true)), timeout)
         scanBtn3?.click()
         android.os.SystemClock.sleep(2000)
 
