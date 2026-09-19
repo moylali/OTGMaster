@@ -1,0 +1,17 @@
+repo:   https://github.com/Mbed-TLS/mbedtls
+tag:    v2.28.8
+commit: 5a764e5555c64337ed17444410269ff21cb617b1
+
+Vendored into: app/src/main/cpp/mbedtls/
+
+No source files were modified. The only change from upstream is deletion of
+the tests/ and programs/ directories (neither is needed for the Android build
+and both were large — ~1000 files, 234k lines removed in commit 923ee4d).
+
+No patches/ directory — nothing to re-apply on update.
+
+To update:
+  1. Clone upstream, checkout the new tag.
+  2. Copy the repo into app/src/main/cpp/mbedtls/ replacing the existing tree.
+  3. Delete tests/ and programs/ directories.
+  4. Update this file with the new tag and commit hash.

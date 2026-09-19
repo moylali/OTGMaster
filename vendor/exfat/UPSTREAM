@@ -1,0 +1,29 @@
+repo:   https://github.com/relan/exfat
+tag:    1.4.0
+commit: 0372fdeab2b878736fa20c9c510a0766a7996cdc
+
+Vendored into: app/src/main/cpp/exfat/
+Upstream sources live under libexfat/ in the upstream repo.
+Our copy is flat (no libexfat/ subdirectory).
+
+Files from upstream (all under libexfat/ upstream → exfat/ here):
+  byteorder.h, cluster.c, compiler.h, exfat.h, exfatfs.h, io.c,
+  log.c, lookup.c, Makefile.am, mount.c, node.c, platform.h,
+  repair.c, time.c, utf.c, utils.c
+
+Files NOT from upstream (project-specific, do not overwrite on update):
+  ExFatNative.cpp   — JNI bridge layer (new file)
+  rewrite_io.py     — helper script used to generate the JNI io.c
+
+Modified upstream files (covered by patches/0001-jni-android-port.patch):
+  io.c      — completely replaced with JNI implementation
+  exfat.h   — removed Android-specific #ifndef ANDROID / config.h guard
+  mount.c   — added OEM name to "file system not found" error; moved exfat_flush()
+  node.c    — added unlinked-node cluster cleanup on reset_cache
+  log.c     — changed log tag from PACKAGE macro to hardcoded "ExFatNative"
+
+To update:
+  1. Clone upstream, checkout the new tag.
+  2. Copy libexfat/*.{c,h} → app/src/main/cpp/exfat/ (do NOT overwrite ExFatNative.cpp).
+  3. Re-apply: patch -p1 < vendor/exfat/patches/0001-jni-android-port.patch
+  4. Build and test; update this file with the new tag and commit hash.

@@ -1,0 +1,15 @@
+repo:   https://github.com/magnusja/libaums
+commit: af89120aa434ccd97b985a6d66420c1b7e30a1ad
+date:   2023-03-11
+note:   "Merge pull request #381 from magnusja/develop"
+
+Vendored into: libaums/
+Files live at libaums/src/ in our repo; upstream paths are libaums/src/ too
+(upstream repo root changed structure — at this commit the module is at
+libaums/ with sources under libaums/src/).
+
+To update:
+  1. Clone upstream, checkout the new commit.
+  2. Copy libaums/src/ and regenerate libaums/build.gradle.kts from upstream.
+  3. Re-apply each patch: patch -p1 < vendor/libaums/patches/<N>-*.patch
+  4. Build and test; update this file with the new commit hash.

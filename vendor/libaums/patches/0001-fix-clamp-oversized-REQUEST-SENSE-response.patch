@@ -1,0 +1,118 @@
+--- a/src/main/java/me/jahnen/libaums/core/driver/scsi/ScsiBlockDevice.kt	2026-09-19 15:18:51.846181217 -0700
++++ b/src/main/java/me/jahnen/libaums/core/driver/scsi/ScsiBlockDevice.kt	2026-06-26 05:42:04.590823828 -0700
+@@ -19,26 +19,14 @@
+ 
+ import android.util.Log
+ import me.jahnen.libaums.core.driver.BlockDeviceDriver
+-import me.jahnen.libaums.core.driver.scsi.commands.CommandBlockWrapper
++import me.jahnen.libaums.core.driver.scsi.commands.*
+ import me.jahnen.libaums.core.driver.scsi.commands.CommandBlockWrapper.Direction
+-import me.jahnen.libaums.core.driver.scsi.commands.CommandStatusWrapper
+-import me.jahnen.libaums.core.driver.scsi.commands.ScsiInquiry
+-import me.jahnen.libaums.core.driver.scsi.commands.ScsiInquiryResponse
+-import me.jahnen.libaums.core.driver.scsi.commands.ScsiRead10
+-import me.jahnen.libaums.core.driver.scsi.commands.ScsiReadCapacity
+-import me.jahnen.libaums.core.driver.scsi.commands.ScsiReadCapacityResponse
+-import me.jahnen.libaums.core.driver.scsi.commands.ScsiTestUnitReady
+-import me.jahnen.libaums.core.driver.scsi.commands.ScsiWrite10
+-import me.jahnen.libaums.core.driver.scsi.commands.sense.InitRequired
+-import me.jahnen.libaums.core.driver.scsi.commands.sense.NotReadyTryAgain
+-import me.jahnen.libaums.core.driver.scsi.commands.sense.ScsiRequestSense
+-import me.jahnen.libaums.core.driver.scsi.commands.sense.ScsiRequestSenseResponse
+-import me.jahnen.libaums.core.driver.scsi.commands.sense.SenseException
++import me.jahnen.libaums.core.driver.scsi.commands.sense.*
+ import me.jahnen.libaums.core.usb.PipeException
+ import me.jahnen.libaums.core.usb.UsbCommunication
+ import java.io.IOException
+ import java.nio.ByteBuffer
+-import java.util.Arrays
++import java.util.*
+ 
+ /**
+  * This class is responsible for handling mass storage devices which follow the
+@@ -54,6 +42,7 @@
+ 
+     override var blockSize: Int = 0
+         private set
++    private var lastBlockAddress: Int = 0
+ 
+     private val writeCommand = ScsiWrite10(lun=lun)
+     private val readCommand = ScsiRead10(lun=lun)
+@@ -66,8 +55,7 @@
+      *
+      * @return The block device size in blocks
+      */
+-    override var blocks: Long = 0
+-        private set
++    override val blocks: Long get() = lastBlockAddress.toLong()
+ 
+     /**
+      * Issues a SCSI Inquiry to determine the connected device. After that it is
+@@ -132,10 +120,10 @@
+         inBuffer.clear()
+         val readCapacityResponse = ScsiReadCapacityResponse.read(inBuffer)
+         blockSize = readCapacityResponse.blockLength
+-        blocks = readCapacityResponse.blockCount
++        lastBlockAddress = readCapacityResponse.logicalBlockAddress
+ 
+         Log.i(TAG, "Block size: $blockSize")
+-        Log.i(TAG, "Block count: $blocks")
++        Log.i(TAG, "Last block address: $lastBlockAddress")
+     }
+ 
+     /**
+@@ -229,8 +217,8 @@
+ 
+     @Throws(IOException::class)
+     private fun requestSense() {
+-        val inBuffer = ByteBuffer.allocate(18)
+-        val sense = ScsiRequestSense(inBuffer.array().size.toByte(), lun = lun)
++        val inBuffer = ByteBuffer.allocate(252)
++        val sense = ScsiRequestSense(inBuffer.array().size, lun = lun)
+         when (val status = transferOneCommand(sense, inBuffer)) {
+             CommandStatusWrapper.COMMAND_PASSED -> {
+                 inBuffer.clear()
+@@ -279,8 +267,7 @@
+         }
+ 
+         var transferLength = command.dCbwDataTransferLength
+-        val initialPosition = inBuffer.position()
+-        inBuffer.limit(initialPosition + transferLength)
++        inBuffer.limit(inBuffer.position() + transferLength)
+ 
+         var read = 0
+         if (transferLength > 0) {
+@@ -290,21 +277,22 @@
+                     read += usbCommunication.bulkInTransfer(inBuffer)
+                     if (command.bCbwDynamicSize) {
+                         transferLength = command.dynamicSizeFromPartialResponse(inBuffer)
+-                        val clampedLength =
+-                            transferLength.coerceAtMost(inBuffer.capacity() - initialPosition)
+-                        if (transferLength != clampedLength) {
+-                            Log.w(
+-                                TAG,
+-                                "Device returned transfer length $transferLength, clamping to $clampedLength to prevent overflow"
+-                            )
+-                            transferLength = clampedLength
+-                        }
+-                        inBuffer.limit(initialPosition + transferLength)
++                        // Some non-compliant devices report a dynamic size larger than the
++                        // buffer we allocated to receive it (e.g. REQUEST SENSE responses
++                        // beyond the 252-byte fixed-format max), which would otherwise throw
++                        // in inBuffer.limit() below. Clamp the size itself (not just the
++                        // limit call) so the read-loop's `read < transferLength` condition
++                        // stays consistent and terminates instead of spinning forever trying
++                        // to read bytes that have nowhere to go.
++                        val maxTransferLength = inBuffer.capacity() - inBuffer.position()
++                        transferLength = transferLength.coerceAtMost(maxTransferLength)
++                        inBuffer.limit(inBuffer.position() + transferLength)
+                     }
+                 } while (read < transferLength)
+ 
+                 if (read != transferLength) {
+-                    throw IOException("Unexpected command size ($read) on response to $command")
++                    throw IOException("Unexpected command size (" + read + ") on response to "
++                            + command)
+                 }
+             } else {
+                 written = 0

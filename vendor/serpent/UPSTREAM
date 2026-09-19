@@ -1,0 +1,16 @@
+source: https://www.cl.cam.ac.uk/~rja14/serpent.html
+        "floppy 1" — unoptimised ANSI C reference implementation from the
+        1998 NIST AES-candidate submission by Frank Stajano, Ross Anderson,
+        Eli Biham, Lars Knudsen. Public domain.
+
+No upstream git repository exists for this source.
+
+Vendored into: app/src/main/cpp/serpent/
+
+Modifications are fully documented in app/src/main/cpp/serpent/PROVENANCE.md:
+  - serpent-api.h: WORD typedef changed from `unsigned long` to `uint32_t`
+  - serpent_adapter.c/.h: new files (not from the original submission)
+  - xts_generic.c: new file (not from the original submission)
+
+To update: no upstream to track. Any changes go directly into the source
+files; update PROVENANCE.md accordingly.

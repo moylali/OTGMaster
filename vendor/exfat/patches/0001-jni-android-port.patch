@@ -1,0 +1,569 @@
+--- a/libexfat/exfat.h
++++ b/libexfat/exfat.h
+@@ -24,10 +24,6 @@
+ #ifndef EXFAT_H_INCLUDED
+ #define EXFAT_H_INCLUDED
+ 
+-#ifndef ANDROID
+-/* Android.bp is used instead of autotools when targeting Android */
+-#include "config.h"
+-#endif
+ #include "compiler.h"
+ #include "exfatfs.h"
+ #include <stdio.h>
+--- a/libexfat/mount.c
++++ b/libexfat/mount.c
+@@ -224,7 +224,7 @@
+ 	}
+ 	if (memcmp(ef->sb->oem_name, "EXFAT   ", 8) != 0)
+ 	{
+-		exfat_error("exFAT file system is not found");
++		exfat_error("exFAT file system is not found (oem_name: %.8s)", ef->sb->oem_name);
+ 		exfat_free(ef);
+ 		return -EIO;
+ 	}
+@@ -365,9 +365,9 @@
+ void exfat_unmount(struct exfat* ef)
+ {
+ 	exfat_flush_nodes(ef);	/* ignore return code */
+-	exfat_flush(ef);		/* ignore return code */
+ 	exfat_put_node(ef, ef->root);
+ 	exfat_reset_cache(ef);
++	exfat_flush(ef);		/* ignore return code */
+ 	finalize_super_block(ef);
+ 	exfat_free(ef);			/* will close the descriptor */
+ }
+--- a/libexfat/node.c
++++ b/libexfat/node.c
+@@ -616,6 +616,15 @@
+ 		exfat_get_name(node, buffer);
+ 		exfat_bug("node '%s' is dirty", buffer);
+ 	}
++	if (node->is_unlinked)
++	{
++		node->references = 0; // force cleanup
++		// exfat_cleanup_node frees the node internally, so we don't need to do it.
++		// BUT reset_cache caller also frees it!
++		// Let's NOT call exfat_cleanup_node here.
++		// INSTEAD, just do exfat_truncate to free clusters!
++		exfat_truncate(ef, node, 0, true);
++	}
+ 	while (node->references)
+ 		exfat_put_node(ef, node);
+ }
+--- a/libexfat/log.c
++++ b/libexfat/log.c
+@@ -76,7 +76,7 @@
+ 	fputs(".\n", stderr);
+ 
+ #ifdef __ANDROID__
+-	__android_log_vprint(ANDROID_LOG_ERROR, PACKAGE, format, aq);
++	__android_log_vprint(ANDROID_LOG_ERROR, "ExFatNative", format, aq);
+ #else
+ 	if (!isatty(STDERR_FILENO))
+ 		vsyslog(LOG_ERR, format, aq);
+--- a/libexfat/io.c
++++ b/libexfat/io.c
+@@ -1,24 +1,3 @@
+-/*
+-	io.c (02.09.09)
+-	exFAT file system implementation library.
+-
+-	Free exFAT implementation.
+-	Copyright (C) 2010-2023  Andrew Nayenko
+-
+-	This program is free software; you can redistribute it and/or modify
+-	it under the terms of the GNU General Public License as published by
+-	the Free Software Foundation, either version 2 of the License, or
+-	(at your option) any later version.
+-
+-	This program is distributed in the hope that it will be useful,
+-	but WITHOUT ANY WARRANTY; without even the implied warranty of
+-	MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+-	GNU General Public License for more details.
+-
+-	You should have received a copy of the GNU General Public License along
+-	with this program; if not, write to the Free Software Foundation, Inc.,
+-	51 Franklin Street, Fifth Floor, Boston, MA 02110-1301 USA.
+-*/
+ 
+ #include "exfat.h"
+ #include <inttypes.h>
+@@ -28,363 +7,122 @@
+ #include <unistd.h>
+ #include <string.h>
+ #include <errno.h>
+-#if defined(__APPLE__)
+-#include <sys/disk.h>
+-#elif defined(__OpenBSD__)
+-#include <sys/param.h>
+-#include <sys/disklabel.h>
+-#include <sys/dkio.h>
+-#include <sys/ioctl.h>
+-#elif defined(__NetBSD__)
+-#include <sys/ioctl.h>
+-#elif __linux__
+-#include <sys/mount.h>
+-#endif
+-#ifdef USE_UBLIO
+-#include <sys/uio.h>
+-#include <ublio.h>
+-#endif
+-
+-struct exfat_dev
+-{
+-	int fd;
+-	enum exfat_mode mode;
+-	off_t size; /* in bytes */
+-#ifdef USE_UBLIO
+-	off_t pos;
+-	ublio_filehandle_t ufh;
+-#endif
++
++struct exfat_dev {
++    void* jni_env;
++    void* block_device;
++    enum exfat_mode mode;
++    off_t size; /* in bytes */
+ };
+ 
+-static bool is_open(int fd)
+-{
+-	return fcntl(fd, F_GETFD) != -1;
+-}
+-
+-static int open_ro(const char* spec)
+-{
+-	return open(spec, O_RDONLY);
+-}
+-
+-static int open_rw(const char* spec)
+-{
+-	int fd = open(spec, O_RDWR);
+-#ifdef __linux__
+-	int ro = 0;
+-
+-	/*
+-	   This ioctl is needed because after "blockdev --setro" kernel still
+-	   allows to open the device in read-write mode but fails writes.
+-	*/
+-	if (fd != -1 && ioctl(fd, BLKROGET, &ro) == 0 && ro)
+-	{
+-		close(fd);
+-		errno = EROFS;
+-		return -1;
+-	}
+-#endif
+-	return fd;
+-}
+-
+-struct exfat_dev* exfat_open(const char* spec, enum exfat_mode mode)
+-{
+-	struct exfat_dev* dev;
+-	struct stat stbuf;
+-#ifdef USE_UBLIO
+-	struct ublio_param up;
+-#endif
+-
+-	/* The system allocates file descriptors sequentially. If we have been
+-	   started with stdin (0), stdout (1) or stderr (2) closed, the system
+-	   will give us descriptor 0, 1 or 2 later when we open block device,
+-	   FUSE communication pipe, etc. As a result, functions using stdin,
+-	   stdout or stderr will actually work with a different thing and can
+-	   corrupt it. Protect descriptors 0, 1 and 2 from such misuse. */
+-	while (!is_open(STDIN_FILENO)
+-		|| !is_open(STDOUT_FILENO)
+-		|| !is_open(STDERR_FILENO))
+-	{
+-		/* we don't need those descriptors, let them leak */
+-		if (open("/dev/null", O_RDWR) == -1)
+-		{
+-			exfat_error("failed to open /dev/null");
+-			return NULL;
+-		}
+-	}
+-
+-	dev = malloc(sizeof(struct exfat_dev));
+-	if (dev == NULL)
+-	{
+-		exfat_error("failed to allocate memory for device structure");
+-		return NULL;
+-	}
+-
+-	switch (mode)
+-	{
+-	case EXFAT_MODE_RO:
+-		dev->fd = open_ro(spec);
+-		if (dev->fd == -1)
+-		{
+-			free(dev);
+-			exfat_error("failed to open '%s' in read-only mode: %s", spec,
+-					strerror(errno));
+-			return NULL;
+-		}
+-		dev->mode = EXFAT_MODE_RO;
+-		break;
+-	case EXFAT_MODE_RW:
+-		dev->fd = open_rw(spec);
+-		if (dev->fd == -1)
+-		{
+-			free(dev);
+-			exfat_error("failed to open '%s' in read-write mode: %s", spec,
+-					strerror(errno));
+-			return NULL;
+-		}
+-		dev->mode = EXFAT_MODE_RW;
+-		break;
+-	case EXFAT_MODE_ANY:
+-		dev->fd = open_rw(spec);
+-		if (dev->fd != -1)
+-		{
+-			dev->mode = EXFAT_MODE_RW;
+-			break;
+-		}
+-		dev->fd = open_ro(spec);
+-		if (dev->fd != -1)
+-		{
+-			dev->mode = EXFAT_MODE_RO;
+-			exfat_warn("'%s' is write-protected, mounting read-only", spec);
+-			break;
+-		}
+-		free(dev);
+-		exfat_error("failed to open '%s': %s", spec, strerror(errno));
+-		return NULL;
+-	}
+-
+-	if (fstat(dev->fd, &stbuf) != 0)
+-	{
+-		close(dev->fd);
+-		free(dev);
+-		exfat_error("failed to fstat '%s'", spec);
+-		return NULL;
+-	}
+-	if (!S_ISBLK(stbuf.st_mode) &&
+-		!S_ISCHR(stbuf.st_mode) &&
+-		!S_ISREG(stbuf.st_mode))
+-	{
+-		close(dev->fd);
+-		free(dev);
+-		exfat_error("'%s' is neither a device, nor a regular file", spec);
+-		return NULL;
+-	}
+-
+-#if defined(__APPLE__)
+-	if (!S_ISREG(stbuf.st_mode))
+-	{
+-		uint32_t block_size = 0;
+-		uint64_t blocks = 0;
+-
+-		if (ioctl(dev->fd, DKIOCGETBLOCKSIZE, &block_size) != 0)
+-		{
+-			close(dev->fd);
+-			free(dev);
+-			exfat_error("failed to get block size");
+-			return NULL;
+-		}
+-		if (ioctl(dev->fd, DKIOCGETBLOCKCOUNT, &blocks) != 0)
+-		{
+-			close(dev->fd);
+-			free(dev);
+-			exfat_error("failed to get blocks count");
+-			return NULL;
+-		}
+-		dev->size = blocks * block_size;
+-	}
+-	else
+-#elif defined(__OpenBSD__)
+-	if (!S_ISREG(stbuf.st_mode))
+-	{
+-		struct disklabel lab;
+-		struct partition* pp;
+-		char* partition;
+-
+-		if (ioctl(dev->fd, DIOCGDINFO, &lab) == -1)
+-		{
+-			close(dev->fd);
+-			free(dev);
+-			exfat_error("failed to get disklabel");
+-			return NULL;
+-		}
+-
+-		/* Don't need to check that partition letter is valid as we won't get
+-		   this far otherwise. */
+-		partition = strchr(spec, '\0') - 1;
+-		pp = &(lab.d_partitions[*partition - 'a']);
+-		dev->size = DL_GETPSIZE(pp) * lab.d_secsize;
+-
+-		if (pp->p_fstype != FS_NTFS)
+-			exfat_warn("partition type is not 0x07 (NTFS/exFAT); "
+-					"you can fix this with fdisk(8)");
+-	}
+-	else
+-#elif defined(__NetBSD__)
+-	if (!S_ISREG(stbuf.st_mode))
+-	{
+-		off_t size;
+-
+-		if (ioctl(dev->fd, DIOCGMEDIASIZE, &size) == -1)
+-		{
+-			close(dev->fd);
+-			free(dev);
+-			exfat_error("failed to get media size");
+-			return NULL;
+-		}
+-		dev->size = size;
+-	}
+-	else
+-#endif
+-	{
+-		/* works for Linux, FreeBSD, Solaris */
+-		dev->size = exfat_seek(dev, 0, SEEK_END);
+-		if (dev->size <= 0)
+-		{
+-			close(dev->fd);
+-			free(dev);
+-			exfat_error("failed to get size of '%s'", spec);
+-			return NULL;
+-		}
+-		if (exfat_seek(dev, 0, SEEK_SET) == -1)
+-		{
+-			close(dev->fd);
+-			free(dev);
+-			exfat_error("failed to seek to the beginning of '%s'", spec);
+-			return NULL;
+-		}
+-	}
+-
+-#ifdef USE_UBLIO
+-	memset(&up, 0, sizeof(struct ublio_param));
+-	up.up_blocksize = 256 * 1024;
+-	up.up_items = 64;
+-	up.up_grace = 32;
+-	up.up_priv = &dev->fd;
+-
+-	dev->pos = 0;
+-	dev->ufh = ublio_open(&up);
+-	if (dev->ufh == NULL)
+-	{
+-		close(dev->fd);
+-		free(dev);
+-		exfat_error("failed to initialize ublio");
+-		return NULL;
+-	}
+-#endif
+-
+-	return dev;
+-}
+-
+-int exfat_close(struct exfat_dev* dev)
+-{
+-	int rc = 0;
+-
+-#ifdef USE_UBLIO
+-	if (ublio_close(dev->ufh) != 0)
+-	{
+-		exfat_error("failed to close ublio");
+-		rc = -EIO;
+-	}
+-#endif
+-	if (close(dev->fd) != 0)
+-	{
+-		exfat_error("failed to close device: %s", strerror(errno));
+-		rc = -EIO;
+-	}
+-	free(dev);
+-	return rc;
+-}
+-
+-int exfat_fsync(struct exfat_dev* dev)
+-{
+-	int rc = 0;
+-
+-#ifdef USE_UBLIO
+-	if (ublio_fsync(dev->ufh) != 0)
+-	{
+-		exfat_error("ublio fsync failed");
+-		rc = -EIO;
+-	}
+-#endif
+-	if (fsync(dev->fd) != 0)
+-	{
+-		exfat_error("fsync failed: %s", strerror(errno));
+-		rc = -EIO;
+-	}
+-	return rc;
+-}
+-
+-enum exfat_mode exfat_get_mode(const struct exfat_dev* dev)
+-{
+-	return dev->mode;
+-}
+-
+-off_t exfat_get_size(const struct exfat_dev* dev)
+-{
+-	return dev->size;
+-}
+-
+-off_t exfat_seek(struct exfat_dev* dev, off_t offset, int whence)
+-{
+-#ifdef USE_UBLIO
+-	/* XXX SEEK_CUR will be handled incorrectly */
+-	return dev->pos = lseek(dev->fd, offset, whence);
+-#else
+-	return lseek(dev->fd, offset, whence);
+-#endif
+-}
+-
+-ssize_t exfat_read(struct exfat_dev* dev, void* buffer, size_t size)
+-{
+-#ifdef USE_UBLIO
+-	ssize_t result = ublio_pread(dev->ufh, buffer, size, dev->pos);
+-	if (result >= 0)
+-		dev->pos += size;
+-	return result;
+-#else
+-	return read(dev->fd, buffer, size);
+-#endif
+-}
+-
+-ssize_t exfat_write(struct exfat_dev* dev, const void* buffer, size_t size)
+-{
+-#ifdef USE_UBLIO
+-	ssize_t result = ublio_pwrite(dev->ufh, (void*) buffer, size, dev->pos);
+-	if (result >= 0)
+-		dev->pos += size;
+-	return result;
+-#else
+-	return write(dev->fd, buffer, size);
+-#endif
+-}
+-
+-ssize_t exfat_pread(struct exfat_dev* dev, void* buffer, size_t size,
+-		off_t offset)
+-{
+-#ifdef USE_UBLIO
+-	return ublio_pread(dev->ufh, buffer, size, offset);
+-#else
+-	return pread(dev->fd, buffer, size, offset);
+-#endif
+-}
+-
+-ssize_t exfat_pwrite(struct exfat_dev* dev, const void* buffer, size_t size,
+-		off_t offset)
+-{
+-#ifdef USE_UBLIO
+-	return ublio_pwrite(dev->ufh, (void*) buffer, size, offset);
+-#else
+-	return pwrite(dev->fd, buffer, size, offset);
+-#endif
++#include <jni.h>
++#include <android/log.h>
++#include <stdio.h>
++#include <stdlib.h>
++
++#define LOG_TAG "exfat-jni"
++#define LOGE(...) __android_log_print(ANDROID_LOG_ERROR, LOG_TAG, __VA_ARGS__)
++
++static JavaVM* g_jvm = NULL;
++
++JNIEXPORT jint JNICALL JNI_OnLoad(JavaVM* vm, void* reserved) {
++    g_jvm = vm;
++    return JNI_VERSION_1_6;
++}
++
++static JNIEnv* getEnv() {
++    JNIEnv* env = NULL;
++    if ((*g_jvm)->GetEnv(g_jvm, (void**)&env, JNI_VERSION_1_6) != JNI_OK) {
++        (*g_jvm)->AttachCurrentThread(g_jvm, &env, NULL);
++    }
++    return env;
++}
++
++struct exfat_dev* exfat_open(const char* spec, enum exfat_mode mode) {
++    struct exfat_dev* dev = (struct exfat_dev*) malloc(sizeof(struct exfat_dev));
++    if (!dev) return NULL;
++    dev->mode = mode;
++    dev->size = 0;
++    
++    long long ptr;
++    if (sscanf(spec, "%lld", &ptr) == 1) {
++        dev->block_device = (void*) ptr;
++    } else {
++        free(dev);
++        return NULL;
++    }
++    
++    JNIEnv* env = getEnv();
++    jclass clazz = (*env)->FindClass(env, "app/fayaz/otgmaster/exfat/ExFatNative");
++    jmethodID getDeviceSize = (*env)->GetStaticMethodID(env, clazz, "getDeviceSize", "(Lapp/fayaz/otgmaster/block/RawBlockDevice;)J");
++    dev->size = (*env)->CallStaticLongMethod(env, clazz, getDeviceSize, (jobject)dev->block_device);
++    (*env)->DeleteLocalRef(env, clazz);
++    
++    return dev;
++}
++
++int exfat_close(struct exfat_dev* dev) {
++    JNIEnv* env = getEnv();
++    if (dev->block_device) {
++        (*env)->DeleteGlobalRef(env, (jobject)dev->block_device);
++    }
++    free(dev);
++    return 0;
++}
++
++int exfat_fsync(struct exfat_dev* dev) {
++    return 0;
++}
++
++enum exfat_mode exfat_get_mode(const struct exfat_dev* dev) {
++    return dev->mode;
++}
++
++off_t exfat_get_size(const struct exfat_dev* dev) {
++    return dev->size;
++}
++
++off_t exfat_seek(struct exfat_dev* dev, off_t offset, int whence) {
++    return -1;
++}
++
++ssize_t exfat_read(struct exfat_dev* dev, void* buffer, size_t size) {
++    return -1;
++}
++
++ssize_t exfat_write(struct exfat_dev* dev, const void* buffer, size_t size) {
++    return -1;
++}
++
++ssize_t exfat_pread(struct exfat_dev* dev, void* buffer, size_t size, off_t offset) {
++    JNIEnv* env = getEnv();
++    jclass clazz = (*env)->FindClass(env, "app/fayaz/otgmaster/exfat/ExFatNative");
++    jmethodID preadMethod = (*env)->GetStaticMethodID(env, clazz, "pread", "(Lapp/fayaz/otgmaster/block/RawBlockDevice;JI[B)I");
++    
++    jbyteArray jBuffer = (*env)->NewByteArray(env, size);
++    jint result = (*env)->CallStaticIntMethod(env, clazz, preadMethod, (jobject)dev->block_device, (jlong)offset, (jint)size, jBuffer);
++    
++    if (result > 0) {
++        (*env)->GetByteArrayRegion(env, jBuffer, 0, result, (jbyte*)buffer);
++    }
++    (*env)->DeleteLocalRef(env, jBuffer);
++    (*env)->DeleteLocalRef(env, clazz);
++    return result;
++}
++
++ssize_t exfat_pwrite(struct exfat_dev* dev, const void* buffer, size_t size, off_t offset) {
++    JNIEnv* env = getEnv();
++    jclass clazz = (*env)->FindClass(env, "app/fayaz/otgmaster/exfat/ExFatNative");
++    jmethodID pwriteMethod = (*env)->GetStaticMethodID(env, clazz, "pwrite", "(Lapp/fayaz/otgmaster/block/RawBlockDevice;JI[B)I");
++    
++    jbyteArray jBuffer = (*env)->NewByteArray(env, size);
++    (*env)->SetByteArrayRegion(env, jBuffer, 0, size, (const jbyte*)buffer);
++    
++    jint result = (*env)->CallStaticIntMethod(env, clazz, pwriteMethod, (jobject)dev->block_device, (jlong)offset, (jint)size, jBuffer);
++    
++    (*env)->DeleteLocalRef(env, jBuffer);
++    (*env)->DeleteLocalRef(env, clazz);
++    return result;
+ }
+ 
+ ssize_t exfat_generic_pread(const struct exfat* ef, struct exfat_node* node,
