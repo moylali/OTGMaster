@@ -1,0 +1,64 @@
+# Promotes the latest release on the internal track to production.
+# Trigger manually: gh workflow run promote.yml
+# or via GitHub UI: Actions → Promote to Production → Run workflow.
+
+name: Promote to Production
+
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  promote:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Promote internal → production
+        run: |
+          pip install google-auth requests --quiet
+
+          python3 - <<'PYEOF'
+          import json, time, requests
+          import google.auth
+          import google.oauth2.service_account as sa
+
+          KEY = json.loads("""${{ secrets.SERVICE_ACCOUNT_JSON }}""")
+          PACKAGE = "app.fayaz.otgmaster"
+          SCOPES = ["https://www.googleapis.com/auth/androidpublisher"]
+          BASE = "https://androidpublisher.googleapis.com/androidpublisher/v3/applications"
+
+          creds = sa.Credentials.from_service_account_info(KEY, scopes=SCOPES)
+          creds.refresh(google.auth.transport.requests.Request())
+          token = creds.token
+          headers = {"Authorization": f"Bearer {token}", "Content-Type": "application/json"}
+
+          # 1. Open edit
+          r = requests.post(f"{BASE}/{PACKAGE}/edits", headers=headers)
+          r.raise_for_status()
+          edit_id = r.json()["id"]
+          print(f"Edit: {edit_id}")
+
+          # 2. Get internal track releases
+          r = requests.get(f"{BASE}/{PACKAGE}/edits/{edit_id}/tracks/internal", headers=headers)
+          r.raise_for_status()
+          internal = r.json()
+          releases = internal.get("releases", [])
+          completed = [rel for rel in releases if rel.get("status") == "completed"]
+          if not completed:
+              raise SystemExit("No completed release found on internal track")
+          release = completed[0]
+          print(f"Promoting versionCodes {release['versionCodes']} ({release.get('name','')})")
+
+          # 3. Update production track
+          prod_body = {"releases": [{"versionCodes": release["versionCodes"], "status": "completed"}]}
+          r = requests.put(f"{BASE}/{PACKAGE}/edits/{edit_id}/tracks/production",
+                           headers=headers, json=prod_body)
+          r.raise_for_status()
+          print("Production track updated")
+
+          # 4. Commit
+          r = requests.post(f"{BASE}/{PACKAGE}/edits/{edit_id}:commit", headers=headers)
+          r.raise_for_status()
+          print("Edit committed — promotion complete")
+          PYEOF
