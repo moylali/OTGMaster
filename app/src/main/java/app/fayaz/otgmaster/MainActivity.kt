@@ -344,8 +344,8 @@ class MainActivity : AppCompatActivity() {
                             credentialStore.setExcluded(deviceKey, excluded)
                             excludedDeviceKeys.value = credentialStore.loadExcludedKeys()
                         },
-                        onQuickUnlock = { deviceName, onComplete ->
-                            showQuickUnlockPrompt(deviceName, onComplete)
+                        onQuickUnlock = { deviceName, candidate, onComplete ->
+                            showQuickUnlockPrompt(deviceName, candidate, onComplete)
                         },
                         toastMessage = toastState.value?.first,
                         toastIsSuccess = toastState.value?.second ?: true,
@@ -999,23 +999,11 @@ class MainActivity : AppCompatActivity() {
         prompt.authenticate(builder.build())
     }
 
-    private fun showQuickUnlockPrompt(deviceName: String, onComplete: () -> Unit) {
-        val device = _deviceCandidates.value.find { it.deviceName == deviceName } ?: run {
-            appendLog("Device not found: $deviceName")
-            onComplete()
-            return
-        }
-        val candidateStarts = device.candidates.map { it.startBlock }.toSet()
-        val creds = sessionPlaintextCreds[deviceName]
-            ?: credentialStore.loadAll(deviceName).find { it.candidateStartBlock in candidateStarts }
+    private fun showQuickUnlockPrompt(deviceName: String, candidate: VolumeCandidate, onComplete: () -> Unit) {
+        val creds = sessionPlaintextCreds[deviceName]?.takeIf { it.candidateStartBlock == candidate.startBlock }
+            ?: credentialStore.load(deviceName, candidate.startBlock)
             ?: run {
-            appendLog("No credentials found for $deviceName")
-            onComplete()
-            return
-        }
-        val candidate = device.candidates.find { it.startBlock == creds.candidateStartBlock }
-            ?: device.candidates.firstOrNull() ?: run {
-            appendLog("No volume candidate found for $deviceName")
+            appendLog("No credentials found for $deviceName partition ${candidate.startBlock}")
             onComplete()
             return
         }
@@ -1034,9 +1022,10 @@ class MainActivity : AppCompatActivity() {
             override fun onAuthenticationFailed() {}
         }
         val prompt = androidx.biometric.BiometricPrompt(this, executor, callback)
+        val displayName = _deviceCandidates.value.find { it.deviceName == deviceName }?.displayName ?: deviceName
         val builder = androidx.biometric.BiometricPrompt.PromptInfo.Builder()
             .setTitle(getString(R.string.auto_mount_prompt_title))
-            .setSubtitle(device.displayName)
+            .setSubtitle(displayName)
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.R) {
             builder.setAllowedAuthenticators(
                 androidx.biometric.BiometricManager.Authenticators.BIOMETRIC_STRONG or
@@ -1219,7 +1208,7 @@ fun OtgMasterApp(
     onClearAllCredentials: () -> Unit,
     onClearDeviceCreds: (String) -> Unit = {},
     onSetExcluded: (String, Boolean) -> Unit,
-    onQuickUnlock: (String, () -> Unit) -> Unit = { _, cb -> cb() },
+    onQuickUnlock: (String, VolumeCandidate, () -> Unit) -> Unit = { _, _, cb -> cb() },
     toastMessage: String? = null,
     toastIsSuccess: Boolean = true,
     onToastDismiss: () -> Unit = {},
@@ -1462,7 +1451,7 @@ fun VeraCryptMountSection(
     hasCachedCreds: (String, Long?) -> Boolean = { _, _ -> false },
     isExcluded: (String) -> Boolean = { false },
     onSetExcluded: (String, Boolean) -> Unit = { _, _ -> },
-    onQuickUnlock: ((String, () -> Unit) -> Unit)? = null
+    onQuickUnlock: ((String, VolumeCandidate, () -> Unit) -> Unit)? = null
 ) {
     var isUnlocking by remember { mutableStateOf(false) }
     var selectedDevice by remember(deviceCandidates) { mutableStateOf(deviceCandidates.firstOrNull()) }
@@ -1556,35 +1545,17 @@ fun VeraCryptMountSection(
             }
 
             val currentDeviceName = selectedDevice?.deviceName ?: ""
-            val showQuickUnlock = (isPreFilled ||
-                selectedDevice?.candidates?.any { hasCachedCreds(currentDeviceName, it.startBlock) } == true
-            ) && onQuickUnlock != null
+            // Check only the selected candidate — if it has cached creds offer biometric,
+            // otherwise show the password form so the user can enter creds manually.
+            val showQuickUnlock = hasCachedCreds(currentDeviceName, selectedCandidate?.startBlock) &&
+                onQuickUnlock != null
 
             if (candidates.isEmpty()) {
                 Text(stringResource(R.string.no_candidates_found), color = MaterialTheme.colorScheme.error)
-            } else if (showQuickUnlock) {
-                Button(
-                    onClick = {
-                        isUnlocking = true
-                        val device = selectedDevice
-                        if (device != null) {
-                            onQuickUnlock!!(device.deviceName) { isUnlocking = false }
-                        }
-                    },
-                    modifier = Modifier.fillMaxWidth().semantics { contentDescription = "mount_button" },
-                    enabled = selectedDevice != null && !isUnlocking
-                ) {
-                    if (isUnlocking) {
-                        androidx.compose.material3.CircularProgressIndicator(modifier = Modifier.size(24.dp), color = MaterialTheme.colorScheme.onPrimary)
-                        Spacer(modifier = Modifier.width(8.dp))
-                        Text(stringResource(R.string.unlocking_in_progress))
-                    } else {
-                        Icon(Icons.Default.Fingerprint, contentDescription = null)
-                        Spacer(modifier = Modifier.width(8.dp))
-                        Text(stringResource(R.string.unlock_and_mount))
-                    }
-                }
             } else {
+            // Partition picker: always visible when there are multiple candidates so the
+            // user can choose which one to unlock, regardless of whether quick-unlock applies.
+            if (candidates.size > 1) {
             @OptIn(ExperimentalMaterial3Api::class)
             ExposedDropdownMenuBox(
                 expanded = expanded,
@@ -1614,6 +1585,32 @@ fun VeraCryptMountSection(
                     }
                 }
             }
+            }
+
+            if (showQuickUnlock) {
+                Button(
+                    onClick = {
+                        isUnlocking = true
+                        val device = selectedDevice
+                        val candidate = selectedCandidate
+                        if (device != null && candidate != null) {
+                            onQuickUnlock!!(device.deviceName, candidate) { isUnlocking = false }
+                        }
+                    },
+                    modifier = Modifier.fillMaxWidth().semantics { contentDescription = "mount_button" },
+                    enabled = selectedDevice != null && selectedCandidate != null && !isUnlocking
+                ) {
+                    if (isUnlocking) {
+                        androidx.compose.material3.CircularProgressIndicator(modifier = Modifier.size(24.dp), color = MaterialTheme.colorScheme.onPrimary)
+                        Spacer(modifier = Modifier.width(8.dp))
+                        Text(stringResource(R.string.unlocking_in_progress))
+                    } else {
+                        Icon(Icons.Default.Fingerprint, contentDescription = null)
+                        Spacer(modifier = Modifier.width(8.dp))
+                        Text(stringResource(R.string.unlock_and_mount))
+                    }
+                }
+            } else {
             
             OutlinedTextField(
                 value = password,
@@ -1784,6 +1781,7 @@ fun VeraCryptMountSection(
                 } else {
                     Text(stringResource(R.string.unlock_and_mount))
                 }
+            }
             }
             }
         }
