@@ -15,15 +15,17 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - name: Promote internal → production
+        env:
+          SERVICE_ACCOUNT_JSON: ${{ secrets.SERVICE_ACCOUNT_JSON }}
         run: |
           pip install google-auth requests --quiet
 
           python3 - <<'PYEOF'
-          import json, time, requests
+          import json, os, requests
           import google.auth
           import google.oauth2.service_account as sa
 
-          KEY = json.loads("""${{ secrets.SERVICE_ACCOUNT_JSON }}""")
+          KEY = json.loads(os.environ["SERVICE_ACCOUNT_JSON"])
           PACKAGE = "app.fayaz.otgmaster"
           SCOPES = ["https://www.googleapis.com/auth/androidpublisher"]
           BASE = "https://androidpublisher.googleapis.com/androidpublisher/v3/applications"
