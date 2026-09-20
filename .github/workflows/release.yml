@@ -13,10 +13,9 @@
 #   RELEASE_KEYSTORE_PASSWORD       the keystore password you set above
 #   RELEASE_KEY_ALIAS               the alias you set above (e.g. "otgmaster")
 #   RELEASE_KEY_PASSWORD            the key password you set above
-#   GOOGLE_PLAY_SERVICE_ACCOUNT_JSON
-#                                   JSON key for a Google Play service account with
+#   SERVICE_ACCOUNT_JSON            JSON key for a Google Play service account with
 #                                   "Release manager" role on the app. Create it at:
-#                                   Play Console → Setup → API access → Service accounts
+#                                   Play Console → Settings → API access → Service accounts
 #                                   → Create / Grant access → Release manager → JSON key
 #
 # Note: this signed APK is for direct/GitHub-Releases distribution only. F-Droid
@@ -97,7 +96,7 @@ jobs:
       - name: Upload AAB to Google Play (internal track)
         uses: r0adkll/upload-google-play@v1
         with:
-          serviceAccountJsonPlainText: ${{ secrets.GOOGLE_PLAY_SERVICE_ACCOUNT_JSON }}
+          serviceAccountJsonPlainText: ${{ secrets.SERVICE_ACCOUNT_JSON }}
           packageName: app.fayaz.otgmaster
           releaseFiles: app/build/outputs/bundle/release/*.aab
           track: internal
