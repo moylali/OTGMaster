@@ -101,8 +101,8 @@ class NativeDecryptedBlockDevice(
 
     override fun close() {
         masterKey.fill(0)
-        // Without this, the underlying USB interface claim/connection is never released,
-        // so the device can't be reopened after unmounting until the app restarts.
-        encryptedDevice.close()
+        // Do NOT close encryptedDevice here — multiple partitions on the same USB drive
+        // share the same underlying RawBlockDevice. Closing one would break the others.
+        // The raw device is closed explicitly by unmountDrive when the last partition is gone.
     }
 }

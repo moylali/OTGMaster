@@ -78,8 +78,8 @@ class E2EAutomatedTest {
         val cipher = arguments.getString("cipher", "")
 
         // Click "Scan USB Devices"
-        val scanButton = device.wait(Until.findObject(By.textContains("Scan").clickable(true)), timeout)
-            ?: device.wait(Until.findObject(By.descContains("Scan").clickable(true)), timeout)
+        val scanButton = device.wait(Until.findObject(By.desc("scan_button").clickable(true)), timeout)
+            ?: device.wait(Until.findObject(By.textContains("Scan").clickable(true)), timeout)
         scanButton?.click()
 
         // Wait for USB permission dialog (optional – may not appear if no device)
@@ -168,9 +168,27 @@ class E2EAutomatedTest {
                 val selectKeyfileBtn = device.wait(Until.findObject(By.textContains("Select Keyfile")), timeout)
                 selectKeyfileBtn?.click()
 
-                // Wait for SAF picker
-                val fileObject = device.wait(Until.findObject(By.textContains(keyfile)), timeout * 2)
+                // Wait for DocumentsUI to open
+                device.wait(Until.hasObject(By.pkg("com.google.android.documentsui")), timeout)
+                android.os.SystemClock.sleep(1000)
+
+                // Try to find the file in current view (Recent); if not found, navigate to Downloads
+                var fileObject = device.findObject(By.textContains(keyfile))
+                if (fileObject == null) {
+                    val hamburger = device.findObject(By.descContains("Show roots"))
+                        ?: device.findObject(By.descContains("Navigate up"))
+                        ?: device.findObject(By.descContains("Open navigation drawer"))
+                    hamburger?.click()
+                    android.os.SystemClock.sleep(500)
+                    val downloadsItem = device.wait(Until.findObject(By.textContains("Download")), timeout)
+                    downloadsItem?.click()
+                    android.os.SystemClock.sleep(500)
+                    fileObject = device.wait(Until.findObject(By.textContains(keyfile)), timeout * 2)
+                }
                 fileObject?.click()
+                // Wait for picker to close and return to our app
+                device.wait(Until.hasObject(By.pkg("app.fayaz.otgmaster")), timeout)
+                android.os.SystemClock.sleep(500)
             }
 
             if (cipher.isNotEmpty() && cipher != "AES") {

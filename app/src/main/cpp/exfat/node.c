@@ -614,7 +614,9 @@ static void reset_cache(struct exfat* ef, struct exfat_node* node)
 	if (node != ef->root && node->is_dirty)
 	{
 		exfat_get_name(node, buffer);
-		exfat_bug("node '%s' is dirty", buffer);
+		exfat_warn("dirty node '%s' at reset, flushing", buffer);
+		exfat_flush_node(ef, node);
+		node->is_dirty = false;
 	}
 	if (node->is_unlinked)
 	{

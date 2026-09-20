@@ -2,6 +2,7 @@ package app.fayaz.otgmaster
 
 import me.jahnen.libaums.core.fs.FileSystem
 import app.fayaz.otgmaster.block.RawBlockDevice
+import app.fayaz.otgmaster.veracrypt.VolumeCandidate
 import java.util.concurrent.CopyOnWriteArrayList
 
 data class MountedDrive(
@@ -15,7 +16,13 @@ data class MountedDrive(
     /** Human-readable USB device name (e.g. "Kingston DataTraveler") for display purposes. */
     val sourceDeviceDisplayName: String? = null,
     /** True for auto-mounted plain (unencrypted) drives — no unmount action shown. */
-    val isPlain: Boolean = false
+    val isPlain: Boolean = false,
+    /** The raw USB block device shared across all partitions on the same physical drive.
+     * Used by unmountDrive to close the USB connection only when ALL partitions are gone. */
+    val rawBlockDevice: RawBlockDevice? = null,
+    /** The specific VolumeCandidate this encrypted partition was unlocked from.
+     * Restored to _deviceCandidates when the drive is unmounted so the user can remount. */
+    val sourceVolumeCandidate: VolumeCandidate? = null
 )
 
 object OtgMasterState {

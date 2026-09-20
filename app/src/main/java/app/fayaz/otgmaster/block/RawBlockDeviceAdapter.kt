@@ -36,5 +36,8 @@ class RawBlockDeviceAdapter(private val delegate: RawBlockDevice) : RawBlockDevi
         delegate.writeBlocks(deviceOffset, data)
     }
 
-    override fun close() = delegate.close()
+    override fun close() {
+        // Do not propagate close — the underlying raw USB device is shared across partitions
+        // and its lifetime is managed by openedDevices / unmountDrive.
+    }
 }

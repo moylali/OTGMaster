@@ -229,14 +229,31 @@ class MainActivity : AppCompatActivity() {
                 UsbManager.ACTION_USB_DEVICE_DETACHED -> {
                     val detached = intent.getParcelableExtraCompat<UsbDevice>(UsbManager.EXTRA_DEVICE)
                     if (detached != null) {
-                        val detachedKey = UsbDeviceDescriber.stableKey(detached, usbDeviceProvider.hasPermission(detached))
+                        // At detach time, device.serialNumber often throws (device is gone), so
+                        // stableKey falls back to the bus path. Keys stored at mount time likely
+                        // used the serial. Match by vendorId:productId prefix as a reliable anchor.
+                        val keyWithPerm = UsbDeviceDescriber.stableKey(detached, true)
+                        val keyWithoutPerm = UsbDeviceDescriber.stableKey(detached, false)
+                        val idPrefix = "${detached.vendorId}:${detached.productId}:"
+                        val matchesDetached = { key: String ->
+                            key == keyWithPerm || key == keyWithoutPerm || key.startsWith(idPrefix)
+                        }
                         // Clear suppression flags so the next plug-in triggers auto-mount again.
-                        manuallyUnmountedDevices.remove(detachedKey)
-                        autoMountAttempted.remove(detachedKey)
+                        manuallyUnmountedDevices.removeAll { matchesDetached(it) }
+                        autoMountAttempted.removeAll { matchesDetached(it) }
+                        sessionPlaintextCreds.keys.filter { matchesDetached(it) }.forEach { sessionPlaintextCreds.remove(it) }
                         saveManuallyUnmountedDevices()
+                        // Unmount any mounted drives from this device.
                         OtgMasterState.mountedDrives
-                            .filter { it.sourceDeviceName == detachedKey }
+                            .filter { it.sourceDeviceName?.let(matchesDetached) == true }
                             .forEach { unmountDrive(it) }
+                        // Close and discard any probed-but-not-yet-mounted block handles.
+                        val keysToClose = openedDevices.keys.filter { matchesDetached(it) }
+                        val toClose = keysToClose.mapNotNull { openedDevices.remove(it) }
+                        _deviceCandidates.value = _deviceCandidates.value.filterNot { matchesDetached(it.deviceName) }
+                        if (toClose.isNotEmpty()) {
+                            lifecycleScope.launch(Dispatchers.IO) { toClose.forEach { runCatching { it.close() } } }
+                        }
                     }
                     appendLog(getString(R.string.log_usb_device_detached))
                     refreshDevices()
@@ -287,7 +304,10 @@ class MainActivity : AppCompatActivity() {
                         formResetKey = mountFormResetKey.value,
                         autoMountEnabled = autoMountEnabled.value,
                         sessionCredentials = sessionPlaintextCreds,
-                        hasCachedCreds = { deviceKey -> credentialStore.has(deviceKey) },
+                        hasCachedCreds = { deviceKey, startBlock ->
+                            if (startBlock == null) credentialStore.hasAny(deviceKey)
+                            else credentialStore.load(deviceKey, startBlock) != null
+                        },
                         isExcluded = { deviceKey -> deviceKey in excludedDeviceKeys.value },
                         onRefreshDevices = { refreshDevices() },
                         onUnlock = { deviceName, candidate, pwd, pim, keyfiles, cipher, hash, onComplete ->
@@ -316,7 +336,7 @@ class MainActivity : AppCompatActivity() {
                             appendLog(getString(R.string.log_auto_mount_credentials_cleared))
                         },
                         onClearDeviceCreds = { deviceKey ->
-                            credentialStore.delete(deviceKey)
+                            credentialStore.deleteAll(deviceKey)
                             sessionPlaintextCreds.remove(deviceKey)
                             appendLog(getString(R.string.log_credentials_cleared_for, deviceKey))
                         },
@@ -501,19 +521,45 @@ class MainActivity : AppCompatActivity() {
                     // that turned out to already be in the dropdown by the time we got here.
                     duplicates.forEach { it.blockDevice.close() }
 
-                    // Plain (unencrypted) drives are auto-mounted immediately; encrypted
-                    // drives go into the candidate dropdown for the VeraCrypt form.
-                    val (plainNew, encryptedNew) = uniqueNew.partition { it.plainPartitions.isNotEmpty() }
+                    // Classify each device:
+                    //  - purePlain:  every candidate is a recognised plain FS → auto-mount all
+                    //  - mixed:      has both plain and encrypted candidates → auto-mount plain
+                    //                partitions AND show VeraCrypt form for the encrypted ones
+                    //  - pureEncrypted: no plain candidates → VeraCrypt form only
+                    val (hasPlain, pureEncrypted) = uniqueNew.partition { it.plainPartitions.isNotEmpty() }
+                    val (purePlain, mixed) = hasPlain.partition { device ->
+                        val plainStarts = device.plainPartitions.map { it.startBlock }.toSet()
+                        device.candidates.all { it.startBlock in plainStarts }
+                    }
+
+                    // Auto-mount ALL plain partitions on pure-plain and mixed devices
+                    (purePlain + mixed).forEach { candidate ->
+                        openedDevices[candidate.deviceName] = candidate.blockDevice
+                        candidate.plainPartitions.forEach { plain ->
+                            mountPlainDevice(candidate, plain)
+                        }
+                    }
+
+                    // For mixed devices, strip out the already-mounted plain candidates so
+                    // the VeraCrypt form only shows the encrypted partitions still to unlock.
+                    val mixedEncrypted = mixed.map { device ->
+                        val plainStarts = device.plainPartitions.map { it.startBlock }.toSet()
+                        device.copy(candidates = device.candidates.filter { it.startBlock !in plainStarts })
+                    }
+
+                    val encryptedNew = pureEncrypted + mixedEncrypted
                     encryptedNew.forEach { openedDevices[it.deviceName] = it.blockDevice }
-                    _deviceCandidates.value = _deviceCandidates.value + encryptedNew
+                    // Defer auto-mount candidates from _deviceCandidates so the form doesn't
+                    // flash while waiting for the biometric prompt. They'll be added back in
+                    // showAutoMountPrompt once biometric resolves (success or cancel).
+                    val toAutoMountNames = filterAutoMountCandidates(encryptedNew).map { it.deviceName }.toSet()
+                    val manualOnly = encryptedNew.filter { it.deviceName !in toAutoMountNames }
+                    _deviceCandidates.value = _deviceCandidates.value + manualOnly
                     if (encryptedNew.isNotEmpty()) {
                         appendLog(getString(R.string.log_probed_devices, encryptedNew.joinToString(", ") { it.displayName }))
                         triggerAutoMount(encryptedNew)
                     }
-                    plainNew.forEach { candidate ->
-                        openedDevices[candidate.deviceName] = candidate.blockDevice
-                        mountPlainDevice(candidate, candidate.plainPartitions.first())
-                    }
+
                 }
             } finally {
                 withContext(Dispatchers.Main) { isProbingDevices = false }
@@ -597,7 +643,9 @@ class MainActivity : AppCompatActivity() {
                     fileSystem = fileSystem,
                     blockDevice = decryptedDevice,
                     sourceDeviceName = deviceName,
-                    sourceDeviceDisplayName = deviceDisplayName
+                    sourceDeviceDisplayName = deviceDisplayName,
+                    rawBlockDevice = device,
+                    sourceVolumeCandidate = candidate
                 )
 
                 OtgMasterState.addDrive(mountedDrive)
@@ -609,7 +657,7 @@ class MainActivity : AppCompatActivity() {
                     onComplete()
                     mountFormResetKey.value++
                     if (autoMountEnabled.value) {
-                        credentialStore.save(deviceName, password, pim?.toString() ?: "", keyfiles, cipher.name, hash.name, candidate.startBlock)
+                        credentialStore.save(deviceName, candidate.startBlock, password, pim?.toString() ?: "", keyfiles, cipher.name, hash.name)
                         sessionPlaintextCreds[deviceName] = app.fayaz.otgmaster.security.CredentialStore.Credentials(
                             password, pim?.toString() ?: "", keyfiles, cipher.name, hash.name, candidate.startBlock
                         )
@@ -622,10 +670,24 @@ class MainActivity : AppCompatActivity() {
                     updateMountedDrives()
                     pushDriveShortcut(mountedDrive)
                     appendLog(getString(R.string.log_mounted_successfully, deviceDisplayName, fileSystem.capacity / (1024 * 1024)))
-                    // Stop tracking it as "available to unlock" — don't close it, it's now
-                    // owned by the mounted filesystem's underlying decrypted device chain.
-                    openedDevices.remove(deviceName)
-                    _deviceCandidates.value = _deviceCandidates.value.filterNot { it.deviceName == deviceName }
+                    // Remove only this candidate; keep others for the same device (multi-partition).
+                    val updatedCandidates = _deviceCandidates.value.map { udc ->
+                        if (udc.deviceName == deviceName)
+                            udc.copy(candidates = udc.candidates.filter { it.startBlock != candidate.startBlock })
+                        else udc
+                    }.filter { it.candidates.isNotEmpty() }
+                    _deviceCandidates.value = updatedCandidates
+                    // Clear in-session pre-fill so the form can use the stored creds for the
+                    // next remaining candidate (hasCachedCreds keeps the quick-unlock button visible).
+                    if (updatedCandidates.any { it.deviceName == deviceName }) {
+                        sessionPlaintextCreds.remove(deviceName)
+                    }
+                    if (updatedCandidates.none { it.deviceName == deviceName }) {
+                        openedDevices.remove(deviceName)
+                        // All partitions mounted — no more candidates remain, so session creds
+                        // are no longer needed and would block auto-mount on next re-plug.
+                        sessionPlaintextCreds.remove(deviceName)
+                    }
                 }
                 // Pick up any newly attached device since the last probe (and prompt for
                 // permission if needed) now that this one is out of the dropdown.
@@ -635,7 +697,7 @@ class MainActivity : AppCompatActivity() {
                 withContext(Dispatchers.Main) {
                     onComplete()
                     if (fromCache) {
-                        credentialStore.delete(deviceName)
+                        credentialStore.deletePartition(deviceName, candidate.startBlock)
                         sessionPlaintextCreds.remove(deviceName)
                         appendLog(getString(R.string.log_cached_credentials_invalid, deviceDisplayName))
                     }
@@ -698,12 +760,49 @@ class MainActivity : AppCompatActivity() {
             if (drive.fileSystem is app.fayaz.otgmaster.exfat.ExFatFileSystem) {
                 drive.fileSystem.unmount()
             }
+            // drive.blockDevice is either NativeDecryptedBlockDevice (close zeros the key but
+            // does NOT close the underlying USB connection) or RawBlockDeviceAdapter (noop close).
+            // The raw USB connection is managed below — closed only when no other partitions remain.
             drive.blockDevice?.close()
             withContext(Dispatchers.Main) {
                 toastState.value = Pair("Unmounted: ${drive.name}", true)
                 appendLog(getString(R.string.log_drive_unmounted, drive.name))
-                // The device's sourceDeviceName is now free (no longer in mountedDrives), so
-                // this picks it back up and re-probes it for the dropdown.
+
+                val sourceKey = drive.sourceDeviceName
+                val rawDevice = drive.rawBlockDevice
+                val volCandidate = drive.sourceVolumeCandidate
+
+                if (sourceKey != null && rawDevice != null) {
+                    val otherMounted = OtgMasterState.mountedDrives.any { it.sourceDeviceName == sourceKey }
+                    val candidatesInForm = _deviceCandidates.value.any { it.deviceName == sourceKey }
+
+                    if (!otherMounted && !candidatesInForm) {
+                        // Last partition from this USB — safe to release the USB connection.
+                        // Only close if we actually removed it; detach handler may have beaten us.
+                        val removed = openedDevices.remove(sourceKey)
+                        if (removed != null) rawDevice.close()
+                    } else if (!drive.isPlain && volCandidate != null) {
+                        // Other partitions still alive; restore this candidate so the user can remount.
+                        openedDevices[sourceKey] = rawDevice
+                        val existing = _deviceCandidates.value.find { it.deviceName == sourceKey }
+                        if (existing != null) {
+                            _deviceCandidates.value = _deviceCandidates.value.map {
+                                if (it.deviceName == sourceKey)
+                                    it.copy(candidates = (it.candidates + volCandidate).sortedBy { c -> c.startBlock })
+                                else it
+                            }
+                        } else {
+                            _deviceCandidates.value = _deviceCandidates.value + UsbDeviceCandidate(
+                                deviceName = sourceKey,
+                                displayName = drive.sourceDeviceDisplayName ?: sourceKey,
+                                blockDevice = rawDevice,
+                                candidates = listOf(volCandidate),
+                                plainPartitions = emptyList()
+                            )
+                        }
+                    }
+                }
+
                 refreshDevices()
             }
         }
@@ -749,7 +848,8 @@ class MainActivity : AppCompatActivity() {
                     blockDevice = adapter,
                     sourceDeviceName = candidate.deviceName,
                     sourceDeviceDisplayName = deviceDisplayName,
-                    isPlain = true
+                    isPlain = true,
+                    rawBlockDevice = rawDevice
                 )
                 OtgMasterState.addDrive(mountedDrive)
                 contentResolver.notifyChange(
@@ -763,14 +863,18 @@ class MainActivity : AppCompatActivity() {
                     updateMountedDrives()
                     pushDriveShortcut(mountedDrive)
                     appendLog(getString(R.string.log_mounted_successfully, deviceDisplayName, fileSystem.capacity / (1024 * 1024)))
-                    openedDevices.remove(candidate.deviceName)
+                    if (_deviceCandidates.value.none { it.deviceName == candidate.deviceName }) {
+                        openedDevices.remove(candidate.deviceName)
+                    }
                 }
             } catch (e: Exception) {
                 e.printStackTrace()
                 withContext(Dispatchers.Main) {
                     toastState.value = Pair("Mount failed: ${e.message ?: "Unknown error"}", false)
                     appendLog("Failed to mount ${candidate.displayName}: ${e.message}")
-                    openedDevices.remove(candidate.deviceName)
+                    if (_deviceCandidates.value.none { it.deviceName == candidate.deviceName }) {
+                        openedDevices.remove(candidate.deviceName)
+                    }
                 }
             }
         }
@@ -808,18 +912,21 @@ class MainActivity : AppCompatActivity() {
 
 
 
-    private fun triggerAutoMount(newCandidates: List<UsbDeviceCandidate>) {
-        if (!autoMountEnabled.value) return
+    /** Returns which of [candidates] would actually trigger auto-mount right now. */
+    private fun filterAutoMountCandidates(candidates: List<UsbDeviceCandidate>): List<UsbDeviceCandidate> {
+        if (!autoMountEnabled.value) return emptyList()
         val excluded = excludedDeviceKeys.value
-        val toMount = newCandidates.filter {
+        return candidates.filter {
             it.deviceName !in autoMountAttempted &&
             it.deviceName !in manuallyUnmountedDevices &&
-            // If credentials are already in session memory the form will pre-fill —
-            // no biometric needed (handles the "unmount then reconnect same session" case).
             it.deviceName !in sessionPlaintextCreds &&
-            credentialStore.has(it.deviceName) &&
+            it.candidates.any { c -> credentialStore.load(it.deviceName, c.startBlock) != null } &&
             it.deviceName !in excluded
         }
+    }
+
+    private fun triggerAutoMount(newCandidates: List<UsbDeviceCandidate>) {
+        val toMount = filterAutoMountCandidates(newCandidates)
         if (toMount.isEmpty()) return
         toMount.forEach { autoMountAttempted.add(it.deviceName) }
         // Debounce: accumulate hub devices that arrive in rapid succession, then
@@ -836,22 +943,39 @@ class MainActivity : AppCompatActivity() {
         val callback = object : androidx.biometric.BiometricPrompt.AuthenticationCallback() {
             override fun onAuthenticationSucceeded(result: androidx.biometric.BiometricPrompt.AuthenticationResult) {
                 isAutoMountPromptShowing = false
+                // Restore deferred candidates so attemptUnlock can look up displayName and the
+                // form shows remaining candidates while each partition mounts in the background.
+                val existingNames = _deviceCandidates.value.map { it.deviceName }.toSet()
+                val toRestore = devices.filter { it.deviceName !in existingNames }
+                if (toRestore.isNotEmpty()) {
+                    _deviceCandidates.value = _deviceCandidates.value + toRestore
+                }
                 devices.forEach { device ->
-                    val creds = credentialStore.load(device.deviceName) ?: return@forEach
-                    val candidate = device.candidates.find { it.startBlock == creds.candidateStartBlock }
-                        ?: device.candidates.firstOrNull() ?: return@forEach
-                    sessionPlaintextCreds[device.deviceName] = creds
-                    val cipher = app.fayaz.otgmaster.veracrypt.VeraCryptCipher.entries
-                        .find { it.name == creds.cipherName }
-                        ?: app.fayaz.otgmaster.veracrypt.VeraCryptCipher.DEFAULT
-                    val hash = app.fayaz.otgmaster.veracrypt.VeraCryptHash.entries
-                        .find { it.name == creds.hashName }
-                        ?: app.fayaz.otgmaster.veracrypt.VeraCryptHash.DEFAULT
-                    attemptUnlock(device.deviceName, candidate, creds.password, creds.pim.toIntOrNull(), creds.keyfileUris, cipher, hash, fromCache = true) {}
+                    val allCreds = credentialStore.loadAll(device.deviceName)
+                    if (allCreds.isEmpty()) return@forEach
+                    device.candidates.forEach { candidate ->
+                        val creds = allCreds.find { it.candidateStartBlock == candidate.startBlock }
+                            ?: return@forEach
+                        sessionPlaintextCreds[device.deviceName] = creds
+                        val cipher = app.fayaz.otgmaster.veracrypt.VeraCryptCipher.entries
+                            .find { it.name == creds.cipherName }
+                            ?: app.fayaz.otgmaster.veracrypt.VeraCryptCipher.DEFAULT
+                        val hash = app.fayaz.otgmaster.veracrypt.VeraCryptHash.entries
+                            .find { it.name == creds.hashName }
+                            ?: app.fayaz.otgmaster.veracrypt.VeraCryptHash.DEFAULT
+                        attemptUnlock(device.deviceName, candidate, creds.password, creds.pim.toIntOrNull(), creds.keyfileUris, cipher, hash, fromCache = true) {}
+                    }
                 }
             }
             override fun onAuthenticationError(errorCode: Int, errString: CharSequence) {
                 isAutoMountPromptShowing = false
+                // Restore deferred candidates to _deviceCandidates so the user can fall back
+                // to manual unlock after dismissing or cancelling the biometric prompt.
+                val existingNames = _deviceCandidates.value.map { it.deviceName }.toSet()
+                val toRestore = devices.filter { it.deviceName !in existingNames }
+                if (toRestore.isNotEmpty()) {
+                    _deviceCandidates.value = _deviceCandidates.value + toRestore
+                }
             }
             override fun onAuthenticationFailed() {}
         }
@@ -876,13 +1000,16 @@ class MainActivity : AppCompatActivity() {
     }
 
     private fun showQuickUnlockPrompt(deviceName: String, onComplete: () -> Unit) {
-        val creds = sessionPlaintextCreds[deviceName] ?: credentialStore.load(deviceName) ?: run {
-            appendLog("No credentials found for $deviceName")
+        val device = _deviceCandidates.value.find { it.deviceName == deviceName } ?: run {
+            appendLog("Device not found: $deviceName")
             onComplete()
             return
         }
-        val device = _deviceCandidates.value.find { it.deviceName == deviceName } ?: run {
-            appendLog("Device not found: $deviceName")
+        val candidateStarts = device.candidates.map { it.startBlock }.toSet()
+        val creds = sessionPlaintextCreds[deviceName]
+            ?: credentialStore.loadAll(deviceName).find { it.candidateStartBlock in candidateStarts }
+            ?: run {
+            appendLog("No credentials found for $deviceName")
             onComplete()
             return
         }
@@ -1079,7 +1206,7 @@ fun OtgMasterApp(
     formResetKey: Int,
     autoMountEnabled: Boolean,
     sessionCredentials: Map<String, app.fayaz.otgmaster.security.CredentialStore.Credentials>,
-    hasCachedCreds: (String) -> Boolean,
+    hasCachedCreds: (String, Long?) -> Boolean,
     isExcluded: (String) -> Boolean,
     onRefreshDevices: () -> Unit,
     onUnlock: (String, VolumeCandidate, String, Int?, List<Uri>, app.fayaz.otgmaster.veracrypt.VeraCryptCipher, app.fayaz.otgmaster.veracrypt.VeraCryptHash, () -> Unit) -> Unit,
@@ -1134,7 +1261,10 @@ fun OtgMasterApp(
             verticalArrangement = Arrangement.spacedBy(16.dp)
         ) {
         
-        Button(onClick = onRefreshDevices, modifier = Modifier.fillMaxWidth()) {
+        Button(
+            onClick = onRefreshDevices,
+            modifier = Modifier.fillMaxWidth().semantics { contentDescription = "scan_button" }
+        ) {
             Text(stringResource(R.string.scan_usb_devices))
         }
 
@@ -1200,7 +1330,7 @@ fun OtgMasterApp(
                                 }
                             }
                             val deviceKey = drive.sourceDeviceName
-                            if (deviceKey != null && hasCachedCreds(deviceKey)) {
+                            if (deviceKey != null && hasCachedCreds(deviceKey, null)) {
                                 Button(onClick = { onClearDeviceCreds(deviceKey) }) {
                                     Text(stringResource(R.string.clear_cached_credentials))
                                 }
@@ -1329,7 +1459,7 @@ fun VeraCryptMountSection(
     onUnlock: (String, VolumeCandidate, String, Int?, List<Uri>, app.fayaz.otgmaster.veracrypt.VeraCryptCipher, app.fayaz.otgmaster.veracrypt.VeraCryptHash, () -> Unit) -> Unit,
     autoMountEnabled: Boolean = false,
     sessionCredentials: Map<String, app.fayaz.otgmaster.security.CredentialStore.Credentials> = emptyMap(),
-    hasCachedCreds: (String) -> Boolean = { false },
+    hasCachedCreds: (String, Long?) -> Boolean = { _, _ -> false },
     isExcluded: (String) -> Boolean = { false },
     onSetExcluded: (String, Boolean) -> Unit = { _, _ -> },
     onQuickUnlock: ((String, () -> Unit) -> Unit)? = null
@@ -1426,7 +1556,9 @@ fun VeraCryptMountSection(
             }
 
             val currentDeviceName = selectedDevice?.deviceName ?: ""
-            val showQuickUnlock = (isPreFilled || hasCachedCreds(currentDeviceName)) && onQuickUnlock != null
+            val showQuickUnlock = (isPreFilled ||
+                selectedDevice?.candidates?.any { hasCachedCreds(currentDeviceName, it.startBlock) } == true
+            ) && onQuickUnlock != null
 
             if (candidates.isEmpty()) {
                 Text(stringResource(R.string.no_candidates_found), color = MaterialTheme.colorScheme.error)

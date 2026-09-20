@@ -12,6 +12,8 @@ class LibaumsRawBlockDevice(
     override val blockSize: Int = driver.blockSize
     override val blockCount: Long = driver.blocks
 
+    @Volatile private var closed = false
+
     override fun readBlocks(startBlock: Long, blockCount: Int): ByteArray {
         require(blockCount >= 0) { "blockCount must be non-negative" }
         val buffer = ByteBuffer.allocate(blockCount * blockSize)
@@ -25,6 +27,8 @@ class LibaumsRawBlockDevice(
     }
 
     override fun close() {
+        if (closed) return
+        closed = true
         communication.close()
     }
 }

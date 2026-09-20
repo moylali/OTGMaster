@@ -15,7 +15,7 @@ object UsbDeviceDescriber {
     fun stableKey(device: UsbDevice, hasPermission: Boolean): String {
         val idPart = "${device.vendorId}:${device.productId}"
         val serial = if (hasPermission) {
-            try { device.serialNumber } catch (_: SecurityException) { null }
+            try { device.serialNumber } catch (_: Exception) { null }
         } else null
         return if (!serial.isNullOrBlank()) "$idPart:$serial" else "$idPart:${device.deviceName}"
     }
