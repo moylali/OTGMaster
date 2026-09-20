@@ -455,10 +455,21 @@ class MainActivity : AppCompatActivity() {
                     openedDevices[QEMU_DEVICE_KEY] = device
                     if (plainPartitions.isNotEmpty()) {
                         mountPlainDevice(qemuCandidate, plainPartitions.first())
-                    } else {
-                        _deviceCandidates.value = listOf(qemuCandidate)
-                        appendLog(getString(R.string.log_found_candidates_qemu, candidates.size))
-                        triggerAutoMount(listOf(qemuCandidate))
+                    }
+                    // Strip plain-partition offsets so the form only shows encrypted candidates
+                    // (mirrors the USB mixed-device path). If there are no plain partitions this
+                    // is a no-op and all candidates are passed through as before.
+                    val plainStarts = plainPartitions.map { it.startBlock }.toSet()
+                    val encryptedCandidates = candidates.filter { it.startBlock !in plainStarts }
+                    if (encryptedCandidates.isNotEmpty()) {
+                        val encryptedQemuCandidate = qemuCandidate.copy(candidates = encryptedCandidates)
+                        appendLog(getString(R.string.log_found_candidates_qemu, encryptedCandidates.size))
+                        val toAutoMountNames = filterAutoMountCandidates(listOf(encryptedQemuCandidate))
+                            .map { it.deviceName }.toSet()
+                        if (encryptedQemuCandidate.deviceName !in toAutoMountNames) {
+                            _deviceCandidates.value = listOf(encryptedQemuCandidate)
+                        }
+                        triggerAutoMount(listOf(encryptedQemuCandidate))
                     }
                 }
             } catch (e: Exception) {
