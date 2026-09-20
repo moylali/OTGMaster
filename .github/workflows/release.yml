@@ -6,13 +6,18 @@
 #
 # Requires these repository secrets to be set under Settings > Secrets and
 # variables > Actions before this workflow can sign anything:
-#   RELEASE_KEYSTORE_BASE64   base64 of your release .jks/.keystore file
-#                             (generate locally: keytool -genkeypair -v -storetype PKCS12
-#                             -keystore release.jks -alias otgmaster -keyalg RSA -keysize 2048
-#                             -validity 10000, then: base64 -w0 release.jks)
-#   RELEASE_KEYSTORE_PASSWORD the keystore password you set above
-#   RELEASE_KEY_ALIAS         the alias you set above (e.g. "otgmaster")
-#   RELEASE_KEY_PASSWORD      the key password you set above
+#   RELEASE_KEYSTORE_BASE64         base64 of your release .jks/.keystore file
+#                                   (generate locally: keytool -genkeypair -v -storetype PKCS12
+#                                   -keystore release.jks -alias otgmaster -keyalg RSA -keysize 2048
+#                                   -validity 10000, then: base64 -w0 release.jks)
+#   RELEASE_KEYSTORE_PASSWORD       the keystore password you set above
+#   RELEASE_KEY_ALIAS               the alias you set above (e.g. "otgmaster")
+#   RELEASE_KEY_PASSWORD            the key password you set above
+#   GOOGLE_PLAY_SERVICE_ACCOUNT_JSON
+#                                   JSON key for a Google Play service account with
+#                                   "Release manager" role on the app. Create it at:
+#                                   Play Console → Setup → API access → Service accounts
+#                                   → Create / Grant access → Release manager → JSON key
 #
 # Note: this signed APK is for direct/GitHub-Releases distribution only. F-Droid
 # builds from source on its own infrastructure and signs with its own key, so
@@ -88,3 +93,12 @@ jobs:
             app/build/outputs/apk/release/*.apk
             app/build/outputs/bundle/release/*.aab
           generate_release_notes: true
+
+      - name: Upload AAB to Google Play (internal track)
+        uses: r0adkll/upload-google-play@v1
+        with:
+          serviceAccountJsonPlainText: ${{ secrets.GOOGLE_PLAY_SERVICE_ACCOUNT_JSON }}
+          packageName: app.fayaz.otgmaster
+          releaseFiles: app/build/outputs/bundle/release/*.aab
+          track: internal
+          status: completed
