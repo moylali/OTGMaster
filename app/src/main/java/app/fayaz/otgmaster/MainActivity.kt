@@ -863,18 +863,16 @@ class MainActivity : AppCompatActivity() {
                     updateMountedDrives()
                     pushDriveShortcut(mountedDrive)
                     appendLog(getString(R.string.log_mounted_successfully, deviceDisplayName, fileSystem.capacity / (1024 * 1024)))
-                    if (_deviceCandidates.value.none { it.deviceName == candidate.deviceName }) {
-                        openedDevices.remove(candidate.deviceName)
-                    }
+                    // Don't remove from openedDevices here — for mixed devices (plain + encrypted
+                    // partitions), the encrypted partitions still need the USB connection.
+                    // Cleanup is handled by attemptUnlock when the last encrypted partition mounts,
+                    // or by the detach handler when the device is unplugged.
                 }
             } catch (e: Exception) {
                 e.printStackTrace()
                 withContext(Dispatchers.Main) {
                     toastState.value = Pair("Mount failed: ${e.message ?: "Unknown error"}", false)
                     appendLog("Failed to mount ${candidate.displayName}: ${e.message}")
-                    if (_deviceCandidates.value.none { it.deviceName == candidate.deviceName }) {
-                        openedDevices.remove(candidate.deviceName)
-                    }
                 }
             }
         }
