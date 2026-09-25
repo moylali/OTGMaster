@@ -153,6 +153,20 @@ class MainActivity : AppCompatActivity() {
     // suppressed for these until the device is physically detached and re-attached.
     private val manuallyUnmountedDevices = mutableSetOf<String>()
     private var isAutoMountPromptShowing = false
+
+    /**
+     * Candidates withheld from the unlock form while an auto-mount prompt is pending.
+     *
+     * The deferral only exists to stop the form flashing behind the biometric prompt,
+     * but it made the form's appearance depend on that prompt always resolving. When
+     * it did not — a stuck [isAutoMountPromptShowing], or the prompt dismissed by the
+     * screen locking without a callback — the candidates were dropped and the form
+     * never appeared. Scanning again did not help, because the device was already in
+     * [openedDevices] and so got filtered out of the next probe, leaving no way back
+     * short of restarting the app. Holding them here means every exit path, plus
+     * onResume, can put them back.
+     */
+    private val deferredCandidates = LinkedHashMap<String, UsbDeviceCandidate>()
     private val sessionPlaintextCreds = androidx.compose.runtime.snapshots.SnapshotStateMap<String, app.fayaz.otgmaster.security.CredentialStore.Credentials>()
     private val excludedDeviceKeys = mutableStateOf<Set<String>>(emptySet())
 
@@ -371,6 +385,17 @@ class MainActivity : AppCompatActivity() {
         handleShareIntent(intent)
     }
 
+    override fun onResume() {
+        super.onResume()
+        // Backstop for a prompt that never delivered a callback — most often because the
+        // screen locked while it was up, which dismisses it silently. Once we are resumed
+        // there is nothing left to hide the form behind, so clear the flag and put the
+        // candidates back. A spurious restore only costs the cosmetic flash the deferral
+        // was avoiding; not restoring leaves the form permanently missing.
+        isAutoMountPromptShowing = false
+        restoreDeferredCandidates()
+    }
+
     override fun onDestroy() {
         closeOpenedDevices()
         unregisterReceiver(usbReceiver)
@@ -507,7 +532,17 @@ class MainActivity : AppCompatActivity() {
                 }
 
                 if (openedList.isEmpty()) {
-                    withContext(Dispatchers.Main) { appendLog(getString(R.string.log_could_not_open_block_device)) }
+                    withContext(Dispatchers.Main) {
+                        // Every attached device was filtered out as already open. If any of
+                        // them are sitting in deferredCandidates, an earlier auto-mount
+                        // prompt never resolved — surface them rather than reporting
+                        // failure, so Scan works as a recovery action.
+                        if (deferredCandidates.isNotEmpty()) {
+                            restoreDeferredCandidates()
+                        } else {
+                            appendLog(getString(R.string.log_could_not_open_block_device))
+                        }
+                    }
                     return@launch
                 }
 
@@ -565,6 +600,7 @@ class MainActivity : AppCompatActivity() {
                     // showAutoMountPrompt once biometric resolves (success or cancel).
                     val toAutoMountNames = filterAutoMountCandidates(encryptedNew).map { it.deviceName }.toSet()
                     val manualOnly = encryptedNew.filter { it.deviceName !in toAutoMountNames }
+                    deferCandidates(encryptedNew.filter { it.deviceName in toAutoMountNames })
                     _deviceCandidates.value = _deviceCandidates.value + manualOnly
                     if (encryptedNew.isNotEmpty()) {
                         appendLog(getString(R.string.log_probed_devices, encryptedNew.joinToString(", ") { it.displayName }))
@@ -922,6 +958,24 @@ class MainActivity : AppCompatActivity() {
 
 
     /** Returns which of [candidates] would actually trigger auto-mount right now. */
+    private fun deferCandidates(devices: List<UsbDeviceCandidate>) {
+        devices.forEach { deferredCandidates[it.deviceName] = it }
+    }
+
+    /** Puts back anything withheld for an auto-mount prompt. Safe to call repeatedly. */
+    private fun restoreDeferredCandidates() {
+        if (deferredCandidates.isEmpty()) return
+        val shown = _deviceCandidates.value.map { it.deviceName }.toSet()
+        val mounted = OtgMasterState.mountedDrives.mapNotNull { it.sourceDeviceName }.toSet()
+        val toRestore = deferredCandidates.values.filter {
+            it.deviceName !in shown && it.deviceName !in mounted
+        }
+        deferredCandidates.clear()
+        if (toRestore.isNotEmpty()) {
+            _deviceCandidates.value = _deviceCandidates.value + toRestore
+        }
+    }
+
     private fun filterAutoMountCandidates(candidates: List<UsbDeviceCandidate>): List<UsbDeviceCandidate> {
         if (!autoMountEnabled.value) return emptyList()
         val excluded = excludedDeviceKeys.value
@@ -946,19 +1000,19 @@ class MainActivity : AppCompatActivity() {
     }
 
     private fun showAutoMountPrompt(devices: List<UsbDeviceCandidate>) {
-        if (isAutoMountPromptShowing) return
+        if (isAutoMountPromptShowing) {
+            // A prompt is already up for another device; do not strand these.
+            restoreDeferredCandidates()
+            return
+        }
         isAutoMountPromptShowing = true
         val executor = androidx.core.content.ContextCompat.getMainExecutor(this)
         val callback = object : androidx.biometric.BiometricPrompt.AuthenticationCallback() {
             override fun onAuthenticationSucceeded(result: androidx.biometric.BiometricPrompt.AuthenticationResult) {
                 isAutoMountPromptShowing = false
-                // Restore deferred candidates so attemptUnlock can look up displayName and the
-                // form shows remaining candidates while each partition mounts in the background.
-                val existingNames = _deviceCandidates.value.map { it.deviceName }.toSet()
-                val toRestore = devices.filter { it.deviceName !in existingNames }
-                if (toRestore.isNotEmpty()) {
-                    _deviceCandidates.value = _deviceCandidates.value + toRestore
-                }
+                // Restore so attemptUnlock can look up displayName, and the form shows any
+                // remaining candidates while each partition mounts in the background.
+                restoreDeferredCandidates()
                 devices.forEach { device ->
                     val allCreds = credentialStore.loadAll(device.deviceName)
                     if (allCreds.isEmpty()) return@forEach
@@ -978,13 +1032,9 @@ class MainActivity : AppCompatActivity() {
             }
             override fun onAuthenticationError(errorCode: Int, errString: CharSequence) {
                 isAutoMountPromptShowing = false
-                // Restore deferred candidates to _deviceCandidates so the user can fall back
-                // to manual unlock after dismissing or cancelling the biometric prompt.
-                val existingNames = _deviceCandidates.value.map { it.deviceName }.toSet()
-                val toRestore = devices.filter { it.deviceName !in existingNames }
-                if (toRestore.isNotEmpty()) {
-                    _deviceCandidates.value = _deviceCandidates.value + toRestore
-                }
+                // Restore so the user can fall back to manual unlock after dismissing or
+                // cancelling the prompt.
+                restoreDeferredCandidates()
             }
             override fun onAuthenticationFailed() {}
         }
