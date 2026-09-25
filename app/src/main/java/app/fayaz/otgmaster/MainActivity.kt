@@ -666,9 +666,14 @@ class MainActivity : AppCompatActivity() {
                 }
 
                 val dummyEntry = PartitionTableEntry(0, 0, 0)
-                val byteDevice = me.jahnen.libaums.core.driver.ByteBlockDevice(
-                    decryptedDevice as me.jahnen.libaums.core.driver.BlockDeviceDriver
-                )
+                // Read cache with readahead between the filesystem driver and the
+                // decrypted device. libexfat reads directory and FAT entries
+                // unbuffered — measured at 100,844 preads averaging 24 bytes to list
+                // a 10,000-entry directory (docs/IO_PERFORMANCE.md §5.5) — and each
+                // one was a USB round trip plus a sector decryption. Caching
+                // plaintext means a hit skips both.
+                val cachedDevice = app.fayaz.otgmaster.block.CachedBlockDevice(decryptedDevice)
+                val byteDevice = me.jahnen.libaums.core.driver.ByteBlockDevice(cachedDevice)
                 val fileSystem = try {
                     FileSystemFactory.createFileSystem(dummyEntry, byteDevice)
                 } catch (e: Exception) {
@@ -688,7 +693,7 @@ class MainActivity : AppCompatActivity() {
                     id = driveId,
                     name = getString(R.string.mounted_drive_name, deviceDisplayName, driveId),
                     fileSystem = fileSystem,
-                    blockDevice = decryptedDevice,
+                    blockDevice = cachedDevice,
                     sourceDeviceName = deviceName,
                     sourceDeviceDisplayName = deviceDisplayName,
                     rawBlockDevice = device,
@@ -885,14 +890,18 @@ class MainActivity : AppCompatActivity() {
         lifecycleScope.launch(Dispatchers.IO) {
             try {
                 val dummyEntry = PartitionTableEntry(0, 0, 0)
-                val byteDevice = me.jahnen.libaums.core.driver.ByteBlockDevice(adapter)
+                // Same cache for plain volumes: libaums rebuilds directory state that
+                // libexfat keeps parsed, so FAT32 re-reads blocks instead (its warm
+                // listing is 556 ms against exFAT's 30 ms).
+                val cachedDevice = app.fayaz.otgmaster.block.CachedBlockDevice(adapter)
+                val byteDevice = me.jahnen.libaums.core.driver.ByteBlockDevice(cachedDevice)
                 val fileSystem = FileSystemFactory.createFileSystem(dummyEntry, byteDevice)
                 val driveId = UUID.randomUUID().toString().substring(0, 8)
                 val mountedDrive = MountedDrive(
                     id = driveId,
                     name = getString(R.string.mounted_drive_name_plain, deviceDisplayName, plain.filesystemName, driveId),
                     fileSystem = fileSystem,
-                    blockDevice = adapter,
+                    blockDevice = cachedDevice,
                     sourceDeviceName = candidate.deviceName,
                     sourceDeviceDisplayName = deviceDisplayName,
                     isPlain = true,
