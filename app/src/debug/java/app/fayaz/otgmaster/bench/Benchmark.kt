@@ -64,6 +64,7 @@ object Benchmark {
         only: Set<String> = emptySet(),
         mount: MountCredentials? = null,
         remount: Boolean = false,
+        driveFilter: String? = null,
     ): String {
         if (!running.compareAndSet(false, true)) {
             val msg = "*** a benchmark is already running — refusing to start a second one ***"
@@ -72,7 +73,7 @@ object Benchmark {
             return msg
         }
         try {
-            return runAllLocked(context, only, mount, remount)
+            return runAllLocked(context, only, mount, remount, driveFilter)
         } finally {
             running.set(false)
         }
@@ -83,6 +84,7 @@ object Benchmark {
         only: Set<String> = emptySet(),
         mount: MountCredentials? = null,
         remount: Boolean = false,
+        driveFilter: String? = null,
     ): String {
         fun wants(name: String) = only.isEmpty() || name in only
         val out = StringBuilder()
@@ -153,8 +155,46 @@ object Benchmark {
         // Skip drives whose filesystem has already been unmounted. A remount leaves
         // the old entry in the list briefly, and calling into a torn-down
         // ExFatFileSystem is what the withNative guard exists to stop.
-        val drives = OtgMasterState.mountedDrives.filter {
+        val allDrives = OtgMasterState.mountedDrives.filter {
             (it.fileSystem as? ExFatFileSystem)?.isUnmounted != true
+        }
+
+        // Every mounted drive runs, in sequence, unless narrowed. The filter is a
+        // comma-separated list of 0-based indices or case-insensitive substrings of the
+        // volume label or drive name, so "0", "VCFAT", "exfat" and "0,1" all work.
+        val drives = if (driveFilter.isNullOrBlank() || driveFilter.equals("all", true)) {
+            allDrives
+        } else {
+            val wanted = driveFilter.split(",").map { it.trim() }.filter { it.isNotEmpty() }
+            allDrives.filterIndexed { i, d ->
+                val label = runCatching { d.fileSystem.volumeLabel }.getOrDefault("")
+                wanted.any { w ->
+                    w == i.toString() ||
+                        label.contains(w, ignoreCase = true) ||
+                        d.name.contains(w, ignoreCase = true)
+                }
+            }
+        }
+        if (allDrives.size > 1) {
+            emit("drives attached: " + allDrives.mapIndexed { i, d ->
+                "[$i] ${runCatching { d.fileSystem.volumeLabel }.getOrDefault("?")}" +
+                    " @${d.sourceVolumeCandidate?.startBlock ?: "plain"}"
+            }.joinToString(" "))
+            // If two drives tag the same, the remount-and-verify sections cannot tell
+            // them apart and could check the wrong one. Say so rather than report a
+            // meaningless pass.
+            val tags = allDrives.map { driveTag(it) }
+            if (tags.size != tags.toSet().size) {
+                emit("*** two mounted volumes share an identity: $tags")
+                emit("*** remount-based verification cannot distinguish them — " +
+                     "run them one at a time with the 'drive' filter ***")
+            }
+            emit("running against : " + if (drives.size == allDrives.size) "all, in sequence"
+                 else drives.joinToString { runCatching { it.fileSystem.volumeLabel }.getOrDefault("?") })
+            emit("")
+        }
+        if (drives.isEmpty() && allDrives.isNotEmpty()) {
+            emit("*** drive filter '$driveFilter' matched none of the mounted drives ***")
         }
         if (drives.isEmpty()) {
             emit("NO DRIVES MOUNTED — attach a prepared drive, or pass mount credentials")
@@ -475,9 +515,8 @@ object Benchmark {
          * through it dereferences a freed `struct exfat` (SIGSEGV at ef->sb, not a
          * catchable exception).
          */
-        fun liveRoot(): UsbFile? = OtgMasterState.mountedDrives
-            .firstOrNull { (it.fileSystem as? ExFatFileSystem)?.isUnmounted != true }
-            ?.fileSystem?.rootDirectory
+        val tag = driveTag(drive)
+        fun liveRoot(): UsbFile? = rootForTag(tag)
 
         /** Re-opens the file by name so nothing is carried over in a stale handle. */
         fun verifyPass(label: String): Boolean {
@@ -619,9 +658,8 @@ object Benchmark {
         val dir = freshDir(root, "BENCH_UNALIGNED")
         val dirName = dir.name
 
-        fun liveRoot(): UsbFile? = OtgMasterState.mountedDrives
-            .firstOrNull { (it.fileSystem as? ExFatFileSystem)?.isUnmounted != true }
-            ?.fileSystem?.rootDirectory
+        val tag = driveTag(drive)
+        fun liveRoot(): UsbFile? = rootForTag(tag)
 
         fun remount(): Boolean {
             if (mount == null) return false
@@ -743,9 +781,8 @@ object Benchmark {
         fun bad(msg: String) { emit("correctness   : *** $msg ***"); failures++ }
         fun good(msg: String) = emit("correctness   : $msg")
 
-        fun liveRoot(): UsbFile? = OtgMasterState.mountedDrives
-            .firstOrNull { (it.fileSystem as? ExFatFileSystem)?.isUnmounted != true }
-            ?.fileSystem?.rootDirectory
+        val tag = driveTag(drive)
+        fun liveRoot(): UsbFile? = rootForTag(tag)
 
         fun remount(): Boolean {
             if (mount == null) return false
@@ -1336,6 +1373,47 @@ object Benchmark {
         }
         throw java.io.IOException("could not create a working directory for $base")
     }
+
+    /**
+     * Identifies a drive across an unmount/remount.
+     *
+     * MountedDrive.id is regenerated on every mount, so it cannot be used to find the
+     * same drive again. sourceDeviceName is the stable USB identity, and the volume
+     * label disambiguates partitions on one physical drive.
+     *
+     * This matters as soon as two drives are attached: the sections that remount to
+     * force a re-read from disk used to re-resolve with firstOrNull, which is correct
+     * with one drive and arbitrary with two — it could write to one drive and verify
+     * against the other, reporting a pass that means nothing.
+     */
+    private fun driveTag(d: MountedDrive): String = buildString {
+        // Physical device, then the partition's own offset on it. startBlock is what
+        // actually makes this unique: two partitions on one drive share a
+        // sourceDeviceName, ExFatFileSystem.volumeLabel is a hardcoded "exFAT" so it
+        // distinguishes nothing there, and two partitions of equal size have equal
+        // capacity. The offset cannot collide, and it is stable across a remount
+        // because it is a property of the medium rather than of this mount.
+        append(d.sourceDeviceName ?: "?")
+        append('@')
+        val start = d.sourceVolumeCandidate?.startBlock
+        if (start != null) {
+            append(start)
+        } else {
+            // A plain (unencrypted) auto-mounted volume has no candidate. Fall back to
+            // label and capacity, which is weaker but only applies where there is no
+            // partition offset to be had.
+            append("plain:")
+            append(runCatching { d.fileSystem.volumeLabel }.getOrDefault("?"))
+            append(':')
+            append(runCatching { d.fileSystem.capacity }.getOrDefault(-1L))
+        }
+    }
+
+    /** The live root of the drive matching [tag], or null if it is not mounted. */
+    private fun rootForTag(tag: String): UsbFile? = OtgMasterState.mountedDrives
+        .firstOrNull {
+            driveTag(it) == tag && (it.fileSystem as? ExFatFileSystem)?.isUnmounted != true
+        }?.fileSystem?.rootDirectory
 
     /** Depth-first delete; a non-empty directory cannot be removed directly. */
     private fun deleteRecursively(file: UsbFile) {

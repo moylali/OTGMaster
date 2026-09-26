@@ -40,6 +40,36 @@ giving it to the user to paste.
 
 ## Vendored code
 
-`libaums/` is a vendored fork with an upstream pin, patched in-tree when needed
-(see `docs/VENDOR_FIXES.md`). Patches there must be recorded in that document so a
-future upstream pull knows what to preserve.
+`docs/VENDOR_FIXES.md` is the registry of every vendored dependency. Nothing is
+vendored without an entry there.
+
+**Adding a library.** Before the vendoring commit lands, add a section recording:
+
+- the upstream repository URL;
+- the exact upstream commit pinned, full SHA, not a tag or a branch;
+- the date pinned, and the upstream version if it has one;
+- **why** it is vendored rather than consumed as a dependency — this is the part
+  that gets lost, and without it a later maintainer cannot judge whether the reason
+  still holds;
+- the licence, and whether it is compatible with this project's GPL-2.0-or-later
+  grant (the licence table in `README.md` is the authoritative list — add the new
+  entry there, and reference it from the registry rather than restating it);
+- an empty patch table, ready for the first local change.
+
+The commit that brings the code in states the same pin in its message, so the
+pairing is visible from `git log` alone without opening the doc.
+
+**Patching a vendored library.** Record it in that library's patch table (what,
+why, and the commit), and mark the code itself:
+
+```kotlin
+// LOCAL PATCH (docs/VENDOR_FIXES.md V3): one line on what upstream does wrong.
+```
+
+The in-file marker matters more than it looks: it is what stops a future upstream
+merge from silently reverting a fix. A patch with no marker will be lost.
+
+**Pulling upstream.** Follow the shape of `b03705d`: name the old and new commits,
+summarise the source changes that actually affect this project, and state explicitly
+for each local patch whether it still applies, was absorbed upstream, or had to be
+re-applied. Update the pin in the registry in the same commit.

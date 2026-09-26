@@ -72,7 +72,12 @@ class BenchmarkReceiver : BroadcastReceiver() {
         Thread {
             try {
                 Log.i("OTGBench", "benchmark starting (tests=${if (only.isEmpty()) "all" else only})")
-                Benchmark.runAll(context.applicationContext, only, mount, remount)
+                Benchmark.runAll(
+                    context.applicationContext, only, mount, remount,
+                    // "all" (default), indices, or label substrings: "0", "VCFAT",
+                    // "0,1". Every mounted drive runs in sequence when unset.
+                    intent.getStringExtra("drive"),
+                )
             } catch (e: Throwable) {
                 Log.e("OTGBench", "benchmark failed", e)
             }

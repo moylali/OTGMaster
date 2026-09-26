@@ -1,12 +1,43 @@
-# Vendor patches to `libaums/`
+# Vendored dependency registry
 
-`libaums/` is a vendored fork of [magnusja/libaums](https://github.com/magnusja/libaums),
-pinned upstream and patched in-tree. Every local patch must be recorded here, so a
-future `chore: pull libaums upstream` knows what to preserve or re-apply.
+Every vendored dependency is recorded here: what it is pinned to, why it is vendored
+at all, and every local patch applied to it. A patch that is not in this file will be
+lost the next time upstream is pulled.
 
-Current pin: upstream `57fa482` (`b03705d`).
+See `CLAUDE.md` for what a new entry must contain and how to record an upstream pull.
 
-## Existing patches
+## Index
+
+| Library | Upstream | Pinned commit | Vendored in |
+|---|---|---|---|
+| `libaums/` | [magnusja/libaums](https://github.com/magnusja/libaums) | `57fa482` | `b03705d` (last pull) |
+| `app/src/main/cpp/exfat/` | [relan/exfat](https://github.com/relan/exfat) | see note below | pre-dates this registry |
+| `app/src/main/cpp/` (VeraCrypt primitives, mbedtls, Serpent) | VeraCrypt / Mbed-TLS | see note below | pre-dates this registry |
+
+**Licences** are listed in the table in `README.md`, which is authoritative — this
+registry deliberately does not restate them, to avoid the two drifting apart.
+
+**Note on the C trees.** Their upstream pins were not recorded when they were brought
+in, so the exact commits are unknown. They should be established and written down the
+next time either is touched; until then an upstream pull cannot be done safely,
+because there is no baseline to diff against. This is precisely the gap the registry
+exists to prevent, and it is the reason the rule in `CLAUDE.md` requires a full SHA
+before a vendoring commit lands.
+
+---
+
+# `libaums/`
+
+Vendored fork of [magnusja/libaums](https://github.com/magnusja/libaums).
+
+- **Pinned upstream:** `57fa482`, brought in by `b03705d`.
+- **Why vendored:** local patches are required for correctness on real hardware —
+  six of them are below, and several are defects upstream has not fixed. The FAT32
+  layer also needed changes specific to reading a VeraCrypt volume through a
+  userspace block device rather than a kernel-mounted one.
+- **Licence:** Apache-2.0 (per-file headers; see the table in `README.md`).
+
+## Patches
 
 | Area | Patch | Commit |
 |---|---|---|
