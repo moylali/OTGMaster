@@ -624,10 +624,11 @@ The remount pass is the one that earns its keep: a cache invalidation leaves
 libexfat's and libaums' in-memory metadata intact, so a corrupt cluster chain that
 was never flushed would still verify.
 
-**Result: 16/16 cases passed** — 8 before the fix below and 8 after, across both
-filesystems, both phones, cache on and off. Every pass reported the correct length
-and a matching SHA-256 (`8645696846c56668…`, identical on both devices, which also
-confirms the two phones wrote identical content).
+**Result: 32/32 cases passed** — 8 before the fix below, 8 after, and 16 more while
+gathering write-throughput repetitions, across both filesystems, both phones, cache
+on and off. Every pass reported the correct length and a matching SHA-256
+(`8645696846c56668…`, identical on both devices, which also confirms the two phones
+wrote byte-identical content).
 
 ### The strengthened check crashed the app — twice
 
@@ -673,8 +674,27 @@ The hash checks themselves all passed — including in the run that crashed.
 - **No regressions on any metric on either filesystem or phone.** The one
   exception is exFAT random 4 KiB, 2.6 -> 3.0 ms — 0.4 ms, and the only place the
   cache loses anything.
-- Writes improved everywhere they changed at all: 1.18x on the Pixel, 1.6-2x on
-  exFAT, neutral on FAT32/OnePlus. The invalidate-to-patch change is what did it.
+- **Writes are unaffected — and the earlier claim here was wrong.** This section
+  first reported "1.18x on the Pixel, 1.6-2x on exFAT", from one or two samples per
+  arm. Six repetitions per arm show that USB flash write variance is far larger than
+  any effect the cache has:
+
+  | | n | min | median | max | ratio | ranges |
+  |---|---|---|---|---|---|---|
+  | exFAT / OnePlus, cache off | 6 | 0.84 | 0.95 | 1.37 | | |
+  | exFAT / OnePlus, cache on | 6 | 0.82 | 0.94 | 1.12 | 0.99x | overlap |
+  | FAT32 / Pixel, cache off | 6 | 0.78 | 1.61 | 2.33 | | |
+  | FAT32 / Pixel, cache on | 6 | 0.89 | 2.05 | 2.63 | 1.27x | overlap |
+
+  MB/s for a 16 MiB write. A single arm spans 3x on the Pixel, so the medians are
+  not separable — SLC cache exhaustion, wear levelling and controller garbage
+  collection dominate. The honest statement is **no measurable write effect in
+  either direction**. The invalidate-to-patch change is still correct (it avoids a
+  refetch that serves no purpose) but it does not show up as throughput.
+
+  Lesson repeated from §5.6: a ratio between single samples is not a result. The
+  read improvements survive this treatment — 81x cold listing is not noise — but
+  the write figures never should have been stated.
 - The Pixel is substantially faster than the OnePlus on FAT32 (cold listing ~750 ms
   vs ~1,200 ms, sequential 6.97 vs 2.93 MB/s), so absolute figures are not
   comparable across devices — only the within-device arms are.
