@@ -814,12 +814,50 @@ the pre-fix measurements suggested (1.15-1.27x against the 2.2x seen earlier),
 which is consistent: V4 stopped read-only opens rewriting the parent directory, so
 less of the listing cost is now writes the cache could absorb.
 
-### exFAT is not re-baselined
+### exFAT, re-baselined
 
-These fixes are FAT32-path except the exFAT short-write and copy-elimination
-changes, and the exFAT device was unavailable. The exFAT figures in §5.5-§5.8 stand
-as last measured, and the copy elimination in particular is **unverified on
-hardware**.
+OnePlus 7, Android 16, exFAT VeraCrypt volume, both arms in one session.
+
+| | Cache off | Cache on | Effect |
+|---|---|---|---|
+| Cold list, 10,000 short names | 136,002 ms | 1,679 ms | **81x** |
+| Cold list, 10,000 long names | 189,430 ms | 2,651 ms | **71x** |
+| Sequential, 512 KiB buffer | (not measured) | 26.46 MB/s | |
+| Random 4 KiB | (not measured) | 2.6 ms | |
+| Block layer, 4 MiB span (control) | 26.15 MB/s | 24.52 MB/s | matched |
+
+**The cache-off arm is incomplete.** After 325 seconds of cold directory listing it
+reported `seq read: no files in large/` — `listFiles()` returned empty for a
+directory that the cache-on arm read without trouble. `ExFatFile.listFiles` returns
+an empty array when libexfat's `readDir` returns null, so a failure there is
+indistinguishable from an empty directory. That is a reporting gap worth closing;
+the sequential and random figures for the uncached arm are simply missing rather
+than slow.
+
+The 81x listing result reproduces the original motivation for the cache (§5.5) and
+is a same-session comparison, so it stands on its own.
+
+### Correction to §5.8: there was a lever on the provider path
+
+§5.8 concluded that the 1.50x–2.90x provider penalty was the FUSE round trip and
+that **no lever had been identified**. That was wrong. The read copy elimination
+(three copies and two allocations per read down to one copy and none) moved exFAT's
+provider overhead from **2.90x to 1.04x**:
+
+| | Before | After |
+|---|---|---|
+| `saf single` | 8.94 MB/s | 20.77 MB/s |
+| `saf direct` | 24.53 MB/s | 21.61 MB/s |
+| **provider overhead** | **2.90x** | **1.04x** |
+
+Going through SAF on exFAT now costs almost nothing. The penalty was per-read
+allocation and copying inside the callback, not the bridge.
+
+One consequence for the concurrency question: `saf par same` is now 17.56 MB/s
+against 20.77 single — two streams are slightly *worse* than one, where before they
+were 2.03x better. With the per-read cost removed there is no idle time for a second
+stream to fill, so it only contends. That strengthens rather than weakens the
+rejection of per-drive handler threads.
 
 ## 6. The honest ceiling
 
