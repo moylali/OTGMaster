@@ -91,6 +91,9 @@ android {
 
     buildFeatures {
         compose = true
+        // Required from AGP 8 onward; without it .aidl files are ignored silently
+        // and the generated Stub simply does not exist.
+        aidl = true
     }
     composeOptions {
         kotlinCompilerExtensionVersion = "1.5.14"

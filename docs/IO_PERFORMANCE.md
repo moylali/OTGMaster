@@ -745,9 +745,29 @@ from the same latency-hiding one thread already provides. (A thread pool is
 separately unsafe: libaums has no locking, so concurrent callbacks on one drive
 would race its FAT cache and directory entries.)
 
-The lever is **fewer, larger callbacks**, not more threads. Cross-drive throughput
-remains unmeasured; it needs two drives through a powered hub and is reported as
-`saf par cross` when present.
+**Correction.** This section first concluded that the lever was "fewer, larger
+callbacks". That is wrong, and the FD relay spike is what showed it: the callbacks
+are *already* large. With a client reading in 64 KiB blocks, `onRead` arrives at
+**131,072 bytes** — the kernel coalesces to 128 KiB before it ever reaches the
+callback:
+
+```
+worker: onRead off=0      size=131072 pid=4294
+worker: onRead off=131072 size=131072 pid=4294
+```
+
+So the 1.50x–2.90x provider penalty is not callback granularity. What remains is
+the FUSE round trip itself: a kernel transition per request, the request handed to a
+userspace handler thread, and the data copied back through the bridge. None of that
+is reduced by batching we already get, and none of it is reduced by more threads.
+
+That leaves no identified lever on the provider path. It may simply be the cost of
+SAF on this platform, which would make it a fixed tax to plan around — for example
+by having the backup engine use `UsbFile` directly rather than going through the
+provider — rather than something to optimise away.
+
+Cross-drive throughput remains unmeasured; it needs two drives through a powered hub
+and is reported as `saf par cross` when present.
 
 ## 5.9 Re-baseline after the correctness fixes
 

@@ -20,6 +20,24 @@
                 <action android:name="app.fayaz.otgmaster.RUN_BENCHMARK" />
             </intent-filter>
         </receiver>
+
+        <!--
+          Debug-only spike: does a FUSE-backed ParcelFileDescriptor created in one
+          process still work after being relayed through another? Runs in its own
+          process to stand in for a per-drive mount process. See FdRelayService.
+        -->
+        <service
+            android:name=".spike.FdRelayService"
+            android:process=":mount0"
+            android:exported="false" />
+
+        <receiver
+            android:name=".spike.FdSpikeReceiver"
+            android:exported="true">
+            <intent-filter>
+                <action android:name="app.fayaz.otgmaster.RUN_FD_SPIKE" />
+            </intent-filter>
+        </receiver>
     </application>
 
 </manifest>
