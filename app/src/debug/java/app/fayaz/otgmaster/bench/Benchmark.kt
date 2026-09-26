@@ -4,6 +4,7 @@ import android.content.Context
 import android.util.Log
 import app.fayaz.otgmaster.MountedDrive
 import app.fayaz.otgmaster.OtgMasterState
+import app.fayaz.otgmaster.exfat.ExFatFileSystem
 import app.fayaz.otgmaster.exfat.ExFatIoStats
 import me.jahnen.libaums.core.fs.UsbFile
 import java.io.File
@@ -150,7 +151,7 @@ object Benchmark {
             if (wants("opens")) runCatching { benchDenseOpens(bench, ::emit) }.onFailure { emit("dense opens   : FAILED ${it}") }
             // Opt-in only: this one writes to the drive, so a default run stays
             // read-only.
-            if (only.contains("write")) runCatching { benchWriteVerify(drive, ::emit) }
+            if (only.contains("write")) runCatching { benchWriteVerify(drive, ::emit, mount) }
                 .onFailure { emit("write verify  : FAILED ${it}") }
             emit("")
         }
@@ -336,80 +337,177 @@ object Benchmark {
      * Writes into a scratch directory and removes it afterwards. The prepared
      * fixtures deliberately leave ~4 GiB free for this.
      */
-    private fun benchWriteVerify(drive: MountedDrive, emit: (String) -> Unit) {
-        val cache = drive.blockDevice as? app.fayaz.otgmaster.block.CachedBlockDevice
+    /**
+     * Position-dependent byte for an absolute file offset.
+     *
+     * Every byte depends on where it lives, so data landing at the wrong offset is
+     * detectable. An earlier version wrote one 64 KiB pattern repeatedly, which
+     * could not distinguish correct data from two chunks swapped or a read served
+     * from the wrong block — the exact failure mode a block cache risks.
+     */
+    private fun expectedByteAt(offset: Long): Byte =
+        (((offset * 2654435761L) xor (offset ushr 13)) and 0xFF).toByte()
+
+    /**
+     * End-to-end write verification.
+     *
+     * Four checks, because a write bug on a VeraCrypt volume is not recoverable by
+     * ordinary tools:
+     *  1. byte-for-byte against position-dependent content, so misplacement counts
+     *     as corruption;
+     *  2. file length, which a content comparison alone cannot catch;
+     *  3. re-read after invalidating the cache, proving bytes reached the device
+     *     rather than being served from memory;
+     *  4. re-read after a full unmount and remount, which discards libexfat's and
+     *     libaums' in-memory metadata — otherwise a corrupt FAT chain or directory
+     *     entry that was never written back would still verify.
+     *
+     * The SHA-256 is reported so it can be cross-checked on a host with shasum
+     * against the same generator.
+     */
+    private fun benchWriteVerify(
+        drive: MountedDrive,
+        emit: (String) -> Unit,
+        mount: MountCredentials? = null,
+    ) {
         val root = drive.fileSystem.rootDirectory
         val dirName = "BENCH_WRITE"
+        val fileName = "verify.bin"
+        val sizeMiB = 16
+        val chunk = 64 * 1024
+        val total = sizeMiB * 1024L * 1024L
 
-        // Clean up anything left by an earlier run. Must remove the contents first:
-        // deleting a non-empty directory fails on exFAT (EEXIST/-17 on the next
-        // createDirectory), which silently broke the second write case of a matrix.
         runCatching { root.search(dirName)?.let { deleteRecursively(it) } }
-
         val dir = root.createDirectory(dirName)
-        try {
-            val sizeMiB = 16
-            val pattern = ByteArray(64 * 1024) { ((it * 31 + 7) % 251).toByte() }
-            val file = dir.createFile("verify.bin")
 
-            var written = 0L
+        var expectedHash = ""
+        try {
+            val file = dir.createFile(fileName)
+            val md = java.security.MessageDigest.getInstance("SHA-256")
+            val buf = ByteArray(chunk)
+
             val writeNs = measureNanoTime {
                 var off = 0L
-                repeat(sizeMiB * 1024 * 1024 / pattern.size) {
-                    file.write(off, ByteBuffer.wrap(pattern))
-                    off += pattern.size
-                    written = off
+                while (off < total) {
+                    for (i in 0 until chunk) buf[i] = expectedByteAt(off + i)
+                    md.update(buf)
+                    file.write(off, ByteBuffer.wrap(buf))
+                    off += chunk
                 }
                 file.flush()
             }
-            emit("write         : $sizeMiB MiB -> ${mbps(written, writeNs)}")
+            expectedHash = md.digest().joinToString("") { "%02x".format(it) }
+            emit("write         : $sizeMiB MiB -> ${mbps(total, writeNs)}")
+            emit("              expected sha256 ${expectedHash.take(32)}…")
 
-            fun verify(label: String) {
-                val buf = ByteBuffer.allocate(pattern.size)
-                var off = 0L
-                var mismatchAt = -1L
-                val ns = measureNanoTime {
-                    while (off < written) {
-                        buf.clear()
-                        file.read(off, buf)
-                        val got = buf.array()
-                        for (i in pattern.indices) {
-                            if (got[i] != pattern[i]) { mismatchAt = off + i; break }
-                        }
-                        if (mismatchAt >= 0) break
-                        off += pattern.size
-                    }
-                }
-                if (mismatchAt >= 0) {
-                    emit("verify $label".padEnd(14) + ": *** MISMATCH at byte $mismatchAt ***")
-                } else {
-                    emit("verify $label".padEnd(14) + ": $written bytes OK (${ms(ns)})")
-                }
-            }
-
-            verify("(cached)")
-            if (cache != null) {
-                cache.invalidate()
-                verify("(from device)")
-                emit("              ${cache.stats()}")
-            } else {
-                emit("              (no cache in the stack — device read not isolated)")
-            }
             file.close()
-        } finally {
+        } catch (e: Throwable) {
+            emit("write         : FAILED $e")
             runCatching { root.search(dirName)?.let { deleteRecursively(it) } }
-                .onFailure { emit("write verify  : could not remove $dirName: $it") }
+            return
         }
+
+        /**
+         * Picks a drive whose filesystem is actually still live.
+         *
+         * Re-querying mountedDrives blindly is how this harness crashed the app: an
+         * unmount can leave a stale entry in the list, and calling into libexfat
+         * through it dereferences a freed `struct exfat` (SIGSEGV at ef->sb, not a
+         * catchable exception).
+         */
+        fun liveRoot(): UsbFile? = OtgMasterState.mountedDrives
+            .firstOrNull { (it.fileSystem as? ExFatFileSystem)?.isUnmounted != true }
+            ?.fileSystem?.rootDirectory
+
+        /** Re-opens the file by name so nothing is carried over in a stale handle. */
+        fun verifyPass(label: String): Boolean {
+            val d = liveRoot()?.search(dirName)
+            val f = d?.search(fileName)
+            if (f == null) {
+                emit("verify $label".padEnd(20) + ": *** file not found ***")
+                return false
+            }
+            val len = runCatching { f.length }.getOrDefault(-1L)
+            if (len != total) {
+                emit("verify $label".padEnd(20) + ": *** LENGTH $len, expected $total ***")
+                return false
+            }
+            val md = java.security.MessageDigest.getInstance("SHA-256")
+            val bb = ByteBuffer.allocate(chunk)
+            var off = 0L
+            var mismatchAt = -1L
+            val ns = measureNanoTime {
+                while (off < total) {
+                    bb.clear()
+                    f.read(off, bb)
+                    if (bb.position() != chunk) { mismatchAt = off; return@measureNanoTime }
+                    val got = bb.array()
+                    for (i in 0 until chunk) {
+                        if (got[i] != expectedByteAt(off + i)) { mismatchAt = off + i; break }
+                    }
+                    if (mismatchAt >= 0) return@measureNanoTime
+                    md.update(got, 0, chunk)
+                    off += chunk
+                }
+            }
+            if (mismatchAt >= 0) {
+                emit("verify $label".padEnd(20) + ": *** MISMATCH at byte $mismatchAt ***")
+                return false
+            }
+            val h = md.digest().joinToString("") { "%02x".format(it) }
+            val ok = h == expectedHash
+            emit("verify $label".padEnd(20) + ": $total bytes OK, sha256 " +
+                    (if (ok) "matches" else "*** DIFFERS ***") + " (${ms(ns)})")
+            return ok
+        }
+
+        var allOk = verifyPass("(cached)")
+
+        val cache = drive.blockDevice as? app.fayaz.otgmaster.block.CachedBlockDevice
+        if (cache != null) {
+            cache.invalidate()
+            allOk = verifyPass("(cache dropped)") && allOk
+            emit("              ${cache.stats()}")
+        } else {
+            emit("              (no cache in the stack — device read not isolated)")
+        }
+
+        // Full unmount/remount: discards filesystem metadata held in memory, which
+        // a cache-only invalidation leaves intact.
+        if (mount != null && OtgMasterState.unmountAllRequest != null) {
+            emit("              remounting to discard filesystem metadata…")
+            OtgMasterState.unmountAllRequest?.invoke()
+            var deadline = System.currentTimeMillis() + 30_000
+            while (OtgMasterState.mountedDrives.isNotEmpty() &&
+                    System.currentTimeMillis() < deadline) Thread.sleep(300)
+            Thread.sleep(1500)
+            OtgMasterState.mountRequest?.mount(mount.password, mount.pim, mount.cipher, mount.hash)
+            deadline = System.currentTimeMillis() + MOUNT_TIMEOUT_MS
+            while (OtgMasterState.mountedDrives.isEmpty() &&
+                    System.currentTimeMillis() < deadline) Thread.sleep(500)
+            if (liveRoot() == null) {
+                emit("verify (remounted)  : *** remount failed, could not verify ***")
+                allOk = false
+            } else {
+                allOk = verifyPass("(remounted)") && allOk
+            }
+        } else {
+            emit("              (no credentials — skipped the remount verify)")
+        }
+
+        emit("write verify  : ${if (allOk) "ALL PASSED" else "*** FAILURES ABOVE ***"}")
+        runCatching {
+            liveRoot()?.search(dirName)?.let { deleteRecursively(it) }
+        }.onFailure { emit("write verify  : could not remove $dirName: $it") }
     }
 
     /**
      * Records the conditions the run happened under.
      *
      * Decryption is CPU-bound, so Doze makes everything uniformly slower: a run
-     * taken with the screen off measured the block layer at 5.05 MB/s against
-     * 22.03 MB/s awake, with the big core downclocked to 825 MHz of its 2.84 GHz
-     * maximum. Without this in the output a throttled run looks like a regression,
-     * which is exactly how it was first misread.
+     * taken with the screen off measured the block-layer control at 5.05 MB/s
+     * against 22.03 MB/s awake. Without this in the output a throttled run looks
+     * like a regression, which is how it was first misread.
      */
     private fun emitPowerState(context: Context, emit: (String) -> Unit) {
         val pm = context.getSystemService(android.os.PowerManager::class.java)
