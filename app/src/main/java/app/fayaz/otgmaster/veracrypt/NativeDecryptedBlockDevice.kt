@@ -57,28 +57,27 @@ class NativeDecryptedBlockDevice(
     override fun readBlocks(startBlock: Long, blockCount: Int): ByteArray {
         checkOpen()
         val physicalStartBlock = startBlock + volumeDataOffset
+        // Decrypted in place, so the delegate must hand back an array it does not
+        // retain. LibaumsRawBlockDevice allocates a fresh one per call. Do not
+        // insert a caching device *below* this one without revisiting that.
         val encryptedData = encryptedDevice.readBlocks(physicalStartBlock, blockCount)
 
-        val decryptedData = ByteArray(encryptedData.size)
-        val sectorCount = encryptedData.size / 512
-        
         val sectorsPerBlock = blockSize / 512L
-        val tweakDataOffsetSectors = tweakDataOffset * sectorsPerBlock
-        val startBlockSectors = startBlock * sectorsPerBlock
+        val firstTweak = tweakDataOffset * sectorsPerBlock + startBlock * sectorsPerBlock
 
-        for (i in 0 until sectorCount) {
-            val sectorEncrypted = encryptedData.copyOfRange(i * 512, (i + 1) * 512)
-            val tweak = tweakDataOffsetSectors + startBlockSectors + i
-            val sectorDecrypted = VeraCryptNative.decryptSector(cipherNativeId, masterKey, tweak, sectorEncrypted)
-
-            if (sectorDecrypted != null) {
-                System.arraycopy(sectorDecrypted, 0, decryptedData, i * 512, 512)
-            } else {
-                throw IllegalStateException("Decryption failed at physical sector ${physicalStartBlock + i}")
-            }
+        // One JNI crossing and one XTS key schedule for the whole run. The
+        // per-sector path rebuilt the schedule for every 512 bytes, which cost as
+        // much as the decryption it was setting up for.
+        val rc = VeraCryptNative.cryptSectorsInPlace(
+            cipherNativeId, DECRYPT, masterKey, firstTweak,
+            encryptedData, 0, encryptedData.size,
+        )
+        if (rc != 0) {
+            throw IllegalStateException(
+                "Decryption failed at physical sector $physicalStartBlock (rc=$rc)"
+            )
         }
-        
-        return decryptedData
+        return encryptedData
     }
 
     override fun read(deviceOffset: Long, buffer: ByteBuffer) {
@@ -93,25 +92,21 @@ class NativeDecryptedBlockDevice(
     override fun writeBlocks(startBlock: Long, data: ByteArray) {
         checkOpen()
         val physicalStartBlock = startBlock + volumeDataOffset
-        val sectorCount = data.size / 512
-        val encryptedData = ByteArray(data.size)
-        
         val sectorsPerBlock = blockSize / 512L
-        val tweakDataOffsetSectors = tweakDataOffset * sectorsPerBlock
-        val startBlockSectors = startBlock * sectorsPerBlock
+        val firstTweak = tweakDataOffset * sectorsPerBlock + startBlock * sectorsPerBlock
 
-        for (i in 0 until sectorCount) {
-            val sectorDecrypted = data.copyOfRange(i * 512, (i + 1) * 512)
-            val tweak = tweakDataOffsetSectors + startBlockSectors + i
-            val sectorEncrypted = VeraCryptNative.encryptSector(cipherNativeId, masterKey, tweak, sectorDecrypted)
-
-            if (sectorEncrypted != null) {
-                System.arraycopy(sectorEncrypted, 0, encryptedData, i * 512, 512)
-            } else {
-                throw IllegalStateException("Encryption failed at physical sector ${physicalStartBlock + i}")
-            }
+        // Copy first: the caller's plaintext must not be encrypted underneath it,
+        // and the cache above holds this same array as a cached line.
+        val encryptedData = data.copyOf()
+        val rc = VeraCryptNative.cryptSectorsInPlace(
+            cipherNativeId, ENCRYPT, masterKey, firstTweak,
+            encryptedData, 0, encryptedData.size,
+        )
+        if (rc != 0) {
+            throw IllegalStateException(
+                "Encryption failed at physical sector $physicalStartBlock (rc=$rc)"
+            )
         }
-        
         encryptedDevice.writeBlocks(physicalStartBlock, encryptedData)
     }
 
@@ -121,6 +116,11 @@ class NativeDecryptedBlockDevice(
         val data = ByteArray(bytesToWrite)
         buffer.get(data)
         writeBlocks(deviceOffset, data)
+    }
+
+    private companion object {
+        const val DECRYPT = 0
+        const val ENCRYPT = 1
     }
 
     override fun close() {

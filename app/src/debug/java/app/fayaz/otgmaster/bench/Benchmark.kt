@@ -45,7 +45,40 @@ object Benchmark {
      * A full run took 3.6 hours on the exFAT baseline, ~2.1 of which was the
      * random-read section, so subsets matter for iterating on an optimisation.
      */
+    /**
+     * Refuses a second concurrent run.
+     *
+     * Killing the host-side runner does not stop the benchmark: it lives on a
+     * plain Thread on the device and keeps going. The next broadcast then started
+     * a second run against the same USB device, and the two interleaved — doubled
+     * output under one heading, sequential reads at 0.57 MB/s instead of ~6, and
+     * one run unmounting the volume out from under the other (which the
+     * use-after-unmount guard then reported as "exFAT filesystem is unmounted").
+     * Numbers from overlapping runs are meaningless, so refuse rather than produce
+     * them.
+     */
+    private val running = java.util.concurrent.atomic.AtomicBoolean(false)
+
     fun runAll(
+        context: Context,
+        only: Set<String> = emptySet(),
+        mount: MountCredentials? = null,
+        remount: Boolean = false,
+    ): String {
+        if (!running.compareAndSet(false, true)) {
+            val msg = "*** a benchmark is already running — refusing to start a second one ***"
+            Log.w(TAG, msg)
+            OtgMasterState.logSink?.invoke(msg)
+            return msg
+        }
+        try {
+            return runAllLocked(context, only, mount, remount)
+        } finally {
+            running.set(false)
+        }
+    }
+
+    private fun runAllLocked(
         context: Context,
         only: Set<String> = emptySet(),
         mount: MountCredentials? = null,
@@ -111,7 +144,12 @@ object Benchmark {
             }
         }
 
-        val drives = OtgMasterState.mountedDrives.toList()
+        // Skip drives whose filesystem has already been unmounted. A remount leaves
+        // the old entry in the list briefly, and calling into a torn-down
+        // ExFatFileSystem is what the withNative guard exists to stop.
+        val drives = OtgMasterState.mountedDrives.filter {
+            (it.fileSystem as? ExFatFileSystem)?.isUnmounted != true
+        }
         if (drives.isEmpty()) {
             emit("NO DRIVES MOUNTED — attach a prepared drive, or pass mount credentials")
             return out.toString().also { save(context, it) }
@@ -153,6 +191,9 @@ object Benchmark {
             // read-only.
             if (only.contains("write")) runCatching { benchWriteVerify(drive, ::emit, mount) }
                 .onFailure { emit("write verify  : FAILED ${it}") }
+            // Opt-in: writes, and deliberately unaligned.
+            if (only.contains("unaligned")) runCatching { benchUnaligned(drive, ::emit, mount) }
+                .onFailure { emit("unaligned     : FAILED ${it}") }
             emit("")
         }
 
@@ -526,6 +567,128 @@ object Benchmark {
             emit("*** DEVICE IS IDLE OR THROTTLED — throughput here is not comparable")
             emit("*** to an awake run; wake the screen and disable Doze before measuring")
         }
+    }
+
+    /**
+     * Unaligned writes and truncate-rewrite — the two cases the aligned write
+     * verification cannot see.
+     *
+     * benchWriteVerify writes 64 KiB chunks at 64 KiB offsets, so every write is a
+     * whole number of sectors. That is precisely the shape that hides
+     * ByteBlockDevice's trailing-sector bug (docs/VENDOR_FIXES.md V1), where a write
+     * whose length is not a multiple of blockSize zero-fills the rest of the final
+     * sector instead of preserving what is on disk. 32/32 aligned cases passed while
+     * that bug sat in the write path.
+     *
+     * Case A (tail preservation): fill a region with 0xFF, then overwrite only the
+     * first 10 bytes with 0xAA. Everything after byte 10 must still be 0xFF.
+     *
+     * Case B (truncate then rewrite): write, truncate to 0, write again, then remount
+     * and read. Exercises the stale entry.startCluster path (V2), where the directory
+     * entry keeps pointing at a freed cluster.
+     *
+     * Both are read back after a remount, because an in-memory chain or cached node
+     * can make a corrupt on-disk structure look correct.
+     */
+    private fun benchUnaligned(
+        drive: MountedDrive,
+        emit: (String) -> Unit,
+        mount: MountCredentials? = null,
+    ) {
+        val root = drive.fileSystem.rootDirectory
+        val dirName = "BENCH_UNALIGNED"
+        runCatching { root.search(dirName)?.let { deleteRecursively(it) } }
+        val dir = root.createDirectory(dirName)
+
+        fun liveRoot(): UsbFile? = OtgMasterState.mountedDrives
+            .firstOrNull { (it.fileSystem as? ExFatFileSystem)?.isUnmounted != true }
+            ?.fileSystem?.rootDirectory
+
+        fun remount(): Boolean {
+            if (mount == null) return false
+            OtgMasterState.unmountAllRequest?.invoke()
+            var deadline = System.currentTimeMillis() + 30_000
+            while (OtgMasterState.mountedDrives.isNotEmpty() &&
+                    System.currentTimeMillis() < deadline) Thread.sleep(300)
+            Thread.sleep(1500)
+            OtgMasterState.mountRequest?.mount(mount.password, mount.pim, mount.cipher, mount.hash)
+            deadline = System.currentTimeMillis() + MOUNT_TIMEOUT_MS
+            while (liveRoot() == null && System.currentTimeMillis() < deadline) Thread.sleep(500)
+            return liveRoot() != null
+        }
+
+        fun readBack(name: String, expectLen: Long): ByteArray? {
+            val f = liveRoot()?.search(dirName)?.search(name) ?: run {
+                emit("unaligned     : *** $name not found after remount ***"); return null
+            }
+            if (f.length != expectLen) {
+                emit("unaligned     : *** $name length ${f.length}, expected $expectLen ***")
+                return null
+            }
+            val bb = ByteBuffer.allocate(expectLen.toInt())
+            f.read(0, bb)
+            if (bb.position() != expectLen.toInt()) {
+                emit("unaligned     : *** $name short read ${bb.position()} of $expectLen ***")
+                return null
+            }
+            return bb.array()
+        }
+
+        // ---- Case A: does an unaligned overwrite destroy the rest of the sector?
+        val size = 4096
+        val tailFile = "tail.bin"
+        runCatching {
+            val f = dir.createFile(tailFile)
+            f.write(0, ByteBuffer.wrap(ByteArray(size) { 0xFF.toByte() }))
+            f.flush()
+            // 10 bytes: deliberately not a sector multiple, and not sector-aligned in
+            // length, which is what triggers the zero-pad path.
+            f.write(0, ByteBuffer.wrap(ByteArray(10) { 0xAA.toByte() }))
+            f.flush()
+            f.close()
+        }.onFailure { emit("unaligned     : case A write FAILED $it"); }
+
+        // ---- Case B: truncate to zero, rewrite, and see if the chain survives.
+        val truncFile = "trunc.bin"
+        val second = ByteArray(2048) { i -> (i % 251).toByte() }
+        runCatching {
+            val f = dir.createFile(truncFile)
+            f.write(0, ByteBuffer.wrap(ByteArray(8192) { 0x5A.toByte() }))
+            f.flush()
+            f.length = 0
+            f.write(0, ByteBuffer.wrap(second.copyOf()))
+            f.flush()
+            f.close()
+        }.onFailure { emit("unaligned     : case B write FAILED $it") }
+
+        if (!remount()) {
+            emit("unaligned     : *** remount failed, cannot judge on-disk state ***")
+            return
+        }
+
+        readBack(tailFile, size.toLong())?.let { got ->
+            val firstBad = (10 until size).firstOrNull { got[it] != 0xFF.toByte() }
+            val headOk = (0 until 10).all { got[it] == 0xAA.toByte() }
+            when {
+                !headOk -> emit("unaligned     : *** case A head not written ***")
+                firstBad == null -> emit("unaligned     : case A PASS — sector tail preserved")
+                else -> {
+                    val zeros = (10 until size).count { got[it] == 0.toByte() }
+                    emit("unaligned     : *** case A FAIL — tail corrupted from byte " +
+                         "$firstBad (got 0x%02X, $zeros of ${size - 10} bytes zeroed) ***"
+                             .format(got[firstBad]))
+                }
+            }
+        }
+
+        readBack(truncFile, second.size.toLong())?.let { got ->
+            val bad = second.indices.firstOrNull { got[it] != second[it] }
+            if (bad == null) emit("unaligned     : case B PASS — truncate+rewrite survived remount")
+            else emit("unaligned     : *** case B FAIL — mismatch at byte $bad " +
+                      "(got 0x%02X, expected 0x%02X) ***".format(got[bad], second[bad]))
+        }
+
+        runCatching { liveRoot()?.search(dirName)?.let { deleteRecursively(it) } }
     }
 
     /** Depth-first delete; a non-empty directory cannot be removed directly. */

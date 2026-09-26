@@ -57,6 +57,101 @@ static int xtsCrypt(int cipher, int direction, const unsigned char* key64, const
     return -1;
 }
 
+/*
+ * Crypts a run of consecutive 512-byte sectors in place, setting the key schedule
+ * up once for the whole run.
+ *
+ * The per-sector entry points below rebuild it every time: mbedtls_aes_xts_setkey_*
+ * expands two AES-256 schedules (data key + tweak key) for every 512 bytes, which
+ * is 32 AES blocks of payload. The expansion therefore costs on the order of the
+ * encryption itself, and it is pure waste — the master key is fixed for the life of
+ * the mount. A 64 KiB read rebuilt it 128 times.
+ *
+ * Working in place on the caller's array also removes the 512-byte allocation and
+ * arraycopy that each per-sector call performed, and collapses 128 JNI crossings
+ * into one. The block layer is demonstrably CPU-bound (17.26 MB/s awake against
+ * 7.27 MB/s at reduced clocks), so this is on the critical path.
+ *
+ * direction: 0 = decrypt, 1 = encrypt. Returns 0 on success.
+ */
+extern "C" JNIEXPORT jint JNICALL
+Java_app_fayaz_otgmaster_veracrypt_VeraCryptNative_cryptSectorsInPlace(
+        JNIEnv *env, jobject thiz, jint cipher, jint direction, jbyteArray jMasterKey,
+        jlong startSector, jbyteArray jBuffer, jint offset, jint length) {
+
+    if (length <= 0 || (length % 512) != 0) {
+        LOGE("cryptSectorsInPlace: length %d is not a positive multiple of 512", length);
+        return -1;
+    }
+    if (env->GetArrayLength(jMasterKey) < 64) {
+        LOGE("cryptSectorsInPlace: master key shorter than 64 bytes");
+        return -1;
+    }
+    if (offset < 0 || offset + length > env->GetArrayLength(jBuffer)) {
+        LOGE("cryptSectorsInPlace: range [%d,%d) outside buffer", offset, offset + length);
+        return -1;
+    }
+
+    jbyte* masterKey = env->GetByteArrayElements(jMasterKey, NULL);
+    if (!masterKey) return -1;
+    jbyte* buffer = env->GetByteArrayElements(jBuffer, NULL);
+    if (!buffer) {
+        env->ReleaseByteArrayElements(jMasterKey, masterKey, JNI_ABORT);
+        return -1;
+    }
+
+    const unsigned char* key64 = (const unsigned char*) masterKey;
+    unsigned char* data = (unsigned char*) (buffer + offset);
+    const int sectors = length / 512;
+    const int mbedDir = (direction == 1) ? MBEDTLS_AES_ENCRYPT : MBEDTLS_AES_DECRYPT;
+    int rc = 0;
+
+    if (cipher == CIPHER_AES) {
+        mbedtls_aes_xts_context xts_ctx;
+        mbedtls_aes_xts_init(&xts_ctx);
+        rc = (mbedDir == MBEDTLS_AES_ENCRYPT)
+             ? mbedtls_aes_xts_setkey_enc(&xts_ctx, key64, 512)
+             : mbedtls_aes_xts_setkey_dec(&xts_ctx, key64, 512);
+        if (rc == 0) {
+            for (int i = 0; i < sectors && rc == 0; i++) {
+                unsigned char data_unit[16] = {0};
+                uint64_t sectorNum = (uint64_t) startSector + (uint64_t) i;
+                for (int b = 0; b < 8; b++) {
+                    data_unit[b] = (unsigned char) ((sectorNum >> (b * 8)) & 0xFF);
+                }
+                unsigned char* p = data + (size_t) i * 512;
+                // mbedtls tolerates input == output, so this is a genuine in-place pass.
+                rc = mbedtls_aes_crypt_xts(&xts_ctx, mbedDir, 512, data_unit, p, p);
+            }
+        }
+        mbedtls_aes_xts_free(&xts_ctx);
+    } else if (cipher == CIPHER_SERPENT) {
+        keySchedule khat1, khat2;
+        serpent_set_key_256(key64, khat1);
+        serpent_set_key_256(key64 + 32, khat2);
+        xts_block_fn dataFn = (mbedDir == MBEDTLS_AES_ENCRYPT)
+                              ? serpentEncryptBlockAdapter : serpentDecryptBlockAdapter;
+        for (int i = 0; i < sectors; i++) {
+            unsigned char data_unit[16] = {0};
+            uint64_t sectorNum = (uint64_t) startSector + (uint64_t) i;
+            for (int b = 0; b < 8; b++) {
+                data_unit[b] = (unsigned char) ((sectorNum >> (b * 8)) & 0xFF);
+            }
+            unsigned char* p = data + (size_t) i * 512;
+            xts_generic_crypt(&khat1, &khat2, dataFn, serpentEncryptBlockAdapter,
+                              data_unit, p, p, 512);
+        }
+    } else {
+        LOGE("cryptSectorsInPlace: unknown cipher id %d", cipher);
+        rc = -1;
+    }
+
+    env->ReleaseByteArrayElements(jMasterKey, masterKey, JNI_ABORT);
+    // 0 commits the (in-place) plaintext back to the Java array.
+    env->ReleaseByteArrayElements(jBuffer, buffer, rc == 0 ? 0 : JNI_ABORT);
+    return rc;
+}
+
 extern "C" JNIEXPORT jbyteArray JNICALL
 Java_app_fayaz_otgmaster_veracrypt_VeraCryptNative_decryptHeader(JNIEnv *env, jobject thiz, jint cipher, jbyteArray jPassword, jbyteArray jSalt, jint iterations, jbyteArray jEncHeader) {
     jsize pwdLen = env->GetArrayLength(jPassword);
