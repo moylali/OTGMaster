@@ -132,21 +132,33 @@ Java_app_fayaz_otgmaster_exfat_ExFatNative_readDir(JNIEnv *env, jclass clazz, jl
 }
 
 extern "C" JNIEXPORT jint JNICALL
-Java_app_fayaz_otgmaster_exfat_ExFatNative_readFile(JNIEnv *env, jclass clazz, jlong exfatPtr, jlong nodePtr, jlong offset, jint size, jbyteArray buffer) {
+Java_app_fayaz_otgmaster_exfat_ExFatNative_readFile(JNIEnv *env, jclass clazz, jlong exfatPtr, jlong nodePtr, jlong offset, jint size, jbyteArray buffer, jint bufferOffset) {
     struct exfat* ef = (struct exfat*) exfatPtr;
     struct exfat_node* node = (struct exfat_node*) nodePtr;
     
     if (!ef || !node || (node->attrib & EXFAT_ATTRIB_DIR)) return -1;
     
-    char* localBuffer = (char*) malloc(size);
-    if (!localBuffer) return -1;
-    
-    ssize_t bytesRead = exfat_generic_pread(ef, node, localBuffer, size, offset);
-    if (bytesRead > 0) {
-        env->SetByteArrayRegion(buffer, 0, bytesRead, (jbyte*) localBuffer);
+    // Read straight into the Java array.
+    //
+    // This used to malloc(size), read into it, SetByteArrayRegion it across, and
+    // free it — and the Kotlin caller then copied the result into the destination
+    // ByteBuffer, for three copies and two allocations per read. libexfat issues
+    // roughly 100,000 preads for a single large directory listing, so that churn is
+    // not incidental.
+    if (bufferOffset < 0 || size < 0 ||
+            bufferOffset + size > env->GetArrayLength(buffer)) {
+        return -1;
     }
-    free(localBuffer);
-    
+    jbyte* elements = env->GetByteArrayElements(buffer, NULL);
+    if (!elements) return -1;
+
+    ssize_t bytesRead = exfat_generic_pread(
+            ef, node, (char*) (elements + bufferOffset), size, offset);
+
+    // 0 commits the data back; JNI_ABORT on failure avoids paying for a copy-back
+    // when the array holds nothing useful.
+    env->ReleaseByteArrayElements(buffer, elements, bytesRead > 0 ? 0 : JNI_ABORT);
+
     return (jint) bytesRead;
 }
 

@@ -924,6 +924,50 @@ object Benchmark {
             }
         }
 
+        // ---------- G: does reading a large existing file still work? ----------
+        //
+        // Every fixture above is 4-8 KiB, which is why a 2 GiB read regression passed
+        // all of them: (length - offset).toInt() overflowed to negative at exactly
+        // 2 GiB and returned zero bytes for any file that size. Only the SAF section
+        // read something big enough to notice. Check it here, cheaply, by sampling
+        // rather than reading the whole file.
+        val big = liveRoot()?.search("BENCH")?.search("large")?.listFiles()
+            ?.maxByOrNull { runCatching { it.length }.getOrDefault(0L) }
+        if (big == null) emit("correctness   : G skipped (BENCH/large missing)")
+        else {
+            val len = runCatching { big.length }.getOrDefault(-1L)
+            if (len <= 0) bad("G ${big.name} reports length $len")
+            else {
+                // Near the start, straddling 2 GiB if the file reaches it, and at the
+                // very end — the offsets where narrowing bugs bite.
+                val probes = listOfNotNull(
+                    0L,
+                    (len / 2) and 0xFFFFF000L.inv().inv(),
+                    if (len > 2L * 1024 * 1024 * 1024) 2L * 1024 * 1024 * 1024 - 4096 else null,
+                    maxOf(0L, len - 4096),
+                )
+                var ok = true
+                for (off in probes) {
+                    val want = minOf(4096L, len - off).toInt()
+                    if (want <= 0) continue
+                    val bb = ByteBuffer.allocate(want)
+                    val r = runCatching { big.read(off, bb) }
+                    when {
+                        r.isFailure -> { bad("G read at $off threw ${r.exceptionOrNull()}"); ok = false }
+                        bb.position() != want -> {
+                            bad("G read at $off returned ${bb.position()} of $want bytes"); ok = false
+                        }
+                    }
+                }
+                val past = ByteBuffer.allocate(512)
+                val eof = runCatching { big.read(len, past) }
+                if (eof.isFailure) { bad("G read at EOF threw ${eof.exceptionOrNull()}"); ok = false }
+                else if (past.position() != 0) { bad("G read at EOF returned ${past.position()} bytes"); ok = false }
+                if (ok) good("G large file (${len / 1024 / 1024} MiB) reads correctly at all probes")
+                runCatching { big.close() }
+            }
+        }
+
         emit("correctness   : ${if (failures == 0) "ALL PASSED" else "$failures FAILURE(S) ABOVE"}")
         runCatching { liveRoot()?.search(dirName)?.let { deleteRecursively(it) } }
     }

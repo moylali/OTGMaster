@@ -98,9 +98,16 @@ class ExFatFile(
         checkNotClosed()
         if (isDirectory) throw IOException("Cannot read directory as file")
         val size = destination.remaining()
-        val tempBuffer = ByteArray(size)
+        // Read straight into the destination's backing array when it has one, which
+        // removes the intermediate ByteArray and the copy out of it. Only a direct
+        // ByteBuffer needs the fallback.
+        val direct = destination.hasArray()
+        val target = if (direct) destination.array() else ByteArray(size)
+        val targetOffset = if (direct) destination.arrayOffset() + destination.position() else 0
         val bytesRead = fileSystem.withNative {
-            ExFatNative.readFile(fileSystem.exfatPtr, node.nodePtr, offset, size, tempBuffer)
+            ExFatNative.readFile(
+                fileSystem.exfatPtr, node.nodePtr, offset, size, target, targetOffset,
+            )
         }
         // A negative return is a native I/O failure (bad sector, device pulled).
         // Dropping it silently left destination untouched, and the SAF callback
@@ -111,7 +118,11 @@ class ExFatFile(
             throw IOException("exFAT read failed at offset $offset ($size bytes): $bytesRead")
         }
         if (bytesRead > 0) {
-            destination.put(tempBuffer, 0, bytesRead)
+            if (direct) {
+                destination.position(destination.position() + bytesRead)
+            } else {
+                destination.put(target, 0, bytesRead)
+            }
         }
     }
 

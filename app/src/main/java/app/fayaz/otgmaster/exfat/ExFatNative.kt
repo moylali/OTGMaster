@@ -31,7 +31,11 @@ object ExFatNative {
     external fun readDir(exfatPtr: Long, nodePtr: Long): Array<ExFatNode>?
 
     @JvmStatic
-    external fun readFile(exfatPtr: Long, nodePtr: Long, offset: Long, size: Int, buffer: ByteArray): Int
+    /** Reads into [buffer] starting at [bufferOffset], avoiding an intermediate copy. */
+    external fun readFile(
+        exfatPtr: Long, nodePtr: Long, offset: Long, size: Int,
+        buffer: ByteArray, bufferOffset: Int,
+    ): Int
 
     @JvmStatic
     external fun writeFile(exfatPtr: Long, nodePtr: Long, offset: Long, size: Int, buffer: ByteArray): Int
