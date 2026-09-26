@@ -837,27 +837,50 @@ than slow.
 The 81x listing result reproduces the original motivation for the cache (§5.5) and
 is a same-session comparison, so it stands on its own.
 
-### Correction to §5.8: there was a lever on the provider path
+### Retraction: the "provider overhead" figure was not measuring overhead
 
-§5.8 concluded that the 1.50x–2.90x provider penalty was the FUSE round trip and
-that **no lever had been identified**. That was wrong. The read copy elimination
-(three copies and two allocations per read down to one copy and none) moved exFAT's
-provider overhead from **2.90x to 1.04x**:
+§5.8 reported a 1.50x–2.90x provider penalty, and an earlier revision of this section
+claimed the read copy elimination had cut exFAT's to 1.04x. **Both are withdrawn.**
+The metric was confounded, and swapping the drives between devices is what exposed
+it.
 
-| | Before | After |
-|---|---|---|
-| `saf single` | 8.94 MB/s | 20.77 MB/s |
-| `saf direct` | 24.53 MB/s | 21.61 MB/s |
-| **provider overhead** | **2.90x** | **1.04x** |
+The same drive and the same build, measured on all four device/filesystem pairs:
 
-Going through SAF on exFAT now costs almost nothing. The penalty was per-read
-allocation and copying inside the callback, not the bridge.
+| | `saf single` | `saf direct` | ratio |
+|---|---|---|---|
+| exFAT, Pixel 10 Pro XL | 8.36 MB/s | 29.41 MB/s | 3.52x |
+| exFAT, OnePlus 7 | 20.77 MB/s | 21.61 MB/s | 1.04x |
+| FAT32, Pixel 10 Pro XL | 3.38 MB/s | 5.07 MB/s | 1.66x |
+| FAT32, OnePlus 7 | 8.22 MB/s | 7.17 MB/s | **0.87x** |
 
-One consequence for the concurrency question: `saf par same` is now 17.56 MB/s
-against 20.77 single — two streams are slightly *worse* than one, where before they
-were 2.03x better. With the per-read cost removed there is no idle time for a second
-stream to fill, so it only contends. That strengthens rather than weakens the
-rejection of per-drive handler threads.
+A ratio below 1.0 cannot be overhead, and that is the tell. The two arms were not
+comparable: the direct arm issued explicit **64 KiB** reads, while the kernel
+coalesces FUSE reads to **128 KiB** — measured directly in the FD relay spike, where
+`onRead` arrives at 131,072 bytes regardless of what the client asked for. So the
+ratio mixed provider cost with kernel readahead, in proportions that vary by device.
+
+The benchmark now issues 128 KiB in the direct arm to match, reports it as
+`saf ratio` rather than `saf overhead`, and flags any value below 1.0 as
+non-comparable. **No provider-overhead figure should be quoted from this document
+until that has been re-measured on both devices.**
+
+Two things that do survive:
+
+- **exFAT single-stream SAF throughput more than doubled** on the OnePlus after the
+  copy elimination, 8.94 to 20.77 MB/s. That is a same-device comparison of the same
+  arm, so it holds independently of the ratio.
+- **The rejection of per-drive handler threads stands on other evidence** — a single
+  handler thread served two concurrent streams at 2.03x on exFAT and 1.43x on FAT32,
+  which is incompatible with it being the bottleneck. Note that the two-stream figure
+  is itself device-dependent: 2.67x on the Pixel against slightly *worse* than one
+  stream on the OnePlus, so it should not be quoted as a single number either.
+
+**The general lesson, which has now cost three retractions in this document.** §5.7
+retracted a write-throughput claim built on cross-session comparison. §5.6 retracted
+a listing comparison for the same reason. This one was sound within a session and
+still wrong, because it generalised from one device. A ratio is only as good as the
+equivalence of its two arms, and "same code, same drive" does not make two *devices*
+equivalent.
 
 ## 6. The honest ceiling
 

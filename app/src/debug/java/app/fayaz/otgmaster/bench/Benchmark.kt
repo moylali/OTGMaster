@@ -1051,7 +1051,14 @@ object Benchmark {
      */
     private fun benchSaf(context: Context, emit: (String) -> Unit) {
         val cr = context.contentResolver
-        val bufSize = 64 * 1024
+        // Match the request size the FUSE bridge actually delivers.
+        //
+        // The direct arm used 64 KiB while the kernel coalesces FUSE reads to 128 KiB
+        // (measured in the FD relay spike: onRead arrives at 131072 bytes). Comparing
+        // those two produced an "overhead" ratio that mixed provider cost with kernel
+        // readahead, and ranged 0.87x-3.52x across four device/filesystem pairs — a
+        // figure below 1.0 being proof on its own that it was not measuring overhead.
+        val bufSize = 128 * 1024
         val capBytes = 32L * 1024 * 1024   // cap so a slow path cannot run for hours
 
         fun docUri(driveId: String, path: String): android.net.Uri =
@@ -1121,9 +1128,14 @@ object Benchmark {
             }
         }
         if (directBytes > 0) {
-            emit("saf direct    : ${mbps(directBytes, directNs)} calling UsbFile directly")
-            emit("saf overhead  : provider costs %.2fx".format(
-                safNs.toDouble() / directNs.toDouble()))
+            emit("saf direct    : ${mbps(directBytes, directNs)} calling UsbFile directly " +
+                 "(${bufSize / 1024} KiB reads, matching what FUSE delivers)")
+            val ratio = safNs.toDouble() / directNs.toDouble()
+            emit("saf ratio     : %.2fx provider vs direct".format(ratio))
+            if (ratio < 1.0) {
+                emit("              (below 1.0 — the two arms are not comparable; " +
+                     "treat as noise, not a speedup)")
+            }
         }
 
         /** Runs [tasks] in parallel, returns total bytes and wall time. */
