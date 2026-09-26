@@ -1,0 +1,25 @@
+<manifest xmlns:android="http://schemas.android.com/apk/res/android">
+
+    <application>
+        <!--
+          Debug-only benchmark trigger. Declared in the debug source set alone, so
+          release builds contain neither this entry nor the classes behind it.
+
+          The broadcast must name this component explicitly: since Android 8,
+          manifest-declared receivers do not receive implicit broadcasts, so an
+          action-only broadcast is accepted and silently dropped.
+
+          An optional string extra named "tests" selects a subset of sections
+          (free, block, dir, path, seq, random, opens), since a full pass takes
+          minutes. See BenchmarkReceiver for the exact commands.
+        -->
+        <receiver
+            android:name=".bench.BenchmarkReceiver"
+            android:exported="true">
+            <intent-filter>
+                <action android:name="app.fayaz.otgmaster.RUN_BENCHMARK" />
+            </intent-filter>
+        </receiver>
+    </application>
+
+</manifest>

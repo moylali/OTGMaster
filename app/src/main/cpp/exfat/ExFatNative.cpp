@@ -7,6 +7,7 @@
 
 extern "C" {
 #include "exfat.h"
+#include "otg_io_stats.h"
 }
 
 #define LOG_TAG "exfat-jni"
@@ -251,3 +252,35 @@ Java_app_fayaz_otgmaster_exfat_ExFatNative_putNode(JNIEnv *env, jclass clazz, jl
         }
     }
 }
+
+/* ---------------------------------------------------------------------------
+ * Debug-only I/O instrumentation (OTG_IO_STATS, set from the debug build type).
+ *
+ * Counted in io.c, exported here: io.c is compiled into the `exfat` STATIC
+ * library, where a JNI entry point is referenced by nothing at link time and the
+ * linker drops it. This file is a direct source of libveracrypt-native.so, so
+ * these exports survive. The Kotlin declarations live in src/debug
+ * (ExFatIoStats), so a release build cannot reference symbols that were never
+ * compiled.
+ * ------------------------------------------------------------------------- */
+#ifdef OTG_IO_STATS
+extern "C" JNIEXPORT void JNICALL
+Java_app_fayaz_otgmaster_exfat_ExFatIoStats_reset(JNIEnv* env, jclass clazz) {
+    (void) env; (void) clazz;
+    otg_io_reset();
+}
+
+extern "C" JNIEXPORT jlongArray JNICALL
+Java_app_fayaz_otgmaster_exfat_ExFatIoStats_snapshot(JNIEnv* env, jclass clazz) {
+    (void) clazz;
+    jlong out[4 + OTG_IO_BUCKETS];
+    out[0] = (jlong) otg_pread_calls;
+    out[1] = (jlong) otg_pread_bytes;
+    out[2] = (jlong) otg_pwrite_calls;
+    out[3] = (jlong) otg_pwrite_bytes;
+    for (int i = 0; i < OTG_IO_BUCKETS; i++) out[4 + i] = (jlong) otg_size_hist[i];
+    jlongArray arr = env->NewLongArray(4 + OTG_IO_BUCKETS);
+    if (arr != nullptr) env->SetLongArrayRegion(arr, 0, 4 + OTG_IO_BUCKETS, out);
+    return arr;
+}
+#endif /* OTG_IO_STATS */

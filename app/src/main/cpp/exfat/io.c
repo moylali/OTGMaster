@@ -1,5 +1,7 @@
 
 #include "exfat.h"
+#include "otg_io_stats.h"
+#include <stdint.h>
 #include <inttypes.h>
 #include <sys/types.h>
 #include <sys/stat.h>
@@ -24,6 +26,35 @@ struct exfat_dev {
 #define LOGE(...) __android_log_print(ANDROID_LOG_ERROR, LOG_TAG, __VA_ARGS__)
 
 static JavaVM* g_jvm = NULL;
+
+/* Counters for the pread/pwrite hooks below; see exfat/otg_io_stats.h for why
+ * the JNI accessors live in ExFatNative.cpp rather than here. OTG_IO_COUNT
+ * compiles to nothing when OTG_IO_STATS is undefined. */
+#ifdef OTG_IO_STATS
+volatile uint64_t otg_pread_calls  = 0;
+volatile uint64_t otg_pread_bytes  = 0;
+volatile uint64_t otg_pwrite_calls = 0;
+volatile uint64_t otg_pwrite_bytes = 0;
+volatile uint64_t otg_size_hist[OTG_IO_BUCKETS] = {0};
+
+void otg_io_count(size_t size, int is_write) {
+    if (is_write) { otg_pwrite_calls++; otg_pwrite_bytes += size; }
+    else          { otg_pread_calls++;  otg_pread_bytes  += size; }
+    int b;
+    if      (size <= 512)    b = 0;
+    else if (size <= 4096)   b = 1;
+    else if (size <= 16384)  b = 2;
+    else if (size <= 65536)  b = 3;
+    else if (size <= 262144) b = 4;
+    else                     b = 5;
+    otg_size_hist[b]++;
+}
+
+void otg_io_reset(void) {
+    otg_pread_calls = otg_pread_bytes = otg_pwrite_calls = otg_pwrite_bytes = 0;
+    for (int i = 0; i < OTG_IO_BUCKETS; i++) otg_size_hist[i] = 0;
+}
+#endif /* OTG_IO_STATS */
 
 JNIEXPORT jint JNICALL JNI_OnLoad(JavaVM* vm, void* reserved) {
     g_jvm = vm;
@@ -99,6 +130,8 @@ ssize_t exfat_pread(struct exfat_dev* dev, void* buffer, size_t size, off_t offs
     jclass clazz = (*env)->FindClass(env, "app/fayaz/otgmaster/exfat/ExFatNative");
     jmethodID preadMethod = (*env)->GetStaticMethodID(env, clazz, "pread", "(Lapp/fayaz/otgmaster/block/RawBlockDevice;JI[B)I");
     
+    OTG_IO_COUNT(size, 0);
+
     jbyteArray jBuffer = (*env)->NewByteArray(env, size);
     jint result = (*env)->CallStaticIntMethod(env, clazz, preadMethod, (jobject)dev->block_device, (jlong)offset, (jint)size, jBuffer);
     
@@ -115,6 +148,8 @@ ssize_t exfat_pwrite(struct exfat_dev* dev, const void* buffer, size_t size, off
     jclass clazz = (*env)->FindClass(env, "app/fayaz/otgmaster/exfat/ExFatNative");
     jmethodID pwriteMethod = (*env)->GetStaticMethodID(env, clazz, "pwrite", "(Lapp/fayaz/otgmaster/block/RawBlockDevice;JI[B)I");
     
+    OTG_IO_COUNT(size, 1);
+
     jbyteArray jBuffer = (*env)->NewByteArray(env, size);
     (*env)->SetByteArrayRegion(env, jBuffer, 0, size, (const jbyte*)buffer);
     

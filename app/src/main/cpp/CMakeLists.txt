@@ -18,6 +18,14 @@ set(ENABLE_TESTING OFF CACHE BOOL "Disable mbedtls tests" FORCE)
 set(ENABLE_PROGRAMS OFF CACHE BOOL "Disable mbedtls programs" FORCE)
 add_subdirectory(mbedtls)
 
+# libexfat I/O instrumentation. Enabled from the debug build type only
+# (app/build.gradle.kts). io.c holds the counters and ExFatNative.cpp exports
+# them over JNI, so the definition has to reach BOTH targets.
+option(OTG_IO_STATS "Compile libexfat pread/pwrite counters (debug only)" OFF)
+if(OTG_IO_STATS)
+    message(STATUS "OTG: libexfat I/O instrumentation enabled")
+endif()
+
 # libexfat
 file(GLOB EXFAT_SRCS "exfat/*.c")
 add_library(exfat STATIC ${EXFAT_SRCS})
@@ -27,6 +35,9 @@ target_compile_definitions(exfat PRIVATE
     VERSION="1.4.0"
 )
 target_include_directories(exfat PUBLIC exfat)
+if(OTG_IO_STATS)
+    target_compile_definitions(exfat PRIVATE OTG_IO_STATS=1)
+endif()
 
 # serpent (vendored public-domain reference implementation, see serpent/PROVENANCE.md)
 add_library(serpent STATIC
@@ -39,7 +50,9 @@ target_include_directories(serpent PUBLIC serpent)
 # veracrypt-native
 add_library(veracrypt-native SHARED VeraCryptNative.cpp exfat/ExFatNative.cpp)
 target_compile_definitions(veracrypt-native PRIVATE _FILE_OFFSET_BITS=64)
-
+if(OTG_IO_STATS)
+    target_compile_definitions(veracrypt-native PRIVATE OTG_IO_STATS=1)
+endif()
 target_link_options(veracrypt-native PRIVATE "-Wl,-z,max-page-size=16384")
 target_link_libraries(veracrypt-native
         mbedcrypto

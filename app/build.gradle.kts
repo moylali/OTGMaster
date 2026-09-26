@@ -50,6 +50,17 @@ android {
     }
 
     buildTypes {
+        debug {
+            // Compiles the libexfat I/O counters (ExFatIoStats / OTG_IO_STATS in
+            // src/main/cpp/CMakeLists.txt). Debug only: release builds must not
+            // carry instrumentation, and the Kotlin side lives in src/debug so a
+            // release build cannot reference the missing native symbols.
+            externalNativeBuild {
+                cmake {
+                    arguments += "-DOTG_IO_STATS=ON"
+                }
+            }
+        }
         release {
             isMinifyEnabled = false
             if (hasReleaseSigning) {
