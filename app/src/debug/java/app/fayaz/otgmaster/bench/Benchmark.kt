@@ -207,6 +207,9 @@ object Benchmark {
                 .onFailure { emit("correctness   : FAILED ${it}") }
             if (only.contains("saf")) runCatching { benchSaf(context, ::emit) }
                 .onFailure { emit("saf           : FAILED ${it}") }
+            // Opt-in: hashing a 2 GiB fixture takes minutes.
+            if (only.contains("fixtures")) runCatching { benchFixtures(drive, ::emit) }
+                .onFailure { emit("fixtures      : FAILED ${it}") }
             emit("")
         }
 
@@ -1132,6 +1135,190 @@ object Benchmark {
     }
 
     /**
+     * Verifies the drive's fixtures against hashes computed on the **host**.
+     *
+     * This is the one check in this file that does not grade its own homework. The
+     * correctness suite generates expected content and compares against that, which
+     * proves the data written is the data read back — but a systematic fault in the
+     * generator, or in the read path applied consistently to both, would be invisible
+     * to it. BENCH/MANIFEST.txt carries SHA-256 values produced by
+     * scripts/prepare_test_usb.sh on a Mac, through a completely different code path,
+     * so agreement means something these other cases cannot establish.
+     *
+     * It is also what makes an offline run on a phone with no adb trustworthy: the
+     * verdict does not depend on anything the phone computed for itself.
+     *
+     * Directory lines are hashed over the sorted "name<TAB>size" listing rather than
+     * file contents, which pins the entry count and every name and length — what the
+     * dense directories exist to stress — without reading 10,000 files.
+     *
+     * Hashing 2 GiB at the measured ~15 MB/s takes minutes, so this is opt-in
+     * ("fixtures") rather than part of a default run.
+     */
+    private fun benchFixtures(drive: MountedDrive, emit: (String) -> Unit) {
+        val root = OtgMasterState.mountedDrives.firstOrNull()?.fileSystem?.rootDirectory
+            ?: drive.fileSystem.rootDirectory
+        val bench = root.search("BENCH") ?: return emit("fixtures      : BENCH/ not found")
+        val manifest = bench.search("MANIFEST.txt")
+            ?: return emit("fixtures      : MANIFEST.txt missing — re-run prepare_test_usb.sh")
+
+        val text = runCatching {
+            val bb = ByteBuffer.allocate(manifest.length.toInt().coerceAtMost(256 * 1024))
+            manifest.read(0, bb)
+            String(bb.array(), 0, bb.position())
+        }.getOrNull()
+        if (text == null) return emit("fixtures      : could not read MANIFEST.txt")
+
+        var checked = 0
+        var failed = 0
+        var skipped = 0
+
+        var errors = 0
+        for (raw in text.lines()) {
+            val line = raw.trim()
+            if (line.isEmpty() || line.startsWith("#")) continue
+            val parts = line.split('\t')
+            if (parts.size < 3) continue
+            val (path, sizeField, expected) = Triple(parts[0], parts[1], parts[2].trim())
+            if (expected == "-" || expected.length != 64) {
+                skipped++
+                continue
+            }
+
+            if (path.endsWith("/")) {
+                // A directory line must record a count, as "<N> files". The older
+                // manifest format wrote `nested/<TAB>10 levels<TAB><hash of one file>`,
+                // where the hash is of a file's contents rather than of a listing —
+                // comparing the two produces a mismatch that looks like corruption and
+                // is not. Skip those and say so.
+                if (!sizeField.trim().endsWith("files")) {
+                    emit("fixtures      : $path skipped — manifest predates this check " +
+                         "(re-run scripts/prepare_test_usb.sh to hash fixtures)")
+                    skipped++
+                    continue
+                }
+                // Directory: hash the sorted name<TAB>size listing.
+                val dir = bench.search(path.trimEnd('/'))
+                if (dir == null) { emit("fixtures      : *** ${path} missing ***"); failed++; continue }
+                val entries = runCatching { dir.listFiles() }.getOrNull()
+                if (entries == null) {
+                    emit("fixtures      : *** $path could not be listed ***")
+                    failed++
+                } else {
+                    // Subdirectories have no length — libaums throws
+                    // UnsupportedOperationException("This is a directory!") — and the
+                    // host cannot produce a comparable value for one either, so they
+                    // are listed by name alone. Found by running this against a
+                    // manifest whose nested/ line pointed at a directory of
+                    // directories, which threw rather than reporting a mismatch.
+                    val listing = entries.map {
+                        if (it.isDirectory) "${it.name}\tdir"
+                        else "${it.name}\t${runCatching { it.length }.getOrDefault(-1L)}"
+                    }.sorted().joinToString("\n")
+                    val got = sha256Of(listing.toByteArray())
+                    checked++
+                    if (got == expected) {
+                        emit("fixtures      : $path listing matches (${entries.size} entries)")
+                    } else {
+                        emit("fixtures      : *** $path LISTING DIFFERS — expected " +
+                             "${expected.take(16)}…, got ${got.take(16)}… ***")
+                        failed++
+                    }
+                }
+                continue
+            }
+
+            val file = bench.search(path)
+            if (file == null) { emit("fixtures      : *** $path missing ***"); failed++; continue }
+            val wantBytes = sizeField.toLongOrNull()
+            if (wantBytes != null && file.length != wantBytes) {
+                emit("fixtures      : *** $path is ${file.length} bytes, manifest says $wantBytes ***")
+                failed++
+                continue
+            }
+            val digest = java.security.MessageDigest.getInstance("SHA-256")
+            val buf = ByteBuffer.allocate(256 * 1024)
+            var off = 0L
+            val ns = measureNanoTime {
+                while (off < file.length) {
+                    buf.clear()
+                    file.read(off, buf)
+                    if (buf.position() <= 0) break
+                    digest.update(buf.array(), 0, buf.position())
+                    off += buf.position()
+                }
+            }
+            runCatching { file.close() }
+            checked++
+            val got = digest.digest().joinToString("") { "%02x".format(it) }
+            if (got == expected && off == file.length) {
+                emit("fixtures      : $path matches the host hash (${mbps(off, ns)})")
+            } else {
+                emit("fixtures      : *** $path DIFFERS — read $off of ${file.length} bytes, " +
+                     "expected ${expected.take(16)}…, got ${got.take(16)}… ***")
+                failed++
+            }
+        }
+
+        if (errors > 0) emit("fixtures      : $errors manifest line(s) could not be read")
+        emit("fixtures      : " + when {
+            checked == 0 -> "nothing to check — manifest has no hashes (old prepare script?)"
+            failed == 0 -> "ALL $checked MATCHED the host-computed hashes" +
+                           if (skipped > 0) " ($skipped entry/entries skipped — see above)" else ""
+            else -> "*** $failed of $checked FAILED ***"
+        })
+    }
+
+    /**
+     * Appends one line per run to BENCH/reports/INDEX.txt.
+     *
+     * Several runs can be done before the drive is next plugged into a desktop, so
+     * each report is its own timestamped file and nothing is overwritten. The index
+     * exists so the whole set can be read at a glance — which runs happened, on what
+     * build, and whether the integrity checks passed — without opening each file.
+     *
+     * Appends rather than rewrites: a later run must not be able to lose an earlier
+     * run's record, and a run that dies midway should still leave the runs before it
+     * intact.
+     */
+    private fun appendIndex(reports: UsbFile, reportName: String, text: String) {
+        runCatching {
+            fun verdict(prefix: String, needle: String): String = text.lines()
+                .lastOrNull { it.startsWith(prefix) && it.contains(needle) }
+                ?.substringAfter(needle)?.trim()?.take(40) ?: "-"
+
+            val correctness = verdict("correctness   :", ":")
+            val fixtures = verdict("fixtures      :", ":")
+            val contaminated = if (text.contains("deviceIdle=true") ||
+                                   text.contains("interactive=false")) "DOZED" else "awake"
+            val line = listOf(
+                reportName,
+                android.os.Build.MODEL,
+                "Android ${android.os.Build.VERSION.RELEASE}",
+                "commit ${app.fayaz.otgmaster.BuildConfig.GIT_COMMIT}",
+                contaminated,
+                "correctness: $correctness",
+                "fixtures: $fixtures",
+            ).joinToString("  |  ") + "\n"
+
+            val index = reports.search("INDEX.txt") ?: reports.createFile("INDEX.txt")
+            val at = index.length
+            index.write(at, ByteBuffer.wrap(line.toByteArray()))
+            index.flush()
+            index.close()
+            // State the running total in the log and in the next report, so "did my
+            // earlier runs survive?" is answerable without pulling the drive.
+            val kept = runCatching { reports.listFiles().count { !it.isDirectory } }.getOrDefault(-1)
+            Log.i(TAG, "index updated: BENCH/reports/INDEX.txt — " +
+                       "$kept file(s) now in BENCH/reports/")
+        }.onFailure { Log.w(TAG, "could not update the report index: $it") }
+    }
+
+    private fun sha256Of(bytes: ByteArray): String =
+        java.security.MessageDigest.getInstance("SHA-256").digest(bytes)
+            .joinToString("") { "%02x".format(it) }
+
+    /**
      * Returns an empty directory named [base], tolerating leftovers.
      *
      * A previous run that died mid-way (an OOM from a corrupt directory entry, an
@@ -1185,7 +1372,7 @@ object Benchmark {
         val model = android.os.Build.MODEL.replace(Regex("[^A-Za-z0-9._-]"), "_")
         val name = "otgbench-$model-$stamp.txt"
 
-        // 1. onto the drive
+        // 1. onto the drive, one file per run plus a one-line index entry
         runCatching {
             val root = OtgMasterState.mountedDrives
                 .firstOrNull { (it.fileSystem as? ExFatFileSystem)?.isUnmounted != true }
@@ -1199,6 +1386,7 @@ object Benchmark {
                 f.flush()
                 f.close()
                 Log.i(TAG, "report written to the drive: BENCH/reports/$name")
+                appendIndex(reports, name, text)
             }
         }.onFailure { Log.w(TAG, "could not write the report to the drive: $it") }
 

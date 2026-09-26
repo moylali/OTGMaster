@@ -439,7 +439,7 @@ STRAY=$(find "$MNT" -name '._*' 2>/dev/null | wc -l | tr -d ' ')
 [ "$STRAY" = "0" ] || { warn "$STRAY AppleDouble files still present"; VERIFY_FAIL=1; }
 [ "$VERIFY_FAIL" -eq 0 ] || warn "fixture verification reported problems — see above"
 
-info "Writing manifest"
+info "Writing manifest (hashing fixtures — a 2 GiB file takes a moment)"
 MANIFEST="$BENCH/MANIFEST.txt"
 {
     echo "# OTG Master benchmark fixture"
@@ -454,15 +454,33 @@ MANIFEST="$BENCH/MANIFEST.txt"
     echo "# label:     $LABEL"
     echo "# device:    $MEDIA (${GIB} GB)"
     echo
-    echo "# path<TAB>bytes<TAB>sha256   (large files: size only, hashed on demand)"
+    echo "# path<TAB>bytes<TAB>sha256"
+    echo "#"
+    echo "# Hashes are computed here, on the host, so the device has an external"
+    echo "# ground truth to check against. The on-device correctness suite generates"
+    echo "# its own expected content and compares against that, which proves the data"
+    echo "# written is the data read back but cannot catch a systematic fault in the"
+    echo "# generator itself. These do."
+    echo "#"
+    echo "# A directory line's hash is over its sorted 'name<TAB>size' listing, not"
+    echo "# file contents: it pins the entry count and every name and length, which is"
+    echo "# what the dense directories exist to stress, without hashing 10,000 files."
     for spec in $LARGE_SPEC; do
         name="${spec%%:*}"
         f="$BENCH/large/$name"
-        printf 'large/%s\t%s\t-\n' "$name" "$(stat -f%z "$f")"
+        printf 'large/%s\t%s\t%s\n' "$name" "$(stat -f%z "$f")" \
+            "$(shasum -a 256 "$f" | awk '{print $1}')"
     done
-    printf 'dense_short/\t%s files\t-\n' "$DENSE_N"
-    printf 'dense_lfn/\t%s files\t-\n' "$DENSE_N"
-    printf 'nested/\t10 levels\t%s\n' "$(shasum -a 256 "$DEEP/leaf_at_depth_10.dat" | awk '{print $1}')"
+    for d in dense_short dense_lfn; do
+        # Regular files only, name and size. A subdirectory has no size the device
+        # can produce a matching value for, so it would never agree.
+        listing="$(cd "$BENCH/$d" && for f in *; do [ -f "$f" ] && printf '%s\t%s\n' "$f" "$(stat -f%z "$f")"; done | LC_ALL=C sort)"
+        printf '%s/\t%s files\t%s\n' "$d" "$DENSE_N" \
+            "$(printf '%s' "$listing" | shasum -a 256 | awk '{print $1}')"
+    done
+    printf 'nested/leaf_at_depth_10.dat\t%s\t%s\n' \
+        "$(stat -f%z "$DEEP/leaf_at_depth_10.dat")" \
+        "$(shasum -a 256 "$DEEP/leaf_at_depth_10.dat" | awk '{print $1}')"
 } > "$MANIFEST"
 
 sync
