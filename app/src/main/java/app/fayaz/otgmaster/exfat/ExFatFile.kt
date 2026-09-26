@@ -88,9 +88,14 @@ class ExFatFile(
     override fun listFiles(): Array<UsbFile> {
         checkNotClosed()
         if (!isDirectory) throw IOException("Not a directory")
+        // null means the native call failed; an empty directory comes back as a
+        // zero-length array. Mapping null to emptyArray() reported every failure —
+        // a bad sector, a pulled drive — as "this directory is empty", which is a
+        // worse answer than an error: a SAF client concludes the files were deleted,
+        // and anything syncing or mirroring the directory would act on that.
         val nodes = fileSystem.withNative {
             ExFatNative.readDir(fileSystem.exfatPtr, node.nodePtr)
-        } ?: return emptyArray()
+        } ?: throw IOException("exFAT directory listing failed for $absolutePath")
         return nodes.map { ExFatFile(fileSystem, this, it) }.toTypedArray()
     }
 

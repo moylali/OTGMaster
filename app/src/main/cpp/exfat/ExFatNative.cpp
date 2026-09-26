@@ -117,17 +117,32 @@ Java_app_fayaz_otgmaster_exfat_ExFatNative_readDir(JNIEnv *env, jclass clazz, jl
     jobjectArray array = env->NewObjectArray(count, nodeClass, NULL);
     
     if (exfat_opendir(ef, dir, &it) != 0) {
+        // Returning `array` here handed the caller `count` NULL elements against a
+        // non-null Kotlin type. NULL means "failed" and an empty directory is a
+        // zero-length array, so the two are already distinguishable — say failed.
         LOGE("exfat_opendir (fill pass) failed");
-        return array;
+        return NULL;
     }
     int i = 0;
     while ((child = exfat_readdir(&it)) != NULL) {
+        if (i >= count) {
+            // More entries than the counting pass saw. Better to fail than to
+            // silently drop the tail of a directory listing.
+            LOGE("readDir: directory grew between passes (%d > %d)", i + 1, count);
+            exfat_closedir(ef, &it);
+            return NULL;
+        }
         jobject jChild = createExFatNode(env, child);
         env->SetObjectArrayElement(array, i++, jChild);
         env->DeleteLocalRef(jChild);
     }
     exfat_closedir(ef, &it);
     
+    if (i != count) {
+        // Fewer than counted: the tail would be NULL elements. Same reasoning.
+        LOGE("readDir: filled %d of %d entries", i, count);
+        return NULL;
+    }
     return array;
 }
 

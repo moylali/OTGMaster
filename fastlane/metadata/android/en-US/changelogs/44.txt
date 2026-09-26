@@ -16,3 +16,4 @@
 • Fixed: a write to an exFAT drive that could not be completed in full is now reported instead of silently losing the remainder
 • Security: the volume's encryption keys are now wiped from memory as soon as they have been used, instead of lingering after the drive is unlocked
 • Fixed: opening a folder on a damaged drive no longer crashes the app — an implausible folder size is now rejected with an error
+• Fixed: if a folder cannot be read on an exFAT drive, the app now reports the error instead of showing the folder as empty
