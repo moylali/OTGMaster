@@ -66,6 +66,35 @@ class VeraCryptDocumentProvider : DocumentsProvider() {
             return buffer.position()
         }
 
+        /**
+         * One lock per drive, serialising all access to that drive's filesystem.
+         *
+         * libaums has no locking of its own: its FAT cache, cluster chains and
+         * directory entries are plain mutable state. DocumentsProvider methods run on
+         * binder threads while file I/O runs on proxyHandler, so a listing and a read
+         * genuinely overlap — and f58d556 showed those structures can disagree even
+         * single-threaded. exFAT is already safe (ExFatFileSystem holds a
+         * filesystem-wide ReentrantLock); this gives FAT32 the same guarantee at the
+         * one boundary every caller crosses.
+         *
+         * Reentrant, because these operations nest: createFile → search → listFiles,
+         * write → flush → parent.write.
+         *
+         * Not a substitute for locking inside libaums, which would also cover direct
+         * UsbFile callers. It covers the accessors that exist today.
+         */
+        private val driveLocks =
+            java.util.concurrent.ConcurrentHashMap<String, java.util.concurrent.locks.ReentrantLock>()
+
+        /** Runs [body] with the filesystem of [docId]'s drive exclusively held. */
+        fun <T> onDrive(docId: String?, body: () -> T): T {
+            val lock = driveLocks.computeIfAbsent(docId?.substringBefore(':') ?: "") {
+                java.util.concurrent.locks.ReentrantLock()
+            }
+            lock.lock()
+            try { return body() } finally { lock.unlock() }
+        }
+
         private val proxyHandler: android.os.Handler by lazy {
             val thread = android.os.HandlerThread("ProxyFileDescriptorThread")
             thread.start()
@@ -89,7 +118,10 @@ class VeraCryptDocumentProvider : DocumentsProvider() {
         return true
     }
 
-    override fun createDocument(
+    override fun createDocument(documentId: String?, mimeType: String?, displayName: String?): String =
+        onDrive(documentId) { createDocumentImpl(documentId, mimeType, displayName) }
+
+    private fun createDocumentImpl(
         documentId: String?,
         mimeType: String?,
         displayName: String?
@@ -104,12 +136,18 @@ class VeraCryptDocumentProvider : DocumentsProvider() {
         return getDocIdForChild(documentId, newFile)
     }
 
-    override fun deleteDocument(documentId: String?) {
+    override fun deleteDocument(documentId: String?) =
+        onDrive(documentId) { deleteDocumentImpl(documentId) }
+
+    private fun deleteDocumentImpl(documentId: String?) {
         val file = getFileForDocId(documentId) ?: throw FileNotFoundException("File not found")
         file.delete()
     }
 
-    override fun renameDocument(documentId: String?, displayName: String?): String {
+    override fun renameDocument(documentId: String?, displayName: String?): String =
+        onDrive(documentId) { renameDocumentImpl(documentId, displayName) }
+
+    private fun renameDocumentImpl(documentId: String?, displayName: String?): String {
         val file = getFileForDocId(documentId) ?: throw FileNotFoundException("File not found")
         if (displayName == null) throw IllegalArgumentException("Display name cannot be null")
         file.name = displayName
@@ -144,7 +182,10 @@ class VeraCryptDocumentProvider : DocumentsProvider() {
         return result
     }
 
-    override fun queryDocument(documentId: String?, projection: Array<out String>?): Cursor {
+    override fun queryDocument(documentId: String?, projection: Array<out String>?): Cursor =
+        onDrive(documentId) { queryDocumentImpl(documentId, projection) }
+
+    private fun queryDocumentImpl(documentId: String?, projection: Array<out String>?): Cursor {
         val result = MatrixCursor(projection ?: DEFAULT_DOCUMENT_PROJECTION)
         val file = getFileForDocId(documentId)
         if (file != null) {
@@ -154,6 +195,14 @@ class VeraCryptDocumentProvider : DocumentsProvider() {
     }
 
     override fun queryChildDocuments(
+        parentDocumentId: String?,
+        projection: Array<out String>?,
+        sortOrder: String?
+    ): Cursor = onDrive(parentDocumentId) {
+        queryChildDocumentsImpl(parentDocumentId, projection, sortOrder)
+    }
+
+    private fun queryChildDocumentsImpl(
         parentDocumentId: String?,
         projection: Array<out String>?,
         sortOrder: String?
@@ -187,25 +236,20 @@ class VeraCryptDocumentProvider : DocumentsProvider() {
             }
             
             val callback = object : ProxyFileDescriptorCallback() {
-                override fun onGetSize(): Long {
-                    return file.length
-                }
+                override fun onGetSize(): Long = onDrive(documentId) { file.length }
 
                 override fun onRead(offset: Long, size: Int, data: ByteArray): Int =
-                    readInto(file, offset, size, data)
+                    onDrive(documentId) { readInto(file, offset, size, data) }
 
-                override fun onWrite(offset: Long, size: Int, data: ByteArray): Int {
-                    file.write(offset, ByteBuffer.wrap(data, 0, size))
-                    return size
-                }
+                override fun onWrite(offset: Long, size: Int, data: ByteArray): Int =
+                    onDrive(documentId) {
+                        file.write(offset, ByteBuffer.wrap(data, 0, size))
+                        size
+                    }
 
-                override fun onFsync() {
-                    file.flush()
-                }
+                override fun onFsync() = onDrive(documentId) { file.flush() }
 
-                override fun onRelease() {
-                    file.close()
-                }
+                override fun onRelease() = onDrive(documentId) { file.close() }
             }
 
             val pfdMode = ParcelFileDescriptor.parseMode(mode ?: "r")
@@ -216,14 +260,12 @@ class VeraCryptDocumentProvider : DocumentsProvider() {
             ?: throw IllegalStateException("StorageManager not available")
 
         val callback = object : ProxyFileDescriptorCallback() {
-            override fun onGetSize(): Long = file.length
+            override fun onGetSize(): Long = onDrive(documentId) { file.length }
 
             override fun onRead(offset: Long, size: Int, data: ByteArray): Int =
-                readInto(file, offset, size, data)
+                onDrive(documentId) { readInto(file, offset, size, data) }
 
-            override fun onRelease() {
-                file.close()
-            }
+            override fun onRelease() = onDrive(documentId) { file.close() }
         }
 
         return storageManager.openProxyFileDescriptor(
@@ -253,7 +295,10 @@ class VeraCryptDocumentProvider : DocumentsProvider() {
         return currentFile
     }
 
-    override fun isChildDocument(parentDocumentId: String?, documentId: String?): Boolean {
+    override fun isChildDocument(parentDocumentId: String?, documentId: String?): Boolean =
+        onDrive(documentId) { isChildDocumentImpl(parentDocumentId, documentId) }
+
+    private fun isChildDocumentImpl(parentDocumentId: String?, documentId: String?): Boolean {
         val parent = parseDocId(parentDocumentId) ?: return false
         val child = parseDocId(documentId) ?: return false
         if (parent.driveId != child.driveId) return false
