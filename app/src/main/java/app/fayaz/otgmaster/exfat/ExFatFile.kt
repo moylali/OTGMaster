@@ -102,6 +102,14 @@ class ExFatFile(
         val bytesRead = fileSystem.withNative {
             ExFatNative.readFile(fileSystem.exfatPtr, node.nodePtr, offset, size, tempBuffer)
         }
+        // A negative return is a native I/O failure (bad sector, device pulled).
+        // Dropping it silently left destination untouched, and the SAF callback
+        // reports the full requested length as read regardless — so the client
+        // received whatever the recycled buffer already held, as if it were file
+        // content. Fail loudly instead.
+        if (bytesRead < 0) {
+            throw IOException("exFAT read failed at offset $offset ($size bytes): $bytesRead")
+        }
         if (bytesRead > 0) {
             destination.put(tempBuffer, 0, bytesRead)
         }
@@ -119,6 +127,12 @@ class ExFatFile(
         if (bytesWritten < 0) {
             throw IOException("Failed to write to exFAT file: $bytesWritten")
         }
+        // libexfat has grown the file on disk, but node.size is a cached Kotlin
+        // field. Leaving it stale makes appended data invisible: SAF bounds every
+        // read by file.length, so onRead returns 0 (EOF) for the new tail and the
+        // client sees a truncated file.
+        val end = offset + bytesWritten
+        if (end > node.size) node.size = end
         dirty = true
     }
 

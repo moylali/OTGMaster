@@ -43,6 +43,29 @@ class VeraCryptDocumentProvider : DocumentsProvider() {
 
         fun rootDocIdForDrive(driveId: String): String = "$driveId:/"
 
+        /**
+         * Fills [data] from [file] and reports how many bytes were actually read.
+         *
+         * Both onRead callbacks used to return the requested length unconditionally.
+         * A short or failed read therefore handed the client whatever the recycled
+         * SAF buffer already contained, presented as file content — silent
+         * corruption with no error anywhere. The ByteBuffer's final position is the
+         * only honest answer, so use it.
+         */
+        private fun readInto(
+            file: me.jahnen.libaums.core.fs.UsbFile,
+            offset: Long,
+            size: Int,
+            data: ByteArray,
+        ): Int {
+            val length = file.length
+            if (offset >= length) return 0
+            val toRead = Math.min(size.toLong(), length - offset).toInt()
+            val buffer = ByteBuffer.wrap(data, 0, toRead)
+            file.read(offset, buffer)
+            return buffer.position()
+        }
+
         private val proxyHandler: android.os.Handler by lazy {
             val thread = android.os.HandlerThread("ProxyFileDescriptorThread")
             thread.start()
@@ -168,12 +191,8 @@ class VeraCryptDocumentProvider : DocumentsProvider() {
                     return file.length
                 }
 
-                override fun onRead(offset: Long, size: Int, data: ByteArray): Int {
-                    if (offset >= file.length) return 0
-                    val toRead = Math.min(size.toLong(), file.length - offset).toInt()
-                    file.read(offset, ByteBuffer.wrap(data, 0, toRead))
-                    return toRead
-                }
+                override fun onRead(offset: Long, size: Int, data: ByteArray): Int =
+                    readInto(file, offset, size, data)
 
                 override fun onWrite(offset: Long, size: Int, data: ByteArray): Int {
                     file.write(offset, ByteBuffer.wrap(data, 0, size))
@@ -199,12 +218,8 @@ class VeraCryptDocumentProvider : DocumentsProvider() {
         val callback = object : ProxyFileDescriptorCallback() {
             override fun onGetSize(): Long = file.length
 
-            override fun onRead(offset: Long, size: Int, data: ByteArray): Int {
-                if (offset >= file.length) return 0
-                val toRead = Math.min(size.toLong(), file.length - offset).toInt()
-                file.read(offset, ByteBuffer.wrap(data, 0, toRead))
-                return toRead
-            }
+            override fun onRead(offset: Long, size: Int, data: ByteArray): Int =
+                readInto(file, offset, size, data)
 
             override fun onRelease() {
                 file.close()
