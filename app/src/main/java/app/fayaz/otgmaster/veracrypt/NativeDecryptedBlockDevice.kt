@@ -21,6 +21,28 @@ class NativeDecryptedBlockDevice(
     private val tweakDataOffset: Long = volumeDataOffset
 ) : RawBlockDevice, BlockDeviceDriver {
 
+    /**
+     * Set by close(), which zeroes the master key.
+     *
+     * Without this, I/O after close() does not fail — it succeeds with an all-zero
+     * key. Reads return garbage that looks like data, and a write *encrypts real
+     * sectors with the zero key and puts them on the disk*, corrupting the volume.
+     * The raw USB connection is deliberately left open by close() (partitions share
+     * it), so there is nothing else downstream to stop such a write.
+     *
+     * The window is real: only exFAT volumes get an explicit filesystem unmount, so
+     * a FAT32 filesystem object stays live and usable after its block device has
+     * been closed, and any holder of a UsbFile — a SAF client with an open
+     * ProxyFileDescriptor, a copy still running on a worker thread — keeps calling
+     * into it.
+     */
+    @Volatile
+    private var closed = false
+
+    private fun checkOpen() {
+        if (closed) throw java.io.IOException("block device is closed (volume was unmounted)")
+    }
+
     override val blockSize: Int
         get() = encryptedDevice.blockSize
     override val blockCount: Long
@@ -33,6 +55,7 @@ class NativeDecryptedBlockDevice(
     }
 
     override fun readBlocks(startBlock: Long, blockCount: Int): ByteArray {
+        checkOpen()
         val physicalStartBlock = startBlock + volumeDataOffset
         val encryptedData = encryptedDevice.readBlocks(physicalStartBlock, blockCount)
 
@@ -68,6 +91,7 @@ class NativeDecryptedBlockDevice(
     }
 
     override fun writeBlocks(startBlock: Long, data: ByteArray) {
+        checkOpen()
         val physicalStartBlock = startBlock + volumeDataOffset
         val sectorCount = data.size / 512
         val encryptedData = ByteArray(data.size)
@@ -100,6 +124,7 @@ class NativeDecryptedBlockDevice(
     }
 
     override fun close() {
+        closed = true
         masterKey.fill(0)
         // Do NOT close encryptedDevice here — multiple partitions on the same USB drive
         // share the same underlying RawBlockDevice. Closing one would break the others.

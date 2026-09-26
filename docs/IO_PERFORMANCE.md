@@ -596,10 +596,77 @@ control that cannot be affected by the cache, and it matched in every arm.
 
 ### Write correctness
 
-Every write case verified 16 MiB byte-for-byte twice: once as read back normally,
-and once after invalidating every cached line, which forces the data to come from
-the device rather than from memory. All passed, both filesystems, both phones,
-cache on and off.
+**The first version of this check was too weak to mean much.** It wrote one 64 KiB
+pattern 256 times and compared byte-for-byte. Against a repeating pattern, two
+swapped chunks, an off-by-one in the offset arithmetic, or a read served from the
+wrong cached line all compare equal — precisely the failure modes a block cache
+introduces. It was passing on content it could not distinguish.
+
+The check now uses position-dependent content, so misplacement counts as
+corruption:
+
+```kotlin
+private fun expectedByteAt(offset: Long): Byte =
+    (((offset * 2654435761L) xor (offset ushr 13)) and 0xFF).toByte()
+```
+
+and verifies four things rather than one — byte-for-byte content, the file length
+(which a content comparison alone cannot catch), and a SHA-256 over the whole file,
+across three passes that each re-open the file by name:
+
+| Pass | Discards | Proves |
+|---|---|---|
+| `(cached)` | nothing | the write path is self-consistent |
+| `(cache dropped)` | every cached line | bytes reached the device, not just memory |
+| `(remounted)` | full unmount + remount | FAT chain and directory entries were written back |
+
+The remount pass is the one that earns its keep: a cache invalidation leaves
+libexfat's and libaums' in-memory metadata intact, so a corrupt cluster chain that
+was never flushed would still verify.
+
+**Result: 16/16 cases passed** — 8 before the fix below and 8 after, across both
+filesystems, both phones, cache on and off. Every pass reported the correct length
+and a matching SHA-256 (`8645696846c56668…`, identical on both devices, which also
+confirms the two phones wrote identical content).
+
+### The strengthened check crashed the app — twice
+
+Tightening the verification was what exposed it. Both crashes were
+use-after-unmount in libexfat:
+
+```
+signal 11 (SIGSEGV), fault addr 0x1a00000060
+  exfat_utf16_to_utf8 / exfat_get_name / ExFatNative_getRootNode
+
+signal 11 (SIGSEGV), fault addr 0x6c
+  exfat_truncate / exfat_generic_pwrite / ExFatNative_writeFile
+```
+
+The second fault address identifies the cause exactly. `exfat_truncate` opens with
+`bytes2clusters(ef, node->size)`, which reads `sb->sector_bits` — and `sector_bits`
+is at offset **0x6C** of `struct exfat_super_block` (`exfatfs.h`). A fault at `0x6c`
+is `ef->sb == NULL`: a `struct exfat` that `exfat_unmount` had already freed.
+
+Only `freeSpace()`, `flush()`, `close()` and `finalize()` tested `isUnmounted`.
+Every other native entry point — `read`, `write`, `listFiles`, `delete`,
+`createFile`, `createDirectory`, `rename`, `setLength`, and the lazy `getRootNode`
+— passed `exfatPtr` straight into C. The JNI `if (!ef || !node)` guards cannot
+catch this: the pointers are non-NULL, they are dangling.
+
+This is reachable from ordinary use, not only from the harness: a SAF client with an
+open `ProxyFileDescriptor` when the user unmounts, a listing or copy in flight on a
+worker thread, or the stick pulled mid-write. `unmountDrive` already drained SAF
+release callbacks before unmounting, which was a point fix for one path of this
+same bug — it did not cover the others.
+
+Fix: every native call routes through `ExFatFileSystem.withNative`, which tests the
+flag under the same lock `unmount()` sets it under and raises `IOException` instead
+of dereferencing. `close()`/`flush()` keep their silent no-op, being idempotent
+teardown. After the fix the same 8 cases ran with no crash on either device.
+
+**Note on what found this.** The crash was not caught by any assertion. It was
+caught because a case emitted no output at all, and the runner reported `APP DIED`.
+The hash checks themselves all passed — including in the run that crashed.
 
 ### Conclusions
 
