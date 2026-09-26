@@ -16,6 +16,19 @@ val keystoreProperties = Properties().apply {
     if (hasReleaseSigning) load(FileInputStream(keystorePropertiesFile))
 }
 
+/** Short commit of the working tree, or "unknown" outside a git checkout. */
+fun gitCommit(): String = runCatching {
+    val p = ProcessBuilder("git", "rev-parse", "--short", "HEAD")
+        .directory(rootDir).redirectErrorStream(true).start()
+    p.inputStream.bufferedReader().readText().trim().ifEmpty { "unknown" }
+}.getOrDefault("unknown")
+
+fun gitDirty(): Boolean = runCatching {
+    val p = ProcessBuilder("git", "status", "--porcelain")
+        .directory(rootDir).redirectErrorStream(true).start()
+    p.inputStream.bufferedReader().readText().isNotBlank()
+}.getOrDefault(false)
+
 android {
     namespace = "app.fayaz.otgmaster"
     compileSdk = 36
@@ -51,6 +64,7 @@ android {
 
     buildTypes {
         debug {
+            buildConfigField("String", "GIT_COMMIT", "\"${gitCommit()}${if (gitDirty()) "-dirty" else ""}\"")
             // Compiles the libexfat I/O counters (ExFatIoStats / OTG_IO_STATS in
             // src/main/cpp/CMakeLists.txt). Debug only: release builds must not
             // carry instrumentation, and the Kotlin side lives in src/debug so a
@@ -91,6 +105,7 @@ android {
 
     buildFeatures {
         compose = true
+        buildConfig = true
         // Required from AGP 8 onward; without it .aidl files are ignored silently
         // and the generated Stub simply does not exist.
         aidl = true

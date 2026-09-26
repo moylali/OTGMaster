@@ -97,6 +97,12 @@ object Benchmark {
         emit("=== OTG Master I/O baseline === (running, this takes a while)")
         emit("time: ${java.text.SimpleDateFormat("yyyy-MM-dd HH:mm:ss", java.util.Locale.US).format(java.util.Date())}")
         emit("device: ${android.os.Build.MODEL} / Android ${android.os.Build.VERSION.RELEASE} (SDK ${android.os.Build.VERSION.SDK_INT})")
+        // A report retrieved days later has to say which code produced it. This
+        // session already had one A/B invalidated by an un-rebuilt APK, caught only
+        // by comparing file hashes afterwards.
+        emit("build: ${app.fayaz.otgmaster.BuildConfig.VERSION_NAME} " +
+             "(${app.fayaz.otgmaster.BuildConfig.VERSION_CODE}) " +
+             "commit ${app.fayaz.otgmaster.BuildConfig.GIT_COMMIT}")
         emitPowerState(context, ::emit)
         emit("")
 
@@ -152,6 +158,9 @@ object Benchmark {
         }
         if (drives.isEmpty()) {
             emit("NO DRIVES MOUNTED — attach a prepared drive, or pass mount credentials")
+            emit("")
+            emit("--- conditions at the end of the run ---")
+            emitPowerState(context, ::emit)
             return out.toString().also { save(context, it) }
         }
 
@@ -201,6 +210,9 @@ object Benchmark {
             emit("")
         }
 
+        emit("")
+        emit("--- conditions at the end of the run ---")
+        emitPowerState(context, ::emit)
         val text = out.toString()
         save(context, text)
         emit("=== benchmark finished ===")
@@ -1151,10 +1163,71 @@ object Benchmark {
     private fun mbps(bytes: Long, ns: Long) =
         "%.2f MB/s (%s)".format(bytes / 1_048_576.0 / (ns / 1_000_000_000.0), ms(ns))
 
+    /**
+     * Writes the report where it can be retrieved without adb.
+     *
+     * Three destinations, because each fails differently:
+     *
+     *  1. **The mounted USB drive**, at BENCH/reports/. This is the one that matters
+     *     for a device with no working adb: the drive is already being carried to a
+     *     desktop, the report travels with it, and it sits next to the fixtures it
+     *     describes. Skipped when nothing is mounted, or when the run is what broke
+     *     the mount.
+     *  2. **Shared `Documents/`**, via MediaStore, so it is visible over MTP and to any
+     *     file manager. getExternalFilesDir is not: Android/data/ is unreadable over
+     *     MTP from Android 11 on, which makes the historical location useless on
+     *     exactly the modern devices where it still exists.
+     *  3. **getExternalFilesDir**, unchanged, as the last resort and for adb pulls.
+     */
     private fun save(context: Context, text: String) {
+        val stamp = java.text.SimpleDateFormat("yyyyMMdd-HHmmss", java.util.Locale.US)
+            .format(java.util.Date())
+        val model = android.os.Build.MODEL.replace(Regex("[^A-Za-z0-9._-]"), "_")
+        val name = "otgbench-$model-$stamp.txt"
+
+        // 1. onto the drive
+        runCatching {
+            val root = OtgMasterState.mountedDrives
+                .firstOrNull { (it.fileSystem as? ExFatFileSystem)?.isUnmounted != true }
+                ?.fileSystem?.rootDirectory
+            if (root != null) {
+                val bench = root.search("BENCH") ?: root.createDirectory("BENCH")
+                val reports = bench.search("reports") ?: bench.createDirectory("reports")
+                val bytes = text.toByteArray()
+                val f = reports.search(name) ?: reports.createFile(name)
+                f.write(0, ByteBuffer.wrap(bytes))
+                f.flush()
+                f.close()
+                Log.i(TAG, "report written to the drive: BENCH/reports/$name")
+            }
+        }.onFailure { Log.w(TAG, "could not write the report to the drive: $it") }
+
+        // 2. shared Documents/, retrievable over MTP
+        runCatching {
+            val values = android.content.ContentValues().apply {
+                put(android.provider.MediaStore.MediaColumns.DISPLAY_NAME, name)
+                put(android.provider.MediaStore.MediaColumns.MIME_TYPE, "text/plain")
+                if (android.os.Build.VERSION.SDK_INT >= 29) {
+                    put(android.provider.MediaStore.MediaColumns.RELATIVE_PATH, "Documents")
+                }
+            }
+            val collection = if (android.os.Build.VERSION.SDK_INT >= 29) {
+                android.provider.MediaStore.Files.getContentUri(
+                    android.provider.MediaStore.VOLUME_EXTERNAL_PRIMARY)
+            } else {
+                android.provider.MediaStore.Files.getContentUri("external")
+            }
+            context.contentResolver.insert(collection, values)?.let { uri ->
+                context.contentResolver.openOutputStream(uri)?.use { it.write(text.toByteArray()) }
+                Log.i(TAG, "report written to Documents/$name")
+            }
+        }.onFailure { Log.w(TAG, "could not write the report to Documents: $it") }
+
+        // 3. the historical location
         runCatching {
             val dir = context.getExternalFilesDir(null) ?: context.filesDir
             File(dir, "benchmark.txt").writeText(text)
+            File(dir, name).writeText(text)
             Log.i(TAG, "results written to ${File(dir, "benchmark.txt").absolutePath}")
         }.onFailure { Log.e(TAG, "could not save results", it) }
     }

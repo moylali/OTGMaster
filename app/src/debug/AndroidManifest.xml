@@ -38,6 +38,20 @@
                 <action android:name="app.fayaz.otgmaster.RUN_FD_SPIKE" />
             </intent-filter>
         </receiver>
+
+        <!--
+          On-device benchmark trigger, for phones with no working adb over wifi.
+          Its own launcher entry because it cannot be reached otherwise there.
+        -->
+        <activity
+            android:name=".bench.BenchLauncherActivity"
+            android:label="OTG Bench"
+            android:exported="true">
+            <intent-filter>
+                <action android:name="android.intent.action.MAIN" />
+                <category android:name="android.intent.category.LAUNCHER" />
+            </intent-filter>
+        </activity>
     </application>
 
 </manifest>
