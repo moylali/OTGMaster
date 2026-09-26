@@ -42,6 +42,9 @@ internal constructor(private val blockDevice: BlockDeviceDriver, private val fat
                     private val entry: FatLfnDirectoryEntry, override var parent: FatDirectory?) : AbstractUsbFile() {
     private lateinit var chain: ClusterChain
 
+    /** Whether this handle has changed file contents or metadata. See close(). */
+    private var dirty = false
+
     override val isDirectory: Boolean
         get() = false
 
@@ -55,6 +58,7 @@ internal constructor(private val blockDevice: BlockDeviceDriver, private val fat
         @Throws(IOException::class)
         set(newLength) {
             initChain()
+            dirty = true
             chain.length = newLength
             entry.fileSize = newLength
             // LOCAL PATCH (docs/VENDOR_FIXES.md V2): keep the directory entry's start
@@ -110,13 +114,38 @@ internal constructor(private val blockDevice: BlockDeviceDriver, private val fat
     @Throws(IOException::class)
     override fun read(offset: Long, destination: ByteBuffer) {
         initChain()
-        entry.setLastAccessedTimeToNow()
-        chain.read(offset, destination)
+        // LOCAL PATCH (docs/VENDOR_FIXES.md V3): bound the read to the file.
+        //
+        // ClusterChain.read fills whatever buffer it is handed, cluster by cluster,
+        // with no reference to fileSize. A 4 KiB read of a 100-byte file therefore
+        // returned 3,996 bytes of cluster slack — on an encrypted volume that is the
+        // decrypted plaintext of whatever previously occupied the cluster, handed to
+        // the caller as file content. Reading at or past EOF also indexed past the
+        // end of the chain array.
+        val length = entry.fileSize
+        if (offset >= length) return
+        // Long math throughout: (length - offset).toInt() overflows to negative for a
+        // file of 2 GiB or more, which made every read of one return zero bytes. The
+        // min is taken before narrowing, and remaining() is already an Int, so the
+        // result always fits.
+        val available = minOf(length - offset, destination.remaining().toLong()).toInt()
+        if (available <= 0) return
+        val limitBefore = destination.limit()
+        destination.limit(destination.position() + available)
+        try {
+            chain.read(offset, destination)
+        } finally {
+            destination.limit(limitBefore)
+        }
+        // LOCAL PATCH (V4): only mark the access time when it will be written anyway.
+        // Touching it here made every read dirty the entry, which close() then
+        // flushed — see below.
     }
 
     @Throws(IOException::class)
     override fun write(offset: Long, source: ByteBuffer) {
         initChain()
+        dirty = true
         val length = offset + source.remaining()
         if (length > this.length)
             this.length = length
@@ -141,7 +170,19 @@ internal constructor(private val blockDevice: BlockDeviceDriver, private val fat
 
     @Throws(IOException::class)
     override fun close() {
+        // LOCAL PATCH (docs/VENDOR_FIXES.md V4): only flush a handle that changed
+        // something.
+        //
+        // close() flushed unconditionally, and flush() calls parent!!.write(), which
+        // serialises and rewrites the *entire* parent directory table. Combined with
+        // read() touching the access time, purely reading a file rewrote the whole
+        // directory: opening 100 files in a 1,000-entry directory rewrote it 100
+        // times. That is write amplification on a bus already measured at ~5 MB/s,
+        // and needless flash wear. ExFatFile has tracked a dirty flag for this since
+        // a492960.
+        if (!dirty) return
         flush()
+        dirty = false
     }
 
     @Throws(IOException::class)

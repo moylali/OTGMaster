@@ -153,17 +153,34 @@ internal constructor(startCluster: Long, private val blockDevice: BlockDeviceDri
             length -= size
         }
 
-        // now we can proceed reading the clusters without an offset in the
-        // cluster
+        // LOCAL PATCH (docs/VENDOR_FIXES.md V6): coalesce consecutive clusters, as
+        // write() already does.
+        //
+        // This loop used to issue one read per cluster unconditionally, so a 512 KiB
+        // read at 4 KiB clusters became 128 separate SCSI commands. The block layer
+        // measures ~3.2 MB/s at 4 KiB spans against ~19.6 MB/s at 512 KiB, so the
+        // fragmentation, not the bus, was the limit on FAT32 sequential reads.
+        //
+        // Only physically consecutive clusters can go in one transfer, which is why
+        // the chain is scanned first — the same reasoning and the same scan as
+        // write(). The cap is higher than write()'s 4 because LibaumsRawBlockDevice
+        // now splits anything oversized into 120 KiB transfers of its own, so a large
+        // span here can no longer reach the USB stack as one outsized request.
         while (length > 0) {
-            // we always read one cluster at a time, or if remaining size is
-            // less than the cluster size, only "size" bytes
-            val size = Math.min(clusterSize, length.toLong()).toInt()
+            var consecutive = 1
+            for (i in chainIndex until chain.size - 1) {
+                if (chain[i] + 1 == chain[i + 1]) consecutive++ else break
+            }
+            consecutive = Math.min(consecutive, MAX_READ_CLUSTERS)
+
+            val clustersLeft = ((length + clusterSize - 1) / clusterSize).toInt()
+            val clusters = Math.min(consecutive, clustersLeft)
+            val size = Math.min(clusterSize * clusters, length.toLong()).toInt()
             dest.limit(dest.position() + size)
 
             blockDevice.read(getFileSystemOffset(chain[chainIndex], 0), dest)
 
-            chainIndex++
+            chainIndex += clusters
             length -= size
         }
     }
@@ -262,6 +279,13 @@ internal constructor(startCluster: Long, private val blockDevice: BlockDeviceDri
     }
 
     companion object {
+        /**
+         * Clusters coalesced into one read at most. 32 is 128 KiB at 4 KiB clusters,
+         * past the knee of the block layer's size/throughput curve (~3.2 MB/s at
+         * 4 KiB, ~14 MB/s at 64 KiB, ~19.6 MB/s at 512 KiB).
+         */
+        private const val MAX_READ_CLUSTERS = 32
+
 
         private val TAG = ClusterChain::class.java.simpleName
     }

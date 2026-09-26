@@ -60,6 +60,8 @@ class CachedBlockDevice(
     @Volatile var hits: Long = 0; private set
     @Volatile var misses: Long = 0; private set
     @Volatile var delegateBlocksRead: Long = 0; private set
+    /** Blocks actually written to the device, for detecting writes nobody asked for. */
+    @Volatile var delegateBlocksWritten: Long = 0; private set
     /** Requests that skipped the cache because they were at least a line long. */
     @Volatile var bypasses: Long = 0; private set
 
@@ -232,6 +234,7 @@ class CachedBlockDevice(
             // applied is exactly what the device now holds. Invalidating instead
             // forced the next read-modify-write to refetch the whole line, measured
             // at 1.08 MB/s writing versus 1.85 MB/s uncached on FAT32.
+            delegateBlocksWritten += blocks
             patchRange(startBlock, data)
         }
     }

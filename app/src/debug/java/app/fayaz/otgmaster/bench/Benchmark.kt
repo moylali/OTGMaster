@@ -817,6 +817,17 @@ object Benchmark {
             dir.createFile("fresh.bin").apply {
                 write(0, ByteBuffer.wrap(ByteArray(4096) { 0x07 })); flush(); close()
             }
+            // E: fill clusters with a marker, free them, then put a tiny file where
+            // they were. A read longer than the file must not return the marker.
+            dir.createFile("slackfill.bin").apply {
+                write(0, ByteBuffer.wrap(ByteArray(64 * 1024) { 0xDD.toByte() }))
+                flush(); close()
+            }
+            dir.search("slackfill.bin")?.let { deleteRecursively(it) }
+            dir.createFile("tiny.bin").apply {
+                write(0, ByteBuffer.wrap(ByteArray(TINY_LEN) { 0xE7.toByte() }))
+                flush(); close()
+            }
         }.onFailure { bad("fixture setup failed: $it") }
 
         if (!remount()) { bad("remount failed — cannot judge on-disk state"); return }
@@ -857,9 +868,68 @@ object Benchmark {
             }
         }
 
+        // ---------- E: does an over-long read leak cluster slack? ----------
+        //
+        // On an encrypted volume this is an information-disclosure question, not a
+        // tidiness one: slack holds the decrypted plaintext of whatever previously
+        // occupied the cluster. A caller asking for 4 KiB of a 100-byte file must get
+        // 100 bytes, not the rest of the cluster.
+        val tinyFile = liveRoot()?.search(dirName)?.search("tiny.bin")
+        if (tinyFile == null) bad("E tiny.bin missing after remount")
+        else {
+            if (tinyFile.length != TINY_LEN.toLong()) {
+                bad("E tiny.bin length ${tinyFile.length}, expected $TINY_LEN")
+            }
+            val over = ByteBuffer.allocate(4096)
+            val outcome = runCatching { tinyFile.read(0, over) }
+            when {
+                outcome.isFailure ->
+                    bad("E over-long read threw ${outcome.exceptionOrNull()}")
+                over.position() > TINY_LEN -> {
+                    val leaked = (TINY_LEN until over.position())
+                        .count { over.array()[it] == 0xDD.toByte() }
+                    bad("E slack leaked: asked 4096 of a $TINY_LEN-byte file, got " +
+                        "${over.position()} bytes, $leaked of them the freed marker 0xDD")
+                }
+                over.position() < TINY_LEN -> bad("E short read ${over.position()}")
+                else -> good("E over-long read bounded to the file (no slack leak)")
+            }
+            // Reading at or past EOF must be a clean no-op, not an exception.
+            val past = ByteBuffer.allocate(512)
+            val atEof = runCatching { tinyFile.read(TINY_LEN.toLong() + 8, past) }
+            if (atEof.isFailure) bad("E read past EOF threw ${atEof.exceptionOrNull()}")
+            else if (past.position() != 0) bad("E read past EOF returned ${past.position()} bytes")
+            else good("E read past EOF is a clean no-op")
+            runCatching { tinyFile.close() }
+        }
+
+        // ---------- F: does a read-only open write to the disk? ----------
+        //
+        // FAT32's close() flushed unconditionally, and read() touches the access
+        // time, so purely reading a file rewrote the whole parent directory table.
+        // ExFatFile already tracks a dirty flag for exactly this.
+        val cache = OtgMasterState.mountedDrives.firstOrNull()?.blockDevice
+                as? app.fayaz.otgmaster.block.CachedBlockDevice
+        if (cache == null) emit("correctness   : F skipped (no cache in the stack)")
+        else {
+            val target = liveRoot()?.search(dirName)?.search("offsets.bin")
+            if (target == null) bad("F offsets.bin missing")
+            else {
+                val before = cache.delegateBlocksWritten
+                val bb = ByteBuffer.allocate(512)
+                runCatching { target.read(0, bb); target.close() }
+                val wrote = cache.delegateBlocksWritten - before
+                if (wrote == 0L) good("F read-only open wrote nothing to the device")
+                else bad("F read-only open wrote $wrote block(s) to the device")
+            }
+        }
+
         emit("correctness   : ${if (failures == 0) "ALL PASSED" else "$failures FAILURE(S) ABOVE"}")
         runCatching { liveRoot()?.search(dirName)?.let { deleteRecursively(it) } }
     }
+
+    /** Small enough to sit well inside one cluster, so slack is large if leaked. */
+    private const val TINY_LEN = 100
 
     /**
      * Measures I/O **through** the DocumentsProvider, not around it.

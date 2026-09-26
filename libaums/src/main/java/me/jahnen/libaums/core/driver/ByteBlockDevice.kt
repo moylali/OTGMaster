@@ -54,10 +54,14 @@ open class ByteBlockDevice @JvmOverloads constructor(private val targetBlockDevi
             targetBlockDevice.read(devOffset, buffer)
 
             if (dest.remaining() % blockSize != 0) {
-                System.arraycopy(buffer.array(), 0, dest.array(), dest.position(), dest.remaining())
+                // LOCAL PATCH (docs/VENDOR_FIXES.md V5): no array() on either side —
+                // it throws on a direct ByteBuffer.
+                buffer.clear()
+                buffer.limit(dest.remaining())
+                dest.put(buffer)
+            } else {
+                dest.position(dest.limit())
             }
-
-            dest.position(dest.limit())
         }
     }
 
@@ -74,7 +78,13 @@ open class ByteBlockDevice @JvmOverloads constructor(private val targetBlockDevi
             tmp.clear()
             tmp.position((byteOffset % blockSize).toInt())
             val remaining = Math.min(tmp.remaining(), src.remaining())
-            tmp.put(src.array(), src.position(), remaining)
+            // LOCAL PATCH (docs/VENDOR_FIXES.md V5): array() throws
+            // UnsupportedOperationException on a direct ByteBuffer, so any caller
+            // using allocateDirect or NDK shared memory crashed here. Copy through
+            // the buffer API instead, which works for both kinds.
+            val slice = src.slice()
+            slice.limit(remaining)
+            tmp.put(slice)
             src.position(src.position() + remaining)
             tmp.clear()
             targetBlockDevice.write(devOffset, tmp)
@@ -107,7 +117,11 @@ open class ByteBlockDevice @JvmOverloads constructor(private val targetBlockDevi
                 val remaining = src.remaining()
                 targetBlockDevice.read(devOffset, buffer)
                 buffer.clear()
-                System.arraycopy(src.array(), src.position(), buffer.array(), 0, remaining)
+                // See V5 above: no array() on either side.
+                val slice = src.slice()
+                slice.limit(remaining)
+                buffer.put(slice)
+                buffer.clear()
 
                 src.position(src.limit())
             } else {

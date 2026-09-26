@@ -9,3 +9,8 @@
 • Fixed: data appended to a file on exFAT is immediately visible to other apps
 • Fixed: editing part of a file on a FAT32 drive no longer wipes the rest of the surrounding data — writes that did not land on an exact sector boundary were blanking up to 511 bytes beyond what was being written
 • Fixed: replacing the contents of a file on a FAT32 drive no longer corrupts it — the drive's directory could be left pointing at freed space, damaging that file and sometimes others
+• Fixed: reading a small file on a FAT32 drive could return leftover data from files you had deleted — it now returns only the file's own contents
+• Fixed: simply opening and closing a file on a FAT32 drive no longer writes to the drive, which wasted write cycles and slowed everything down
+• Fixed: files of 2 GB or larger now read correctly on FAT32 drives
+• Much faster file reading on FAT32 drives — large reads are now sent to the drive in one go instead of one small piece at a time
+• Fixed: a write to an exFAT drive that could not be completed in full is now reported instead of silently losing the remainder

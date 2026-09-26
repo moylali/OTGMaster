@@ -121,12 +121,35 @@ class ExFatFile(
         val size = source.remaining()
         val tempBuffer = ByteArray(size)
         source.get(tempBuffer)
-        val bytesWritten = fileSystem.withNative {
-            ExFatNative.writeFile(fileSystem.exfatPtr, node.nodePtr, offset, size, tempBuffer)
+
+        // Loop until everything lands. A short write (0 < n < size) used to be
+        // treated as success: source.position() had already advanced by the full
+        // amount, so the unwritten tail was gone with nothing reported. libexfat can
+        // return short at a cluster boundary or when the volume fills.
+        var written = 0
+        while (written < size) {
+            val chunk = size - written
+            val n = fileSystem.withNative {
+                ExFatNative.writeFile(
+                    fileSystem.exfatPtr, node.nodePtr, offset + written, chunk,
+                    if (written == 0) tempBuffer else tempBuffer.copyOfRange(written, size),
+                )
+            }
+            if (n < 0) {
+                throw IOException(
+                    "exFAT write failed at offset ${offset + written} " +
+                    "($written of $size bytes written): $n"
+                )
+            }
+            if (n == 0) {
+                throw IOException(
+                    "exFAT write stalled at offset ${offset + written} " +
+                    "($written of $size bytes written) — volume full?"
+                )
+            }
+            written += n
         }
-        if (bytesWritten < 0) {
-            throw IOException("Failed to write to exFAT file: $bytesWritten")
-        }
+        val bytesWritten = written
         // libexfat has grown the file on disk, but node.size is a cached Kotlin
         // field. Leaving it stale makes appended data invisible: SAF bounds every
         // read by file.length, so onRead returns 0 (EOF) for the new tail and the

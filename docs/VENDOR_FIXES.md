@@ -13,6 +13,10 @@ Current pin: upstream `57fa482` (`b03705d`).
 | `ScsiBlockDevice` | Clamp oversized REQUEST SENSE response | `69fc0c1` (absorbed upstream) |
 | `ByteBlockDevice` | V1 — read-modify-write the trailing sector | `f58d556` |
 | `FatFile`, `ClusterChain` | V2 — sync `entry.startCluster` with the chain | `f58d556` |
+| `FatFile` | V3 — bound reads to the file length | see below |
+| `FatFile` | V4 — only flush on close if the handle changed something | see below |
+| `ByteBlockDevice` | V5 — no `array()`, so direct buffers work | see below |
+| `ClusterChain` | V6 — coalesce consecutive clusters on read | see below |
 
 ## V1 and V2 — reproduced on hardware, then fixed
 
@@ -115,3 +119,66 @@ For completeness, the defects found in the same review that live in **our** code
 and so are not listed above: the exFAT `node.size` desynchronisation and the
 swallowed native `-1` read error (`ExFatFile.kt`), and the globally serialised
 `ProxyFileDescriptorThread` (`VeraCryptDocumentProvider.kt`).
+
+## V3 — `FatFile.read` leaked cluster slack
+
+`FatFile.read` handed the caller's buffer straight to `ClusterChain.read`, which
+fills whatever it is given, cluster by cluster, with no reference to `fileSize`.
+
+On an encrypted volume this is information disclosure, not untidiness: the slack
+holds the **decrypted plaintext** of whatever previously occupied the cluster.
+Reading at or past EOF also indexed past the end of the `chain` array.
+
+Reproduced on a Pixel 10 Pro XL, FAT32 VeraCrypt volume — fill 64 KiB with `0xDD`,
+delete it, write a 100-byte file into the recycled clusters, then ask for 4096
+bytes:
+
+| | Pre-fix | Post-fix |
+|---|---|---|
+| Over-long read of a 100-byte file | 4096 bytes returned, 25 of them the freed `0xDD` marker | bounded to 100 bytes |
+| Read 8 bytes past EOF | 512 bytes returned | clean no-op |
+
+**Note on the fix itself.** The first version computed
+`(length - offset).toInt()`, which overflows to negative at exactly 2 GiB, so every
+read of a file that size or larger returned zero bytes. The correctness suite passed
+all ten cases regardless, because its fixtures are 4–8 KiB; only the SAF section,
+which reads `seq_2g.bin`, was large enough to notice. The `min` is now taken in
+`Long` before narrowing.
+
+## V4 — every close rewrote the parent directory
+
+`close()` called `flush()` unconditionally, and `flush()` calls `parent!!.write()`,
+which serialises and rewrites the **entire** parent directory table. `read()` also
+touched the access time, so purely reading a file dirtied the entry. Opening 100
+files in a 1,000-entry directory rewrote that directory 100 times — write
+amplification on a bus measured at single-digit MB/s, plus needless flash wear.
+
+Measured with a device-write counter: a read-only open and close wrote **8 blocks
+(32 KiB)** before the fix and **nothing** after.
+
+Fixed with a `dirty` flag, the same pattern `ExFatFile` has used since `a492960`.
+
+## V5 — `array()` crashed on direct buffers
+
+`ByteBlockDevice` called `src.array()` / `dest.array()` at four sites.
+`ByteBuffer.allocateDirect` and NDK shared memory have no backing array, so
+`array()` throws `UnsupportedOperationException`. Replaced with buffer-API copies,
+which work for both kinds.
+
+## V6 — `ClusterChain.read` issued one command per cluster
+
+`write()` already coalesced up to four consecutive clusters; `read()` read exactly
+one at a time, unconditionally. A 512 KiB read at 4 KiB clusters became 128 separate
+SCSI commands.
+
+The signature was throughput that ignored the caller's buffer size — 4.53, 4.99 and
+4.97 MB/s for 32, 128 and 512 KiB buffers, because each cluster was its own command
+regardless. After coalescing it scales: 6.82, 15.23, 14.59 MB/s. That change of
+*shape* is the evidence; the absolute figures are cross-session and not sound enough
+on their own (see §5.7 for why that distinction is enforced here).
+
+The cap is 32 clusters rather than `write()`'s 4. That lower cap existed because
+oversized spans used to reach the USB stack directly, and some stacks reject them —
+but `LibaumsRawBlockDevice` now splits anything larger into 120 KiB transfers, so the
+original hazard is handled a layer below. 32 clusters is 128 KiB at 4 KiB clusters,
+past the knee of the block layer's size/throughput curve.
