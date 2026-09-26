@@ -82,15 +82,22 @@ class CachedBlockDevice(
         // 6.35 MB/s with no cache at all. It would also evict the metadata the
         // cache exists to hold, in favour of file data that is rarely re-read.
         if (blockCount >= blocksPerLine) {
+            // Counters under the lock; the transfer itself outside it. A bypass reads
+            // nothing from the cache and writes nothing to it, so there is no state to
+            // protect — holding the lock here only blocked cache hits on other
+            // threads behind a multi-second USB read. DocumentsProvider metadata calls
+            // arrive on binder threads while file I/O runs on the proxy thread, so that
+            // contention is real on FAT32, which has no filesystem-level lock of its
+            // own to serialise them first.
             synchronized(lock) {
                 bypasses++
                 delegateBlocksRead += blockCount
-                return delegate.readBlocks(startBlock, blockCount)
             }
+            return delegate.readBlocks(startBlock, blockCount)
         }
 
         val out = ByteArray(blockCount * blockSize)
-        synchronized(lock) {
+        run {
             var done = 0
             while (done < blockCount) {
                 val block = startBlock + done
@@ -113,25 +120,87 @@ class CachedBlockDevice(
         return out
     }
 
-    /** Caller must hold [lock]. */
+    /**
+     * Returns line [lineIndex], fetching it if absent.
+     *
+     * Takes [lock] only to look up and to publish; the device read happens with the
+     * lock released, so a cache hit on another thread is not stuck behind it.
+     *
+     * The window that opens is a write landing on this line while the fetch is in
+     * flight: publishing the fetched data would then discard that write and leave the
+     * cache disagreeing with the disk for as long as the line survives. [fetching]
+     * and [dirtiedWhileFetching] close it — a write to a line being fetched marks it,
+     * and the fetch is then used for this read but not published.
+     *
+     * Publishing outside the lock, or relying on a ConcurrentHashMap, does not work:
+     * the invariant is "device and cache agree", which spans two operations, and
+     * making each one individually atomic does not make the pair atomic.
+     */
     private fun lineFor(lineIndex: Long): ByteArray {
-        lines[lineIndex]?.let {
-            hits++
-            return it
+        synchronized(lock) {
+            lines[lineIndex]?.let {
+                hits++
+                return it
+            }
+            misses++
+            fetching.add(lineIndex)
         }
-        misses++
+
         val start = lineIndex * blocksPerLine
         val count = minOf(blocksPerLine.toLong(), blockCount - start).toInt()
         check(count > 0) { "cache line $lineIndex starts past the end of the device" }
-        val data = delegate.readBlocks(start, count)
-        delegateBlocksRead += count
-        lines[lineIndex] = data
+
+        val data: ByteArray
+        try {
+            data = delegate.readBlocks(start, count)
+        } catch (t: Throwable) {
+            synchronized(lock) {
+                fetching.remove(lineIndex)
+                dirtiedWhileFetching.remove(lineIndex)
+            }
+            throw t
+        }
+
+        synchronized(lock) {
+            delegateBlocksRead += count
+            fetching.remove(lineIndex)
+            val superseded = dirtiedWhileFetching.remove(lineIndex)
+            if (superseded) {
+                // A write changed these blocks while we were reading them. Whatever
+                // the device held mid-write is not what the cache should serve, and
+                // the writer has already patched or dropped the line.
+                lines[lineIndex]?.let { return it }
+            } else {
+                lines[lineIndex] = data
+            }
+        }
         return data
     }
+
+    /** Caller must hold [lock]. */
+    private fun markFetchesDirty(startBlock: Long, blockCount: Int) {
+        if (fetching.isEmpty() || blockCount <= 0) return
+        val firstLine = startBlock / blocksPerLine
+        val lastLine = (startBlock + blockCount - 1) / blocksPerLine
+        var i = firstLine
+        while (i <= lastLine) {
+            if (i in fetching) dirtiedWhileFetching.add(i)
+            i++
+        }
+    }
+
+    /** Lines with a device read in flight, and those a write landed on meanwhile. */
+    private val fetching = HashSet<Long>()
+    private val dirtiedWhileFetching = HashSet<Long>()
 
     override fun writeBlocks(startBlock: Long, data: ByteArray) {
         require(data.size % blockSize == 0) { "write length must be block aligned" }
         synchronized(lock) {
+            // Flag any line currently being fetched that this write overlaps, before
+            // touching the device. lineFor() released the lock for its read, so a
+            // fetch in flight is about to publish blocks that predate this write; it
+            // must not. Flag first, so a write that fails partway is covered too.
+            markFetchesDirty(startBlock, data.size / blockSize)
             try {
                 delegate.writeBlocks(startBlock, data)
             } catch (e: Throwable) {
@@ -219,6 +288,11 @@ class CachedBlockDevice(
     /** Drops and zeroes every cached line. */
     fun invalidate() {
         synchronized(lock) {
+            // Any fetch in flight must not publish afterwards: its data predates this
+            // call, and a caller invalidating to force a device read (the write
+            // verification's "cache dropped" pass does exactly that) would otherwise
+            // see a line reappear from before the drop.
+            dirtiedWhileFetching.addAll(fetching)
             lines.values.forEach { it.fill(0) }
             lines.clear()
         }

@@ -196,6 +196,8 @@ object Benchmark {
                 .onFailure { emit("unaligned     : FAILED ${it}") }
             if (only.contains("correct")) runCatching { benchCorrectness(drive, ::emit, mount) }
                 .onFailure { emit("correctness   : FAILED ${it}") }
+            if (only.contains("saf")) runCatching { benchSaf(context, ::emit) }
+                .onFailure { emit("saf           : FAILED ${it}") }
             emit("")
         }
 
@@ -857,6 +859,150 @@ object Benchmark {
 
         emit("correctness   : ${if (failures == 0) "ALL PASSED" else "$failures FAILURE(S) ABOVE"}")
         runCatching { liveRoot()?.search(dirName)?.let { deleteRecursively(it) } }
+    }
+
+    /**
+     * Measures I/O **through** the DocumentsProvider, not around it.
+     *
+     * Every other section in this file calls UsbFile directly. No real client does
+     * that: a SAF client's read crosses ContentResolver, the provider, a
+     * ProxyFileDescriptor and the FUSE bridge, and lands on a
+     * ProxyFileDescriptorCallback dispatched on one process-wide HandlerThread. So
+     * every number this harness has ever produced describes a path nothing actually
+     * uses, and the serialisation that a real client hits was invisible.
+     *
+     * Three measurements:
+     *   1. single stream through SAF, against the same file read directly, in the
+     *      same session — the provider's own overhead;
+     *   2. two streams in parallel on the SAME drive — expected to show no gain,
+     *      since libaums is not thread-safe and exFAT holds a filesystem-wide lock;
+     *   3. two streams in parallel across DIFFERENT drives — the case the single
+     *      shared handler penalises for no reason. If aggregate throughput here is
+     *      flat against the single-stream figure, the shared handler is the cause and
+     *      a per-drive handler should lift it.
+     *
+     * Case 3 needs two drives mounted (a powered hub), and is skipped otherwise.
+     */
+    private fun benchSaf(context: Context, emit: (String) -> Unit) {
+        val cr = context.contentResolver
+        val bufSize = 64 * 1024
+        val capBytes = 32L * 1024 * 1024   // cap so a slow path cannot run for hours
+
+        fun docUri(driveId: String, path: String): android.net.Uri =
+            android.provider.DocumentsContract.buildDocumentUri(
+                app.fayaz.otgmaster.provider.VeraCryptDocumentProvider.AUTHORITY,
+                "$driveId:$path")
+
+        /** Reads up to capBytes through SAF; returns bytes read, or -1 on failure. */
+        fun safRead(driveId: String, path: String): Long {
+            return try {
+                cr.openFileDescriptor(docUri(driveId, path), "r").use { pfd ->
+                    if (pfd == null) return -1
+                    java.io.FileInputStream(pfd.fileDescriptor).use { ins ->
+                        val buf = ByteArray(bufSize)
+                        var total = 0L
+                        while (total < capBytes) {
+                            val n = ins.read(buf)
+                            if (n <= 0) break
+                            total += n
+                        }
+                        total
+                    }
+                }
+            } catch (e: Throwable) {
+                emit("saf           : read failed for $path: $e")
+                -1
+            }
+        }
+
+        /** Largest file under BENCH/large on a drive, as a provider path. */
+        fun largePath(drive: MountedDrive): String? = runCatching {
+            val large = drive.fileSystem.rootDirectory.search("BENCH")?.search("large")
+                ?: return@runCatching null
+            val f = large.listFiles().maxByOrNull { runCatching { it.length }.getOrDefault(0L) }
+                ?: return@runCatching null
+            "/BENCH/large/${f.name}"
+        }.getOrNull()
+
+        val drives = OtgMasterState.mountedDrives.toList()
+        if (drives.isEmpty()) return emit("saf           : no drives mounted")
+
+        // ---- 1. single stream: through SAF vs direct, same file, same session
+        val d0 = drives[0]
+        val p0 = largePath(d0) ?: return emit("saf           : BENCH/large missing")
+
+        val safNs = measureNanoTime { }.let {
+            var n = 0L
+            val t = measureNanoTime { n = safRead(d0.id, p0) }
+            if (n <= 0) return emit("saf           : single-stream read produced nothing")
+            emit("saf single    : ${mbps(n, t)} through the provider ($p0)")
+            t
+        }
+
+        var directBytes = 0L
+        val directNs = measureNanoTime {
+            val f = d0.fileSystem.rootDirectory.search("BENCH")?.search("large")
+                ?.search(p0.substringAfterLast('/'))
+            if (f != null) {
+                val bb = ByteBuffer.allocate(bufSize)
+                while (directBytes < capBytes) {
+                    bb.clear()
+                    f.read(directBytes, bb)
+                    if (bb.position() <= 0) break
+                    directBytes += bb.position()
+                    if (bb.position() < bufSize) break
+                }
+            }
+        }
+        if (directBytes > 0) {
+            emit("saf direct    : ${mbps(directBytes, directNs)} calling UsbFile directly")
+            emit("saf overhead  : provider costs %.2fx".format(
+                safNs.toDouble() / directNs.toDouble()))
+        }
+
+        /** Runs [tasks] in parallel, returns total bytes and wall time. */
+        fun parallel(tasks: List<() -> Long>): Pair<Long, Long> {
+            val results = LongArray(tasks.size)
+            val threads = tasks.mapIndexed { i, t ->
+                Thread { results[i] = t() }.apply { name = "SafBench$i" }
+            }
+            val ns = measureNanoTime {
+                threads.forEach { it.start() }
+                threads.forEach { it.join() }
+            }
+            return results.filter { it > 0 }.sum() to ns
+        }
+
+        // ---- 2. two streams, same drive
+        val large0 = runCatching {
+            d0.fileSystem.rootDirectory.search("BENCH")?.search("large")?.listFiles()
+                ?.sortedByDescending { runCatching { it.length }.getOrDefault(0L) }
+        }.getOrNull()
+        if (large0 != null && large0.size >= 2) {
+            val a = "/BENCH/large/${large0[0].name}"
+            val b = "/BENCH/large/${large0[1].name}"
+            val (bytes, ns) = parallel(listOf({ safRead(d0.id, a) }, { safRead(d0.id, b) }))
+            emit("saf par same  : ${mbps(bytes, ns)} aggregate, 2 streams on one drive")
+        } else {
+            emit("saf par same  : needs 2 files in BENCH/large, skipped")
+        }
+
+        // ---- 3. two streams, different drives — the multi-drive question
+        if (drives.size >= 2) {
+            val d1 = drives[1]
+            val p1 = largePath(d1)
+            if (p1 == null) {
+                emit("saf par cross : second drive has no BENCH/large, skipped")
+            } else {
+                val (bytes, ns) = parallel(listOf({ safRead(d0.id, p0) }, { safRead(d1.id, p1) }))
+                emit("saf par cross : ${mbps(bytes, ns)} aggregate across 2 drives")
+                emit("              (flat against 'saf single' means the shared " +
+                     "ProxyFileDescriptorThread is the limit, not the bus)")
+            }
+        } else {
+            emit("saf par cross : only ${drives.size} drive mounted — attach a second " +
+                 "via a powered hub to measure cross-drive concurrency")
+        }
     }
 
     /**

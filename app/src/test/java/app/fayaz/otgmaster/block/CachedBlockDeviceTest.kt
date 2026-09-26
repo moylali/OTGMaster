@@ -4,6 +4,8 @@ import org.junit.Assert.assertArrayEquals
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertTrue
 import org.junit.Test
+import java.util.concurrent.CountDownLatch
+import java.util.concurrent.TimeUnit
 
 /**
  * Correctness first: a cache that returns wrong bytes is far worse than a slow
@@ -251,5 +253,96 @@ class CachedBlockDeviceTest {
         val cache = CachedBlockDevice(dev)
         assertEquals(0, cache.readBlocks(5, 0).size)
         assertEquals(0, dev.readCalls)
+    }
+
+    /**
+     * A write that lands while a line is being fetched must win.
+     *
+     * lineFor() releases the lock for the device read, so the fetched bytes can
+     * predate a concurrent write. Publishing them would leave the cache disagreeing
+     * with the device until the line is evicted — every later read wrong. This is
+     * the lost update that "do the I/O outside the lock, then patch" produces if the
+     * in-flight fetch is not accounted for.
+     */
+    @Test
+    fun writeDuringFetchIsNotDiscarded() {
+        val backing = LatchedDevice(blockSize = 512, blockCount = 64)
+        val cache = CachedBlockDevice(backing, maxCacheBytes = 64 * 512, readAheadBytes = 8 * 512)
+
+        // Reader blocks inside the device read for line 0.
+        val reader = Thread { cache.readBlocks(0, 1) }
+        reader.start()
+        assertTrue("reader should reach the device", backing.entered.await(5, TimeUnit.SECONDS))
+
+        // Writer changes block 0 while that fetch is stuck.
+        val payload = ByteArray(512) { 0x5A }
+        val writer = Thread { cache.writeBlocks(0, payload) }
+        writer.start()
+        Thread.sleep(150)
+
+        backing.release.countDown()
+        reader.join(5_000)
+        writer.join(5_000)
+
+        // Whatever the cache now serves must match the device, not the pre-write read.
+        val fromCache = cache.readBlocks(0, 1)
+        val fromDevice = backing.readBlocks(0, 1)
+        assertArrayEquals("cache must agree with the device after the race",
+            fromDevice, fromCache)
+        assertArrayEquals("the write must be what survived", payload, fromCache)
+    }
+
+    /** A bypass read must not hold the lock, so other threads keep serving hits. */
+    @Test
+    fun bypassReadDoesNotBlockCacheHits() {
+        val backing = LatchedDevice(blockSize = 512, blockCount = 64)
+        val cache = CachedBlockDevice(backing, maxCacheBytes = 64 * 512, readAheadBytes = 8 * 512)
+        cache.readBlocks(16, 1)          // populate a line away from the bypass range
+        backing.armFor(0)                // next read of block 0 blocks
+
+        val bypass = Thread { cache.readBlocks(0, 8) }   // >= line size, so a bypass
+        bypass.start()
+        assertTrue(backing.entered.await(5, TimeUnit.SECONDS))
+
+        val hit = Thread { cache.readBlocks(16, 1) }
+        hit.start()
+        hit.join(3_000)
+        val servedWhileBlocked = !hit.isAlive
+
+        backing.release.countDown()
+        bypass.join(5_000)
+        assertTrue("a cache hit must not wait behind a bypass transfer", servedWhileBlocked)
+    }
+
+    /**
+     * Device that blocks on one chosen read until released, so a race can be staged
+     * deterministically instead of by timing.
+     */
+    private class LatchedDevice(
+        override val blockSize: Int,
+        override val blockCount: Long,
+    ) : RawBlockDevice {
+        val store = ByteArray((blockCount * blockSize).toInt()) { (it % 97).toByte() }
+        val entered = CountDownLatch(1)
+        val release = CountDownLatch(1)
+        @Volatile private var blockOn: Long = 0
+
+        fun armFor(block: Long) { blockOn = block }
+
+        override fun readBlocks(startBlock: Long, blockCount: Int): ByteArray {
+            if (startBlock == blockOn && entered.count > 0) {
+                entered.countDown()
+                release.await(10, TimeUnit.SECONDS)
+            }
+            val out = ByteArray(blockCount * blockSize)
+            System.arraycopy(store, (startBlock * blockSize).toInt(), out, 0, out.size)
+            return out
+        }
+
+        override fun writeBlocks(startBlock: Long, data: ByteArray) {
+            System.arraycopy(data, 0, store, (startBlock * blockSize).toInt(), data.size)
+        }
+
+        override fun close() {}
     }
 }
