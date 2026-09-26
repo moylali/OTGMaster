@@ -195,29 +195,43 @@ class CachedBlockDevice(
 
     override fun writeBlocks(startBlock: Long, data: ByteArray) {
         require(data.size % blockSize == 0) { "write length must be block aligned" }
+        val blocks = data.size / blockSize
+
+        // The device write and the cache patch must be one atomic step.
+        //
+        // Splitting them — write outside the lock, patch after — permits a lost
+        // update that never heals:
+        //
+        //   T1 delegate.writeBlocks(line 5, A)
+        //   T2 delegate.writeBlocks(line 5, B)   device holds B
+        //   T2 patchRange(line 5, B)
+        //   T1 patchRange(line 5, A)             cache holds A, forever
+        //
+        // Every later read of that line is then wrong until it happens to be
+        // evicted. Writes are far rarer than reads here and are already serialised
+        // by the layer above, so holding the lock across the transfer costs little;
+        // the concurrency that matters was reads queueing behind it, and that is
+        // handled in readBlocks and lineFor instead.
         synchronized(lock) {
             // Flag any line currently being fetched that this write overlaps, before
-            // touching the device. lineFor() released the lock for its read, so a
+            // touching the device. lineFor() releases the lock for its read, so a
             // fetch in flight is about to publish blocks that predate this write; it
             // must not. Flag first, so a write that fails partway is covered too.
-            markFetchesDirty(startBlock, data.size / blockSize)
+            markFetchesDirty(startBlock, blocks)
             try {
                 delegate.writeBlocks(startBlock, data)
             } catch (e: Throwable) {
                 // The write may still have changed part of the device, so keeping
                 // the pre-write line would serve stale bytes for content that did
                 // land. Dropping a line is always safe — worst case is a refetch.
-                invalidateRange(startBlock, data.size / blockSize)
+                invalidateRange(startBlock, blocks)
                 throw e
             }
-            // Patch in place rather than invalidating.
-            //
-            // We hold the lock and are the only writer, so once the write succeeds
-            // the cached line with the new bytes applied is exactly what the device
-            // holds. Invalidating instead forced the next read-modify-write to
-            // refetch the whole line: measured at 1.08 MB/s writing versus
-            // 1.85 MB/s uncached on FAT32, because ByteBlockDevice does a RMW per
-            // unaligned write and each one dropped a 64 KiB line.
+            // Patch in place rather than invalidating. Holding the lock across both
+            // steps is what makes this sound: the cached line with the new bytes
+            // applied is exactly what the device now holds. Invalidating instead
+            // forced the next read-modify-write to refetch the whole line, measured
+            // at 1.08 MB/s writing versus 1.85 MB/s uncached on FAT32.
             patchRange(startBlock, data)
         }
     }

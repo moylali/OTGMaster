@@ -345,4 +345,83 @@ class CachedBlockDeviceTest {
 
         override fun close() {}
     }
+
+    /**
+     * The device write and the cache patch must be atomic together.
+     *
+     * If they are not, two writes to one line can reach the device in one order and
+     * patch the cache in the other, leaving the cache disagreeing with the disk until
+     * the line is evicted. This test fails on that shape: it blocks the first writer
+     * inside the device and asserts no second writer gets in behind it.
+     *
+     * Written after shipping exactly that bug — the lock was released around the
+     * transfer while the commit message claimed otherwise, and no existing test
+     * noticed, because all of them were single-threaded.
+     */
+    @Test
+    fun writesAreAtomicWithTheirCachePatch() {
+        val backing = ConcurrencyWatchingDevice(blockSize = 512, blockCount = 64)
+        val cache = CachedBlockDevice(backing, maxCacheBytes = 64 * 512, readAheadBytes = 8 * 512)
+        cache.readBlocks(0, 1)   // populate line 0 so patchRange has something to do
+
+        backing.blockNextWrite()
+        val a = ByteArray(512) { 0x0A }
+        val b = ByteArray(512) { 0x0B }
+
+        val t1 = Thread { cache.writeBlocks(0, a) }
+        t1.start()
+        assertTrue("first writer should reach the device",
+            backing.writeEntered.await(5, TimeUnit.SECONDS))
+
+        val t2 = Thread { cache.writeBlocks(0, b) }
+        t2.start()
+        Thread.sleep(200)          // ample time for a second writer to slip through
+
+        backing.releaseWrite.countDown()
+        t1.join(5_000)
+        t2.join(5_000)
+
+        assertEquals("device must never see two overlapping writes",
+            1, backing.maxConcurrentWrites)
+        assertArrayEquals("cache must agree with the device",
+            backing.readBlocks(0, 1), cache.readBlocks(0, 1))
+    }
+
+    /** Backing device that can stall one write and records write overlap. */
+    private class ConcurrencyWatchingDevice(
+        override val blockSize: Int,
+        override val blockCount: Long,
+    ) : RawBlockDevice {
+        private val store = ByteArray((blockCount * blockSize).toInt()) { (it % 89).toByte() }
+        private val inWrite = java.util.concurrent.atomic.AtomicInteger(0)
+        @Volatile var maxConcurrentWrites = 0; private set
+        val writeEntered = CountDownLatch(1)
+        val releaseWrite = CountDownLatch(1)
+        @Volatile private var stallNext = false
+
+        fun blockNextWrite() { stallNext = true }
+
+        override fun readBlocks(startBlock: Long, blockCount: Int): ByteArray {
+            val out = ByteArray(blockCount * blockSize)
+            System.arraycopy(store, (startBlock * blockSize).toInt(), out, 0, out.size)
+            return out
+        }
+
+        override fun writeBlocks(startBlock: Long, data: ByteArray) {
+            val n = inWrite.incrementAndGet()
+            synchronized(this) { if (n > maxConcurrentWrites) maxConcurrentWrites = n }
+            try {
+                if (stallNext) {
+                    stallNext = false
+                    writeEntered.countDown()
+                    releaseWrite.await(10, TimeUnit.SECONDS)
+                }
+                System.arraycopy(data, 0, store, (startBlock * blockSize).toInt(), data.size)
+            } finally {
+                inWrite.decrementAndGet()
+            }
+        }
+
+        override fun close() {}
+    }
 }
