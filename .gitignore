@@ -35,3 +35,6 @@ test.img
 # E2E test reports
 e2e_report_*.md
 logcat_*.txt
+
+# Agent artifacts
+agy/

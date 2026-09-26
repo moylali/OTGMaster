@@ -1,0 +1,9 @@
+• Much faster browsing of encrypted drives: folders with thousands of files now open in about two seconds instead of nearly three minutes, and file reads are many times quicker
+• New: large exFAT drives now mount on devices that previously rejected them
+• Fixed: the app no longer crashes while listing a folder with many thousands of files
+• Fixed: the unlock form always appears now — it could previously go missing after an auto-mount prompt, leaving no way to unlock the drive
+• Fixed: a mounted drive is no longer disconnected by mistake while still in use, which could make it appear empty
+• Fixed: unmounting a drive while an app still had a file open could crash the app
+• Fixed: writing to a drive after it was unmounted could corrupt the volume; this is now blocked
+• Fixed: read errors on a damaged or unplugged drive are now reported instead of silently returning blank data
+• Fixed: data appended to a file on exFAT is immediately visible to other apps
