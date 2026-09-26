@@ -194,6 +194,8 @@ object Benchmark {
             // Opt-in: writes, and deliberately unaligned.
             if (only.contains("unaligned")) runCatching { benchUnaligned(drive, ::emit, mount) }
                 .onFailure { emit("unaligned     : FAILED ${it}") }
+            if (only.contains("correct")) runCatching { benchCorrectness(drive, ::emit, mount) }
+                .onFailure { emit("correctness   : FAILED ${it}") }
             emit("")
         }
 
@@ -595,10 +597,10 @@ object Benchmark {
         emit: (String) -> Unit,
         mount: MountCredentials? = null,
     ) {
-        val root = drive.fileSystem.rootDirectory
-        val dirName = "BENCH_UNALIGNED"
-        runCatching { root.search(dirName)?.let { deleteRecursively(it) } }
-        val dir = root.createDirectory(dirName)
+        val root = OtgMasterState.mountedDrives.firstOrNull()?.fileSystem?.rootDirectory
+            ?: drive.fileSystem.rootDirectory
+        val dir = freshDir(root, "BENCH_UNALIGNED")
+        val dirName = dir.name
 
         fun liveRoot(): UsbFile? = OtgMasterState.mountedDrives
             .firstOrNull { (it.fileSystem as? ExFatFileSystem)?.isUnmounted != true }
@@ -621,8 +623,13 @@ object Benchmark {
             val f = liveRoot()?.search(dirName)?.search(name) ?: run {
                 emit("unaligned     : *** $name not found after remount ***"); return null
             }
+            // Report the length mismatch rather than trusting it: a corrupt directory
+            // entry can claim an absurd size, and allocating it OOMs the process. A
+            // 178 MB claim for a 2 KiB file is how the stale-startCluster defect first
+            // showed itself here.
             if (f.length != expectLen) {
-                emit("unaligned     : *** $name length ${f.length}, expected $expectLen ***")
+                emit("unaligned     : *** $name length ${f.length}, expected $expectLen " +
+                     "— directory entry is wrong ***")
                 return null
             }
             val bb = ByteBuffer.allocate(expectLen.toInt())
@@ -689,6 +696,186 @@ object Benchmark {
         }
 
         runCatching { liveRoot()?.search(dirName)?.let { deleteRecursively(it) } }
+    }
+
+    /**
+     * Data-correctness suite. Latency is not the point here; surviving a remount is.
+     *
+     * The latency-oriented write check reported 32/32 passing while two real
+     * corruption defects sat in the write path, because it only ever wrote aligned
+     * 64 KiB chunks of a repeating pattern. These cases are chosen for what they can
+     * destroy, and every one of them is judged only after a full unmount/remount, so
+     * in-memory metadata cannot vouch for a corrupt on-disk structure.
+     *
+     *  A. neighbour  — write unaligned to one file, prove a second file is untouched.
+     *                  V1's blast radius reached past the file being written.
+     *  B. offsets    — writes at unaligned offsets AND unaligned lengths, which take
+     *                  the read-modify-write path on both ends of the range.
+     *  C. appends    — many small appends, then verify the whole file. Catches a stale
+     *                  cached size and a mis-grown cluster chain.
+     *  D. reuse      — delete a file, create another, and prove no old content shows
+     *                  through the recycled clusters.
+     */
+    private fun benchCorrectness(
+        drive: MountedDrive,
+        emit: (String) -> Unit,
+        mount: MountCredentials? = null,
+    ) {
+        var dirName = "BENCH_CORRECT"
+        var failures = 0
+        fun bad(msg: String) { emit("correctness   : *** $msg ***"); failures++ }
+        fun good(msg: String) = emit("correctness   : $msg")
+
+        fun liveRoot(): UsbFile? = OtgMasterState.mountedDrives
+            .firstOrNull { (it.fileSystem as? ExFatFileSystem)?.isUnmounted != true }
+            ?.fileSystem?.rootDirectory
+
+        fun remount(): Boolean {
+            if (mount == null) return false
+            OtgMasterState.unmountAllRequest?.invoke()
+            var dl = System.currentTimeMillis() + 30_000
+            while (OtgMasterState.mountedDrives.isNotEmpty() && System.currentTimeMillis() < dl)
+                Thread.sleep(300)
+            Thread.sleep(1500)
+            OtgMasterState.mountRequest?.mount(mount.password, mount.pim, mount.cipher, mount.hash)
+            dl = System.currentTimeMillis() + MOUNT_TIMEOUT_MS
+            while (liveRoot() == null && System.currentTimeMillis() < dl) Thread.sleep(500)
+            return liveRoot() != null
+        }
+
+        fun sha(b: ByteArray): String = java.security.MessageDigest.getInstance("SHA-256")
+            .digest(b).joinToString("") { "%02x".format(it) }.take(16)
+
+        /** Reads a whole file, refusing to trust an absurd reported length. */
+        fun slurp(name: String, expect: Int): ByteArray? {
+            val f = liveRoot()?.search(dirName)?.search(name)
+                ?: return null.also { bad("$name missing after remount") }
+            if (f.length != expect.toLong()) {
+                bad("$name length ${f.length}, expected $expect — directory entry is wrong")
+                return null
+            }
+            val bb = ByteBuffer.allocate(expect)
+            f.read(0, bb)
+            if (bb.position() != expect) {
+                bad("$name short read ${bb.position()} of $expect"); return null
+            }
+            return bb.array()
+        }
+
+        // Resolve the root from the live mount, not from the drive runAll captured
+        // before the loop: an earlier section (benchUnaligned) remounts, which
+        // replaces the entry in mountedDrives and leaves the captured drive pointing
+        // at a closed block device. Every call through it then fails, which looked
+        // like "could not create a working directory".
+        val root = liveRoot() ?: run { bad("no live mount — cannot run"); return }
+        val dir = freshDir(root, dirName)
+        dirName = dir.name
+
+        // ---------- build the fixtures ----------
+        val neighbour = ByteArray(4096) { 0x42 }        // must survive untouched
+        val victimLen = 4096
+        val offsets = ByteArray(8192) { i -> (i % 253).toByte() }
+        val appendTotal = 100
+        val appendChunk = 37                             // deliberately odd
+        val reuseOld = ByteArray(4096) { 0xC3.toByte() }
+
+        runCatching {
+            dir.createFile("neighbour.bin").apply {
+                write(0, ByteBuffer.wrap(neighbour.copyOf())); flush(); close()
+            }
+            // A: unaligned write into victim, neighbour must not move
+            dir.createFile("victim.bin").apply {
+                write(0, ByteBuffer.wrap(ByteArray(victimLen) { 0xFF.toByte() }))
+                flush()
+                write(0, ByteBuffer.wrap(ByteArray(10) { 0xAA.toByte() }))
+                flush(); close()
+            }
+            // B: unaligned offsets and lengths
+            dir.createFile("offsets.bin").apply {
+                write(0, ByteBuffer.wrap(offsets.copyOf())); flush()
+                // 700 bytes at offset 1234: unaligned at both ends.
+                val patch = ByteArray(700) { 0x11 }
+                write(1234, ByteBuffer.wrap(patch))
+                for (i in 0 until 700) offsets[1234 + i] = 0x11
+                flush(); close()
+            }
+            // C: many small odd-sized appends
+            dir.createFile("appends.bin").apply {
+                for (n in 0 until appendTotal) {
+                    write(n.toLong() * appendChunk,
+                          ByteBuffer.wrap(ByteArray(appendChunk) { (n % 251).toByte() }))
+                }
+                flush(); close()
+            }
+            // D: write then delete, so the clusters are recycled
+            dir.createFile("gone.bin").apply {
+                write(0, ByteBuffer.wrap(reuseOld.copyOf())); flush(); close()
+            }
+            dir.search("gone.bin")?.let { deleteRecursively(it) }
+            dir.createFile("fresh.bin").apply {
+                write(0, ByteBuffer.wrap(ByteArray(4096) { 0x07 })); flush(); close()
+            }
+        }.onFailure { bad("fixture setup failed: $it") }
+
+        if (!remount()) { bad("remount failed — cannot judge on-disk state"); return }
+
+        // ---------- judge ----------
+        slurp("neighbour.bin", neighbour.size)?.let {
+            val i = it.indices.firstOrNull { k -> it[k] != neighbour[k] }
+            if (i == null) good("A neighbour intact — unaligned write stayed in its own file")
+            else bad("A neighbour CORRUPTED at byte $i (0x%02X, expected 0x42)".format(it[i]))
+        }
+        slurp("victim.bin", victimLen)?.let {
+            val head = (0 until 10).all { k -> it[k] == 0xAA.toByte() }
+            val tail = (10 until victimLen).firstOrNull { k -> it[k] != 0xFF.toByte() }
+            when {
+                !head -> bad("A victim head not written")
+                tail != null -> bad("A victim tail zeroed from byte $tail " +
+                    "(${(10 until victimLen).count { k -> it[k] == 0.toByte() }} bytes lost)")
+                else -> good("A victim tail preserved")
+            }
+        }
+        slurp("offsets.bin", offsets.size)?.let {
+            val i = it.indices.firstOrNull { k -> it[k] != offsets[k] }
+            if (i == null) good("B unaligned offset+length write correct (sha ${sha(it)})")
+            else bad("B mismatch at byte $i (0x%02X, expected 0x%02X)".format(it[i], offsets[i]))
+        }
+        slurp("appends.bin", appendTotal * appendChunk)?.let {
+            val i = it.indices.firstOrNull { k -> it[k] != ((k / appendChunk) % 251).toByte() }
+            if (i == null) good("C $appendTotal odd-sized appends correct")
+            else bad("C append mismatch at byte $i")
+        }
+        slurp("fresh.bin", 4096)?.let {
+            val leaked = it.indices.firstOrNull { k -> it[k] == 0xC3.toByte() }
+            val wrong = it.indices.firstOrNull { k -> it[k] != 0x07.toByte() }
+            when {
+                leaked != null -> bad("D deleted file's content leaked into new file at byte $leaked")
+                wrong != null -> bad("D fresh file wrong at byte $wrong (0x%02X)".format(it[wrong]))
+                else -> good("D recycled clusters clean")
+            }
+        }
+
+        emit("correctness   : ${if (failures == 0) "ALL PASSED" else "$failures FAILURE(S) ABOVE"}")
+        runCatching { liveRoot()?.search(dirName)?.let { deleteRecursively(it) } }
+    }
+
+    /**
+     * Returns an empty directory named [base], tolerating leftovers.
+     *
+     * A previous run that died mid-way (an OOM from a corrupt directory entry, an
+     * app kill) leaves the directory behind with files in it, and createDirectory
+     * then fails with "Item already exists!". Delete what is there; if that cannot
+     * be done, fall back to a suffixed name rather than abandoning the run.
+     */
+    private fun freshDir(root: UsbFile, base: String): UsbFile {
+        runCatching { root.search(base)?.let { deleteRecursively(it) } }
+        runCatching { return root.createDirectory(base) }
+        for (n in 1..20) {
+            val name = "${base}_$n"
+            runCatching { root.search(name)?.let { deleteRecursively(it) } }
+            runCatching { return root.createDirectory(name) }
+        }
+        throw java.io.IOException("could not create a working directory for $base")
     }
 
     /** Depth-first delete; a non-empty directory cannot be removed directly. */

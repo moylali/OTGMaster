@@ -11,12 +11,30 @@ Current pin: upstream `57fa482` (`b03705d`).
 | Area | Patch | Commit |
 |---|---|---|
 | `ScsiBlockDevice` | Clamp oversized REQUEST SENSE response | `69fc0c1` (absorbed upstream) |
+| `ByteBlockDevice` | V1 — read-modify-write the trailing sector | `f58d556` |
+| `FatFile`, `ClusterChain` | V2 — sync `entry.startCluster` with the chain | `f58d556` |
 
-## Outstanding — verified defects, not yet patched
+## V1 and V2 — reproduced on hardware, then fixed
 
-Both are **silent data corruption** with no crash and no error returned. Both were
-confirmed by code trace against the vendored sources; neither is fixable from app
-code, because the defect is inside libaums' own write path.
+Both were **silent data corruption** with no crash and no error returned. Neither
+was fixable from app code, because the defect is inside libaums' own write path.
+
+Both were reproduced before fixing, on a Pixel 10 Pro XL (Android 17) against a
+FAT32 VeraCrypt volume, using the benchmark's `unaligned` section. The pre-fix and
+post-fix APKs were confirmed to differ by SHA-256 before each install — an earlier
+attempt reported a false pass because the APK had not been rebuilt.
+
+| | Pre-fix | Post-fix |
+|---|---|---|
+| V1 sector tail | FAIL — a 10-byte write zeroed 502 bytes | PASS |
+| V2 truncate+rewrite | FAIL — read back freed content; entry claimed 178 MB for a 2 KiB file | PASS |
+
+exFAT passes both either way: it goes through libexfat's own pread/pwrite, so these
+defects are FAT32-only. That bounds the blast radius.
+
+The wider `correct` section (neighbour-file integrity, unaligned offset *and* length,
+100 odd-sized appends, recycled-cluster leakage) passes on both filesystems, with
+identical SHA-256 across both devices.
 
 ### V1. `ByteBlockDevice.write` zero-fills the tail of the final sector
 
