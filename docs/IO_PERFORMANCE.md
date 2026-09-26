@@ -749,6 +749,58 @@ The lever is **fewer, larger callbacks**, not more threads. Cross-drive throughp
 remains unmeasured; it needs two drives through a powered hub and is reported as
 `saf par cross` when present.
 
+## 5.9 Re-baseline after the correctness fixes
+
+The FAT32 figures in §5.5-§5.8 were taken before the defects in
+`docs/VENDOR_FIXES.md` V1-V6 were fixed, and V6 changed the read path enough to
+invalidate them. Re-measured on a Pixel 10 Pro XL, FAT32 VeraCrypt volume, both
+cache arms in one session.
+
+### V6 lifted sequential reads, and it is visible in both arms
+
+| Buffer | Pre-fix (off / on) | Post-fix (off / on) |
+|---|---|---|
+| 32 KiB | 4.53 / 4.94 MB/s | 6.51 / 6.99 MB/s |
+| 128 KiB | 4.99 / 5.09 MB/s | **14.94 / 14.39 MB/s** |
+| 512 KiB | 4.97 / 5.12 MB/s | 11.31 / 14.92 MB/s |
+
+The claim here is the **change of shape**, not the ratio. Before, throughput was
+flat across buffer sizes in both arms — the signature of `ClusterChain.read`
+issuing one SCSI command per cluster no matter what the caller asked for. After, it
+scales with buffer size. Because the change appears in the cache-off arm too, it is
+attributable to the coalescing fix rather than to the cache or to session drift.
+
+### The cache, re-measured post-fix
+
+| | Cache off | Cache on | Effect |
+|---|---|---|---|
+| Random 4 KiB | 24.2 ms | 7.2 ms | **3.36x** |
+| Cold list, 10,000 short names | 927 ms | 727 ms | 1.27x |
+| Cold list, 10,000 long names | 1,086 ms | 947 ms | 1.15x |
+| Path resolve, depth 10 | 4.3 ms | 3.5 ms | 1.23x |
+| Sequential, 128 KiB | 14.94 MB/s | 14.39 MB/s | neutral |
+| Dense opens, 50 files | 293.5 / 110.0 ms | 286.4 / 113.1 ms | neutral |
+| Block layer, 4 MiB span (control) | 20.17 MB/s | 19.41 MB/s | matched |
+| SAF provider overhead | 1.66x | 1.66x | unchanged |
+
+The block-layer control matching across arms is what establishes the two runs are
+comparable rather than one being clock-throttled — the failure that was first
+misread as a regression in §5.7.
+
+**Random 4 KiB is where the cache earns its place on FAT32**, at 3.36x. Its
+sequential contribution is now neutral, because V6 removed the fragmentation the
+cache had been partly compensating for. Cold directory listing improved less than
+the pre-fix measurements suggested (1.15-1.27x against the 2.2x seen earlier),
+which is consistent: V4 stopped read-only opens rewriting the parent directory, so
+less of the listing cost is now writes the cache could absorb.
+
+### exFAT is not re-baselined
+
+These fixes are FAT32-path except the exFAT short-write and copy-elimination
+changes, and the exFAT device was unavailable. The exFAT figures in §5.5-§5.8 stand
+as last measured, and the copy elimination in particular is **unverified on
+hardware**.
+
 ## 6. The honest ceiling
 
 Without root there is no kernel mount, and two floors cannot be removed:
