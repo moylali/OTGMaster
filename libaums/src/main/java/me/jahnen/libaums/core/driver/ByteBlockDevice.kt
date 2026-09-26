@@ -92,9 +92,22 @@ open class ByteBlockDevice @JvmOverloads constructor(private val targetBlockDevi
                 buffer = ByteBuffer.allocate(rounded)
                 buffer.limit(rounded)
 
-                // TODO: instead of just writing 0s at the end of the buffer do we need to read what
-                // is currently on the disk and save that then?
-                System.arraycopy(src.array(), src.position(), buffer.array(), 0, src.remaining())
+                // LOCAL PATCH (docs/VENDOR_FIXES.md V1): read the sectors before
+                // overlaying, rather than zero-padding the tail.
+                //
+                // ByteBuffer.allocate() is zero-filled, so writing it back destroyed
+                // whatever the disk already held past the end of src -- up to
+                // blockSize-1 bytes of another part of the file, or of a neighbouring
+                // file in the same cluster. Any unaligned write corrupted data it was
+                // never asked to touch. Upstream's TODO (kept below in spirit) asked
+                // exactly this question; the answer is yes.
+                //
+                // The leading-partial branch above already does this; only the tail
+                // was missing it.
+                val remaining = src.remaining()
+                targetBlockDevice.read(devOffset, buffer)
+                buffer.clear()
+                System.arraycopy(src.array(), src.position(), buffer.array(), 0, remaining)
 
                 src.position(src.limit())
             } else {

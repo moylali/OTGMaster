@@ -53,6 +53,16 @@ internal constructor(startCluster: Long, private val blockDevice: BlockDeviceDri
     private val dataAreaOffset: Long
 
     /**
+     * The chain's current first cluster, or 0 when the chain is empty.
+     *
+     * LOCAL PATCH (docs/VENDOR_FIXES.md V2): growing or shrinking replaces the whole
+     * chain array, so the first cluster can change. FatFile has to write that back
+     * into its directory entry, and could not see it while `chain` was private.
+     */
+    internal val firstCluster: Long
+        get() = if (chain.isEmpty()) 0L else chain[0]
+
+    /**
      * Gets the current allocated clusters for this chain.
      *
      * @return The number of clusters.

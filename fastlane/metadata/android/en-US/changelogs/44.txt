@@ -7,3 +7,5 @@
 • Fixed: writing to a drive after it was unmounted could corrupt the volume; this is now blocked
 • Fixed: read errors on a damaged or unplugged drive are now reported instead of silently returning blank data
 • Fixed: data appended to a file on exFAT is immediately visible to other apps
+• Fixed: editing part of a file on a FAT32 drive no longer wipes the rest of the surrounding data — writes that did not land on an exact sector boundary were blanking up to 511 bytes beyond what was being written
+• Fixed: replacing the contents of a file on a FAT32 drive no longer corrupts it — the drive's directory could be left pointing at freed space, damaging that file and sometimes others

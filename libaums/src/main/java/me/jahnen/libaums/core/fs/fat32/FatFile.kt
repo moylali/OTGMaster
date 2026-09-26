@@ -57,6 +57,17 @@ internal constructor(private val blockDevice: BlockDeviceDriver, private val fat
             initChain()
             chain.length = newLength
             entry.fileSize = newLength
+            // LOCAL PATCH (docs/VENDOR_FIXES.md V2): keep the directory entry's start
+            // cluster in step with the chain.
+            //
+            // ClusterChain replaces its whole chain array when allocating or freeing,
+            // so the first cluster can change -- and truncating to 0 frees every
+            // cluster, after which a rewrite allocates a brand new one. Without this,
+            // flush() wrote the entry back still naming the original, now-freed
+            // cluster: the file read as garbage after remount, or cross-linked into
+            // whatever had since been given that cluster. SAF truncates on every
+            // mode "t" open, so this was a routine path, not an edge case.
+            entry.startCluster = chain.firstCluster
         }
 
     override val isRoot: Boolean
@@ -111,6 +122,10 @@ internal constructor(private val blockDevice: BlockDeviceDriver, private val fat
             this.length = length
         entry.setLastModifiedTimeToNow()
         chain.write(offset, source)
+        // The length setter above syncs startCluster when it grows the chain, but a
+        // write that fits the existing allocation skips it. Re-assert, cheaply, so a
+        // first write into a freshly truncated file cannot leave a stale entry.
+        entry.startCluster = chain.firstCluster
     }
 
     @Throws(IOException::class)
