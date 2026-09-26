@@ -702,6 +702,53 @@ The hash checks themselves all passed — including in the run that crashed.
   independently exercises the refreshDevices fix: that device is where a mount
   would previously succeed and then read as an empty volume.
 
+## 5.8 The SAF path: what clients actually get
+
+Every measurement in this document before this section called `UsbFile` directly.
+No real client does that. A SAF client's read crosses `ContentResolver`, the
+provider, a `ProxyFileDescriptor` and the FUSE bridge, landing on a
+`ProxyFileDescriptorCallback` dispatched on one process-wide `HandlerThread`. So
+the figures above describe a path nothing uses, and the cost of the real one was
+invisible.
+
+Measured with the harness's `saf` section, 32 MiB capped sequential read, 64 KiB
+buffer, same file read both ways in the same session:
+
+| | exFAT / OnePlus 7 | FAT32 / Pixel 10 Pro XL |
+|---|---|---|
+| Single stream through the provider | 7.93 MB/s | 3.38 MB/s |
+| Same file, direct `UsbFile` call | 23.04 MB/s | 5.07 MB/s |
+| **Provider overhead** | **2.90x** | **1.50x** |
+| Two streams, one drive, aggregate | 16.07 MB/s (**2.03x**) | 4.79 MB/s (**1.43x**) |
+
+The FAT32 column reproduced to within 1% across two sessions on different builds
+(3.35 / 5.05 / 1.51x / 4.81), so unlike the write-throughput figures in §5.7 these
+are stable enough that small differences carry signal.
+
+### Two consequences
+
+**Published read figures overstate what apps see.** Sequential reads on exFAT lose
+15 MB/s to the provider — more than the block cache ever won back. Any claim about
+user-visible read speed has to be discounted by 1.5x on FAT32 and 2.9x on exFAT.
+
+**The shared ProxyFileDescriptorThread is not the bottleneck.** Two streams on one
+drive scaled 2.03x on exFAT and 1.43x on FAT32 — on a single thread. On exFAT that
+is despite `ExFatFileSystem.lock` serialising every native call. If either the
+shared handler or the filesystem lock were binding, aggregate throughput would have
+been at or below the single-stream figure instead of double it.
+
+The single-stream path is therefore **latency-bound**: the thread idles waiting for
+the FUSE bridge between callbacks, and a second stream fills the gaps. That is a
+measured rejection of replacing the shared handler with per-drive handlers or a
+thread pool — including for multiple drives, since the cross-drive gain would come
+from the same latency-hiding one thread already provides. (A thread pool is
+separately unsafe: libaums has no locking, so concurrent callbacks on one drive
+would race its FAT cache and directory entries.)
+
+The lever is **fewer, larger callbacks**, not more threads. Cross-drive throughput
+remains unmeasured; it needs two drives through a powered hub and is reported as
+`saf par cross` when present.
+
 ## 6. The honest ceiling
 
 Without root there is no kernel mount, and two floors cannot be removed:
