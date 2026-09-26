@@ -37,8 +37,40 @@ class LibaumsRawBlockDevice(
 
     @Volatile private var closed = false
 
+    /**
+     * Serialises SCSI traffic on this device.
+     *
+     * A mass-storage transfer is a CBW, then data, then a CSW on the same pair of
+     * bulk endpoints. Two threads interleaving those sequences corrupts both — the
+     * wrong CSW is matched to the wrong command — and libaums' ScsiBlockDevice also
+     * reuses instance-level command buffers across calls, so concurrent entry
+     * scribbles on a command another thread is still sending.
+     *
+     * Nothing used to reach here concurrently: CachedBlockDevice held its single
+     * lock across the physical transfer, which serialised everything above it as a
+     * side effect. Releasing that lock (so a cache hit need not queue behind a
+     * multi-second USB read) removed the accidental protection, and this replaces it
+     * deliberately at the layer that actually owns the endpoints.
+     *
+     * Held per chunk rather than per request, on purpose. Each driver.read/write of
+     * one chunk is a complete, self-contained SCSI transaction, so chunk granularity
+     * is sufficient for transport integrity — and it means a 2 GiB sequential read
+     * yields the device between chunks instead of locking out a 24-byte metadata
+     * read for the whole transfer.
+     *
+     * This is the only code that holds the driver: LibaumsRawBlockDeviceOpener
+     * creates it as a local and hands it straight to this constructor, so there is
+     * no path around this lock.
+     */
+    private val transferLock = Any()
+
+    private fun checkOpen() {
+        if (closed) throw java.io.IOException("USB block device is closed")
+    }
+
     override fun readBlocks(startBlock: Long, blockCount: Int): ByteArray {
         require(blockCount >= 0) { "blockCount must be non-negative" }
+        checkOpen()
         val out = ByteArray(blockCount * blockSize)
         var done = 0
         while (done < blockCount) {
@@ -48,7 +80,13 @@ class LibaumsRawBlockDevice(
             // extra full-size copy per chunk.
             val view = ByteBuffer.wrap(out, done * blockSize, chunk * blockSize)
             try {
-                driver.read(startBlock + done, view)
+                synchronized(transferLock) {
+                    // Re-check inside the lock: close() takes it too, so without this
+                    // a transfer could start against a communication that was closed
+                    // while this thread waited.
+                    checkOpen()
+                    driver.read(startBlock + done, view)
+                }
             } catch (e: Exception) {
                 // Transfer failures here are otherwise reported with no indication of
                 // what was being read, which made a Pixel 10 Pro XL failure impossible
@@ -68,13 +106,17 @@ class LibaumsRawBlockDevice(
 
     override fun writeBlocks(startBlock: Long, data: ByteArray) {
         require(data.size % blockSize == 0) { "Write length must be block aligned" }
+        checkOpen()
         val total = data.size / blockSize
         var done = 0
         while (done < total) {
             val chunk = minOf(maxTransferBlocks, total - done)
             val view = ByteBuffer.wrap(data, done * blockSize, chunk * blockSize)
             try {
-                driver.write(startBlock + done, view)
+                synchronized(transferLock) {
+                    checkOpen()
+                    driver.write(startBlock + done, view)
+                }
             } catch (e: Exception) {
                 throw java.io.IOException(
                     "write failed: chunk of $chunk blocks at ${startBlock + done} " +
@@ -88,9 +130,14 @@ class LibaumsRawBlockDevice(
     }
 
     override fun close() {
-        if (closed) return
-        closed = true
-        communication.close()
+        // Under the lock: closing the UsbDeviceConnection while another thread is
+        // inside bulkTransfer is a use-after-close in the USB stack, not a clean
+        // error. Waiting for the in-flight chunk costs at most one chunk's time.
+        synchronized(transferLock) {
+            if (closed) return
+            closed = true
+            communication.close()
+        }
     }
 
     companion object {

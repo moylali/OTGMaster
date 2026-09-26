@@ -153,4 +153,85 @@ class LibaumsRawBlockDeviceTest {
             driver.reads.all { it.second * 4096 <= LibaumsRawBlockDevice.MAX_TRANSFER_BYTES }
         )
     }
+
+    /**
+     * SCSI transactions on one device must never overlap.
+     *
+     * A transfer is CBW, then data, then CSW on the same bulk endpoints, and
+     * ScsiBlockDevice reuses instance-level command buffers between calls. Two
+     * threads inside the driver at once corrupts both transfers.
+     *
+     * This became reachable when CachedBlockDevice stopped holding its lock across
+     * physical I/O: that lock had been serialising the transport by accident.
+     */
+    @Test
+    fun concurrentTransfersDoNotOverlapOnTheDevice() {
+        val driver = OverlapDetectingDriver()
+        val device = LibaumsRawBlockDevice(driver, FakeCommunication())
+
+        // Spans several chunks each, so there is ample opportunity to interleave.
+        val big = MAX_BLOCKS * 3
+        val threads = (0 until 4).map { i ->
+            Thread { device.readBlocks(i.toLong() * big, big) }
+        }
+        threads.forEach { it.start() }
+        threads.forEach { it.join(20_000) }
+
+        assertEquals("driver must never see two transfers at once",
+            1, driver.maxConcurrent)
+        assertTrue("all chunks should have run", driver.calls > 4)
+    }
+
+    /** A read after close() must fail, not reach a closed UsbCommunication. */
+    @Test
+    fun readAfterCloseFails() {
+        val device = LibaumsRawBlockDevice(FakeDriver(), FakeCommunication())
+        device.close()
+        val e = runCatching { device.readBlocks(0, 1) }.exceptionOrNull()
+        assertTrue("expected an IOException, got $e", e is java.io.IOException)
+    }
+
+    @Test
+    fun writeAfterCloseFails() {
+        val device = LibaumsRawBlockDevice(FakeDriver(), FakeCommunication())
+        device.close()
+        val e = runCatching { device.writeBlocks(0, ByteArray(512)) }.exceptionOrNull()
+        assertTrue("expected an IOException, got $e", e is java.io.IOException)
+    }
+
+    /** Records the peak number of threads inside read/write simultaneously. */
+    private class OverlapDetectingDriver(
+        override val blockSize: Int = 512,
+        override val blocks: Long = 121_145_344L,
+    ) : BlockDeviceDriver {
+        private val inside = java.util.concurrent.atomic.AtomicInteger(0)
+        @Volatile var maxConcurrent = 0; private set
+        @Volatile var calls = 0; private set
+
+        override fun init() {}
+
+        private fun enter() {
+            val n = inside.incrementAndGet()
+            synchronized(this) {
+                if (n > maxConcurrent) maxConcurrent = n
+                calls++
+            }
+            // Long enough that an unsynchronised caller would reliably overlap.
+            Thread.sleep(2)
+        }
+
+        override fun read(deviceOffset: Long, buffer: ByteBuffer) {
+            enter()
+            try { buffer.position(buffer.limit()) } finally { inside.decrementAndGet() }
+        }
+
+        override fun write(deviceOffset: Long, buffer: ByteBuffer) {
+            enter()
+            try { buffer.position(buffer.limit()) } finally { inside.decrementAndGet() }
+        }
+    }
+
+    private companion object {
+        val MAX_BLOCKS = LibaumsRawBlockDevice.MAX_TRANSFER_BYTES / 512
+    }
 }
