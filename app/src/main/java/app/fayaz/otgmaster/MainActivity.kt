@@ -76,6 +76,7 @@ import app.fayaz.otgmaster.veracrypt.VolumeCandidate
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
+import kotlinx.coroutines.withTimeoutOrNull
 import me.jahnen.libaums.core.fs.fat32.Fat32FileSystemCreator
 import me.jahnen.libaums.core.fs.FileSystemFactory
 import me.jahnen.libaums.core.partition.PartitionTableEntry
@@ -285,6 +286,32 @@ class MainActivity : AppCompatActivity() {
         usbDeviceProvider = RealUsbDeviceProvider(usbMgr, permissionIntent)
 
         registerUsbReceiver()
+
+        // Let components without an activity reference write to the log pane.
+        OtgMasterState.logSink = { line -> runOnUiThread { appendLog(line) } }
+
+        OtgMasterState.unmountAllRequest = {
+            runOnUiThread {
+                OtgMasterState.mountedDrives.toList().forEach { unmountDrive(it) }
+            }
+        }
+
+        OtgMasterState.mountRequest = OtgMasterState.MountRequest { pw, pim, cipherName, hashName ->
+            // Probe first if nothing has been scanned yet. Without this the request
+            // depended on the UI having already scanned, which does not happen while
+            // the screen is off or locked — and needing the screen unlocked defeats
+            // the point of being able to mount programmatically.
+            lifecycleScope.launch {
+                if (_deviceCandidates.value.isEmpty()) {
+                    android.util.Log.i("OTGMaster", "Mount request: no candidates, probing")
+                    openAndProbeUsb()
+                    withTimeoutOrNull(25_000) {
+                        while (_deviceCandidates.value.isEmpty()) delay(300)
+                    }
+                }
+                mountProbedCandidates(pw, pim, cipherName, hashName)
+            }
+        }
         
         sharedPreferences = getSharedPreferences("otgmaster_prefs", Context.MODE_PRIVATE)
         val savedTheme = sharedPreferences.getString("theme_mode", ThemeMode.SYSTEM.name)
@@ -397,6 +424,9 @@ class MainActivity : AppCompatActivity() {
     }
 
     override fun onDestroy() {
+        OtgMasterState.logSink = null
+        OtgMasterState.mountRequest = null
+        OtgMasterState.unmountAllRequest = null
         closeOpenedDevices()
         unregisterReceiver(usbReceiver)
         super.onDestroy()
@@ -427,8 +457,29 @@ class MainActivity : AppCompatActivity() {
         val mountedDeviceKeys = OtgMasterState.mountedDrives.mapNotNull { it.sourceDeviceName }.toSet()
 
         // Drop any previously-opened, not-yet-mounted device that's no longer attached.
+        //
+        // Two guards, because getting this wrong closes a live connection:
+        //
+        // 1. Never touch a device a mounted drive is using. Closing it left the
+        //    MountedDrive holding a dead handle, and reads then failed silently —
+        //    ExFatFile.read swallows the error — so the volume appeared empty
+        //    rather than erroring.
+        //
+        // 2. Match on vendor:product rather than the full key. stableKey embeds the
+        //    serial number only when permission is held, and falls back to the
+        //    device path otherwise, so the SAME device yields two different keys
+        //    depending on permission state. openedDevices stores the serial form;
+        //    recomputing here with permission momentarily unavailable produced the
+        //    path form, no match, and the device was closed as "stale".
         val attachedKeys = devices.map { UsbDeviceDescriber.stableKey(it, usbDeviceProvider.hasPermission(it)) }.toSet()
-        val staleKeys = openedDevices.keys.filter { it != QEMU_DEVICE_KEY && it !in attachedKeys }
+        val attachedIds = devices.map { "${it.vendorId}:${it.productId}" }.toSet()
+        fun vendorProductOf(key: String): String = key.split(":").take(2).joinToString(":")
+        val staleKeys = openedDevices.keys.filter { key ->
+            key != QEMU_DEVICE_KEY &&
+                key !in mountedDeviceKeys &&
+                key !in attachedKeys &&
+                vendorProductOf(key) !in attachedIds
+        }
         if (staleKeys.isNotEmpty()) {
             staleKeys.forEach { key -> openedDevices.remove(key)?.close() }
             _deviceCandidates.value = _deviceCandidates.value.filterNot { it.deviceName in staleKeys }
@@ -672,8 +723,12 @@ class MainActivity : AppCompatActivity() {
                 // a 10,000-entry directory (docs/IO_PERFORMANCE.md §5.5) — and each
                 // one was a USB round trip plus a sector decryption. Caching
                 // plaintext means a hit skips both.
-                val cachedDevice = app.fayaz.otgmaster.block.CachedBlockDevice(decryptedDevice)
-                val byteDevice = me.jahnen.libaums.core.driver.ByteBlockDevice(cachedDevice)
+                // Readahead helps or hurts depending on the filesystem's metadata
+                // layout — see CachedBlockDevice.NO_READAHEAD_BYTES.
+                val cachedDevice = wrapWithCache(decryptedDevice, detected.displayName)
+                val byteDevice = me.jahnen.libaums.core.driver.ByteBlockDevice(
+                    cachedDevice as me.jahnen.libaums.core.driver.BlockDeviceDriver
+                )
                 val fileSystem = try {
                     FileSystemFactory.createFileSystem(dummyEntry, byteDevice)
                 } catch (e: Exception) {
@@ -893,8 +948,10 @@ class MainActivity : AppCompatActivity() {
                 // Same cache for plain volumes: libaums rebuilds directory state that
                 // libexfat keeps parsed, so FAT32 re-reads blocks instead (its warm
                 // listing is 556 ms against exFAT's 30 ms).
-                val cachedDevice = app.fayaz.otgmaster.block.CachedBlockDevice(adapter)
-                val byteDevice = me.jahnen.libaums.core.driver.ByteBlockDevice(cachedDevice)
+                val cachedDevice = wrapWithCache(adapter, plain.filesystemName)
+                val byteDevice = me.jahnen.libaums.core.driver.ByteBlockDevice(
+                    cachedDevice as me.jahnen.libaums.core.driver.BlockDeviceDriver
+                )
                 val fileSystem = FileSystemFactory.createFileSystem(dummyEntry, byteDevice)
                 val driveId = UUID.randomUUID().toString().substring(0, 8)
                 val mountedDrive = MountedDrive(
@@ -930,6 +987,82 @@ class MainActivity : AppCompatActivity() {
                     toastState.value = Pair("Mount failed: ${e.message ?: "Unknown error"}", false)
                     appendLog("Failed to mount ${candidate.displayName}: ${e.message}")
                 }
+            }
+        }
+    }
+
+    /**
+     * Cache line size for a filesystem.
+     *
+     * exFAT re-reads a small metadata region thousands of times, so a 64 KiB line
+     * is nearly free and pays back 90x on a cold directory listing. FAT32 at small
+     * cluster sizes walks a large FAT sparsely, where the same readahead was pure
+     * amplification and made cold listings 2-4x slower. Measured in
+     * docs/IO_PERFORMANCE.md.
+     */
+    /**
+     * Wraps [device] in the block cache unless configuration disables it.
+     *
+     * Returning the bare device when disabled lets the cache be A/B'd in one
+     * session; [device] already implements BlockDeviceDriver in both mount paths.
+     */
+    private fun wrapWithCache(
+        device: app.fayaz.otgmaster.block.RawBlockDevice,
+        filesystemName: String,
+    ): app.fayaz.otgmaster.block.RawBlockDevice {
+        val cfg = OtgMasterState.cacheConfig
+        if (cfg?.enabled == false) {
+            appendLog("Block cache: DISABLED for this mount")
+            android.util.Log.i("OTGMaster", "block cache disabled for this mount")
+            return device
+        }
+        val readAhead = cfg?.readAheadBytes ?: readAheadFor(filesystemName)
+        android.util.Log.i("OTGMaster", "block cache enabled, readahead $readAhead bytes")
+        return app.fayaz.otgmaster.block.CachedBlockDevice(device, readAheadBytes = readAhead)
+    }
+
+    private fun readAheadFor(filesystemName: String): Int =
+        if (filesystemName.contains("exFAT", ignoreCase = true))
+            app.fayaz.otgmaster.block.CachedBlockDevice.DEFAULT_READAHEAD_BYTES
+        else
+            app.fayaz.otgmaster.block.CachedBlockDevice.FAT_READAHEAD_BYTES
+
+    /**
+     * Unlocks and mounts every probed candidate with one set of credentials.
+     *
+     * Backs [OtgMasterState.MountRequest]. Goes through the same attemptUnlock the
+     * form uses, so it exercises the real path rather than a parallel one.
+     */
+    private fun mountProbedCandidates(
+        password: String,
+        pim: Int?,
+        cipherName: String,
+        hashName: String,
+    ) {
+        val cipher = app.fayaz.otgmaster.veracrypt.VeraCryptCipher.entries
+            .find { it.name == cipherName || it.displayName == cipherName }
+            ?: app.fayaz.otgmaster.veracrypt.VeraCryptCipher.DEFAULT
+        val hash = app.fayaz.otgmaster.veracrypt.VeraCryptHash.entries
+            .find { it.name == hashName || it.displayName == hashName }
+            ?: app.fayaz.otgmaster.veracrypt.VeraCryptHash.DEFAULT
+
+        val devices = _deviceCandidates.value
+        if (devices.isEmpty()) {
+            val msg = "Mount request: no probed candidates — is a drive attached and permitted?"
+            appendLog(msg)
+            android.util.Log.w("OTGMaster", msg)
+            return
+        }
+        val total = devices.sumOf { it.candidates.size }
+        val msg = "Mount request: $total candidate(s), ${cipher.displayName}/${hash.displayName}, PIM ${pim ?: "default"}"
+        appendLog(msg)
+        android.util.Log.i("OTGMaster", msg)
+        devices.forEach { device ->
+            device.candidates.forEach { candidate ->
+                attemptUnlock(
+                    device.deviceName, candidate, password, pim,
+                    emptyList(), cipher, hash,
+                ) {}
             }
         }
     }

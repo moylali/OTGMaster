@@ -60,6 +60,8 @@ class CachedBlockDevice(
     @Volatile var hits: Long = 0; private set
     @Volatile var misses: Long = 0; private set
     @Volatile var delegateBlocksRead: Long = 0; private set
+    /** Requests that skipped the cache because they were at least a line long. */
+    @Volatile var bypasses: Long = 0; private set
 
     override fun init() { /* delegate is already initialised */ }
 
@@ -70,6 +72,22 @@ class CachedBlockDevice(
             "read of $blockCount blocks at $startBlock exceeds device (${this.blockCount} blocks)"
         }
         if (blockCount == 0) return ByteArray(0)
+
+        // Requests at least a line long bypass the cache.
+        //
+        // Routing them through lines fragments one efficient transfer into many
+        // line-sized ones, because the line size then caps the largest read that
+        // ever reaches the device. With 1-block lines a 128-block request became
+        // 128 separate 512-byte SCSI commands, measured at 0.48 MB/s against
+        // 6.35 MB/s with no cache at all. It would also evict the metadata the
+        // cache exists to hold, in favour of file data that is rarely re-read.
+        if (blockCount >= blocksPerLine) {
+            synchronized(lock) {
+                bypasses++
+                delegateBlocksRead += blockCount
+                return delegate.readBlocks(startBlock, blockCount)
+            }
+        }
 
         val out = ByteArray(blockCount * blockSize)
         synchronized(lock) {
@@ -114,16 +132,58 @@ class CachedBlockDevice(
     override fun writeBlocks(startBlock: Long, data: ByteArray) {
         require(data.size % blockSize == 0) { "write length must be block aligned" }
         synchronized(lock) {
-            delegate.writeBlocks(startBlock, data)
-            // Invalidate rather than patch in place: a partial-line write would
-            // otherwise leave a line that looks complete but is stale elsewhere.
-            val written = data.size / blockSize
-            if (written > 0) {
-                val first = startBlock / blocksPerLine
-                val last = (startBlock + written - 1) / blocksPerLine
-                for (i in first..last) lines.remove(i)?.fill(0)
+            try {
+                delegate.writeBlocks(startBlock, data)
+            } catch (e: Throwable) {
+                // The write may still have changed part of the device, so keeping
+                // the pre-write line would serve stale bytes for content that did
+                // land. Dropping a line is always safe — worst case is a refetch.
+                invalidateRange(startBlock, data.size / blockSize)
+                throw e
             }
+            // Patch in place rather than invalidating.
+            //
+            // We hold the lock and are the only writer, so once the write succeeds
+            // the cached line with the new bytes applied is exactly what the device
+            // holds. Invalidating instead forced the next read-modify-write to
+            // refetch the whole line: measured at 1.08 MB/s writing versus
+            // 1.85 MB/s uncached on FAT32, because ByteBlockDevice does a RMW per
+            // unaligned write and each one dropped a 64 KiB line.
+            patchRange(startBlock, data)
         }
+    }
+
+    /** Caller must hold [lock]. Applies written bytes to any cached lines. */
+    private fun patchRange(startBlock: Long, data: ByteArray) {
+        val written = data.size / blockSize
+        if (written <= 0) return
+        var done = 0
+        while (done < written) {
+            val block = startBlock + done
+            val lineIndex = block / blocksPerLine
+            val offsetInLine = (block - lineIndex * blocksPerLine).toInt()
+            val take = minOf(blocksPerLine - offsetInLine, written - done)
+            lines[lineIndex]?.let { line ->
+                // A final line at the end of the device can be short.
+                val copyable = minOf(take, line.size / blockSize - offsetInLine)
+                if (copyable > 0) {
+                    System.arraycopy(
+                        data, done * blockSize,
+                        line, offsetInLine * blockSize,
+                        copyable * blockSize,
+                    )
+                }
+            }
+            done += take
+        }
+    }
+
+    /** Caller must hold [lock]. */
+    private fun invalidateRange(startBlock: Long, blocks: Int) {
+        if (blocks <= 0) return
+        val first = startBlock / blocksPerLine
+        val last = (startBlock + blocks - 1) / blocksPerLine
+        for (i in first..last) lines.remove(i)?.fill(0)
     }
 
     // --- BlockDeviceDriver: deviceOffset is a block number, per ByteBlockDevice ---
@@ -142,15 +202,18 @@ class CachedBlockDevice(
         writeBlocks(deviceOffset, data)
     }
 
+    /** Blocks fetched per miss; 1 means no readahead. */
+    val lineBlocks: Int get() = blocksPerLine
+
     fun stats(): String {
         val total = hits + misses
         val rate = if (total > 0) 100.0 * hits / total else 0.0
-        return "cache: %d hits, %d misses (%.1f%% hit), %d blocks from device"
-            .format(hits, misses, rate, delegateBlocksRead)
+        return "cache: line=%d blocks, %d hits, %d misses (%.1f%% hit), %d bypassed, %d blocks from device"
+            .format(blocksPerLine, hits, misses, rate, bypasses, delegateBlocksRead)
     }
 
     fun resetStats() {
-        hits = 0; misses = 0; delegateBlocksRead = 0
+        hits = 0; misses = 0; delegateBlocksRead = 0; bypasses = 0
     }
 
     /** Drops and zeroes every cached line. */
@@ -176,7 +239,43 @@ class CachedBlockDevice(
          * 64 KiB: the flat part of the measured throughput curve (~22 MB/s at
          * 64 KiB and 512 KiB spans, ~7 MB/s at 4 KiB), and within the 120 KiB
          * per-transfer limit in LibaumsRawBlockDevice.
+         *
+         * Right for exFAT, whose metadata sits in a small region read over and
+         * over — 90x on a cold directory listing. Wrong for FAT32 at small
+         * cluster sizes: see [NO_READAHEAD_BYTES].
          */
         const val DEFAULT_READAHEAD_BYTES = 64 * 1024
+
+        /**
+         * 4 KiB: the right line size for FAT32.
+         *
+         * Measured by sweeping readahead on a 57 GiB FAT32 volume with 4 KiB
+         * clusters, against no cache at all in the same session
+         * (docs/IO_PERFORMANCE.md §5.6):
+         *
+         *              off     4K      8K     16K     32K     64K
+         *   list      1363   1185    1471    1512    1820    2355  ms
+         *   listLFN   1672   1613    2688    3015    3755    5570  ms
+         *   random    28.9   10.0     7.9     7.2     8.7     9.8  ms
+         *   seq       2.91   2.94    4.41    6.35    8.50   10.31  MB/s
+         *
+         * Cold listing degrades monotonically as the line grows, because walking a
+         * large FAT sparsely re-fetches most of each line for nothing. Sequential
+         * read improves monotonically for the opposite reason. 4 KiB is the only
+         * setting that beats no-cache on every metric and loses on none.
+         */
+        const val FAT_READAHEAD_BYTES = 4 * 1024
+
+        /**
+         * One block per line: cache without readahead.
+         *
+         * Readahead is a bet that neighbouring blocks will be wanted soon. FAT32
+         * with 4 KiB clusters has a ~60 MB FAT walked sparsely, so the bet loses:
+         * each miss fetched 64 KiB to satisfy ~512 bytes and the line was rarely
+         * reused, making a cold 10,000-entry listing 2-4x *slower* than no cache
+         * at all. Deduplicating repeat reads still helps, so the cache stays —
+         * just without the prefetch.
+         */
+        const val NO_READAHEAD_BYTES = 512
     }
 }

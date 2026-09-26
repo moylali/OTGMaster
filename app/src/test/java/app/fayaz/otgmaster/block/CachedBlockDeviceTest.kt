@@ -96,6 +96,82 @@ class CachedBlockDeviceTest {
     }
 
     @Test
+    fun `a failed write still invalidates, so no stale bytes are served`() {
+        // A write that throws may already have changed part of the device. Keeping
+        // the pre-write line would then serve stale bytes for content that landed.
+        val dev = object : RawBlockDevice {
+            override val blockSize = 512
+            override val blockCount = 4096L
+            var failNext = false
+            val store = ByteArray((4096 * 512)) { (it % 251).toByte() }
+            override fun readBlocks(startBlock: Long, blockCount: Int): ByteArray {
+                val from = (startBlock * blockSize).toInt()
+                return store.copyOfRange(from, from + blockCount * blockSize)
+            }
+            override fun writeBlocks(startBlock: Long, data: ByteArray) {
+                // Mutate, then fail — the awkward case.
+                System.arraycopy(data, 0, store, (startBlock * blockSize).toInt(), data.size)
+                if (failNext) throw java.io.IOException("simulated transfer failure")
+            }
+            override fun close() {}
+        }
+        val cache = CachedBlockDevice(dev, readAheadBytes = 8 * 512)
+        cache.readBlocks(0, 1)                       // populate line 0
+        dev.failNext = true
+        val payload = ByteArray(512) { 0x77 }
+        runCatching { cache.writeBlocks(1, payload) }
+        assertArrayEquals(
+            "must refetch from the device, not serve the stale cached line",
+            payload, cache.readBlocks(1, 1),
+        )
+    }
+
+    @Test
+    fun `a write spanning several lines invalidates all of them`() {
+        val dev = FakeDevice()
+        val cache = CachedBlockDevice(dev, readAheadBytes = 4 * 512)
+        cache.readBlocks(0, 20)                      // bypasses (>= line), caches nothing
+        repeat(20) { cache.readBlocks(it.toLong(), 1) }   // now populate lines 0..4
+        val payload = ByteArray(20 * 512) { 0x3C }
+        cache.writeBlocks(0, payload)
+        assertArrayEquals("every touched line must be refetched",
+            payload, cache.readBlocks(0, 20))
+    }
+
+    @Test
+    fun `a write patches the cached line instead of forcing a refetch`() {
+        val dev = FakeDevice()
+        val cache = CachedBlockDevice(dev, readAheadBytes = 8 * 512)
+        cache.readBlocks(0, 1)                  // populate line 0
+        val before = dev.readCalls
+        val payload = ByteArray(512) { 0x5A }
+        cache.writeBlocks(3, payload)
+        assertArrayEquals("re-read must see the new bytes", payload, cache.readBlocks(3, 1))
+        assertEquals("patched line must not trigger a refetch", before, dev.readCalls)
+        // Neighbouring blocks in the same line must be untouched.
+        assertArrayEquals(expected(dev, 4, 1), cache.readBlocks(4, 1))
+    }
+
+    @Test
+    fun `a multi-line write patches every cached line it covers`() {
+        val dev = FakeDevice()
+        val cache = CachedBlockDevice(dev, readAheadBytes = 4 * 512)
+        repeat(20) { cache.readBlocks(it.toLong(), 1) }
+        val before = dev.readCalls
+        val payload = ByteArray(20 * 512) { 0x3C }
+        cache.writeBlocks(0, payload)
+        // Read back one block at a time: a 20-block read would exceed the line size
+        // and bypass the cache, which would hit the device legitimately and say
+        // nothing about whether the lines were patched.
+        for (b in 0 until 20) {
+            assertArrayEquals(
+                "block $b", ByteArray(512) { 0x3C }, cache.readBlocks(b.toLong(), 1),
+            )
+        }
+        assertEquals("no refetch after patching", before, dev.readCalls)
+    }
+
+    @Test
     fun `eviction keeps the cache bounded and correct`() {
         val dev = FakeDevice()
         val lineBlocks = 8
@@ -131,6 +207,42 @@ class CachedBlockDeviceTest {
         val before = dev.readCalls
         cache.readBlocks(0, 8)
         assertEquals("must refetch after invalidate", before + 1, dev.readCalls)
+    }
+
+    @Test
+    fun `a large read is issued as ONE device call, not fragmented per line`() {
+        // The bug this pins: routing large reads through lines makes the line size
+        // cap the biggest transfer that reaches the device. With 8-block lines a
+        // 200-block read became 25 separate calls; with 1-block lines a sequential
+        // file read collapsed to 0.48 MB/s.
+        val dev = FakeDevice()
+        val cache = CachedBlockDevice(dev, readAheadBytes = 8 * 512)
+        val data = cache.readBlocks(64, 200)
+        assertEquals("must be a single underlying read", 1, dev.readCalls)
+        assertEquals(200L, dev.blocksRead)
+        assertArrayEquals(expected(dev, 64, 200), data)
+        assertEquals(1L, cache.bypasses)
+    }
+
+    @Test
+    fun `a read exactly one line long bypasses rather than caching`() {
+        val dev = FakeDevice()
+        val cache = CachedBlockDevice(dev, readAheadBytes = 8 * 512)
+        cache.readBlocks(0, 8)
+        assertEquals(1, dev.readCalls)
+        assertEquals(1L, cache.bypasses)
+        // Nothing was cached, so a following small read must fetch.
+        cache.readBlocks(0, 1)
+        assertEquals(2, dev.readCalls)
+    }
+
+    @Test
+    fun `a large read with 1-block lines still issues one call`() {
+        val dev = FakeDevice()
+        val cache = CachedBlockDevice(dev, readAheadBytes = 512)   // no readahead
+        val data = cache.readBlocks(10, 128)
+        assertEquals("1-block lines must not fragment a 128-block read", 1, dev.readCalls)
+        assertArrayEquals(expected(dev, 10, 128), data)
     }
 
     @Test

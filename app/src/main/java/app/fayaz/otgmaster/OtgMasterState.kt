@@ -27,6 +27,54 @@ data class MountedDrive(
 
 object OtgMasterState {
     val mountedDrives = CopyOnWriteArrayList<MountedDrive>()
+
+    /**
+     * Optional sink for user-visible log lines, installed by MainActivity while it
+     * is alive.
+     *
+     * Lets components with no activity reference — a manifest-declared receiver, a
+     * background worker — surface progress in the app's log pane. The sink is
+     * responsible for hopping to the main thread; callers may be on any thread.
+     */
+    @Volatile
+    var logSink: ((String) -> Unit)? = null
+
+    fun log(line: String) {
+        logSink?.invoke(line)
+    }
+
+    /**
+     * Unlocks and mounts every currently-probed candidate with these credentials,
+     * bypassing the UI form.
+     *
+     * Installed by MainActivity while it is alive. Exists so callers without an
+     * activity reference can mount — test automation today, and the planned
+     * backup service, which has to mount with no user present.
+     */
+    fun interface MountRequest {
+        fun mount(password: String, pim: Int?, cipherName: String, hashName: String)
+    }
+
+    @Volatile
+    var mountRequest: MountRequest? = null
+
+    /** Unmounts every drive. Installed by MainActivity while it is alive. */
+    @Volatile
+    var unmountAllRequest: (() -> Unit)? = null
+
+    /**
+     * Block-cache configuration applied at mount time; null uses the
+     * per-filesystem default.
+     *
+     * Exposed so the cache can be A/B'd within a single session. Comparing across
+     * sessions proved unreliable — the block-layer control measured 22.03 MB/s in
+     * one session and 12.94 MB/s in another with identical code, which is larger
+     * than the effect being measured.
+     */
+    data class CacheConfig(val enabled: Boolean = true, val readAheadBytes: Int? = null)
+
+    @Volatile
+    var cacheConfig: CacheConfig? = null
     
     fun getDrive(id: String): MountedDrive? {
         return mountedDrives.find { it.id == id }

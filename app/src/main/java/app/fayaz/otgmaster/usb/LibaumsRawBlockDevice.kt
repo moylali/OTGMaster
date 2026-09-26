@@ -47,7 +47,20 @@ class LibaumsRawBlockDevice(
             // consistent with what libaums' bulkInTransfer expects) to avoid an
             // extra full-size copy per chunk.
             val view = ByteBuffer.wrap(out, done * blockSize, chunk * blockSize)
-            driver.read(startBlock + done, view)
+            try {
+                driver.read(startBlock + done, view)
+            } catch (e: Exception) {
+                // Transfer failures here are otherwise reported with no indication of
+                // what was being read, which made a Pixel 10 Pro XL failure impossible
+                // to attribute without guesswork.
+                throw java.io.IOException(
+                    "read failed: chunk of $chunk blocks at ${startBlock + done} " +
+                    "(request was $blockCount blocks at $startBlock; " +
+                    "device has ${this.blockCount} blocks of $blockSize bytes; " +
+                    "chunk limit $maxTransferBlocks blocks)",
+                    e,
+                )
+            }
             done += chunk
         }
         return out
@@ -60,7 +73,16 @@ class LibaumsRawBlockDevice(
         while (done < total) {
             val chunk = minOf(maxTransferBlocks, total - done)
             val view = ByteBuffer.wrap(data, done * blockSize, chunk * blockSize)
-            driver.write(startBlock + done, view)
+            try {
+                driver.write(startBlock + done, view)
+            } catch (e: Exception) {
+                throw java.io.IOException(
+                    "write failed: chunk of $chunk blocks at ${startBlock + done} " +
+                    "(request was $total blocks at $startBlock; " +
+                    "device has ${this.blockCount} blocks of $blockSize bytes)",
+                    e,
+                )
+            }
             done += chunk
         }
     }
