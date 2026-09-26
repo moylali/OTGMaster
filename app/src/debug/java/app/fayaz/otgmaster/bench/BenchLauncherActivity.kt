@@ -99,21 +99,33 @@ class BenchLauncherActivity : Activity() {
      * adb-driven runs take rather than a second code path that could drift.
      */
     private fun launch(tests: String, cacheEnabled: Boolean) {
-        appendStatus("starting: $tests (cache ${if (cacheEnabled) "on" else "off"})")
-        if (OtgMasterState.mountRequest == null) {
-            appendStatus("bringing up MainActivity for the mount handler…")
+        // Mount here rather than leaving it to the benchmark's own request.
+        //
+        // That request probes USB and needs permission, and a permission dialog needs
+        // a resumed activity — but this screen holds the front so the screen stays on,
+        // which leaves MainActivity in the background unable to show one. On a cold
+        // start the run then sat for its full 90-second mount timeout and reported
+        // "no probed candidates", which says nothing about why.
+        //
+        // Mounting in OTG Master first is also the natural order for a human: unlock
+        // the drive there, then come here to measure it.
+        if (OtgMasterState.mountedDrives.isEmpty()) {
+            appendStatus("No drive is mounted.")
+            appendStatus("Open OTG Master, unlock the drive there, then come back and " +
+                         "tap again. Opening it now…")
             startActivity(
                 Intent(this, Class.forName("app.fayaz.otgmaster.MainActivity")).apply {
                     addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
                 }
             )
+            return
         }
+
+        appendStatus("starting: $tests (cache ${if (cacheEnabled) "on" else "off"})")
+        appendStatus("mounted: " + OtgMasterState.mountedDrives.joinToString { it.name })
         Thread {
-            // Give MainActivity a moment to install its hooks, then come back here so
-            // FLAG_KEEP_SCREEN_ON is the window in front for the rest of the run.
-            Thread.sleep(2500)
+            Thread.sleep(500)
             runOnUiThread {
-                startActivity(Intent(this, BenchLauncherActivity::class.java))
                 sendBroadcast(
                     Intent("app.fayaz.otgmaster.RUN_BENCHMARK").apply {
                         setClass(this@BenchLauncherActivity, BenchmarkReceiver::class.java)
