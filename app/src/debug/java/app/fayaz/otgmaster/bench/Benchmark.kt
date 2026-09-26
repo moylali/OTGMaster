@@ -341,8 +341,10 @@ object Benchmark {
         val root = drive.fileSystem.rootDirectory
         val dirName = "BENCH_WRITE"
 
-        // Clean up anything left by an interrupted earlier run.
-        runCatching { root.search(dirName)?.delete() }
+        // Clean up anything left by an earlier run. Must remove the contents first:
+        // deleting a non-empty directory fails on exFAT (EEXIST/-17 on the next
+        // createDirectory), which silently broke the second write case of a matrix.
+        runCatching { root.search(dirName)?.let { deleteRecursively(it) } }
 
         val dir = root.createDirectory(dirName)
         try {
@@ -395,7 +397,7 @@ object Benchmark {
             }
             file.close()
         } finally {
-            runCatching { root.search(dirName)?.delete() }
+            runCatching { root.search(dirName)?.let { deleteRecursively(it) } }
                 .onFailure { emit("write verify  : could not remove $dirName: $it") }
         }
     }
@@ -426,6 +428,15 @@ object Benchmark {
             emit("*** DEVICE IS IDLE OR THROTTLED — throughput here is not comparable")
             emit("*** to an awake run; wake the screen and disable Doze before measuring")
         }
+    }
+
+    /** Depth-first delete; a non-empty directory cannot be removed directly. */
+    private fun deleteRecursively(file: UsbFile) {
+        if (file.isDirectory) {
+            runCatching { file.listFiles() }.getOrNull()
+                ?.forEach { runCatching { deleteRecursively(it) } }
+        }
+        file.delete()
     }
 
     private fun ms(ns: Long) = "%.1f ms".format(ns / 1_000_000.0)

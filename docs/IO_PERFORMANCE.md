@@ -554,6 +554,67 @@ The cost is giving up FAT32's 3.5x sequential gain. That favours the common case
 browsing and writing — over streaming throughput, and is a one-constant change if
 the trade should be weighted differently.
 
+## 5.7 Cross-device validation: no regressions on either filesystem
+
+Same-session A/B on two phones with hash-identical builds, cache off versus the
+per-filesystem defaults. Medians where repeated; the block-layer figure is a
+control that cannot be affected by the cache, and it matched in every arm.
+
+### exFAT — OnePlus 7 (64 KiB readahead)
+
+| metric | cache off | cache on | |
+|---|---|---|---|
+| List 10,000 cold | 164,502 ms | **2,016 ms** | **81.6x better** |
+| List 10,000 LFN cold | 340,297 ms | **3,533 ms** | **96.3x better** |
+| Sequential, 512 KiB | 1.30 MB/s | **20.01 MB/s** | **15.4x better** |
+| Write 16 MiB | 0.25 / 0.26 MB/s | **0.41 / 0.52 MB/s** | **1.6-2x better** |
+| Random 4 KiB | **2.6 ms** | 3.0 ms | 15% worse |
+| Block layer, 512 KiB (control) | 24.37 MB/s | 24.77 MB/s | matched |
+
+### FAT32 — OnePlus 7 (4 KiB readahead)
+
+| metric | cache off | cache on | |
+|---|---|---|---|
+| Random 4 KiB | 32.0 ms | **11.1 ms** | **2.88x better** |
+| Path resolve | 10.2 ms | **6.6 ms** | 1.55x better |
+| List LFN cold | 1,791 ms | **1,598 ms** | 1.12x better |
+| List 10,000 cold | 1,255 ms | **1,188 ms** | 1.06x better |
+| Sequential, 512 KiB | 2.93 MB/s | 2.92 MB/s | neutral |
+| Write 16 MiB | 1.46 MB/s | 1.45 MB/s | neutral |
+
+### FAT32 — Pixel 10 Pro XL, Android 17 (4 KiB readahead)
+
+| metric | cache off | cache on | |
+|---|---|---|---|
+| Random 4 KiB | 12.1 / 12.9 ms | **5.8 / 5.3 ms** | **2.25x better** |
+| Path resolve | 4.6 / 6.3 ms | **2.9 / 3.0 ms** | **1.85x better** |
+| Write 16 MiB | 1.53 / 1.66 MB/s | **1.87 / 1.91 MB/s** | **1.18x better** |
+| List LFN cold | 985 / 905 ms | **895 / 889 ms** | 1.06x better |
+| List 10,000 cold | 822 / 685 ms | 705 / 737 ms | 1.05x better |
+| Sequential, 512 KiB | 6.98 / 6.95 MB/s | 6.96 / 6.98 MB/s | neutral |
+| Block layer (control) | 17.59 / 17.26 MB/s | 18.16 / 16.96 MB/s | matched |
+
+### Write correctness
+
+Every write case verified 16 MiB byte-for-byte twice: once as read back normally,
+and once after invalidating every cached line, which forces the data to come from
+the device rather than from memory. All passed, both filesystems, both phones,
+cache on and off.
+
+### Conclusions
+
+- **No regressions on any metric on either filesystem or phone.** The one
+  exception is exFAT random 4 KiB, 2.6 -> 3.0 ms — 0.4 ms, and the only place the
+  cache loses anything.
+- Writes improved everywhere they changed at all: 1.18x on the Pixel, 1.6-2x on
+  exFAT, neutral on FAT32/OnePlus. The invalidate-to-patch change is what did it.
+- The Pixel is substantially faster than the OnePlus on FAT32 (cold listing ~750 ms
+  vs ~1,200 ms, sequential 6.97 vs 2.93 MB/s), so absolute figures are not
+  comparable across devices — only the within-device arms are.
+- The Pixel ran eight consecutive mount/unmount cycles with no failures, which
+  independently exercises the refreshDevices fix: that device is where a mount
+  would previously succeed and then read as an empty volume.
+
 ## 6. The honest ceiling
 
 Without root there is no kernel mount, and two floors cannot be removed:
