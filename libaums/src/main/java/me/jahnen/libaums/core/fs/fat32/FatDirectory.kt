@@ -157,7 +157,7 @@ internal constructor(
      */
     @Throws(IOException::class)
     private fun readEntries() {
-        val buffer = ByteBuffer.allocate(chain.length.toInt())
+        val buffer = ByteBuffer.allocate(boundedDirectorySize(chain.length))
         chain.read(0, buffer)
         // we have to buffer all long filename entries to parse them later
         val list = ArrayList<FatDirectoryEntry>()
@@ -280,7 +280,7 @@ internal constructor(
         val totalBytes = (totalEntryCount * FatDirectoryEntry.SIZE).toLong()
         chain.length = totalBytes
 
-        val buffer = ByteBuffer.allocate(chain.length.toInt())
+        val buffer = ByteBuffer.allocate(boundedDirectorySize(chain.length))
         buffer.order(ByteOrder.LITTLE_ENDIAN)
 
         if (writeVolumeLabel)
@@ -528,7 +528,35 @@ internal constructor(
         chain.length = 0
     }
 
+    /**
+     * LOCAL PATCH (docs/VENDOR_FIXES.md V7): refuse an implausible directory size
+     * instead of trying to allocate it.
+     *
+     * A directory was read with ByteBuffer.allocate(chain.length.toInt()), sized from
+     * the cluster chain. A corrupt chain — circular, or one whose length overflows the
+     * Int — reports an enormous size, and the allocation then throws OutOfMemoryError,
+     * which takes the whole process down merely for opening the directory. This is not
+     * hypothetical: a corrupt FAT32 entry in testing reported 178 MB for a 2 KiB file
+     * and OOM'd the app.
+     *
+     * 32 MiB is far above anything legitimate — a FAT32 directory of 10,000 long-name
+     * entries is about 1.2 MB — while still being an allocation a phone can refuse
+     * cleanly rather than die on.
+     */
+    private fun boundedDirectorySize(length: Long): Int {
+        if (length < 0 || length > MAX_DIRECTORY_BYTES) {
+            throw IOException(
+                "directory claims $length bytes, above the ${MAX_DIRECTORY_BYTES} limit " +
+                "— the cluster chain is corrupt"
+            )
+        }
+        return length.toInt()
+    }
+
     companion object {
+        /** See [boundedDirectorySize]. */
+        private const val MAX_DIRECTORY_BYTES = 32L * 1024 * 1024
+
 
         private val TAG = FatDirectory::class.java.simpleName
 

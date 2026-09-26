@@ -2,6 +2,7 @@
 #include <android/log.h>
 #include "mbedtls/aes.h"
 #include "mbedtls/pkcs5.h"
+#include "mbedtls/platform_util.h"
 #include "serpent_adapter.h"
 #include "xts_generic.h"
 
@@ -51,6 +52,13 @@ static int xtsCrypt(int cipher, int direction, const unsigned char* key64, const
         serpent_set_key_256(key64 + 32, khat2);
         xts_block_fn dataFn = direction == MBEDTLS_AES_ENCRYPT ? serpentEncryptBlockAdapter : serpentDecryptBlockAdapter;
         xts_generic_crypt(&khat1, &khat2, dataFn, serpentEncryptBlockAdapter, dataUnit, input, output, length);
+        // An expanded key schedule is key material: it is enough to decrypt the
+        // volume, so leaving it on the stack for the next caller to inherit defeats
+        // the point of zeroing the master key elsewhere. mbedtls_aes_xts_free does
+        // this for the AES branch; Serpent's schedules are plain arrays and need it
+        // done by hand.
+        mbedtls_platform_zeroize(khat1, sizeof(khat1));
+        mbedtls_platform_zeroize(khat2, sizeof(khat2));
         return 0;
     }
     LOGE("Unknown cipher id: %d", cipher);
@@ -141,6 +149,8 @@ Java_app_fayaz_otgmaster_veracrypt_VeraCryptNative_cryptSectorsInPlace(
             xts_generic_crypt(&khat1, &khat2, dataFn, serpentEncryptBlockAdapter,
                               data_unit, p, p, 512);
         }
+        mbedtls_platform_zeroize(khat1, sizeof(khat1));
+        mbedtls_platform_zeroize(khat2, sizeof(khat2));
     } else {
         LOGE("cryptSectorsInPlace: unknown cipher id %d", cipher);
         rc = -1;
@@ -174,6 +184,7 @@ Java_app_fayaz_otgmaster_veracrypt_VeraCryptNative_decryptHeader(JNIEnv *env, jo
 
     if (ret != 0) {
         LOGE("PBKDF2 failed: %d", ret);
+        mbedtls_platform_zeroize(headerKey, sizeof(headerKey));
         env->ReleaseByteArrayElements(jPassword, pwd, JNI_ABORT);
         env->ReleaseByteArrayElements(jSalt, salt, JNI_ABORT);
         env->ReleaseByteArrayElements(jEncHeader, encHeader, JNI_ABORT);
@@ -184,17 +195,29 @@ Java_app_fayaz_otgmaster_veracrypt_VeraCryptNative_decryptHeader(JNIEnv *env, jo
     unsigned char data_unit[16] = {0}; // Tweak for header is 0
     ret = xtsCrypt(cipher, MBEDTLS_AES_DECRYPT, headerKey, data_unit, (const unsigned char*)encHeader, decHeader, 448);
 
-    env->ReleaseByteArrayElements(jPassword, pwd, 0);
-    env->ReleaseByteArrayElements(jSalt, salt, 0);
-    env->ReleaseByteArrayElements(jEncHeader, encHeader, 0);
+    // Wipe the native copy of the password before releasing it. JNI_ABORT rather
+    // than 0: mode 0 would copy our zeroes back into the caller's array, destroying
+    // a password the caller may still need. Nothing here mutates these arrays, so
+    // discarding is correct regardless.
+    mbedtls_platform_zeroize(pwd, pwdLen);
+    env->ReleaseByteArrayElements(jPassword, pwd, JNI_ABORT);
+    env->ReleaseByteArrayElements(jSalt, salt, JNI_ABORT);
+    env->ReleaseByteArrayElements(jEncHeader, encHeader, JNI_ABORT);
 
     if (ret != 0) {
         LOGE("Header XTS decrypt failed: %d", ret);
+        mbedtls_platform_zeroize(headerKey, sizeof(headerKey));
+        mbedtls_platform_zeroize(decHeader, sizeof(decHeader));
         return nullptr;
     }
 
     jbyteArray jDecHeader = env->NewByteArray(448);
     env->SetByteArrayRegion(jDecHeader, 0, 448, (jbyte*)decHeader);
+    // decHeader holds the decrypted VeraCrypt header, and that includes the 64-byte
+    // master key. Leaving 448 bytes of it on the stack for whatever runs next undoes
+    // the care taken to zero the key on the Kotlin side.
+    mbedtls_platform_zeroize(headerKey, sizeof(headerKey));
+    mbedtls_platform_zeroize(decHeader, sizeof(decHeader));
     return jDecHeader;
 }
 

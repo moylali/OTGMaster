@@ -48,6 +48,7 @@ Vendored fork of [magnusja/libaums](https://github.com/magnusja/libaums).
 | `FatFile` | V4 — only flush on close if the handle changed something | see below |
 | `ByteBlockDevice` | V5 — no `array()`, so direct buffers work | see below |
 | `ClusterChain` | V6 — coalesce consecutive clusters on read | see below |
+| `FatDirectory` | V7 — refuse an implausible directory size instead of OOM | see below |
 
 ## V1 and V2 — reproduced on hardware, then fixed
 
@@ -213,3 +214,18 @@ oversized spans used to reach the USB stack directly, and some stacks reject the
 but `LibaumsRawBlockDevice` now splits anything larger into 120 KiB transfers, so the
 original hazard is handled a layer below. 32 clusters is 128 KiB at 4 KiB clusters,
 past the knee of the block layer's size/throughput curve.
+
+## V7 — a corrupt directory chain OOM'd the process
+
+`FatDirectory` read a directory with `ByteBuffer.allocate(chain.length.toInt())`,
+sized from the cluster chain and unbounded. A corrupt chain — circular, or one whose
+length overflows an `Int` — reports an enormous size, and the allocation then throws
+`OutOfMemoryError`, killing the process merely for opening the directory.
+
+Not hypothetical: during this work a corrupt FAT32 entry reported 178 MB for a 2 KiB
+file and OOM'd the app mid-test.
+
+Now bounded at 32 MiB, which is far above anything legitimate — a directory of 10,000
+long-name entries is about 1.2 MB — and refused with an `IOException` the caller can
+report instead of a process death. Verified on both devices: 10,000-entry directories
+still list normally.
