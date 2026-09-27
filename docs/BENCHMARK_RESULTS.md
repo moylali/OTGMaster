@@ -35,18 +35,19 @@ comparison, the arms are not comparable and nothing else in the run means anythi
 |---|---|---|---|
 | Huawei | FAT32 | 7.90 MB/s | 8.11 MB/s |
 | Samsung | exFAT | 11.36 MB/s | 11.58 MB/s |
+| Samsung | FAT32 | 11.43 MB/s | 11.45 MB/s |
 | OnePlus | exFAT | 26.15 MB/s | 24.52 MB/s |
 | Pixel | FAT32 | 20.17 MB/s | 19.41 MB/s |
 
 Transfer size dominates far more than the device does, and it does so on every device.
 The full ladder, same run, same drive:
 
-| Span | OnePlus exFAT | Samsung exFAT (on) | Samsung exFAT (off) | Huawei FAT32 (on) | Huawei FAT32 (off) |
-|---|---|---|---|---|---|
-| 4 KiB | 8.13 MB/s | 2.78 MB/s | 4.21 MB/s | 2.05 MB/s | 1.65 MB/s |
-| 64 KiB | 29.82 MB/s | 12.06 MB/s | 12.52 MB/s | 5.11 MB/s | 3.84 MB/s |
-| 512 KiB | — | 13.21 MB/s | 13.29 MB/s | 8.81 MB/s | 8.57 MB/s |
-| 4096 KiB | 26.15 MB/s | 11.58 MB/s | 11.36 MB/s | 8.11 MB/s | 7.90 MB/s |
+| Span | OnePlus exFAT | Samsung exFAT (on/off) | Samsung FAT32 (on/off) | Huawei FAT32 (on/off) |
+|---|---|---|---|---|
+| 4 KiB | 8.13 MB/s | 2.78 / 4.21 | 1.70 / 1.63 | 2.05 / 1.65 |
+| 64 KiB | 29.82 MB/s | 12.06 / 12.52 | 4.80 / 4.91 | 5.11 / 3.84 |
+| 512 KiB | — | 13.21 / 13.29 | 13.18 / 13.24 | 8.81 / 8.57 |
+| 4096 KiB | 26.15 MB/s | 11.58 / 11.36 | 11.45 / 11.43 | 8.11 / 7.90 |
 
 A 4 KiB request gets a quarter to a third of what a 64 KiB one gets. That is why the
 block cache uses 64 KiB lines and why V6 (coalescing cluster reads) mattered — both
@@ -74,14 +75,17 @@ The measurement that motivated the block cache.
 | OnePlus | exFAT, long names | 189,430 ms | 2,651 ms | **71×** |
 | Samsung | exFAT, short names | 211,681 ms | 3,914 ms | **54×** |
 | Samsung | exFAT, long names | 296,683 ms | 6,314 ms | **47×** |
+| Samsung | FAT32, short names | 1,882 ms | 2,083 ms | none (noise) |
+| Samsung | FAT32, long names | 1,559 ms | 1,523 ms | none (noise) |
 | Huawei | FAT32, short names | 2,323 ms | 2,777 ms | none (noise) |
 | Huawei | FAT32, long names | 2,080 ms | 1,864 ms | none (noise) |
 | Pixel | FAT32, short names | 927 ms | 727 ms | 1.27× |
 
 Uncached exFAT cold listings landed at **136–212 s** across several runs (and 297–366 s
-for long names); uncached FAT32 ran **0.9–2.3 s** on the same suite. Those are different
-phones, so treat the gap as order-of-magnitude, not as a clean ratio — but with the
-cache on, exFAT comes down to 1.7–6.3 s, which is FAT32 territory.
+for long names); uncached FAT32 ran **0.9–2.3 s**. On the Samsung both filesystems were
+measured on one phone (see §3.4), giving **211,681 ms against 1,882 ms uncached — 112×**.
+With the cache on, exFAT comes down to 3,914 ms against FAT32's 2,083, so the gap closes
+to 1.9×.
 
 The mechanism is measured rather than inferred: libexfat issues **100,844 preads
 averaging 24 bytes** — only 2.3 MiB of real data — for one 10,000-entry listing, where
@@ -100,6 +104,8 @@ the Huawei, within noise); its value there is in §3.3.
 | OnePlus | exFAT (cache on) | 15.35 | 24.90 | 26.46 MB/s |
 | Samsung | exFAT (cache on) | 8.43 | 9.91 | 9.95 MB/s |
 | Samsung | exFAT (**cache off**) | 0.89 | 0.84 | 0.96 MB/s |
+| Samsung | FAT32 (cache on) | 2.65 | 7.03 | 6.68 MB/s |
+| Samsung | FAT32 (**cache off**) | 2.61 | 6.60 | 6.70 MB/s |
 | Pixel | FAT32 **after** V6 | 6.51 | 14.94 | 11.31 MB/s |
 | Pixel | FAT32 **before** V6 | 4.53 | 4.99 | 4.97 MB/s |
 | Huawei | FAT32 | 1.54 | 3.88 | 3.86 MB/s |
@@ -125,10 +131,14 @@ is neutral, because V6 removed the fragmentation it had been compensating for.
 | Pixel | FAT32 | 24.2 ms | 7.2 ms (**3.36× better**) |
 | Huawei | FAT32 | 21.8 ms | 14.6 ms (**1.49× better**) |
 | Samsung | exFAT | 2.0 ms | 6.4 ms (**3.2× worse**) |
+| Samsung | FAT32 | 10.4 ms | 8.8 ms (**1.18× better**) |
 | OnePlus | exFAT | — | 2.6 ms |
 
 **The cache helps random reads on FAT32 and hurts them on exFAT**, and the sign flip is
-the point. On FAT32 a random read must walk the FAT chain first, and those lookups are
+the point. The Samsung rows establish it on **one phone**: 2.0 → 6.4 ms on exFAT against
+10.4 → 8.8 ms on FAT32, with the block-layer control matched to within 0.2% across all
+four arms. Before that it was two observations on two different devices, which is not
+the same claim. On FAT32 a random read must walk the FAT chain first, and those lookups are
 what the cache serves. On exFAT a contiguous file needs no chain walk, so a 4 KiB random
 read gains nothing and still pays for a 64 KiB line — 16× the transfer for one useful
 sector.
@@ -139,9 +149,60 @@ It is an argument for the large-read bypass and against widening the line furthe
 
 Opening 50 files in a dense directory: 66–1,277 ms each depending on device and name
 length. **Opens are cache-independent**: the Samsung measured 73.2/91.3 ms with the
-cache and 72.6/91.1 ms without it — the cost is per-open metadata work, not I/O the
-cache can serve. Long-name directories are consistently *cheaper* per open than 8.3-name ones
+cache and 72.6/91.1 ms without it on exFAT, and 1,140.9/423.4 against 1,159.9/428.7 on
+FAT32 — the cost is per-open metadata work, not I/O the cache can serve.
+
+**Opens are where FAT32 is worst.** On the Samsung a dense-directory open costs
+**1,141 ms on FAT32 against 73 ms on exFAT** — 15.6× — and it is the one metric where
+exFAT wins outright. The long-name inversion also shows up strongly here: on FAT32
+`dense_lfn` opens in 423 ms against `dense_short`'s 1,141 ms, so the 8.3-name directory
+is **2.7× more expensive** than the long-name one. On exFAT the order is conventional
+(73 ms short, 91 ms long). Still unexplained, now on a device where the effect is too
+large to be noise. Long-name directories are consistently *cheaper* per open than 8.3-name ones
 on the same drive, which is counterintuitive and unexplained.
+
+### 3.4 exFAT against FAT32 on one phone
+
+The Samsung is the only device where both filesystems were measured, with the
+block-layer control matched to within 0.2% across all four arms (11.36–11.58 MB/s), so
+the transport and crypto are held constant.
+
+| | exFAT (on) | exFAT (off) | FAT32 (on) | FAT32 (off) |
+|---|---|---|---|---|
+| Block, 4 MiB — *control* | 11.58 | 11.36 | 11.45 | 11.43 MB/s |
+| Cold list, 10k short | 3,914 ms | 211,681 ms | 2,083 ms | 1,882 ms |
+| Cold list, 10k long | 6,314 ms | 296,683 ms | 1,523 ms | 1,559 ms |
+| Path resolve, depth 10 | 53.8 ms | 97.7 ms | 12.3 ms | 16.4 ms |
+| Sequential, 128 KiB | 9.91 | 0.84 | 7.03 | 6.60 MB/s |
+| Random 4 KiB | 6.4 ms | 2.0 ms | 8.8 ms | 10.4 ms |
+| Open in dense dir | 73.2 ms | 72.6 ms | 1,140.9 ms | 1,159.9 ms |
+| Write, 16 MiB | 0.37 | 0.18 | 1.14 | 1.02 MB/s |
+| SAF single stream | 4.06 | 0.62 | 5.50 | 5.42 MB/s |
+
+**Read this with one caveat.** The drive was physically swapped between the two
+filesystems, so this is *same phone, different USB stick* — both 62 GB PNY USB 3.2.1 FD,
+but different units. The 4 MiB control agrees closely, and the 512 KiB figures agree to
+0.5% (13.18 vs 13.21), which is what licenses the comparison. But the small-transfer
+ends of the ladder do **not** agree — 1.70 against 2.78 MB/s at 4 KiB — so treat any
+conclusion that hinges on small-transfer behaviour as drive-confounded rather than
+filesystem-attributable.
+
+What the table supports:
+
+- **exFAT is catastrophic uncached and competitive cached.** 112× slower on a cold
+  listing without the cache (211,681 vs 1,882 ms), 1.9× with it. The entire case for
+  the block cache is here.
+- **FAT32 is cache-indifferent.** Every FAT32 metric moves by less than noise between
+  arms — listings marginally worse, random marginally better, writes and SAF flat. On
+  this device the cache neither helps nor hurts FAT32 measurably; V6 removed the
+  fragmentation it used to compensate for.
+- **FAT32 writes ~3× faster** (1.14 vs 0.37 MB/s) and resolves deep paths ~4× faster
+  (12.3 vs 53.8 ms).
+- **exFAT opens 15.6× faster** in a dense directory (73 vs 1,141 ms) and reads
+  sequentially 1.4× faster once cached (9.91 vs 7.03 MB/s).
+
+So neither filesystem wins outright: FAT32 is consistently mediocre and stable, exFAT is
+excellent at metadata and unusable without the cache.
 
 ## 4. SAF — what clients actually get
 
@@ -160,6 +221,7 @@ cost with kernel readahead — including one below 1.0, which is what exposed it
 | Pixel | FAT32 | 5.94 | 14.23 | 2.40× | 13.10 MB/s |
 | OnePlus | FAT32 | 7.08 | 9.34 | 1.32× | 7.95 MB/s |
 | Samsung | exFAT | 4.06 | 9.71 | 2.39× | 7.87 MB/s |
+| Samsung | FAT32 | 5.50 | 6.16 | 1.12× | 6.63 MB/s |
 | Huawei | FAT32 | 3.42 | 3.81 | 1.11× | 3.95 MB/s |
 
 **Read the absolute figure, not the ratio.** Single-stream throughput spans
@@ -174,12 +236,16 @@ transport *is* the constraint, so SAF tracks it and the ratio collapses to 1.11�
 same provider behaviour over a much smaller denominator. A high ratio means a fast
 underlying path, not a worse provider.
 
-**The ceiling is per-device, not a fixed 6–8 MB/s.** The Samsung is what establishes
-this: its direct path runs at 9.71 MB/s, comfortably above 6–8, so a constant ceiling
-predicts ~6–8 MB/s through the provider — but it delivers 4.06. The FUSE relay is
-CPU-bound, and that phone's cores sat at 1,248 MHz. So the ceiling tracks device class
-(roughly 3.4–8 MB/s here), and an earlier flat "6–8 MB/s" reading of this table was too
-strong.
+**The ceiling is not a fixed 6–8 MB/s.** The Samsung establishes this twice over. Its
+exFAT direct path runs at 9.71 MB/s, comfortably above 6–8, so a constant ceiling
+predicts ~6–8 through the provider — it delivers 4.06. The FUSE relay is CPU-bound and
+that phone's cores sat at 1,248 MHz, so the ceiling tracks device class.
+
+But the FAT32 arm on the *same phone* gets 5.50 MB/s through the provider against a
+6.16 MB/s direct path — a 1.12× ratio, nearly no loss. So on one device, one CPU, the
+provider costs 58% of the direct path on exFAT and 11% on FAT32. **The ceiling is
+per-device *and* per-filesystem**, and any single number for it is wrong. Use the
+absolute figures in the table; the ratio is only meaningful against its own direct arm.
 
 **Concurrency lifts past the ceiling**, reaching 75–92% of the direct rate where there
 is headroom. That is why replacing the single `ProxyFileDescriptorThread` with
@@ -197,6 +263,7 @@ every cached line, after a full remount):
 | Pixel | FAT32 | 2.66 MB/s |
 | OnePlus | FAT32 | 1.91 MB/s |
 | Huawei | FAT32 | 1.37 MB/s (0.18–1.25 with the cache off) |
+| Samsung | FAT32 | 1.14 MB/s (1.02 with the cache off) |
 | Huawei | exFAT | 0.43 MB/s |
 | Samsung | exFAT | **0.37 MB/s** (0.18 with the cache off) |
 
