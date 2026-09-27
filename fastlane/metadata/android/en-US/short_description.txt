@@ -1,1 +1,1 @@
-Mount VeraCrypt-encrypted USB drives on non-rooted Android
+Mount VeraCrypt and LUKS encrypted USB drives on non-rooted Android

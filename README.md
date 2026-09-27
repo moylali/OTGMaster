@@ -3,15 +3,18 @@
 [![CI](https://github.com/moylali/OTGMaster/actions/workflows/ci.yml/badge.svg)](https://github.com/moylali/OTGMaster/actions/workflows/ci.yml)
 [![License: GPL v2 or later](https://img.shields.io/badge/license-GPL--2.0--or--later-blue.svg)](LICENSE)
 
-Android app for opening VeraCrypt-encrypted USB mass-storage devices without root.
+Android app for opening encrypted USB mass-storage devices without root. Supports **VeraCrypt**, **LUKS1**, and **LUKS2** encrypted volumes with **FAT32**, **exFAT**, and **ext4** filesystems.
 
 The app cannot perform a kernel mount on non-rooted Android. Instead it:
 
 1. Requests USB Host permission for a mass-storage device.
 2. Reads raw sectors through a userspace USB Mass Storage adapter ([libaums](libaums/)).
-3. Probes MBR/GPT partitions to find VeraCrypt volume starts.
-4. Unlocks a VeraCrypt header (AES or Serpent, SHA-512) and exposes a decrypted block-device wrapper.
-5. Feeds the decrypted block device into a userspace filesystem reader (FAT32 via libaums, exFAT via a vendored native `libexfat`).
+3. Probes MBR/GPT partitions and detects the encryption type (VeraCrypt, LUKS1, or LUKS2) on each.
+4. Unlocks the volume header and exposes a decrypted block-device wrapper:
+   - **VeraCrypt**: AES or Serpent cipher, SHA-512 / Whirlpool KDF
+   - **LUKS1**: PBKDF2-based KDF, AES-XTS bulk decryption
+   - **LUKS2**: Argon2id-based KDF, AES-XTS bulk decryption
+5. Feeds the decrypted block device into a userspace filesystem reader (FAT32 via libaums, exFAT via a vendored native `libexfat`, ext4 via a pure-Kotlin driver).
 6. Surfaces files through the app UI and a `DocumentsProvider`, so other apps (Files, Gallery, etc.) can browse the unlocked volume.
 
 See [ROADMAP.md](docs/ROADMAP.md) for planned filesystem and encryption-algorithm support.
@@ -38,7 +41,7 @@ JVM unit tests (e.g. `FilesystemDetector`) run without a device:
 ./gradlew testDebugUnitTest
 ```
 
-The full device end-to-end suite (VeraCrypt unlock + mount against generated test volumes,
+The full device end-to-end suite (VeraCrypt/LUKS unlock + mount against generated test volumes,
 run on a QEMU Android emulator) is documented in `scripts/run_e2e_tests.sh` and is not part of CI,
 since it needs real USB-device emulation that isn't available on hosted runners.
 

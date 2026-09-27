@@ -1,13 +1,23 @@
-OTG Master lets you mount VeraCrypt-encrypted USB mass-storage devices on Android without root access.
+OTG Master lets you mount encrypted USB mass-storage devices on Android without root access.
 
-The app reads raw sectors from the USB drive using the Android USB Host API, unlocks the VeraCrypt volume header (AES or Serpent cipher, SHA-512 key derivation), and exposes the decrypted filesystem through a standard Android DocumentsProvider — so other apps like Files or Gallery can browse the unlocked volume directly, just like any other storage location.
+The app reads raw sectors from the USB drive using the Android USB Host API, detects the encryption type on each partition, unlocks the volume, and exposes the decrypted filesystem through a standard Android DocumentsProvider — so other apps like Files or Gallery can browse the unlocked volume directly, just like any other storage location.
 
-Features:
+Supported encryption:
 
-* Unlock VeraCrypt volumes with a password, PIM, and/or keyfiles
-* AES and Serpent ciphers, SHA-512 key derivation
-* Read and write FAT32 and exFAT filesystems
-* Browse and edit unlocked volumes through any file manager via Android's Storage Access Framework
+* VeraCrypt volumes — password, PIM, and/or keyfiles; AES and Serpent ciphers; SHA-512 key derivation
+* LUKS1 volumes — PBKDF2-HMAC key derivation, AES-XTS bulk decryption
+* LUKS2 volumes — Argon2id key derivation, AES-XTS bulk decryption
+
+Supported filesystems:
+
+* FAT32 and exFAT — full read/write access
+* ext2 / ext3 / ext4 — read access
+
+Other features:
+
+* Automatically detects and labels each partition as VeraCrypt, LUKS1, LUKS2, or unencrypted with colour-coded tags
 * Support for multiple simultaneously attached USB drives, with a picker when more than one is detected
+* Remembers credentials per device partition — re-mount in one tap
+* Sends a structured diagnostic report to the support form (no data leaves without your review)
 
-Filesystems other than FAT32 and exFAT (such as NTFS or ext4) are detected but not yet supported for mounting.
+NTFS, HFS+, F2FS, and other filesystems are detected but not yet supported for mounting.
