@@ -861,8 +861,38 @@ ratio mixed provider cost with kernel readahead, in proportions that vary by dev
 
 The benchmark now issues 128 KiB in the direct arm to match, reports it as
 `saf ratio` rather than `saf overhead`, and flags any value below 1.0 as
-non-comparable. **No provider-overhead figure should be quoted from this document
-until that has been re-measured on both devices.**
+non-comparable.
+
+### Re-measured with matched arms
+
+| | old (64 KiB direct) | corrected (128 KiB both) |
+|---|---|---|
+| exFAT, Pixel 10 Pro XL | 3.52x | **4.24x** |
+| FAT32, OnePlus 7 | **0.87x** | **1.32x** |
+
+The impossible value is gone, which is the first evidence the metric is now
+coherent. The OnePlus direct arm rose from 7.17 to 9.34 MB/s on request size alone —
+a 30% handicap that the old comparison had been crediting to the provider.
+
+Detail for the corrected runs:
+
+| | `saf single` | `saf direct` | ratio | 2 streams |
+|---|---|---|---|---|
+| exFAT, Pixel | 7.14 MB/s | 30.26 MB/s | 4.24x | 24.06 MB/s (3.37x) |
+| FAT32, OnePlus | 7.08 MB/s | 9.34 MB/s | 1.32x | 7.95 MB/s (1.12x) |
+
+**Only two of the four cells have been re-measured**, because the drives are
+currently swapped relative to the earlier runs. The remaining spread — 1.32x against
+4.24x — therefore still mixes device and filesystem, and cannot be attributed to
+either until exFAT/OnePlus and FAT32/Pixel are re-measured with the corrected arms.
+Do not read 4.24x as "exFAT is worse" or "the Pixel is worse" on this evidence.
+
+What the corrected numbers do support: **the provider's cost is per-request latency,
+and concurrency hides it.** On the Pixel two streams reach 24.06 MB/s against 30.26
+direct — most of a 4.24x single-stream gap closes with a second reader, on one
+handler thread. That is the same conclusion §5.8 reached by a different route, and it
+remains the reason a per-drive handler refactor is not justified: a thread serving
+two streams at 3.37x is not the bottleneck.
 
 Two things that do survive:
 
