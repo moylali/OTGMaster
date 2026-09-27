@@ -41,6 +41,12 @@
                 android:resource="@xml/shortcuts" />
         </activity>
 
+        <activity
+            android:name=".feedback.FeedbackActivity"
+            android:label="@string/feedback_title"
+            android:exported="false"
+            android:parentActivityName=".MainActivity" />
+
         <provider
             android:name=".provider.VeraCryptDocumentProvider"
             android:authorities="app.fayaz.otgmaster.documents"

@@ -1241,6 +1241,7 @@ class MainActivity : AppCompatActivity() {
 
     private fun clearLogs() {
         logsState.clear()
+        OtgMasterState.clearLogHistory()
     }
 
     private fun copyText(text: String, label: String) {
@@ -1253,6 +1254,8 @@ class MainActivity : AppCompatActivity() {
     private fun appendLog(line: String) {
         if (logsState.size > 50) logsState.removeAt(0)
         logsState.add(line)
+        // Mirrored into process-wide state so FeedbackActivity can show the same lines.
+        OtgMasterState.recordLog(line)
     }
 
     private fun handleShareIntent(intent: Intent) {
@@ -1575,7 +1578,15 @@ fun OtgMasterApp(
         ) {
             val logsLabel = stringResource(R.string.logs)
             Text(logsLabel, style = MaterialTheme.typography.titleMedium)
-            Row {
+            Row(verticalAlignment = Alignment.CenterVertically) {
+                val ctx = androidx.compose.ui.platform.LocalContext.current
+                TextButton(onClick = {
+                    ctx.startActivity(
+                        Intent(ctx, app.fayaz.otgmaster.feedback.FeedbackActivity::class.java)
+                    )
+                }) {
+                    Text(stringResource(R.string.feedback_report_issue))
+                }
                 IconButton(onClick = { onClearLogs() }) {
                     Icon(Icons.Default.Delete, contentDescription = stringResource(R.string.cd_clear_logs))
                 }
@@ -2095,6 +2106,14 @@ fun SettingsDrawer(
                     Spacer(modifier = Modifier.height(8.dp))
                     HorizontalDivider()
 
+                    // Scrolls independently of the header, which stays reachable. The
+                    // drawer is a fixed 300.dp column and an expanded row can exceed the
+                    // screen on its own.
+                    Column(
+                        modifier = Modifier
+                            .weight(1f)
+                            .verticalScroll(rememberScrollState())
+                    ) {
                     SettingsExpandableRow(
                         title = stringResource(R.string.theme_label),
                         summary = stringResource(themeStringRes(currentTheme))
@@ -2152,23 +2171,6 @@ fun SettingsDrawer(
                     }
 
                     val uriHandler = androidx.compose.ui.platform.LocalUriHandler.current
-                    val donateUrl = stringResource(R.string.donate_url)
-                    SettingsExpandableRow(
-                        title = stringResource(R.string.donate_title),
-                        summary = stringResource(R.string.donate_summary)
-                    ) {
-                        TextButton(
-                            onClick = { uriHandler.openUri(donateUrl) },
-                            modifier = Modifier.fillMaxWidth()
-                        ) {
-                            Text(donateUrl)
-                        }
-                        Text(
-                            stringResource(R.string.donate_thank_you),
-                            style = MaterialTheme.typography.bodyMedium,
-                            modifier = Modifier.padding(horizontal = 8.dp, vertical = 4.dp)
-                        )
-                    }
 
                     SettingsExpandableRow(
                         title = stringResource(R.string.app_version_label),
@@ -2189,6 +2191,25 @@ fun SettingsDrawer(
                                 modifier = Modifier.size(18.dp)
                             )
                         }
+                    }
+
+                    val donateUrl = stringResource(R.string.donate_url)
+                    SettingsExpandableRow(
+                        title = stringResource(R.string.donate_title),
+                        summary = stringResource(R.string.donate_summary)
+                    ) {
+                        TextButton(
+                            onClick = { uriHandler.openUri(donateUrl) },
+                            modifier = Modifier.fillMaxWidth()
+                        ) {
+                            Text(donateUrl)
+                        }
+                        Text(
+                            stringResource(R.string.donate_thank_you),
+                            style = MaterialTheme.typography.bodyMedium,
+                            modifier = Modifier.padding(horizontal = 8.dp, vertical = 4.dp)
+                        )
+                    }
                     }
                 }
             }

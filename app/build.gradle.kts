@@ -130,6 +130,15 @@ dependencies {
     implementation("androidx.biometric:biometric:1.1.0")
     implementation("androidx.security:security-crypto:1.1.0-alpha06")
 
+    // org.json ships in android.jar as a stub that throws under plain unit tests.
+
+    // A real implementation on the test classpath lets JSON payloads be tested
+
+    // without Robolectric.
+
+    testImplementation("org.json:json:20240303")
+
+
     testImplementation("junit:junit:4.13.2")
 
     androidTestImplementation("androidx.test.ext:junit:1.1.5")

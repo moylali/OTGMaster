@@ -29,6 +29,24 @@ object OtgMasterState {
     val mountedDrives = CopyOnWriteArrayList<MountedDrive>()
 
     /**
+     * The recent log lines, mirrored here so another activity can read them.
+     *
+     * MainActivity keeps the list the UI renders; this is the same content, process
+     * wide, for the report screen. Bounded to the same 50 lines: it exists to be
+     * attached to a bug report, not to be a history.
+     */
+    private val logHistory = CopyOnWriteArrayList<String>()
+
+    fun recordLog(line: String) {
+        if (logHistory.size >= 50) logHistory.removeAt(0)
+        logHistory.add(line)
+    }
+
+    fun recentLogs(): List<String> = logHistory.toList()
+
+    fun clearLogHistory() = logHistory.clear()
+
+    /**
      * Optional sink for user-visible log lines, installed by MainActivity while it
      * is alive.
      *
