@@ -3,6 +3,7 @@ package app.fayaz.otgmaster
 import me.jahnen.libaums.core.fs.FileSystem
 import app.fayaz.otgmaster.block.RawBlockDevice
 import app.fayaz.otgmaster.veracrypt.VolumeCandidate
+import androidx.compose.runtime.mutableStateOf
 import java.util.concurrent.CopyOnWriteArrayList
 
 data class MountedDrive(
@@ -43,6 +44,18 @@ object OtgMasterState {
     }
 
     fun recentLogs(): List<String> = logHistory.toList()
+
+    /**
+     * True while a benchmark is running, so whichever screen is in front can hold the
+     * display on.
+     *
+     * The screen going off is not a cosmetic problem: the CPU throttles, decryption is
+     * CPU-bound, and the block layer measured 7.27 MB/s asleep against 17.26 awake. A
+     * dozed run reads as a regression, which is how one was first misread. The bench
+     * screen holds the flag itself, but MainActivity can end up in front — the mount
+     * pre-flight brings it forward — and it needs to hold it too.
+     */
+    val benchmarkRunning = mutableStateOf(false)
 
     fun clearLogHistory() = logHistory.clear()
 

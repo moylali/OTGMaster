@@ -328,6 +328,17 @@ class MainActivity : AppCompatActivity() {
                 ThemeMode.DARK -> true
                 ThemeMode.SYSTEM -> isSystemInDarkTheme()
             }
+            // Hold the display on while a benchmark runs. The bench screen does this
+            // for itself, but the mount pre-flight can bring this activity forward, and
+            // the flag belongs to whichever window is actually in front.
+            val benchRunning = OtgMasterState.benchmarkRunning.value
+            androidx.compose.runtime.LaunchedEffect(benchRunning) {
+                if (benchRunning) {
+                    window.addFlags(android.view.WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON)
+                } else {
+                    window.clearFlags(android.view.WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON)
+                }
+            }
             MaterialTheme(
                 colorScheme = if (isDarkTheme) darkColorScheme() else lightColorScheme()
             ) {
@@ -432,9 +443,32 @@ class MainActivity : AppCompatActivity() {
         super.onDestroy()
     }
 
+    /**
+     * Closes USB connections this activity opened, except any a mounted drive is
+     * still using.
+     *
+     * refreshDevices has carried this guard since 4458c6d — "never touch a device a
+     * mounted drive is using" — but onDestroy did not, and closed everything. That
+     * kills a live mount whenever the activity is destroyed: a configuration change,
+     * or memory pressure while another screen is in front. Observed on a Huawei P20
+     * Lite (Android 9), where opening the on-device benchmark backgrounded this
+     * activity, Android destroyed it, and the running benchmark then failed every
+     * read with "USB block device is closed".
+     *
+     * Leaving a connection open when the activity dies is the lesser problem: the
+     * drive stays usable, MountedDrive still holds it, and the OS reclaims it when the
+     * process ends. Closing it takes the volume down under whoever is reading.
+     */
     private fun closeOpenedDevices() {
-        openedDevices.values.forEach { it.close() }
-        openedDevices.clear()
+        val inUse = OtgMasterState.mountedDrives.mapNotNull { it.sourceDeviceName }.toSet()
+        val releasable = openedDevices.filterKeys { it !in inUse }
+        releasable.forEach { (key, device) ->
+            device.close()
+            openedDevices.remove(key)
+        }
+        if (openedDevices.isNotEmpty()) {
+            Log.i(TAG, "kept ${openedDevices.size} USB connection(s) open for mounted drives")
+        }
     }
 
     private fun registerUsbReceiver() {
