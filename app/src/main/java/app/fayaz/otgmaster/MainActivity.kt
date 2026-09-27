@@ -281,6 +281,7 @@ class MainActivity : AppCompatActivity() {
         super.onCreate(savedInstanceState)
         
         FileSystemFactory.registerFileSystem(ExFatFileSystemCreator(), 1)
+        FileSystemFactory.registerFileSystem(app.fayaz.otgmaster.ext4.Ext4FileSystemCreator(), 2)
         
         val usbMgr = getSystemService(Context.USB_SERVICE) as UsbManager
         usbDeviceProvider = RealUsbDeviceProvider(usbMgr, permissionIntent)
@@ -1076,11 +1077,14 @@ class MainActivity : AppCompatActivity() {
         return app.fayaz.otgmaster.block.CachedBlockDevice(device, readAheadBytes = readAhead)
     }
 
-    private fun readAheadFor(filesystemName: String): Int =
-        if (filesystemName.contains("exFAT", ignoreCase = true))
+    private fun readAheadFor(filesystemName: String): Int = when {
+        filesystemName.contains("exFAT", ignoreCase = true) ->
             app.fayaz.otgmaster.block.CachedBlockDevice.DEFAULT_READAHEAD_BYTES
-        else
+        filesystemName.startsWith("ext", ignoreCase = true) ->
+            app.fayaz.otgmaster.block.CachedBlockDevice.DEFAULT_READAHEAD_BYTES
+        else ->
             app.fayaz.otgmaster.block.CachedBlockDevice.FAT_READAHEAD_BYTES
+    }
 
     /**
      * Unlocks and mounts every probed candidate with one set of credentials.

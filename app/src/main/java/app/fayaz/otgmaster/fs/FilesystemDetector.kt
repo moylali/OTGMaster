@@ -78,9 +78,7 @@ object FilesystemDetector {
         if (data.size >= 1082 &&
             (data[1080].toInt() and 0xFF) == 0x53 &&
             (data[1081].toInt() and 0xFF) == 0xEF) {
-            val extType = detectExtVersion(data)
-            return DetectedFilesystem.Unsupported(extType,
-                "$extType (Linux) is not supported. Please reformat as FAT32 or exFAT.")
+            return DetectedFilesystem.Supported(detectExtVersion(data))
         }
 
         // F2FS: superblock at byte 1024, magic 0xF2F52010 (little-endian) = bytes 0x10 0x20 0xF5 0xF2

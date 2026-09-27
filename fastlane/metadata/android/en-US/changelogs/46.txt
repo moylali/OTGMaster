@@ -1,3 +1,4 @@
 • New: LUKS1 and LUKS2 encrypted volumes are now supported alongside VeraCrypt
+• New: ext2, ext3 and ext4 filesystems are now supported (read-only)
 • New: The unlock form automatically detects whether a partition is LUKS or VeraCrypt and shows only the relevant fields
 • New: Drives with no recognisable encrypted partitions now display a clear "no encrypted volumes found" message instead of a confusing empty list
