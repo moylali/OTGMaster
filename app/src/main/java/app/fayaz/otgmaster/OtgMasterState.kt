@@ -23,7 +23,11 @@ data class MountedDrive(
     val rawBlockDevice: RawBlockDevice? = null,
     /** The specific VolumeCandidate this encrypted partition was unlocked from.
      * Restored to _deviceCandidates when the drive is unmounted so the user can remount. */
-    val sourceVolumeCandidate: VolumeCandidate? = null
+    val sourceVolumeCandidate: VolumeCandidate? = null,
+    /** Partition label shown in the card header (e.g. "Partition 1", "Whole device"). */
+    val partitionLabel: String = "",
+    /** Detected filesystem name for the tag chip (e.g. "exFAT", "ext4", "FAT32"). */
+    val filesystemName: String = ""
 )
 
 object OtgMasterState {

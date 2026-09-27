@@ -152,16 +152,20 @@ echo "[6] Writing manifest..."
             "$(stat -c%s "$f")" "$(sha256sum "$f" | cut -d' ' -f1)"
     done
     for d in dense_short dense_lfn; do
+        # head -c -1 strips the trailing newline so the hash matches
+        # the benchmark's joinToString("\n") which uses \n as separator only.
         printf '%s/\t%s files\t%s\n' "$d" \
             "$(find "$B/$d" -maxdepth 1 -type f | wc -l | tr -d ' ')" \
             "$(cd "$B/$d" && for f in *; do
                 if   [ -d "$f" ]; then printf '%s\tdir\n' "$f"
                 elif [ -f "$f" ]; then printf '%s\t%s\n' "$f" "$(stat -c%s "$f")"
                 fi
-               done | LC_ALL=C sort | sha256sum | cut -d' ' -f1)"
+               done | LC_ALL=C sort | head -c -1 | sha256sum | cut -d' ' -f1)"
     done
+    # Record the full relative path so bench.search() can find it.
     L=$(find "$B/nested" -name leaf_at_depth_10.dat)
-    printf 'nested/leaf_at_depth_10.dat\t%s\t%s\n' \
+    RELPATH="${L#$B/}"
+    printf '%s\t%s\t%s\n' "$RELPATH" \
         "$(stat -c%s "$L")" "$(sha256sum "$L" | cut -d' ' -f1)"
 } > "$B/MANIFEST.txt"
 echo "  manifest: $B/MANIFEST.txt"

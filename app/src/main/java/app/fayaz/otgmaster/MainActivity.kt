@@ -808,7 +808,9 @@ class MainActivity : AppCompatActivity() {
                     sourceDeviceName = deviceName,
                     sourceDeviceDisplayName = deviceDisplayName,
                     rawBlockDevice = device,
-                    sourceVolumeCandidate = candidate
+                    sourceVolumeCandidate = candidate,
+                    partitionLabel = candidate.label,
+                    filesystemName = detected.displayName
                 )
 
                 OtgMasterState.addDrive(mountedDrive)
@@ -1018,7 +1020,9 @@ class MainActivity : AppCompatActivity() {
                     sourceDeviceName = candidate.deviceName,
                     sourceDeviceDisplayName = deviceDisplayName,
                     isPlain = true,
-                    rawBlockDevice = rawDevice
+                    rawBlockDevice = rawDevice,
+                    partitionLabel = plain.label,
+                    filesystemName = plain.filesystemName
                 )
                 OtgMasterState.addDrive(mountedDrive)
                 contentResolver.notifyChange(
@@ -1439,6 +1443,19 @@ class MainActivity : AppCompatActivity() {
 
 }
 
+@Composable
+fun DriveTag(label: String, color: Color) {
+    Surface(
+        shape = RoundedCornerShape(4.dp),
+        color = color,
+        contentColor = Color.White,
+    ) {
+        androidx.compose.foundation.layout.Box(modifier = Modifier.padding(horizontal = 6.dp, vertical = 2.dp)) {
+            Text(text = label, style = MaterialTheme.typography.labelSmall)
+        }
+    }
+}
+
 fun formatSize(bytes: Long): String {
     if (bytes <= 0) return "0 B"
     val units = arrayOf("B", "KB", "MB", "GB", "TB")
@@ -1547,8 +1564,40 @@ fun OtgMasterApp(
                         val freeSpace = drive.fileSystem.freeSpace
                         val usedSpace = totalSpace - freeSpace
                         val progress = if (totalSpace > 0) usedSpace.toFloat() / totalSpace.toFloat() else 0f
-                        
-                        Text(text = drive.name, style = MaterialTheme.typography.titleMedium)
+
+                        val deviceTitle = buildString {
+                            append(drive.sourceDeviceDisplayName ?: drive.name)
+                            if (drive.partitionLabel.isNotEmpty()) {
+                                append(" · ")
+                                append(drive.partitionLabel)
+                            }
+                        }
+                        Text(text = deviceTitle, style = MaterialTheme.typography.titleMedium)
+
+                        Spacer(modifier = Modifier.height(6.dp))
+
+                        // Encryption + filesystem tags
+                        Row(horizontalArrangement = Arrangement.spacedBy(6.dp)) {
+                            val encTag = when (drive.sourceVolumeCandidate?.containerType) {
+                                app.fayaz.otgmaster.veracrypt.ContainerType.VERACRYPT -> Pair("VERACRYPT", Color(0xFF3949AB))
+                                app.fayaz.otgmaster.veracrypt.ContainerType.LUKS1    -> Pair("LUKS1",     Color(0xFFE65100))
+                                app.fayaz.otgmaster.veracrypt.ContainerType.LUKS2    -> Pair("LUKS2",     Color(0xFF6A1B9A))
+                                else -> Pair("UNENCRYPTED", Color(0xFF546E7A))
+                            }
+                            DriveTag(label = encTag.first, color = encTag.second)
+
+                            if (drive.filesystemName.isNotEmpty()) {
+                                val fsColor = when {
+                                    drive.filesystemName.startsWith("ext", ignoreCase = true) -> Color(0xFF1565C0)
+                                    drive.filesystemName.equals("exFAT", ignoreCase = true)   -> Color(0xFF00796B)
+                                    drive.filesystemName.equals("FAT32", ignoreCase = true)   -> Color(0xFF2E7D32)
+                                    else -> Color(0xFF37474F)
+                                }
+                                DriveTag(label = drive.filesystemName.uppercase(), color = fsColor)
+                            }
+                        }
+
+                        Spacer(modifier = Modifier.height(4.dp))
                         Text(text = formatSize(totalSpace), style = MaterialTheme.typography.bodyMedium, color = MaterialTheme.colorScheme.onSurfaceVariant)
 
                         Spacer(modifier = Modifier.height(8.dp))

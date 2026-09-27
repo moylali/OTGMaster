@@ -1,3 +1,4 @@
 • New: LUKS1 and LUKS2 encrypted volumes now supported alongside VeraCrypt
+• New: ext2/3/4 filesystems now supported (read-only)
 • New: Unlock form auto-detects LUKS vs VeraCrypt — shows only relevant fields
-• New: Clear message when no encrypted volumes are found on a drive
+• New: Drive cards show encryption and filesystem type as colour tags
