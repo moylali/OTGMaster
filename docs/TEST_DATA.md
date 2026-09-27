@@ -1,18 +1,25 @@
-# Generating test data for new ciphers, hashes and filesystems
+# Preparing test media and test data
 
-There are **three** separate test-data systems in this repo, built for different
-questions, on different host platforms, at different scales. Picking the wrong one
-wastes the most time, so start here.
+**This is the single reference for all test-media and test-case preparation** — E2E
+emulator images, physical VeraCrypt benchmark drives, and the LUKS drives. Everything
+needed to build a fixture from nothing is here or reachable from here; nothing else in
+the repo should carry a second copy of these commands.
 
-| System | Script | Host | Size | Answers |
+There are two kinds of test media, built for different questions, on different host
+platforms, at different scales. Picking the wrong one wastes the most time.
+
+| System | Script / section | Host | Size | Answers |
 |---|---|---|---|---|
-| **E2E volume images** | `scripts/generate_testdata.sh` | Linux | 10 MB each | Does unlock + mount + basic I/O work? Is an unsupported choice *rejected*? |
-| **Physical USB fixtures** | `scripts/prepare_test_usb.sh` | macOS | 62 GB | How fast is it, and does it stay correct under load? |
-| **LUKS partitions** | `docs/LUKS_SUPPORT.md` §5 | Linux | 64 GB | Not implemented yet — prep steps only |
+| **E2E volume images** | `scripts/generate_testdata.sh`, §2–§5 | Linux | 10 MB each | Does unlock + mount + basic I/O work? Is an unsupported choice *rejected*? |
+| **VeraCrypt benchmark drive** | `scripts/prepare_test_usb.sh`, §7 | macOS | 62 GB | How fast is it, and does it stay correct under load? |
+| **LUKS drives (3 of them)** | §8–§12, manual | Linux | 64 GB each | LUKS1/LUKS2 header parsing, Argon2 on a phone, ext4 detection |
 
 The E2E images are the ones to add first for any new cipher, hash or filesystem: they
 are cheap, they run on an emulator, and they cover the case that matters most for a new
 format — that the app either handles it correctly or refuses it cleanly.
+
+**If you are resuming this work, start at §13** — it is the checklist of what exists,
+what is missing, and what to do next.
 
 ## 1. What the app supports today
 
@@ -165,12 +172,412 @@ Two code paths matter: detection, and the driver.
 
 A new *container* (LUKS1, LUKS2) is a larger change than a cipher, because it replaces
 header parsing and key derivation rather than a block transform: AF-split/merge,
-PBKDF2 vs Argon2id, master-key digest verification. `docs/LUKS_SUPPORT.md` evaluates
-the proposal, records seven gaps, and gives complete Linux preparation commands in §5
-for a 4-partition 64 GB drive covering LUKS1/2 × FAT32/exFAT, with a host-computed
-manifest. Start there rather than from this document.
+PBKDF2 vs Argon2id, master-key digest verification.
 
-## 7. Verifying the fixture is real
+`docs/LUKS_SUPPORT.md` is the design evaluation — it records seven gaps in the original
+proposal and the recommended scope for a first version. **The preparation commands live
+here**, in §8–§12, so there is one copy to keep correct.
+
+## 7. The VeraCrypt benchmark drive (macOS, scripted)
+
+This one is fully scripted. It is the drive every figure in
+`docs/BENCHMARK_RESULTS.md` was measured on.
+
+```sh
+diskutil list                      # identify the disk FIRST
+scripts/prepare_test_usb.sh --disk diskN --fs exfat --veracrypt --free 4
+```
+
+Flags that matter: `--fs fat32|exfat`, `--veracrypt`, `--vc-encryption AES|Serpent`,
+`--vc-hash SHA-512`, `--vc-pim 1`, `--cluster 4096`, `--free 4`, `--quick` (small
+fixtures, no bulk fill — for iterating on the script itself, never for measuring).
+
+It refuses anything that is not an external, removable USB disk and has a size ceiling
+to catch a typo'd identifier. **It repartitions the disk.** Read the summary it prints
+before confirming, and per `CLAUDE.md` never paste it in the same block as a read-only
+command.
+
+Verify and clean are separate scripts: `scripts/verify_test_usb.sh`,
+`scripts/clean_test_usb.sh`.
+
+---
+
+# LUKS drives
+
+Three drives. None of this is scripted yet — these are manual Linux procedures, and
+`scripts/prepare_test_usb.sh` is macOS-only so it cannot be reused.
+
+| Drive | Layout | Tests |
+|---|---|---|
+| **A** | 4 partitions: LUKS1/LUKS2 × FAT32/exFAT | Both header formats, both KDFs, both supported filesystems, **and multi-drive** |
+| **B** | 1 partition: LUKS1 + ext4 | PBKDF2 unlock, then ext4 detection |
+| **C** | 1 partition: LUKS2 + ext4 | Argon2id unlock, then ext4 detection |
+
+**Know what B and C can prove today.** The app does not implement ext4 — it is one of
+the three filesystems (`fat16`, `ntfs`, `ext4`) that exist as cases *to be refused*. So
+until ext4 support lands, B and C test that the app **unlocks the LUKS container and
+then refuses the filesystem cleanly**, naming ext4 rather than reporting a corrupt
+volume. That is a real and useful test: it separates a container-layer failure from a
+filesystem-layer one. The fixtures are still worth writing so the drives are ready if
+ext4 is implemented.
+
+## 8. Prerequisites and safety
+
+```sh
+sudo apt install cryptsetup-bin dosfstools exfatprogs e2fsprogs parted
+cryptsetup --version        # 2.4+ for reliable LUKS2 Argon2id support
+```
+
+Identify the device and **confirm it is the right one** — every command below destroys
+data:
+
+```sh
+lsblk -o NAME,SIZE,TYPE,TRAN,MODEL,MOUNTPOINT
+# Expect TRAN=usb and the size you expect. /dev/sdX below is a placeholder.
+```
+
+Two conventions used throughout, both deliberate:
+
+- `PASS=password123` — matches the VeraCrypt fixtures and `generate_testdata.sh`, so
+  one password fits every fixture in the project.
+- **`--pbkdf-memory 65536` (64 MB) on every LUKS2 volume.** cryptsetup's desktop
+  default is 1–4 GB of Argon2 memory, which a phone cannot allocate — a drive formatted
+  with defaults tests nothing except the out-of-memory path. This is the single most
+  important parameter on this page; see `docs/LUKS_SUPPORT.md` §2.1.
+
+## 9. Drive A — four partitions, LUKS1/2 × FAT32/exFAT
+
+MBR allows exactly four primary partitions, which is what makes this layout possible.
+It is also **the only way to test multiple encrypted volumes on one physical device**.
+
+| Partition | Container | Filesystem | Label | Path |
+|---|---|---|---|---|
+| `p1` | LUKS1 | FAT32 | `LUKS1FAT` | PBKDF2 |
+| `p2` | LUKS1 | exFAT | `LUKS1EXF` | PBKDF2 |
+| `p3` | LUKS2 | FAT32 | `LUKS2FAT` | Argon2id |
+| `p4` | LUKS2 | exFAT | `LUKS2EXF` | Argon2id |
+
+### 9.1 Partition
+
+```sh
+sudo wipefs -a /dev/sdX
+sudo parted -s /dev/sdX mklabel msdos
+sudo parted -s /dev/sdX mkpart primary 1MiB    16GiB
+sudo parted -s /dev/sdX mkpart primary 16GiB   32GiB
+sudo parted -s /dev/sdX mkpart primary 32GiB   48GiB
+sudo parted -s /dev/sdX mkpart primary 48GiB   100%
+sudo partprobe /dev/sdX
+lsblk /dev/sdX          # expect sdX1..sdX4, ~15.5 GB each
+```
+
+### 9.2 Create the containers
+
+```sh
+PASS=password123
+
+for p in 1 2; do
+    echo -n "$PASS" | sudo cryptsetup luksFormat --type luks1 \
+        --cipher aes-xts-plain64 --key-size 512 --hash sha256 \
+        --pbkdf-force-iterations 10000 --batch-mode /dev/sdX$p -
+done
+
+for p in 3 4; do
+    echo -n "$PASS" | sudo cryptsetup luksFormat --type luks2 \
+        --cipher aes-xts-plain64 --key-size 512 --hash sha256 \
+        --pbkdf argon2id --pbkdf-memory 65536 --pbkdf-parallel 4 \
+        --pbkdf-force-iterations 4 --sector-size 512 \
+        --batch-mode /dev/sdX$p -
+done
+```
+
+**Capture the headers. This is the ground truth for the parser** — payload offset, key
+size, cipher, sector size, KDF parameters, keyslot layout:
+
+```sh
+mkdir -p ~/otg-luks-fixtures
+for p in 1 2 3 4; do
+    sudo cryptsetup luksDump /dev/sdX$p | sudo tee ~/otg-luks-fixtures/luks-A-p$p.txt
+done
+```
+
+Keep that directory. Without it there is nothing to check the app's header parsing
+against except the app itself.
+
+### 9.3 Open and format
+
+```sh
+for p in 1 2 3 4; do
+    echo -n "$PASS" | sudo cryptsetup open /dev/sdX$p otgA$p -
+done
+
+# 4096-byte clusters, deliberately small, to inflate the FAT and the exFAT
+# allocation bitmap — the same reasoning as prepare_test_usb.sh.
+sudo mkfs.vfat -F 32 -s 8 -n LUKS1FAT /dev/mapper/otgA1
+sudo mkfs.exfat -c 4096 -L LUKS1EXF  /dev/mapper/otgA2
+sudo mkfs.vfat -F 32 -s 8 -n LUKS2FAT /dev/mapper/otgA3
+sudo mkfs.exfat -c 4096 -L LUKS2EXF  /dev/mapper/otgA4
+
+for p in 1 2 3 4; do
+    sudo mkdir -p /mnt/otgA$p
+    sudo mount /dev/mapper/otgA$p /mnt/otgA$p
+done
+```
+
+`-s 8` is sectors-per-cluster: 8 × 512 = 4096 bytes. On exFAT, `-c` takes bytes
+directly.
+
+Then populate each with §12, using `SEQ_MB=256` — four partitions cannot each hold a
+2 GiB file.
+
+## 10. Drive B — LUKS1 + ext4
+
+```sh
+PASS=password123
+sudo wipefs -a /dev/sdY
+sudo parted -s /dev/sdY mklabel msdos
+sudo parted -s /dev/sdY mkpart primary 1MiB 100%
+sudo partprobe /dev/sdY
+
+echo -n "$PASS" | sudo cryptsetup luksFormat --type luks1 \
+    --cipher aes-xts-plain64 --key-size 512 --hash sha256 \
+    --pbkdf-force-iterations 10000 --batch-mode /dev/sdY1 -
+
+sudo cryptsetup luksDump /dev/sdY1 | sudo tee ~/otg-luks-fixtures/luks-B.txt
+echo -n "$PASS" | sudo cryptsetup open /dev/sdY1 otgB -
+
+# -m 0: no reserved blocks, so the free-space figure the app reports is comparable
+#       to the FAT32/exFAT drives.
+# lazy_*_init=0: write the inode tables and journal NOW rather than lazily in the
+#       background. Without this, the filesystem keeps changing under the first few
+#       reads and no fixture hash is reproducible.
+sudo mkfs.ext4 -L LUKS1EXT4 -m 0 \
+    -E lazy_itable_init=0,lazy_journal_init=0 /dev/mapper/otgB
+
+sudo mkdir -p /mnt/otgB && sudo mount /dev/mapper/otgB /mnt/otgB
+```
+
+Populate with §12 using `SEQ_MB=2048` — this drive has the whole 62 GB.
+
+**ext4 needs an ownership fix** that FAT32 and exFAT do not. ext4 stores real POSIX
+permissions, and everything written under `sudo` lands root-owned. Do this before
+unmounting or the fixtures are unreadable to a non-root reader:
+
+```sh
+sudo chown -R "$(id -u):$(id -g)" /mnt/otgB/BENCH
+sudo chmod -R a+rX /mnt/otgB/BENCH
+```
+
+## 11. Drive C — LUKS2 + ext4
+
+Identical to Drive B except the container. **Note `--pbkdf-memory 65536`.**
+
+```sh
+PASS=password123
+sudo wipefs -a /dev/sdZ
+sudo parted -s /dev/sdZ mklabel msdos
+sudo parted -s /dev/sdZ mkpart primary 1MiB 100%
+sudo partprobe /dev/sdZ
+
+echo -n "$PASS" | sudo cryptsetup luksFormat --type luks2 \
+    --cipher aes-xts-plain64 --key-size 512 --hash sha256 \
+    --pbkdf argon2id --pbkdf-memory 65536 --pbkdf-parallel 4 \
+    --pbkdf-force-iterations 4 --sector-size 512 \
+    --batch-mode /dev/sdZ1 -
+
+sudo cryptsetup luksDump /dev/sdZ1 | sudo tee ~/otg-luks-fixtures/luks-C.txt
+echo -n "$PASS" | sudo cryptsetup open /dev/sdZ1 otgC -
+
+sudo mkfs.ext4 -L LUKS2EXT4 -m 0 \
+    -E lazy_itable_init=0,lazy_journal_init=0 /dev/mapper/otgC
+
+sudo mkdir -p /mnt/otgC && sudo mount /dev/mapper/otgC /mnt/otgC
+```
+
+Populate with §12 (`SEQ_MB=2048`), then apply the same `chown`/`chmod` as §10.
+
+## 12. The dummy files — what goes inside, and why
+
+Every drive gets the same `BENCH/` tree. **Each fixture exists to stress one specific
+path**; a fixture of the wrong shape is how this project produced false passes before
+(see §14).
+
+| Fixture | Content | Stresses |
+|---|---|---|
+| `large/seq_<N>.bin` | Random bytes | Sequential throughput, random 4 KiB reads, the ≥2 GiB boundary |
+| `dense_short/` | 10,000 files, 8.3 names | Directory listing, one directory entry per file |
+| `dense_lfn/` | 10,000 files, long names | Listing with ~4 entries per file |
+| `nested/` | 10 levels deep | Path resolution (every level is re-listed) |
+| `reports/` | empty | Where the on-device harness writes results |
+
+Set `SEQ_MB` per drive: **256** for Drive A's partitions, **2048** for B and C. A
+2 GiB file is what exercises the 32-bit overflow that once made every ≥2 GiB read
+return zero bytes while all ten correctness cases still passed.
+
+```sh
+# M=mountpoint, SEQ_MB=size of the sequential fixture in MiB
+populate() {
+    M="$1"; SEQ_MB="$2"
+    B="$M/BENCH"
+    sudo mkdir -p "$B/large" "$B/dense_short" "$B/dense_lfn" "$B/nested" "$B/reports"
+
+    # --- large: sequential + random-read target -----------------------------
+    # Random data, not zeros: a sparse or compressible file lets the drive's
+    # controller cheat and the throughput figure becomes fiction.
+    sudo dd if=/dev/urandom of="$B/large/seq_${SEQ_MB}m.bin" \
+        bs=1M count="$SEQ_MB" status=progress
+    # A 256 MiB file is also needed by the random-read case on every drive.
+    if [ "$SEQ_MB" -ne 256 ]; then
+        sudo dd if=/dev/urandom of="$B/large/seq_256m.bin" \
+            bs=1M count=256 status=none
+    fi
+
+    # --- dense_short: 10,000 8.3-compatible names --------------------------
+    sudo sh -c "cd '$B/dense_short' && for i in \$(seq -w 1 10000); do
+        printf 'x' > f\$i.dat
+    done"
+
+    # --- dense_lfn: 10,000 long names (~4 dir entries each) ----------------
+    sudo sh -c "cd '$B/dense_lfn' && for i in \$(seq -w 1 10000); do
+        printf 'x' > \"a_file_with_a_deliberately_long_name_for_lfn_testing_\$i.dat\"
+    done"
+
+    # --- nested: 10 levels, one leaf ---------------------------------------
+    D="$B/nested"
+    for l in $(seq -w 1 10); do D="$D/level_$l"; sudo mkdir -p "$D"; done
+    sudo dd if=/dev/urandom of="$D/leaf_at_depth_10.dat" bs=4k count=1 status=none
+
+    sync
+}
+
+# Drive A
+for p in 1 2 3 4; do populate "/mnt/otgA$p" 256; done
+# Drives B and C
+populate /mnt/otgB 2048
+populate /mnt/otgC 2048
+```
+
+The dense loops take several minutes each on a slow stick — 20,000 file creations per
+volume. `printf 'x'` rather than `truncate` keeps every file non-empty, because a
+zero-length file skips the cluster-allocation path entirely.
+
+### 12.1 The manifest — the only external ground truth
+
+**Do not skip this.** `fixtures` has never once compared a host-computed hash on any
+device, because every existing drive carries `-` placeholders and the suite reports
+`nothing to check`. It is the only check that can catch the app and the fixture
+generator being wrong in the same direction.
+
+```sh
+manifest() {
+    M="$1"; LUKSREF="$2"
+    B="$M/BENCH"
+    {
+        echo "# OTG Master benchmark fixture"
+        echo "# generated: $(date -u +%Y-%m-%dT%H:%M:%SZ)"
+        echo "# luks:      $LUKSREF"
+        echo
+        echo "# path<TAB>bytes<TAB>sha256"
+        for f in "$B"/large/*.bin; do
+            printf 'large/%s\t%s\t%s\n' "$(basename "$f")" \
+                "$(stat -c%s "$f")" "$(sha256sum "$f" | cut -d' ' -f1)"
+        done
+        for d in dense_short dense_lfn; do
+            # Entry format must match benchFixtures exactly: a regular file is
+            # "name<TAB>size", a subdirectory is "name<TAB>dir".
+            printf '%s/\t%s files\t%s\n' "$d" \
+                "$(find "$B/$d" -maxdepth 1 -type f | wc -l | tr -d ' ')" \
+                "$(cd "$B/$d" && for f in *; do
+                    if [ -d "$f" ]; then printf '%s\tdir\n' "$f"
+                    elif [ -f "$f" ]; then printf '%s\t%s\n' "$f" "$(stat -c%s "$f")"
+                    fi
+                   done | LC_ALL=C sort | sha256sum | cut -d' ' -f1)"
+        done
+        L=$(find "$B/nested" -name leaf_at_depth_10.dat)
+        printf 'nested/leaf_at_depth_10.dat\t%s\t%s\n' \
+            "$(stat -c%s "$L")" "$(sha256sum "$L" | cut -d' ' -f1)"
+    } | sudo tee "$B/MANIFEST.txt" > /dev/null
+}
+
+for p in 1 2 3 4; do manifest "/mnt/otgA$p" "luks-A-p$p.txt"; done
+manifest /mnt/otgB luks-B.txt
+manifest /mnt/otgC luks-C.txt
+```
+
+**The directory-line format is a contract with `benchFixtures`** and all four parts of it
+matter. Getting any one wrong produces a mismatch that looks exactly like data
+corruption:
+
+1. **The size field must end in `files`.** The app rejects anything else as an
+   older-format manifest and reports `skipped — manifest predates this check` rather
+   than comparing. That message is what every current drive prints.
+2. **A regular file is `name<TAB>size`; a subdirectory is `name<TAB>dir`.** A
+   subdirectory has no length the device can read — libaums throws
+   `UnsupportedOperationException("This is a directory!")` — so the app substitutes the
+   literal `dir`, and the host must do the same. `dense_short` and `dense_lfn` contain
+   no subdirectories so it makes no difference there, but it will the moment a fixture
+   with nested content is hashed.
+3. **`LC_ALL=C` is not optional.** The app sorts with Kotlin's natural String ordering,
+   which is byte order for ASCII names; a locale-dependent host sort produces a
+   different hash on a different machine.
+4. **Entries are joined with `\n`, no trailing newline** — which is what
+   `sha256sum` over the piped listing produces, since the final `printf` supplies the
+   separator between lines only.
+
+The count in the size field is computed rather than assumed: the app only checks the
+suffix, so a hardcoded `10000 files` would still be accepted while being untrue.
+
+### 12.2 Teardown
+
+Always close the mappers, or the next run finds the device busy:
+
+```sh
+for p in 1 2 3 4; do sudo umount /mnt/otgA$p; sudo cryptsetup close otgA$p; done
+sudo umount /mnt/otgB && sudo cryptsetup close otgB
+sudo umount /mnt/otgC && sudo cryptsetup close otgC
+sync
+```
+
+Confirm nothing is left open before unplugging:
+
+```sh
+sudo dmsetup ls        # should list no otg* entries
+lsblk /dev/sdX         # no crypt children
+```
+
+## 13. Resume checklist
+
+For an agent picking this up cold.
+
+**Already done, nothing to redo:**
+
+- The VeraCrypt benchmark drive is scripted and working; four devices have full
+  results in `docs/BENCHMARK_RESULTS.md`.
+- E2E fixtures exist for FAT32, exFAT, keyfile and PIM variants, Serpent, an
+  unsupported-cipher rejection, a partitioned MBR, and FAT16/NTFS/ext4 rejections.
+- `docs/LUKS_SUPPORT.md` holds the design evaluation and the seven gaps.
+
+**Not done:**
+
+| Task | Blocker |
+|---|---|
+| Build drives A, B, C | Needs a Linux host and 3 USB sticks (~64 GB each) |
+| LUKS implementation | Design agreed in `LUKS_SUPPORT.md`; no code |
+| ext4 support | Unimplemented; B and C are rejection cases until then |
+| A real `fixtures` comparison | Needs any drive built with §12.1 above |
+| Serpent measurement | Supported and E2E-tested, never benchmarked |
+| Multi-drive (`saf par cross`) | Needs two volumes on one device — Drive A provides this |
+
+**Order to work in:** build Drive A first. It is the only drive that unblocks two
+separate gaps at once (LUKS verification *and* multi-drive), and its four partitions
+exercise both header formats against filesystems the app already supports — so a
+failure is unambiguously in the LUKS layer rather than in a new filesystem driver. B and
+C are worth less until ext4 exists.
+
+**When a drive is built, record it**: add the `luksDump` output location and the drive's
+label to this section, so the next reader knows the fixture exists without plugging it
+in.
+
+## 14. Verifying the fixture is real
 
 A generated fixture is a claim about the disk, and the claims fail in both directions.
 
@@ -195,7 +602,7 @@ corruption bugs, 4–8 KiB fixtures hid a 2 GiB read overflow, single-threaded t
 a lock shipped wrong. When adding a fixture for a new format, confirm it **fails**
 against the unimplemented state before you make it pass.
 
-## 8. Practical traps
+## 15. Practical traps
 
 Collected from actually running these, in rough order of time lost.
 

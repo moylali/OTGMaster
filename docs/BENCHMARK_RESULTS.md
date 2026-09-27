@@ -333,7 +333,7 @@ rather than reasoning from it.
 - `fixtures` has never validated a hash on any device.
 - Serpent is untested; every run used AES/SHA-512.
 - Multi-drive is untested: the `drive` selector, `driveTag` collision detection and
-  `saf par cross` all need two volumes on one device. `docs/LUKS_SUPPORT.md` §5
+  `saf par cross` all need two volumes on one device. `docs/TEST_DATA.md` §9
   describes a drive that would provide them.
 - **The Huawei has no exFAT block-layer figure**, so its exFAT results have no control
   to check against. Only FAT32 was measured there (7.90/8.11 MB/s).

@@ -157,150 +157,18 @@ Linux needed for the actual testing.
 
 ## 5. Test-data preparation
 
-A single 64 GB drive carries all four combinations, which is also the **only way to
-test multiple encrypted partitions on one physical device** — see §6.
+**Moved.** The preparation commands live in
+[docs/TEST_DATA.md](TEST_DATA.md) §8–§12 — partitioning, `luksFormat` for both header
+formats, the filesystems, the fixture tree, the host-computed manifest and teardown.
 
-### 5.1 Layout
+They were duplicated here and there is now one copy, because two copies of a
+`cryptsetup` invocation diverge and the stale one gets pasted. That document also covers
+the two single-partition ext4 drives, which this section never did.
 
-MBR allows exactly four primary partitions:
-
-| Partition | Format | Filesystem | Purpose |
-|---|---|---|---|
-| `p1` | LUKS1 | FAT32 | PBKDF2 path, 4096-byte clusters |
-| `p2` | LUKS1 | exFAT | PBKDF2 path, exFAT metadata load |
-| `p3` | LUKS2 | FAT32 | Argon2id path |
-| `p4` | LUKS2 | exFAT | Argon2id path, exFAT metadata load |
-
-~15.5 GB each. **Reduce the fixture sizes** relative to
-`scripts/prepare_test_usb.sh`: four partitions cannot each hold a 2 GiB sequential
-file plus bulk fill. Keep the dense directories at 10,000 entries — they are what
-stress the metadata paths — and use a 256 MiB sequential file.
-
-### 5.2 Partitioning (Linux)
-
-Replace `/dev/sdX` throughout. **This destroys the drive.**
-
-```sh
-sudo wipefs -a /dev/sdX
-sudo parted -s /dev/sdX mklabel msdos
-for i in 0 1 2 3; do
-    start=$(( i * 16 + 1 ))MiB
-    end=$(( (i + 1) * 16 ))GiB
-    sudo parted -s /dev/sdX mkpart primary "${start}" "${end}"
-done
-lsblk /dev/sdX
-```
-
-### 5.3 LUKS containers
-
-Argon2 parameters are pinned deliberately: **`--pbkdf-memory 65536` (64 MB) so the
-volumes open on a phone.** A desktop default of 1–4 GB would make them untestable on
-the devices this app targets, and would test nothing except the refusal path.
-
-```sh
-PASS=password123      # matches the VeraCrypt fixtures, so one password fits all
-
-# LUKS1 — PBKDF2
-for p in 1 2; do
-    echo -n "$PASS" | sudo cryptsetup luksFormat --type luks1 \
-        --cipher aes-xts-plain64 --key-size 512 --hash sha256 \
-        --pbkdf-force-iterations 10000 --batch-mode /dev/sdX$p -
-done
-
-# LUKS2 — Argon2id, memory capped for mobile
-for p in 3 4; do
-    echo -n "$PASS" | sudo cryptsetup luksFormat --type luks2 \
-        --cipher aes-xts-plain64 --key-size 512 --hash sha256 \
-        --pbkdf argon2id --pbkdf-memory 65536 --pbkdf-parallel 4 \
-        --pbkdf-force-iterations 4 --sector-size 512 \
-        --batch-mode /dev/sdX$p -
-done
-
-# Record what was actually written — the app must agree with this.
-for p in 1 2 3 4; do sudo cryptsetup luksDump /dev/sdX$p > luks-p$p.txt; done
-```
-
-Keep the `luksDump` output. It is the ground truth for the header parser: payload
-offset, key size, cipher, sector size, KDF parameters and keyslot layout.
-
-### 5.4 Filesystems and fixtures
-
-```sh
-for p in 1 2 3 4; do
-    echo -n "$PASS" | sudo cryptsetup open /dev/sdX$p otg$p -
-done
-
-# 4096-byte clusters, deliberately small, to inflate the FAT and the exFAT bitmap —
-# the same reasoning as scripts/prepare_test_usb.sh §3.1.
-sudo mkfs.vfat -F 32 -s 8 -n LUKS1FAT /dev/mapper/otg1
-sudo mkfs.exfat -c 4096 -L LUKS1EXF  /dev/mapper/otg2
-sudo mkfs.vfat -F 32 -s 8 -n LUKS2FAT /dev/mapper/otg3
-sudo mkfs.exfat -c 4096 -L LUKS2EXF  /dev/mapper/otg4
-
-for p in 1 2 3 4; do
-    sudo mkdir -p /mnt/otg$p && sudo mount /dev/mapper/otg$p /mnt/otg$p
-    B=/mnt/otg$p/BENCH
-    sudo mkdir -p "$B/large" "$B/dense_short" "$B/dense_lfn" "$B/nested" "$B/reports"
-
-    # Sequential target: 256 MiB, not 2 GiB — four partitions must share 62 GB.
-    sudo dd if=/dev/urandom of="$B/large/seq_256m.bin" bs=1M count=256 status=none
-
-    # 10,000 entries each: 8.3 names (one directory entry) and long names (~4).
-    sudo sh -c "cd $B/dense_short && for i in \$(seq -w 1 10000); do echo x > f\$i.dat; done"
-    sudo sh -c "cd $B/dense_lfn && for i in \$(seq -w 1 10000); do \
-        echo x > \"a_file_with_a_deliberately_long_name_for_lfn_testing_\$i.dat\"; done"
-
-    # 10 levels deep, for path resolution.
-    D="$B/nested"; for l in $(seq -w 1 10); do D="$D/level_$l"; sudo mkdir -p "$D"; done
-    sudo dd if=/dev/urandom of="$D/leaf_at_depth_10.dat" bs=4k count=1 status=none
-done
-```
-
-### 5.5 The manifest — host-computed hashes
-
-This is the part that matters most, and the part the VeraCrypt fixtures still lack:
-`fixtures` has **never compared a host-computed hash on any device**, because the
-existing manifests carry `-` placeholders. Do not repeat that here.
-
-```sh
-for p in 1 2 3 4; do
-    B=/mnt/otg$p/BENCH
-    M=$B/MANIFEST.txt
-    sudo sh -c "{
-        echo '# OTG Master benchmark fixture (LUKS)'
-        echo '# generated: $(date -u +%Y-%m-%dT%H:%M:%SZ)'
-        echo '# luks:      see luks-p$p.txt'
-        echo
-        echo '# path<TAB>bytes<TAB>sha256'
-        printf 'large/seq_256m.bin\t%s\t%s\n' \
-            \$(stat -c%s $B/large/seq_256m.bin) \
-            \$(sha256sum $B/large/seq_256m.bin | cut -d' ' -f1)
-        for d in dense_short dense_lfn; do
-            printf '%s/\t10000 files\t%s\n' \$d \
-                \"\$(cd $B/\$d && for f in *; do [ -f \"\$f\" ] && printf '%s\t%s\n' \"\$f\" \$(stat -c%s \"\$f\"); done | LC_ALL=C sort | sha256sum | cut -d' ' -f1)\"
-        done
-        printf 'nested/leaf_at_depth_10.dat\t%s\t%s\n' \
-            \$(stat -c%s \$(find $B/nested -name leaf_at_depth_10.dat)) \
-            \$(sha256sum \$(find $B/nested -name leaf_at_depth_10.dat) | cut -d' ' -f1)
-    } > $M"
-done
-```
-
-The directory lines hash a sorted `name<TAB>size` listing of **regular files only** —
-a subdirectory has no size the device can reproduce. This must match
-`benchFixtures`, which computes the same thing on the phone; see
-`docs/VENDOR_FIXES.md` and the `fixtures` section in
-`docs/RUNNING_BENCHMARKS.md`.
-
-### 5.6 Teardown
-
-```sh
-for p in 1 2 3 4; do
-    sudo umount /mnt/otg$p
-    sudo cryptsetup close otg$p
-done
-sync
-```
+The one parameter worth repeating, because everything else depends on it:
+**`--pbkdf-memory 65536`** on every LUKS2 volume. cryptsetup's desktop default of
+1–4 GB of Argon2 memory cannot be allocated on a phone, so a drive formatted with
+defaults tests only the out-of-memory path. See §2.1.
 
 ## 6. What this drive tests beyond LUKS
 

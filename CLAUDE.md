@@ -58,6 +58,18 @@ touching the I/O path: several suites in this project have passed while real dat
 corruption sat in the code, every time because of the test's shape rather than its
 logic.
 
+## Test media and test data
+
+`docs/TEST_DATA.md` is the **single reference for preparing every kind of test media**:
+the E2E emulator volume images, the scripted VeraCrypt benchmark drive, and the three
+LUKS drives (4-partition LUKS1/2 × FAT32/exFAT, plus LUKS1+ext4 and LUKS2+ext4). It
+covers the per-case file contract, how to add a cipher, hash, filesystem or container
+format, the fixture tree and what each fixture stresses, and the host-computed manifest.
+
+Preparation commands belong in that file and nowhere else. They were previously
+duplicated between it and `docs/LUKS_SUPPORT.md`, which is how a stale `cryptsetup`
+invocation gets pasted; `LUKS_SUPPORT.md` now holds the design evaluation only.
+
 ## Constraints
 
 - **Do not push to mainline** unless explicitly asked. Commit to the working
