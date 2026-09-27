@@ -48,6 +48,55 @@ generators — is documented in **[docs/TEST_DATA.md](docs/TEST_DATA.md)**. For 
 a drive rather than testing it, see [docs/RUNNING_BENCHMARKS.md](docs/RUNNING_BENCHMARKS.md)
 and the reference figures in [docs/BENCHMARK_RESULTS.md](docs/BENCHMARK_RESULTS.md).
 
+### Keeping devices awake for benchmark runs
+
+Decryption is CPU-bound, so a device that sleeps mid-run throttles its clocks and the
+result reads as a regression — the block-layer control measured **7.27 MB/s asleep
+against 17.26 MB/s awake** on the same device. `scripts/run_benchmark.sh` therefore
+changes two settings per device, and **both persist after the run ends**:
+
+| Setting | Run value | Normal value |
+|---|---|---|
+| `screen_off_timeout` | `86400000` (24 h) | typically `30000`–`60000` |
+| `deviceidle` (Doze) | disabled | enabled |
+
+Left in place they keep the screen on indefinitely and drain the battery, so revert
+them on any device you are not actively measuring.
+
+**Enable** (what the runner does automatically — only needed for a manual run):
+
+```bash
+adb -s <serial> shell settings put system screen_off_timeout 86400000
+adb -s <serial> shell dumpsys deviceidle disable
+adb -s <serial> shell input keyevent KEYCODE_WAKEUP
+```
+
+**Disable / restore** when you are done with a device:
+
+```bash
+adb -s <serial> shell settings put system screen_off_timeout 60000
+adb -s <serial> shell dumpsys deviceidle enable
+```
+
+**Check the current state** of every attached device:
+
+```bash
+for d in $(adb devices | awk 'NR>1 && $2=="device" {print $1}'); do
+  echo "$d  model=$(adb -s $d shell getprop ro.product.model | tr -d '\r')" \
+       " timeout=$(adb -s $d shell settings get system screen_off_timeout | tr -d '\r')ms" \
+       " doze_enabled=$(adb -s $d shell dumpsys deviceidle enabled | tr -d '\r')"
+done
+```
+
+`timeout=86400000` with `doze_enabled=0` means that device is still in run
+configuration. A finished run is also self-reporting: the harness records the power
+state at both the start and the end of every report, and flags any run that dozed as
+`*** CONTAMINATED ***`. The app additionally sets `FLAG_KEEP_SCREEN_ON` while a
+benchmark is active, but that one is transient and needs no cleanup.
+
+See [docs/RUNNING_BENCHMARKS.md](docs/RUNNING_BENCHMARKS.md) for the rest of the
+device-handling traps.
+
 ### Running E2E Tests
 
 The E2E tests run on a local Android emulator via QEMU, which allows us to emulate USB mass-storage devices.

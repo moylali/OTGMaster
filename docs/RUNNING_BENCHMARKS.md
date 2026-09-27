@@ -78,6 +78,11 @@ the block-layer control measured 7.27 MB/s asleep against 17.26 awake. A dozed r
 looks exactly like a regression. The runner re-asserts wakefulness every 30 s and
 flags any run that dozed as `*** CONTAMINATED ***`.
 
+Both settings the runner changes (`screen_off_timeout` to 24 h and `deviceidle`
+disabled) **persist after the run**. Restore them on any device you are no longer
+measuring — README's "Keeping devices awake for benchmark runs" has the enable,
+disable and check commands.
+
 **Use the block layer as the control.** It reads the uncached device with no
 filesystem involved, so it should be unchanged between two arms of the same A/B. If
 it differs, the arms are not comparable and nothing else in the run means anything.
