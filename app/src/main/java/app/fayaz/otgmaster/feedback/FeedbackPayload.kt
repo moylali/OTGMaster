@@ -3,6 +3,7 @@ package app.fayaz.otgmaster.feedback
 import android.os.Build
 import app.fayaz.otgmaster.BuildConfig
 import app.fayaz.otgmaster.MountedDrive
+import app.fayaz.otgmaster.veracrypt.ContainerType
 import org.json.JSONArray
 import org.json.JSONObject
 
@@ -29,7 +30,13 @@ object FeedbackPayload {
         val logLinesDropped: Int,
     )
 
-    data class Partition(val sizeGb: String, val fileSystem: String, val encrypted: Boolean)
+    data class Partition(
+        val sizeGb: String,
+        val fileSystem: String,
+        val encrypted: Boolean,
+        /** Lowercase encryption type: "veracrypt", "luks1", "luks2", or "none". */
+        val encryptionType: String,
+    )
 
     /**
      * Which categories the user has agreed to include.
@@ -67,15 +74,18 @@ object FeedbackPayload {
     fun collect(drives: List<MountedDrive>, logs: List<String>): Contents {
         val first = drives.firstOrNull()
         val partitions = drives.map { d ->
+            val encType = when (d.sourceVolumeCandidate?.containerType) {
+                ContainerType.LUKS1    -> "luks1"
+                ContainerType.LUKS2    -> "luks2"
+                ContainerType.VERACRYPT -> "veracrypt"
+                else -> if (d.isPlain) "none" else "veracrypt"
+            }
             Partition(
                 sizeGb = runCatching { "%.1f".format(d.fileSystem.capacity / 1_000_000_000.0) }
                     .getOrDefault("?"),
-                fileSystem = runCatching { d.fileSystem.volumeLabel }
-                    .getOrNull()
-                    ?.let { if (it.equals("exFAT", true)) "exFAT" else "FAT32" }
-                    ?: "unknown",
-                encrypted = d.blockDevice?.javaClass?.simpleName == "NativeDecryptedBlockDevice" ||
-                    d.uncachedIsEncrypted(),
+                fileSystem = d.filesystemName.ifEmpty { "unknown" },
+                encrypted = encType != "none",
+                encryptionType = encType,
             )
         }
         val (kept, dropped) = trimLogs(logs)
@@ -135,7 +145,7 @@ object FeedbackPayload {
             appVersion = "0.0.0 (0)",
             usbMake = "Test USB Drive",
             usbSize = "62.0 GB",
-            partitions = listOf(Partition("62.0", "exFAT", true)),
+            partitions = listOf(Partition("62.0", "exFAT", true, "veracrypt")),
             logLines = kept,
             logLinesDropped = dropped,
         )
@@ -155,6 +165,7 @@ object FeedbackPayload {
                         put("size_gb", it.sizeGb)
                         put("file_system", it.fileSystem)
                         put("encrypted", it.encrypted)
+                        put("encryption_type", it.encryptionType)
                     })
                 }
             })
@@ -208,8 +219,13 @@ object FeedbackPayload {
             } else {
                 appendLine("Partitions: ${c.partitions.size}")
                 c.partitions.forEachIndexed { i, p ->
-                    appendLine("  ${i + 1}. ${p.sizeGb} GB, ${p.fileSystem}, " +
-                        if (p.encrypted) "encrypted" else "not encrypted")
+                    val encLabel = when (p.encryptionType) {
+                        "luks1"     -> "LUKS1"
+                        "luks2"     -> "LUKS2"
+                        "veracrypt" -> "VeraCrypt"
+                        else        -> "not encrypted"
+                    }
+                    appendLine("  ${i + 1}. ${p.sizeGb} GB, ${p.fileSystem}, $encLabel")
                 }
             }
         }
