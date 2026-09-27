@@ -59,6 +59,48 @@ object Benchmark {
      */
     private val running = java.util.concurrent.atomic.AtomicBoolean(false)
 
+    /** Long enough not to be noise, short enough to answer "is it stuck?". */
+    private const val HEARTBEAT_MS = 30_000L
+
+    /** What is running now, for the heartbeat. */
+    @Volatile private var phase: String = "starting"
+    @Volatile private var phaseSince: Long = 0L
+
+    private fun phase(name: String) {
+        phase = name
+        phaseSince = System.currentTimeMillis()
+    }
+
+    /**
+     * Reports that the run is alive every [HEARTBEAT_MS], naming the phase and how
+     * long it has been in it.
+     *
+     * Several phases emit nothing for minutes — a cold 10,000-entry exFAT listing took
+     * 136 seconds uncached, and a 2 GiB read runs for tens of seconds — so a run in
+     * progress was indistinguishable from a hung one, particularly on the on-device
+     * screen where there is no logcat to fall back on.
+     *
+     * Goes to the UI sink and logcat but deliberately not into the report: a heartbeat
+     * is about watching, not about the result, and it would bury the findings.
+     */
+    private fun startHeartbeat(): Thread = Thread {
+        try {
+            // Without this the first tick reports seconds since the epoch, because
+            // phaseSince is still 0 until the first phase() call.
+            phase("starting")
+            while (!Thread.currentThread().isInterrupted) {
+                Thread.sleep(HEARTBEAT_MS)
+                val since = phaseSince
+                val secs = if (since <= 0L) 0L else (System.currentTimeMillis() - since) / 1000
+                val line = "still running: $phase (${secs}s in this step)"
+                Log.i(TAG, line)
+                OtgMasterState.logSink?.invoke(line)
+            }
+        } catch (_: InterruptedException) {
+            // Normal shutdown at the end of the run.
+        }
+    }.apply { name = "OTGBenchHeartbeat"; isDaemon = true; start() }
+
     fun runAll(
         context: Context,
         only: Set<String> = emptySet(),
@@ -72,9 +114,15 @@ object Benchmark {
             OtgMasterState.logSink?.invoke(msg)
             return msg
         }
+        val heartbeat = startHeartbeat()
+        // Whichever screen is in front holds the display on while this is true. A
+        // throttled run produces numbers that look like a regression.
+        OtgMasterState.benchmarkRunning.value = true
         try {
             return runAllLocked(context, only, mount, remount, driveFilter)
         } finally {
+            OtgMasterState.benchmarkRunning.value = false
+            heartbeat.interrupt()
             running.set(false)
         }
     }
@@ -218,7 +266,9 @@ object Benchmark {
             emit("encrypted     : ${underlying?.javaClass?.simpleName == "NativeDecryptedBlockDevice"}")
             emit("")
 
+            phase("free space")
             if (wants("free")) runCatching { benchFreeSpace(fs, ::emit) }.onFailure { emit("freeSpace     : FAILED ${it}") }
+            phase("block layer")
             if (wants("block")) runCatching { benchBlockLayer(drive, ::emit) }.onFailure {
                 emit("block layer   : FAILED ${it}")
                 emit("*** the device is not readable — every number below is meaningless ***")
@@ -231,23 +281,33 @@ object Benchmark {
                 continue
             }
 
+            phase("directory listing")
             if (wants("dir")) runCatching { benchDirListing(bench, ::emit) }.onFailure { emit("dir listing   : FAILED ${it}") }
+            phase("path resolve")
             if (wants("path")) runCatching { benchPathResolve(drive.fileSystem.rootDirectory, ::emit) }.onFailure { emit("path resolve  : FAILED ${it}") }
+            phase("sequential read")
             if (wants("seq")) runCatching { benchSequentialRead(bench, ::emit) }.onFailure { emit("seq read      : FAILED ${it}") }
+            phase("random read")
             if (wants("random")) runCatching { benchRandomRead(bench, ::emit) }.onFailure { emit("random read   : FAILED ${it}") }
+            phase("dense opens")
             if (wants("opens")) runCatching { benchDenseOpens(bench, ::emit) }.onFailure { emit("dense opens   : FAILED ${it}") }
             // Opt-in only: this one writes to the drive, so a default run stays
             // read-only.
+            phase("write verification")
             if (only.contains("write")) runCatching { benchWriteVerify(drive, ::emit, mount) }
                 .onFailure { emit("write verify  : FAILED ${it}") }
             // Opt-in: writes, and deliberately unaligned.
+            phase("unaligned writes")
             if (only.contains("unaligned")) runCatching { benchUnaligned(drive, ::emit, mount) }
                 .onFailure { emit("unaligned     : FAILED ${it}") }
+            phase("correctness")
             if (only.contains("correct")) runCatching { benchCorrectness(drive, ::emit, mount) }
                 .onFailure { emit("correctness   : FAILED ${it}") }
+            phase("SAF path")
             if (only.contains("saf")) runCatching { benchSaf(context, ::emit) }
                 .onFailure { emit("saf           : FAILED ${it}") }
             // Opt-in: hashing a 2 GiB fixture takes minutes.
+            phase("fixture hashes")
             if (only.contains("fixtures")) runCatching { benchFixtures(drive, ::emit) }
                 .onFailure { emit("fixtures      : FAILED ${it}") }
             emit("")
@@ -573,28 +633,30 @@ object Benchmark {
 
         // Full unmount/remount: discards filesystem metadata held in memory, which
         // a cache-only invalidation leaves intact.
-        if (mount != null && OtgMasterState.unmountAllRequest != null) {
-            emit("              remounting to discard filesystem metadata…")
-            OtgMasterState.unmountAllRequest?.invoke()
-            var deadline = System.currentTimeMillis() + 30_000
-            while (OtgMasterState.mountedDrives.isNotEmpty() &&
-                    System.currentTimeMillis() < deadline) Thread.sleep(300)
-            Thread.sleep(1500)
-            OtgMasterState.mountRequest?.mount(mount.password, mount.pim, mount.cipher, mount.hash)
-            deadline = System.currentTimeMillis() + MOUNT_TIMEOUT_MS
-            while (OtgMasterState.mountedDrives.isEmpty() &&
-                    System.currentTimeMillis() < deadline) Thread.sleep(500)
-            if (liveRoot() == null) {
-                emit("verify (remounted)  : *** remount failed, could not verify ***")
-                allOk = false
-            } else {
-                allOk = verifyPass("(remounted)") && allOk
-            }
+        emit("              remounting to discard filesystem metadata…")
+        var remountWhy: String? = null
+        var remountRan = false
+        if (remountAndProve(mount, { liveRoot()?.let { "live" } }, { remountWhy = it })) {
+            remountRan = true
+            allOk = verifyPass("(remounted)") && allOk
         } else {
-            emit("              (no credentials — skipped the remount verify)")
+            // Said plainly, and counted as a failure of the check rather than a pass:
+            // the remount pass is the only one that can catch metadata which was never
+            // written back, so skipping it quietly would overstate what was verified.
+            emit("verify (remounted)  : *** NOT PERFORMED — " +
+                 "${remountWhy ?: "remount failed"} ***")
+            emit("              the first two passes still hold, but nothing here proves " +
+                 "the on-disk metadata is correct")
         }
 
-        emit("write verify  : ${if (allOk) "ALL PASSED" else "*** FAILURES ABOVE ***"}")
+        // "ALL PASSED" would overstate a run where the remount pass never happened: the
+        // other two passes cannot distinguish correct on-disk metadata from metadata
+        // that was only ever correct in memory.
+        emit("write verify  : " + when {
+            !allOk -> "*** FAILURES ABOVE ***"
+            remountRan -> "ALL PASSED"
+            else -> "PARTIAL — 2 of 3 passes; the remount pass was not performed"
+        })
         runCatching {
             liveRoot()?.search(dirName)?.let { deleteRecursively(it) }
         }.onFailure { emit("write verify  : could not remove $dirName: $it") }
@@ -661,18 +723,10 @@ object Benchmark {
         val tag = driveTag(drive)
         fun liveRoot(): UsbFile? = rootForTag(tag)
 
-        fun remount(): Boolean {
-            if (mount == null) return false
-            OtgMasterState.unmountAllRequest?.invoke()
-            var deadline = System.currentTimeMillis() + 30_000
-            while (OtgMasterState.mountedDrives.isNotEmpty() &&
-                    System.currentTimeMillis() < deadline) Thread.sleep(300)
-            Thread.sleep(1500)
-            OtgMasterState.mountRequest?.mount(mount.password, mount.pim, mount.cipher, mount.hash)
-            deadline = System.currentTimeMillis() + MOUNT_TIMEOUT_MS
-            while (liveRoot() == null && System.currentTimeMillis() < deadline) Thread.sleep(500)
-            return liveRoot() != null
-        }
+        var remountFailure: String? = null
+        fun remount(): Boolean = remountAndProve(
+            mount, { liveRoot()?.let { "live" } }, { remountFailure = it }
+        )
 
         fun readBack(name: String, expectLen: Long): ByteArray? {
             val f = liveRoot()?.search(dirName)?.search(name) ?: run {
@@ -724,7 +778,9 @@ object Benchmark {
         }.onFailure { emit("unaligned     : case B write FAILED $it") }
 
         if (!remount()) {
-            emit("unaligned     : *** remount failed, cannot judge on-disk state ***")
+            emit("unaligned     : *** NOT VERIFIED — ${remountFailure ?: "remount failed"} ***")
+            emit("unaligned     : these cases only mean something after a remount, so no " +
+                 "result is reported rather than a misleading pass")
             return
         }
 
@@ -784,18 +840,10 @@ object Benchmark {
         val tag = driveTag(drive)
         fun liveRoot(): UsbFile? = rootForTag(tag)
 
-        fun remount(): Boolean {
-            if (mount == null) return false
-            OtgMasterState.unmountAllRequest?.invoke()
-            var dl = System.currentTimeMillis() + 30_000
-            while (OtgMasterState.mountedDrives.isNotEmpty() && System.currentTimeMillis() < dl)
-                Thread.sleep(300)
-            Thread.sleep(1500)
-            OtgMasterState.mountRequest?.mount(mount.password, mount.pim, mount.cipher, mount.hash)
-            dl = System.currentTimeMillis() + MOUNT_TIMEOUT_MS
-            while (liveRoot() == null && System.currentTimeMillis() < dl) Thread.sleep(500)
-            return liveRoot() != null
-        }
+        var remountFailure: String? = null
+        fun remount(): Boolean = remountAndProve(
+            mount, { liveRoot()?.let { "live" } }, { remountFailure = it }
+        )
 
         fun sha(b: ByteArray): String = java.security.MessageDigest.getInstance("SHA-256")
             .digest(b).joinToString("") { "%02x".format(it) }.take(16)
@@ -882,7 +930,12 @@ object Benchmark {
             }
         }.onFailure { bad("fixture setup failed: $it") }
 
-        if (!remount()) { bad("remount failed — cannot judge on-disk state"); return }
+        if (!remount()) {
+            bad("NOT VERIFIED — ${remountFailure ?: "remount failed"}")
+            emit("correctness   : these cases only mean something after a remount, so no " +
+                 "result is reported rather than a misleading pass")
+            return
+        }
 
         // ---------- judge ----------
         slurp("neighbour.bin", neighbour.size)?.let {
@@ -1387,6 +1440,71 @@ object Benchmark {
     }
 
     /**
+     * Unmounts and remounts, and proves it happened.
+     *
+     * The previous version could not tell a real remount from none at all. It called
+     * OtgMasterState.unmountAllRequest?.invoke() — a safe call — so when MainActivity
+     * had been destroyed and the handlers were null, nothing was unmounted, the
+     * wait-for-empty loop simply timed out, the mount request also did nothing, and
+     * liveRoot() was still non-null, so it returned true. Every case that claims to be
+     * judged "after a remount" was then judged against live in-memory metadata, which
+     * is exactly what the remount exists to discard — and the suite still printed ALL
+     * PASSED.
+     *
+     * That is how an entire run on a Huawei P20 Lite reported eleven passes without a
+     * single remount: the on-device benchmark screen backgrounds MainActivity, Android
+     * 9 destroyed it, and onDestroy nulls the handlers.
+     *
+     * Now it requires the mount list to actually empty, and the drive identity to
+     * change, before claiming success. [why] receives the reason on failure so the
+     * caller can report it rather than printing something untrue.
+     */
+    private fun remountAndProve(
+        mount: MountCredentials?,
+        tagOf: () -> String?,
+        why: (String) -> Unit,
+    ): Boolean {
+        if (mount == null) {
+            why("no credentials were supplied, so no remount was attempted")
+            return false
+        }
+        val unmountAll = OtgMasterState.unmountAllRequest
+        val mountReq = OtgMasterState.mountRequest
+        if (unmountAll == null || mountReq == null) {
+            why("the mount handler is unavailable — MainActivity is not running, so a " +
+                "remount cannot be performed and on-disk state cannot be judged")
+            return false
+        }
+        val before = OtgMasterState.mountedDrives.map { it.id }.toSet()
+
+        unmountAll.invoke()
+        var deadline = System.currentTimeMillis() + 30_000
+        while (OtgMasterState.mountedDrives.isNotEmpty() &&
+                System.currentTimeMillis() < deadline) Thread.sleep(300)
+        if (OtgMasterState.mountedDrives.isNotEmpty()) {
+            why("the drive did not unmount within 30s, so nothing was discarded")
+            return false
+        }
+        Thread.sleep(1500)
+
+        mountReq.mount(mount.password, mount.pim, mount.cipher, mount.hash)
+        deadline = System.currentTimeMillis() + MOUNT_TIMEOUT_MS
+        while (tagOf() == null && System.currentTimeMillis() < deadline) Thread.sleep(500)
+        val after = OtgMasterState.mountedDrives.map { it.id }.toSet()
+        if (tagOf() == null) {
+            why("the drive did not come back after unmounting")
+            return false
+        }
+        // A fresh mount gets a fresh id. Identical ids would mean the list never
+        // actually turned over, which is the failure this function exists to catch.
+        if (after.isNotEmpty() && after == before) {
+            why("the mount identity did not change, so no real remount occurred")
+            return false
+        }
+        return true
+    }
+
+    /**
      * Identifies a drive across an unmount/remount.
      *
      * MountedDrive.id is regenerated on every mount, so it cannot be used to find the
@@ -1480,21 +1598,22 @@ object Benchmark {
             }
         }.onFailure { Log.w(TAG, "could not write the report to the drive: $it") }
 
-        // 2. shared Documents/, retrievable over MTP
-        runCatching {
+        // 2. shared Documents/, retrievable over MTP — API 29 and up only.
+        //
+        // Below that, a MediaStore insert needs WRITE_EXTERNAL_STORAGE and fails with
+        // a SecurityException (observed on a Huawei P20 Lite, Android 9). It is also
+        // unnecessary there: this destination exists because Android/data became
+        // unreadable over MTP in Android 11, and on older releases
+        // getExternalFilesDir is directly accessible from a desktop. So the devices
+        // that cannot use this path are exactly the ones that do not need it.
+        if (android.os.Build.VERSION.SDK_INT >= 29) runCatching {
             val values = android.content.ContentValues().apply {
                 put(android.provider.MediaStore.MediaColumns.DISPLAY_NAME, name)
                 put(android.provider.MediaStore.MediaColumns.MIME_TYPE, "text/plain")
-                if (android.os.Build.VERSION.SDK_INT >= 29) {
-                    put(android.provider.MediaStore.MediaColumns.RELATIVE_PATH, "Documents")
-                }
+                put(android.provider.MediaStore.MediaColumns.RELATIVE_PATH, "Documents")
             }
-            val collection = if (android.os.Build.VERSION.SDK_INT >= 29) {
-                android.provider.MediaStore.Files.getContentUri(
-                    android.provider.MediaStore.VOLUME_EXTERNAL_PRIMARY)
-            } else {
-                android.provider.MediaStore.Files.getContentUri("external")
-            }
+            val collection = android.provider.MediaStore.Files.getContentUri(
+                android.provider.MediaStore.VOLUME_EXTERNAL_PRIMARY)
             context.contentResolver.insert(collection, values)?.let { uri ->
                 context.contentResolver.openOutputStream(uri)?.use { it.write(text.toByteArray()) }
                 Log.i(TAG, "report written to Documents/$name")
@@ -1507,6 +1626,10 @@ object Benchmark {
             File(dir, "benchmark.txt").writeText(text)
             File(dir, name).writeText(text)
             Log.i(TAG, "results written to ${File(dir, "benchmark.txt").absolutePath}")
+            if (android.os.Build.VERSION.SDK_INT < 29) {
+                Log.i(TAG, "on this Android version that folder is readable over MTP, " +
+                           "so no Documents/ copy is needed")
+            }
         }.onFailure { Log.e(TAG, "could not save results", it) }
     }
 }
