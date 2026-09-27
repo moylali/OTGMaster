@@ -881,18 +881,44 @@ Detail for the corrected runs:
 | exFAT, Pixel | 7.14 MB/s | 30.26 MB/s | 4.24x | 24.06 MB/s (3.37x) |
 | FAT32, OnePlus | 7.08 MB/s | 9.34 MB/s | 1.32x | 7.95 MB/s (1.12x) |
 
-**Only two of the four cells have been re-measured**, because the drives are
-currently swapped relative to the earlier runs. The remaining spread — 1.32x against
-4.24x — therefore still mixes device and filesystem, and cannot be attributed to
-either until exFAT/OnePlus and FAT32/Pixel are re-measured with the corrected arms.
-Do not read 4.24x as "exFAT is worse" or "the Pixel is worse" on this evidence.
+### The full 2x2, and why the ratio was the wrong thing to look at
 
-What the corrected numbers do support: **the provider's cost is per-request latency,
-and concurrency hides it.** On the Pixel two streams reach 24.06 MB/s against 30.26
-direct — most of a 4.24x single-stream gap closes with a second reader, on one
-handler thread. That is the same conclusion §5.8 reached by a different route, and it
-remains the reason a per-drive handler refactor is not justified: a thread serving
-two streams at 3.37x is not the bottleneck.
+Each drive was measured on both phones, so device and filesystem are separable:
+
+| | `saf single` | `saf direct` | ratio | 2 streams |
+|---|---|---|---|---|
+| exFAT, Pixel 10 Pro XL | 7.14 MB/s | 30.26 MB/s | 4.24x | 24.06 MB/s |
+| exFAT, OnePlus 7 | 8.08 MB/s | 24.11 MB/s | 2.98x | 17.99 MB/s |
+| FAT32, Pixel 10 Pro XL | 5.94 MB/s | 14.23 MB/s | 2.40x | 13.10 MB/s |
+| FAT32, OnePlus 7 | 7.08 MB/s | 9.34 MB/s | 1.32x | 7.95 MB/s |
+
+**`saf single` spans 5.94–8.08 MB/s. `saf direct` spans 9.34–30.26 MB/s.**
+
+Single-stream throughput through the provider is nearly indifferent to device and
+filesystem — a spread of 1.4x against 3.2x for the direct path over the same four
+configurations. So the ratio was never measuring the provider's cost; it was
+measuring how fast the stack underneath happened to be. The 1.32x on FAT32/OnePlus
+and the 4.24x on exFAT/Pixel are the same provider behaviour divided by very
+different denominators.
+
+**The figure worth quoting is the absolute one: a single SAF reader gets roughly
+6–8 MB/s, whatever the drive and phone.** That is a ceiling in the provider round
+trip, not a property of the storage.
+
+It is also not a hard ceiling — concurrency lifts straight past it. Two streams
+reach 79% of the direct-path rate on exFAT/Pixel (24.06 of 30.26), 75% on
+exFAT/OnePlus, 92% on FAT32/Pixel and 85% on FAT32/OnePlus. So the limit is
+per-request latency in the round trip, and a second reader fills the gaps.
+
+Two consequences:
+
+- **A single-threaded SAF client cannot exceed ~8 MB/s through this provider**, no
+  matter how fast the underlying volume is. Any work aimed at raising sequential
+  throughput for such a client is capped there, which is an argument for the backup
+  engine using `UsbFile` directly rather than going through SAF.
+- **The per-drive handler refactor remains unjustified.** One handler thread carries
+  two concurrent streams to within 75–92% of the direct path. A thread doing that is
+  not the bottleneck.
 
 Two things that do survive:
 
