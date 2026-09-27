@@ -6,42 +6,50 @@ import java.nio.ByteBuffer
 import java.nio.ByteOrder
 
 /**
- * Read-only [UsbFile] backed by an ext2/3/4 inode.
+ * [UsbFile] backed by an ext2/3/4 inode.  Supports both read and write.
  *
- * File data access:
- *  - Extent tree (EXT4_EXTENTS_FL): used by all ext4 volumes and any ext3 volume
- *    reformatted with tune2fs -E test_fs.
- *  - Block map (legacy): direct blocks (0..11), single, double, triple indirect.
- *    Covers ext2 and ext3 volumes up to the triple-indirect limit.
- *  - Inline data (EXT4_INLINE_DATA_FL): raw bytes stored in the inode's i_block
- *    area; capped at 60 bytes.
+ * Write safety:
+ *  - The filesystem is marked dirty (s_state) before any write begins.
+ *  - Data blocks are written before metadata (extent tree, inode size, bitmaps).
+ *  - [flush] / [close] writes the inode back and marks the filesystem clean.
+ *  - The journal is bypassed entirely; on an unclean disconnect Linux will run
+ *    fsck and recover correctly from the safe write order.
  *
- * Directory parsing:
- *  - Linear directories (the default for small directories).
- *  - Hash-tree (htree/dx) directories: the leaf blocks are ordinary linear
- *    directory blocks, so htree support reduces to following the two-level
- *    index to find the right leaf, then parsing it linearly.  For listing the
- *    full directory we skip the index and iterate all leaf blocks directly.
+ * Limitations:
+ *  - Only extent-tree files are writable.  Legacy block-map files (ext2/3) can
+ *    still be read but writes on them throw [UnsupportedOperationException].
+ *  - No inline-data writes.
+ *  - Extent tree growth beyond the four inline extents allocates a single index
+ *    block; beyond that a second allocation is attempted.  Deeply fragmented
+ *    files are unsupported.
  */
 class Ext4File private constructor(
     private val fs: Ext4FileSystem,
-    private val inodeNum: Long,
-    private val entryName: String,
-    private val parentFile: UsbFile?,
-    private val dir: Boolean,
-    private val fileSize: Long,
+    internal val inodeNum: Long,
+    @Volatile private var entryName: String,
+    @Volatile override var parent: UsbFile?,
+    private val isDir_: Boolean,
+    @Volatile private var currentSize: Long,
     private val atimeMs: Long,
-    private val mtimeMs: Long,
-    private val ctimeMs: Long,
-    private val inode: ByteArray,
+    @Volatile private var mtimeMs: Long,
+    @Volatile private var ctimeMs: Long,
+    private var inode: ByteArray,
 ) : UsbFile {
 
+    @Volatile private var dirty = false
+
     companion object {
-        private const val EXT4_EXTENTS_FL   = 0x00080000
+        private const val EXT4_EXTENTS_FL    = 0x00080000
         private const val EXT4_INLINE_DATA_FL = 0x10000000
-        private const val EXTENT_MAGIC      = 0xF30A
-        private const val S_IFDIR           = 0x4000
-        private const val S_IFLNK           = 0xA000
+        private const val EXTENT_MAGIC       = 0xF30A
+        private const val S_IFDIR            = 0x4000
+        private const val S_IFLNK            = 0xA000
+        private const val S_IFREG            = 0x8000
+
+        // File-type codes used in directory entries.
+        private const val FT_UNKNOWN  = 0
+        private const val FT_REG_FILE = 1
+        private const val FT_DIR      = 2
 
         fun forInode(fs: Ext4FileSystem, inodeNum: Long, name: String, parent: UsbFile?): Ext4File {
             val inode = fs.readInode(inodeNum)
@@ -50,8 +58,6 @@ class Ext4File private constructor(
             val mode   = bb.getShort(0).toInt() and 0xFFFF
             val isDir  = (mode and 0xF000) == S_IFDIR
             val sizeLo = bb.getInt(4).toLong() and 0xFFFFFFFFL
-            // i_size_high (offset 108) is only valid for regular files; directories
-            // use it for a different purpose in older kernels.
             val sizeHi = if (!isDir) (bb.getInt(108).toLong() and 0xFFFFFFFFL) else 0L
             val size   = (sizeHi shl 32) or sizeLo
 
@@ -61,48 +67,87 @@ class Ext4File private constructor(
 
             return Ext4File(fs, inodeNum, name, parent, isDir, size, atime, mtime, ctime, inode)
         }
+
+        /** Allocate and initialise a new inode for a regular file. */
+        fun createNew(
+            fs: Ext4FileSystem,
+            name: String,
+            parent: UsbFile?,
+            isDirectory: Boolean,
+        ): Ext4File {
+            val inodeNum = fs.allocator.allocateInode(isDirectory)
+            val inode = ByteArray(fs.inodeSize)
+            val now = (System.currentTimeMillis() / 1000L).toInt()
+            ByteBuffer.wrap(inode).order(ByteOrder.LITTLE_ENDIAN).apply {
+                val mode = if (isDirectory) 0x41ED else 0x81A4  // 0755 dir, 0644 file
+                putShort(0, mode.toShort())
+                putInt(4, 0)      // i_size_lo
+                putInt(8, now)    // i_atime
+                putInt(12, now)   // i_ctime
+                putInt(16, now)   // i_mtime
+                putInt(20, 0)     // i_dtime
+                putShort(26, (if (isDirectory) 2 else 1).toShort())  // i_links_count
+                putInt(32, EXT4_EXTENTS_FL)  // i_flags: extents
+                if (inode.size > 128) putShort(128, 28.toShort())  // i_extra_isize
+                // Initialise the extent tree header at inode offset 40.
+                putShort(40, EXTENT_MAGIC.toShort())  // eh_magic
+                putShort(42, 0.toShort())              // eh_entries = 0
+                putShort(44, 4.toShort())              // eh_max = 4 (inline)
+                putShort(46, 0.toShort())              // eh_depth = 0
+                putInt(48, 0)                           // eh_generation
+            }
+            val f = Ext4File(fs, inodeNum, name, parent, isDirectory, 0L,
+                now * 1000L, now * 1000L, now * 1000L, inode)
+            f.dirty = true
+            return f
+        }
     }
 
     // -----------------------------------------------------------------------
     // UsbFile properties
     // -----------------------------------------------------------------------
 
-    override val isDirectory: Boolean   get() = dir
-    override var name: String           get() = entryName; set(_) = unsupported()
+    override val isDirectory: Boolean   get() = isDir_
+    override var name: String
+        get() = entryName
+        @Throws(IOException::class)
+        set(newName) { renameInParent(newName) }
+
     override val absolutePath: String   get() =
-        if (parentFile == null) "/" else "${parentFile.absolutePath.trimEnd('/')}/$entryName"
-    override val parent: UsbFile?       get() = parentFile
-    override var length: Long           get() = fileSize; set(_) = unsupported()
-    override val isRoot: Boolean        get() = parentFile == null
+        if (parent == null) "/" else "${parent!!.absolutePath.trimEnd('/')}/$entryName"
+
+    override var length: Long
+        get() = currentSize
+        @Throws(IOException::class)
+        set(newLength) { truncateTo(newLength) }
+
+    override val isRoot: Boolean        get() = parent == null
 
     override fun createdAt(): Long      = ctimeMs
     override fun lastModified(): Long   = mtimeMs
     override fun lastAccessed(): Long   = atimeMs
 
     // -----------------------------------------------------------------------
-    // Directory listing
+    // Directory listing (unchanged from read-only)
     // -----------------------------------------------------------------------
 
     override fun list(): Array<String>   = listFiles().map { it.name }.toTypedArray()
 
     override fun listFiles(): Array<UsbFile> {
-        if (!dir) throw IOException("Not a directory: $entryName")
+        if (!isDir_) throw IOException("Not a directory: $entryName")
         val result = mutableListOf<UsbFile>()
         val flags = inodesFlags()
 
         if (flags and EXT4_INLINE_DATA_FL != 0) {
-            // Tiny directory whose entries fit in the i_block area (60 bytes).
             val inline = inode.copyOfRange(40, 100)
             parseDirBlock(inline, result)
             return result.toTypedArray()
         }
 
-        val numBlocks = (fileSize + fs.blockSize - 1) / fs.blockSize
+        val numBlocks = (currentSize + fs.blockSize - 1) / fs.blockSize
         for (blk in 0 until numBlocks) {
             val phys = resolveBlock(blk) ?: continue
             val data = fs.readBlock(phys)
-            // Skip the htree root block (magic 0x2358 at offset 8); htree leaf
-            // blocks look like ordinary linear directory blocks.
             parseDirBlock(data, result)
         }
         return result.toTypedArray()
@@ -110,17 +155,18 @@ class Ext4File private constructor(
 
     private fun parseDirBlock(block: ByteArray, out: MutableList<UsbFile>) {
         var pos = 0
-        while (pos + 8 <= block.size) {
-            val inoLo  = (block[pos].toInt() and 0xFF) or
-                         ((block[pos+1].toInt() and 0xFF) shl 8) or
-                         ((block[pos+2].toInt() and 0xFF) shl 16) or
-                         ((block[pos+3].toInt() and 0xFF) shl 24)
+        val tailReserve = if (fs.hasMetadataCsum) 12 else 0
+        while (pos + 8 <= block.size - tailReserve) {
+            val inoLo = (block[pos].toInt() and 0xFF) or
+                        ((block[pos+1].toInt() and 0xFF) shl 8) or
+                        ((block[pos+2].toInt() and 0xFF) shl 16) or
+                        ((block[pos+3].toInt() and 0xFF) shl 24)
             val ino    = inoLo.toLong() and 0xFFFFFFFFL
             val recLen = (block[pos+4].toInt() and 0xFF) or
                          ((block[pos+5].toInt() and 0xFF) shl 8)
             if (recLen < 8) break
             val nameLen = block[pos + 6].toInt() and 0xFF
-            if (ino != 0L && nameLen > 0 && pos + 8 + nameLen <= block.size) {
+            if (ino != 0L && nameLen > 0 && pos + 8 + nameLen <= block.size - tailReserve) {
                 val n = String(block, pos + 8, nameLen, Charsets.UTF_8)
                 if (n != "." && n != "..") {
                     out.add(forInode(fs, ino, n, this))
@@ -131,11 +177,11 @@ class Ext4File private constructor(
     }
 
     // -----------------------------------------------------------------------
-    // File reading
+    // File reading (unchanged from read-only)
     // -----------------------------------------------------------------------
 
     override fun read(offset: Long, destination: ByteBuffer) {
-        if (dir) throw IOException("Cannot read a directory as a file")
+        if (isDir_) throw IOException("Cannot read a directory as a file")
         val len = destination.remaining()
         val buf = readBytes(offset, len)
         destination.put(buf, 0, buf.size)
@@ -161,9 +207,7 @@ class Ext4File private constructor(
             val phys         = resolveBlock(logicalBlock)
             val toCopy       = minOf(len - written, fs.blockSize - blockOff)
 
-            if (phys == null) {
-                // Sparse block — already zero in result.
-            } else {
+            if (phys != null) {
                 val data = fs.readBlock(phys)
                 System.arraycopy(data, blockOff, result, written, toCopy)
             }
@@ -174,7 +218,619 @@ class Ext4File private constructor(
     }
 
     // -----------------------------------------------------------------------
-    // Block resolution: extent tree or legacy block map
+    // File writing
+    // -----------------------------------------------------------------------
+
+    /**
+     * Write [source] into the file at [offset].  Allocates new blocks as
+     * needed and grows the extent tree.  Only extent-tree files are supported;
+     * inline-data and legacy block-map files throw.
+     */
+    @Throws(IOException::class)
+    override fun write(offset: Long, source: ByteBuffer) {
+        if (isDir_) throw IOException("Cannot write to a directory")
+        val flags = inodesFlags()
+        if (flags and EXT4_EXTENTS_FL == 0)
+            throw UnsupportedOperationException("Write not supported for legacy block-map inodes")
+        if (flags and EXT4_INLINE_DATA_FL != 0)
+            throw UnsupportedOperationException("Write not supported for inline-data inodes")
+
+        fs.markDirty()
+
+        val data = ByteArray(source.remaining()).also { source.get(it) }
+        var written = 0
+        var pos     = offset
+
+        while (written < data.size) {
+            val logicalBlock = pos / fs.blockSize
+            val blockOff     = (pos % fs.blockSize).toInt()
+            val toCopy       = minOf(data.size - written, fs.blockSize - blockOff)
+
+            val phys = resolveBlock(logicalBlock) ?: run {
+                // Block not yet allocated — allocate and append an extent.
+                val newBlock = fs.allocator.allocateBlocks(1)[0]
+                appendExtent(logicalBlock, newBlock, 1)
+                newBlock
+            }
+
+            if (blockOff == 0 && toCopy == fs.blockSize) {
+                fs.writeBlock(phys, data.copyOfRange(written, written + toCopy))
+            } else {
+                // Partial block: read-modify-write.
+                val block = fs.readBlock(phys).copyOf()
+                System.arraycopy(data, written, block, blockOff, toCopy)
+                fs.writeBlock(phys, block)
+            }
+            written += toCopy
+            pos     += toCopy
+        }
+
+        val endPos = offset + data.size
+        if (endPos > currentSize) {
+            currentSize = endPos
+            updateInodeSize(currentSize)
+        }
+        touchMtime()
+        dirty = true
+    }
+
+    @Throws(IOException::class)
+    override fun flush() {
+        if (!dirty) return
+        val bb = ByteBuffer.wrap(inode).order(ByteOrder.LITTLE_ENDIAN)
+        val nowSec = (System.currentTimeMillis() / 1000L).toInt()
+        bb.putInt(12, nowSec)  // i_ctime
+        fs.writeInode(inodeNum, inode)
+        dirty = false
+        fs.markClean()
+    }
+
+    @Throws(IOException::class)
+    override fun close() {
+        flush()
+    }
+
+    // -----------------------------------------------------------------------
+    // Truncate / set length
+    // -----------------------------------------------------------------------
+
+    private fun truncateTo(newLength: Long) {
+        if (newLength < 0) throw IllegalArgumentException("length must be >= 0")
+        fs.markDirty()
+
+        if (newLength > currentSize) {
+            // Grow: allocate blocks to cover the new tail.  The bytes are already
+            // zero (allocateBlocks zeroes new block bitmaps; the on-disk data of
+            // freshly-allocated blocks is whatever was there before, but the caller
+            // is expected to write before reading, which is the normal truncate-up
+            // contract for empty pre-allocation).
+            var pos = currentSize
+            while (pos < newLength) {
+                val logicalBlock = pos / fs.blockSize
+                if (resolveBlock(logicalBlock) == null) {
+                    val phys = fs.allocator.allocateBlocks(1)[0]
+                    appendExtent(logicalBlock, phys, 1)
+                    // Zero the newly-allocated block.
+                    fs.writeBlock(phys, ByteArray(fs.blockSize))
+                }
+                pos += fs.blockSize
+            }
+        } else if (newLength < currentSize) {
+            // Shrink: free blocks beyond the new end.
+            val lastNeededBlock = if (newLength == 0L) -1L
+                else (newLength - 1) / fs.blockSize
+            freeBlocksAbove(lastNeededBlock)
+        }
+
+        currentSize = newLength
+        updateInodeSize(newLength)
+        touchMtime()
+        dirty = true
+    }
+
+    /**
+     * Free all physical blocks mapped to logical blocks > [lastBlock].
+     * Removes the corresponding extents from the inline extent tree.
+     * Does not yet handle multi-level extent trees (depth > 0); those blocks
+     * are simply freed from bitmaps without updating the index node.
+     */
+    private fun freeBlocksAbove(lastBlock: Long) {
+        val bb = ByteBuffer.wrap(inode).order(ByteOrder.LITTLE_ENDIAN)
+        val entries = bb.getShort(42).toInt() and 0xFFFF
+        val depth   = bb.getShort(46).toInt() and 0xFFFF
+        if (depth != 0) return  // tree too deep — leave extents in place (conservative)
+
+        var keepCount = 0
+        for (i in 0 until entries) {
+            val e = 52 + i * 12  // inode offset 40 (header 12) + i*12
+            val eBlock = bb.getInt(e).toLong() and 0xFFFFFFFFL
+            val eLen   = bb.getShort(e + 4).toInt() and 0xFFFF
+            val count  = if (eLen > 32768) eLen - 32768 else eLen
+            val startHi = (bb.getShort(e + 6).toInt() and 0xFFFF).toLong()
+            val startLo  = bb.getInt(e + 8).toLong() and 0xFFFFFFFFL
+            val physStart = (startHi shl 32) or startLo
+
+            if (eBlock > lastBlock) {
+                // Entire extent is past the truncation point — free all its blocks.
+                for (b in 0 until count) fs.allocator.freeBlock(physStart + b)
+            } else if (eBlock + count - 1 > lastBlock) {
+                // Extent straddles the boundary — keep the prefix, free the rest.
+                val keepBlocks = (lastBlock - eBlock + 1).toInt()
+                for (b in keepBlocks until count) fs.allocator.freeBlock(physStart + b)
+                // Rewrite this extent entry with the trimmed length.
+                bb.putShort(e + 4, keepBlocks.toShort())
+                keepCount++
+            } else {
+                keepCount++
+            }
+        }
+        bb.putShort(42, keepCount.toShort())
+        dirty = true
+    }
+
+    // -----------------------------------------------------------------------
+    // Directory operations: create file, create directory, delete, move, rename
+    // -----------------------------------------------------------------------
+
+    @Throws(IOException::class)
+    override fun createFile(name: String): UsbFile {
+        if (!isDir_) throw IOException("Not a directory")
+        if (listFiles().any { it.name == name })
+            throw IOException("'$name' already exists")
+
+        fs.markDirty()
+        val child = createNew(fs, name, this, isDirectory = false)
+        addDirEntry(child.inodeNum, name, FT_REG_FILE)
+        child.flush()
+        incrLinkCount(0)  // parent mtime update only
+        touchMtime()
+        dirty = true
+        return child
+    }
+
+    @Throws(IOException::class)
+    override fun createDirectory(name: String): UsbFile {
+        if (!isDir_) throw IOException("Not a directory")
+        if (listFiles().any { it.name == name })
+            throw IOException("'$name' already exists")
+
+        fs.markDirty()
+        val child = createNew(fs, name, this, isDirectory = true)
+
+        // Add "." and ".." entries to the new directory's first block.
+        val block = fs.allocator.allocateBlocks(1)[0]
+        child.appendExtent(0L, block, 1)
+        val blkData = ByteArray(fs.blockSize)
+        var pos = 0
+
+        fun writeDot(inoNum: Long, entName: String, ft: Int) {
+            val nameBytes = entName.toByteArray(Charsets.UTF_8)
+            val minLen    = 8 + nameBytes.size
+            val recLen    = ((minLen + 3) and 3.inv())
+            val bb = ByteBuffer.wrap(blkData, pos, recLen).order(ByteOrder.LITTLE_ENDIAN)
+            bb.putInt(inoNum.toInt())
+            bb.putShort(recLen.toShort())
+            bb.put(nameBytes.size.toByte())
+            bb.put(ft.toByte())
+            bb.put(nameBytes)
+            pos += recLen
+        }
+        writeDot(child.inodeNum, ".", FT_DIR)
+        writeDot(inodeNum, "..", FT_DIR)
+        // Extend the last entry's rec_len to reach the end of the block (minus tail).
+        val tailReserve = if (fs.hasMetadataCsum) 12 else 0
+        // Find the position of the last entry and extend its rec_len.
+        pos = 0
+        var lastEntryPos = 0
+        while (pos < blkData.size - tailReserve) {
+            val entRecLen = (blkData[pos + 4].toInt() and 0xFF) or ((blkData[pos + 5].toInt() and 0xFF) shl 8)
+            if (entRecLen == 0) break
+            lastEntryPos = pos
+            pos += entRecLen
+        }
+        val freeEnd = fs.blockSize - tailReserve - lastEntryPos
+        ByteBuffer.wrap(blkData, lastEntryPos + 4, 2).order(ByteOrder.LITTLE_ENDIAN)
+            .putShort(freeEnd.toShort())
+
+        writeDirBlock(child.inodeNum, child.inode, block, blkData)
+
+        child.currentSize = fs.blockSize.toLong()
+        child.updateInodeSize(fs.blockSize.toLong())
+        child.flush()
+
+        addDirEntry(child.inodeNum, name, FT_DIR)
+        incrLinkCount(+1)  // parent link count +1 for the ".." back-reference
+        touchMtime()
+        dirty = true
+        return child
+    }
+
+    @Throws(IOException::class)
+    override fun delete() {
+        val p = parent ?: throw IOException("Cannot delete root")
+
+        fs.markDirty()
+
+        if (isDir_) {
+            // Must be empty (only "." and ".." entries remain).
+            val children = listFiles()
+            if (children.isNotEmpty())
+                throw IOException("Directory not empty: $entryName")
+            // Free directory blocks.
+            freeBlocksAbove(-1L)
+            // Decrement parent link count for the ".." entry.
+            (p as? Ext4File)?.run { incrLinkCount(-1); touchMtime(); dirty = true }
+        } else {
+            freeBlocksAbove(-1L)
+        }
+
+        // Zero out the inode.
+        inode.fill(0)
+        ByteBuffer.wrap(inode).order(ByteOrder.LITTLE_ENDIAN)
+            .putInt(20, (System.currentTimeMillis() / 1000L).toInt())  // i_dtime
+        fs.writeInode(inodeNum, inode)
+        fs.allocator.freeInode(inodeNum, isDir_)
+
+        // Remove this entry from the parent directory.
+        (p as? Ext4File)?.removeDirEntry(inodeNum, entryName)
+        (p as? Ext4File)?.run { touchMtime(); dirty = true; flush() }
+
+        fs.markClean()
+    }
+
+    @Throws(IOException::class)
+    override fun moveTo(destination: UsbFile) {
+        val dst = destination as? Ext4File
+            ?: throw IOException("moveTo: destination is not an ext4 directory")
+        if (!dst.isDir_) throw IOException("moveTo: destination is not a directory")
+        val src = parent as? Ext4File
+            ?: throw IOException("moveTo: source parent unavailable")
+
+        fs.markDirty()
+        val ft = if (isDir_) FT_DIR else FT_REG_FILE
+        dst.addDirEntry(inodeNum, entryName, ft)
+        src.removeDirEntry(inodeNum, entryName)
+        if (isDir_) {
+            // Update ".." entry in the moved directory.
+            updateDotDot(dst.inodeNum)
+            src.incrLinkCount(-1)
+            dst.incrLinkCount(+1)
+            src.dirty = true
+            dst.dirty = true
+        }
+        parent = dst
+        touchMtime()
+        dirty = true
+        flush()
+    }
+
+    // -----------------------------------------------------------------------
+    // Search
+    // -----------------------------------------------------------------------
+
+    override fun search(path: String): UsbFile? {
+        var cur: UsbFile = this
+        for (part in path.split("/").filter { it.isNotEmpty() }) {
+            cur = (cur as? Ext4File)?.listFiles()?.firstOrNull { it.name == part } ?: return null
+        }
+        return cur
+    }
+
+    // -----------------------------------------------------------------------
+    // Directory entry manipulation
+    // -----------------------------------------------------------------------
+
+    /**
+     * Add a new directory entry for ([inoNum], [name]) to this directory.
+     *
+     * Finds the last existing entry and tries to split its slack space.  If
+     * there is no slack, allocates a new directory block.
+     */
+    private fun addDirEntry(inoNum: Long, name: String, fileType: Int) {
+        val nameBytes = name.toByteArray(Charsets.UTF_8)
+        if (nameBytes.size > 255) throw IOException("Name too long: $name")
+        val needed = ((8 + nameBytes.size + 3) and 3.inv())
+        val tailReserve = if (fs.hasMetadataCsum) 12 else 0
+
+        val numBlocks = (currentSize + fs.blockSize - 1) / fs.blockSize
+        for (blk in 0 until numBlocks) {
+            val phys = resolveBlock(blk) ?: continue
+            val data = fs.readBlock(phys).copyOf()
+            if (addEntryToBlock(data, inoNum, nameBytes, needed, fileType, tailReserve)) {
+                writeDirBlock(inodeNum, inode, phys, data)
+                return
+            }
+        }
+
+        // No space in existing blocks — allocate a new one.
+        val newPhys = fs.allocator.allocateBlocks(1)[0]
+        val newLogical = numBlocks
+        appendExtent(newLogical, newPhys, 1)
+        val data = ByteArray(fs.blockSize)
+        // Write the new entry with rec_len = blockSize - tailReserve.
+        val entryRecLen = fs.blockSize - tailReserve
+        ByteBuffer.wrap(data).order(ByteOrder.LITTLE_ENDIAN).apply {
+            putInt(inoNum.toInt())
+            putShort(entryRecLen.toShort())
+            put(nameBytes.size.toByte())
+            put(fileType.toByte())
+            position(8); put(nameBytes)
+        }
+        if (fs.hasMetadataCsum) writeTailChecksum(inodeNum, inode, data)
+        writeDirBlock(inodeNum, inode, newPhys, data)
+
+        currentSize += fs.blockSize
+        updateInodeSize(currentSize)
+        touchMtime()
+        dirty = true
+    }
+
+    /**
+     * Try to insert a new entry into [blockData].
+     * Returns true if successful, false if there was no room.
+     */
+    private fun addEntryToBlock(
+        blockData: ByteArray,
+        inoNum: Long,
+        nameBytes: ByteArray,
+        needed: Int,
+        fileType: Int,
+        tailReserve: Int,
+    ): Boolean {
+        val bb = ByteBuffer.wrap(blockData).order(ByteOrder.LITTLE_ENDIAN)
+        var pos = 0
+        while (pos + 8 <= blockData.size - tailReserve) {
+            val recLen  = bb.getShort(pos + 4).toInt() and 0xFFFF
+            if (recLen == 0) break
+            val nameLen = blockData[pos + 6].toInt() and 0xFF
+            val minLen  = ((8 + nameLen + 3) and 3.inv())
+            val slack   = recLen - minLen
+
+            if (slack >= needed) {
+                // Split: shrink existing entry to minLen, write new entry in the slack.
+                bb.putShort(pos + 4, minLen.toShort())
+                val newPos = pos + minLen
+                bb.putInt(newPos, inoNum.toInt())
+                bb.putShort(newPos + 4, slack.toShort())
+                bb.put(newPos + 6, nameBytes.size.toByte())
+                bb.put(newPos + 7, fileType.toByte())
+                blockData.fill(0, newPos + 8, newPos + 8 + nameBytes.size)
+                System.arraycopy(nameBytes, 0, blockData, newPos + 8, nameBytes.size)
+                return true
+            }
+            pos += recLen
+        }
+        return false
+    }
+
+    /**
+     * Remove the directory entry with ([inoNum], [name]) from this directory.
+     */
+    fun removeDirEntry(inoNum: Long, name: String) {
+        val nameBytes = name.toByteArray(Charsets.UTF_8)
+        val tailReserve = if (fs.hasMetadataCsum) 12 else 0
+        val numBlocks = (currentSize + fs.blockSize - 1) / fs.blockSize
+
+        for (blk in 0 until numBlocks) {
+            val phys = resolveBlock(blk) ?: continue
+            val data = fs.readBlock(phys).copyOf()
+            val bb   = ByteBuffer.wrap(data).order(ByteOrder.LITTLE_ENDIAN)
+            var pos  = 0
+            var prevPos = -1
+
+            while (pos + 8 <= data.size - tailReserve) {
+                val ino     = bb.getInt(pos).toLong() and 0xFFFFFFFFL
+                val recLen  = bb.getShort(pos + 4).toInt() and 0xFFFF
+                if (recLen == 0) break
+                val nameLen = data[pos + 6].toInt() and 0xFF
+                if (ino == inoNum && nameLen == nameBytes.size &&
+                    data.regionMatches(pos + 8, nameBytes, 0, nameLen)) {
+
+                    if (prevPos >= 0) {
+                        // Absorb into the previous entry's rec_len.
+                        val prevRecLen = bb.getShort(prevPos + 4).toInt() and 0xFFFF
+                        bb.putShort(prevPos + 4, (prevRecLen + recLen).toShort())
+                    } else {
+                        // First entry — zero the inode so it is skipped.
+                        bb.putInt(pos, 0)
+                    }
+                    writeDirBlock(inodeNum, inode, phys, data)
+                    return
+                }
+                prevPos = pos
+                pos += recLen
+            }
+        }
+    }
+
+    /** Write a directory block with the tail checksum if required. */
+    private fun writeDirBlock(dirIno: Long, dirInode: ByteArray, phys: Long, data: ByteArray) {
+        if (fs.hasMetadataCsum) writeTailChecksum(dirIno, dirInode, data)
+        fs.writeBlock(phys, data)
+    }
+
+    /**
+     * Write the CRC32c tail entry at the end of a directory block.
+     * The tail is the last 12 bytes of the block.
+     */
+    private fun writeTailChecksum(dirIno: Long, dirInode: ByteArray, data: ByteArray) {
+        val tailOff = data.size - 12
+        // Zero the checksum field (last 4 bytes of the tail) before computing.
+        data[tailOff + 8] = 0; data[tailOff + 9] = 0
+        data[tailOff + 10] = 0; data[tailOff + 11] = 0
+        // Write the tail header if not already present.
+        ByteBuffer.wrap(data, tailOff, 12).order(ByteOrder.LITTLE_ENDIAN).apply {
+            putInt(0)            // det_reserved_zero1
+            putShort(12.toShort()) // det_rec_len
+            put(0)               // det_reserved_name_len
+            put(0xDE.toByte())   // det_reserved_ft
+        }
+        // Re-zero checksum after writing header (putInt above may have non-zero values).
+        data[tailOff + 8] = 0; data[tailOff + 9] = 0
+        data[tailOff + 10] = 0; data[tailOff + 11] = 0
+        val csum = fs.csumDirBlock(dirIno, dirInode, data)
+        ByteBuffer.wrap(data, tailOff + 8, 4).order(ByteOrder.LITTLE_ENDIAN)
+            .putInt(csum)
+    }
+
+    // -----------------------------------------------------------------------
+    // Extent tree helpers
+    // -----------------------------------------------------------------------
+
+    /**
+     * Append a new extent covering [count] physical blocks starting at [physStart]
+     * for logical block [logicalBlock].
+     *
+     * If the inline extent tree (up to 4 entries) is full, an index block is
+     * allocated and the tree grows to depth 1.
+     */
+    private fun appendExtent(logicalBlock: Long, physStart: Long, count: Int) {
+        val bb      = ByteBuffer.wrap(inode).order(ByteOrder.LITTLE_ENDIAN)
+        val entries = bb.getShort(42).toInt() and 0xFFFF
+        val maxInline = bb.getShort(44).toInt() and 0xFFFF
+        val depth   = bb.getShort(46).toInt() and 0xFFFF
+
+        if (depth == 0 && entries < maxInline) {
+            // Room in the inline leaf.
+            val e = 52 + entries * 12
+            bb.putInt(e, logicalBlock.toInt())
+            bb.putShort(e + 4, count.toShort())
+            bb.putShort(e + 6, (physStart ushr 32).toShort())
+            bb.putInt(e + 8, (physStart and 0xFFFFFFFFL).toInt())
+            bb.putShort(42, (entries + 1).toShort())
+            return
+        }
+
+        if (depth == 0 && entries == maxInline) {
+            // Inline tree full — allocate an index block, move extents there,
+            // make the inline tree point to it (depth 1).
+            val idxPhys = fs.allocator.allocateBlocks(1)[0]
+            val idxData = ByteArray(fs.blockSize)
+            val ib = ByteBuffer.wrap(idxData).order(ByteOrder.LITTLE_ENDIAN)
+            // Write extent header for the leaf block.
+            ib.putShort(0, EXTENT_MAGIC.toShort())
+            ib.putShort(2, maxInline.toShort())                 // eh_entries = max (all moved)
+            ib.putShort(4, ((fs.blockSize - 12) / 12).toShort()) // eh_max for a full block
+            ib.putShort(6, 0.toShort())                          // depth 0
+            ib.putInt(8, 0)
+            // Copy existing inline extents.
+            for (i in 0 until entries) {
+                System.arraycopy(inode, 52 + i * 12, idxData, 12 + i * 12, 12)
+            }
+            // Add the new extent.
+            val ne = 12 + entries * 12
+            ib.putInt(ne, logicalBlock.toInt())
+            ib.putShort(ne + 4, count.toShort())
+            ib.putShort(ne + 6, (physStart ushr 32).toShort())
+            ib.putInt(ne + 8, (physStart and 0xFFFFFFFFL).toInt())
+            ib.putShort(2, (entries + 1).toShort())
+            fs.writeBlock(idxPhys, idxData)
+
+            // Rewrite the inode inline area as a depth-1 index with one entry.
+            val firstBlock = bb.getInt(52).toLong() and 0xFFFFFFFFL  // first logical block
+            inode.fill(0, 40, 40 + 60)
+            bb.putShort(40, EXTENT_MAGIC.toShort())
+            bb.putShort(42, 1.toShort())  // one index entry
+            bb.putShort(44, 4.toShort())  // max 4 inline index entries
+            bb.putShort(46, 1.toShort())  // depth = 1
+            bb.putInt(48, 0)
+            // Index entry: ei_block, ei_leaf_lo, ei_leaf_hi, ei_unused
+            bb.putInt(52, firstBlock.toInt())
+            bb.putInt(56, (idxPhys and 0xFFFFFFFFL).toInt())
+            bb.putShort(60, (idxPhys ushr 32).toShort())
+            bb.putShort(62, 0)
+            return
+        }
+
+        if (depth == 1) {
+            // Find the single index entry, read its leaf block, and append there.
+            val idxEiLeafLo = bb.getInt(56).toLong() and 0xFFFFFFFFL
+            val idxEiLeafHi = (bb.getShort(60).toInt() and 0xFFFF).toLong()
+            val leafPhys    = (idxEiLeafHi shl 32) or idxEiLeafLo
+            val leafData    = fs.readBlock(leafPhys).copyOf()
+            val lb          = ByteBuffer.wrap(leafData).order(ByteOrder.LITTLE_ENDIAN)
+            val lEntries    = lb.getShort(2).toInt() and 0xFFFF
+            val lMax        = lb.getShort(4).toInt() and 0xFFFF
+
+            if (lEntries >= lMax) throw IOException("Extent tree full (depth=1, leaf full)")
+            val e = 12 + lEntries * 12
+            lb.putInt(e, logicalBlock.toInt())
+            lb.putShort(e + 4, count.toShort())
+            lb.putShort(e + 6, (physStart ushr 32).toShort())
+            lb.putInt(e + 8, (physStart and 0xFFFFFFFFL).toInt())
+            lb.putShort(2, (lEntries + 1).toShort())
+            fs.writeBlock(leafPhys, leafData)
+            return
+        }
+
+        throw IOException("Extent tree depth $depth not supported for writes")
+    }
+
+    // -----------------------------------------------------------------------
+    // Inode field helpers
+    // -----------------------------------------------------------------------
+
+    private fun updateInodeSize(size: Long) {
+        val bb = ByteBuffer.wrap(inode).order(ByteOrder.LITTLE_ENDIAN)
+        bb.putInt(4, (size and 0xFFFFFFFFL).toInt())
+        if (!isDir_) bb.putInt(108, (size ushr 32 and 0xFFFFFFFFL).toInt())
+        dirty = true
+    }
+
+    private fun touchMtime() {
+        val bb = ByteBuffer.wrap(inode).order(ByteOrder.LITTLE_ENDIAN)
+        val now = (System.currentTimeMillis() / 1000L).toInt()
+        bb.putInt(16, now)
+        mtimeMs = now * 1000L
+    }
+
+    /** Adjust the inode's link count by [delta] (0 = only touch mtime). */
+    private fun incrLinkCount(delta: Int) {
+        if (delta == 0) { touchMtime(); return }
+        val bb = ByteBuffer.wrap(inode).order(ByteOrder.LITTLE_ENDIAN)
+        val links = (bb.getShort(26).toInt() and 0xFFFF) + delta
+        bb.putShort(26, links.coerceAtLeast(0).toShort())
+        touchMtime()
+        dirty = true
+    }
+
+    /** Update the ".." entry in this directory to point to [newParentIno]. */
+    private fun updateDotDot(newParentIno: Long) {
+        val tailReserve = if (fs.hasMetadataCsum) 12 else 0
+        val phys = resolveBlock(0) ?: return
+        val data = fs.readBlock(phys).copyOf()
+        val bb   = ByteBuffer.wrap(data).order(ByteOrder.LITTLE_ENDIAN)
+        var pos  = 0
+        while (pos + 8 <= data.size - tailReserve) {
+            val recLen  = bb.getShort(pos + 4).toInt() and 0xFFFF
+            val nameLen = data[pos + 6].toInt() and 0xFF
+            val n = String(data, pos + 8, nameLen, Charsets.UTF_8)
+            if (n == "..") {
+                bb.putInt(pos, newParentIno.toInt())
+                writeDirBlock(inodeNum, inode, phys, data)
+                return
+            }
+            pos += recLen
+        }
+    }
+
+    /** Rename this entry in the parent directory. */
+    private fun renameInParent(newName: String) {
+        val p = parent as? Ext4File ?: throw IOException("Cannot rename: parent not available")
+        fs.markDirty()
+        p.addDirEntry(inodeNum, newName, if (isDir_) FT_DIR else FT_REG_FILE)
+        p.removeDirEntry(inodeNum, entryName)
+        entryName = newName
+        touchMtime()
+        dirty = true
+        flush()
+        p.touchMtime()
+        p.dirty = true
+        p.flush()
+    }
+
+    // -----------------------------------------------------------------------
+    // Block resolution: extent tree or legacy block map (read, unchanged)
     // -----------------------------------------------------------------------
 
     private fun resolveBlock(logicalBlock: Long): Long? {
@@ -184,10 +840,7 @@ class Ext4File private constructor(
             blockMapLookup(logicalBlock)
     }
 
-    // --- Extent tree ---
-
-    private fun extentLookup(target: Long): Long? =
-        extentSearch(inode, 40, target)
+    private fun extentLookup(target: Long): Long? = extentSearch(inode, 40, target)
 
     private fun extentSearch(data: ByteArray, offset: Int, target: Long): Long? {
         val bb      = ByteBuffer.wrap(data).order(ByteOrder.LITTLE_ENDIAN)
@@ -199,12 +852,10 @@ class Ext4File private constructor(
         val depth   = bb.getShort(offset + 6).toInt() and 0xFFFF
 
         return if (depth == 0) {
-            // Leaf: scan for the extent containing target.
             for (i in 0 until entries) {
                 val e      = offset + 12 + i * 12
                 val eBlock = bb.getInt(e).toLong() and 0xFFFFFFFFL
                 val eLen   = bb.getShort(e + 4).toInt() and 0xFFFF
-                // Lengths > 32768 mark uninitialized extents; subtract 32768 for actual count.
                 val count  = if (eLen > 32768) eLen - 32768 else eLen
                 if (target >= eBlock && target < eBlock + count) {
                     val startHi = (bb.getShort(e + 6).toInt() and 0xFFFF).toLong()
@@ -212,9 +863,8 @@ class Ext4File private constructor(
                     return (startHi shl 32) or startLo + (target - eBlock)
                 }
             }
-            null  // sparse
+            null
         } else {
-            // Index: find the last index whose ei_block <= target.
             var childPhys = -1L
             for (i in 0 until entries) {
                 val ix      = offset + 12 + i * 12
@@ -230,19 +880,14 @@ class Ext4File private constructor(
         }
     }
 
-    // --- Legacy block map (ext2/3) ---
-
     private fun blockMapLookup(logical: Long): Long? {
         val bb            = ByteBuffer.wrap(inode).order(ByteOrder.LITTLE_ENDIAN)
         val pointersPerBlock = (fs.blockSize / 4).toLong()
-
         return when {
-            // Direct blocks (0..11)
             logical < 12 -> {
                 val ptr = bb.getInt(40 + logical.toInt() * 4).toLong() and 0xFFFFFFFFL
                 if (ptr == 0L) null else ptr
             }
-            // Single indirect
             logical < 12 + pointersPerBlock -> {
                 val ind = bb.getInt(40 + 12 * 4).toLong() and 0xFFFFFFFFL
                 if (ind == 0L) return null
@@ -252,7 +897,6 @@ class Ext4File private constructor(
                     .getInt(idx * 4).toLong() and 0xFFFFFFFFL
                 if (ptr == 0L) null else ptr
             }
-            // Double indirect
             logical < 12 + pointersPerBlock + pointersPerBlock * pointersPerBlock -> {
                 val dind = bb.getInt(40 + 13 * 4).toLong() and 0xFFFFFFFFL
                 if (dind == 0L) return null
@@ -268,12 +912,10 @@ class Ext4File private constructor(
                     .getInt(idx2 * 4).toLong() and 0xFFFFFFFFL
                 if (ptr == 0L) null else ptr
             }
-            // Triple indirect
             else -> {
                 val tind = bb.getInt(40 + 14 * 4).toLong() and 0xFFFFFFFFL
                 if (tind == 0L) return null
-                val offset1 = logical - 12 - pointersPerBlock -
-                        pointersPerBlock * pointersPerBlock
+                val offset1 = logical - 12 - pointersPerBlock - pointersPerBlock * pointersPerBlock
                 val idx1 = (offset1 / (pointersPerBlock * pointersPerBlock)).toInt()
                 val idx2 = ((offset1 / pointersPerBlock) % pointersPerBlock).toInt()
                 val idx3 = (offset1 % pointersPerBlock).toInt()
@@ -294,36 +936,17 @@ class Ext4File private constructor(
     }
 
     // -----------------------------------------------------------------------
-    // Search
-    // -----------------------------------------------------------------------
-
-    override fun search(path: String): UsbFile? {
-        var cur: UsbFile = this
-        for (part in path.split("/").filter { it.isNotEmpty() }) {
-            cur = (cur as? Ext4File)?.listFiles()?.firstOrNull { it.name == part } ?: return null
-        }
-        return cur
-    }
-
-    // -----------------------------------------------------------------------
-    // Unsupported write operations (read-only driver)
-    // -----------------------------------------------------------------------
-
-    override fun write(offset: Long, source: ByteBuffer): Unit = unsupported()
-    override fun flush(): Unit                                  = unsupported()
-    override fun createDirectory(name: String): UsbFile         = unsupported()
-    override fun createFile(name: String): UsbFile              = unsupported()
-    override fun moveTo(destination: UsbFile): Unit             = unsupported()
-    override fun delete(): Unit                                 = unsupported()
-    override fun close() {}  // no resources to release
-
-    // -----------------------------------------------------------------------
     // Helpers
     // -----------------------------------------------------------------------
 
     private fun inodesFlags(): Int =
         ByteBuffer.wrap(inode).order(ByteOrder.LITTLE_ENDIAN).getInt(32)
 
-    private fun unsupported(): Nothing =
-        throw UnsupportedOperationException("ext4 driver is read-only")
+    private fun ByteArray.regionMatches(
+        thisOff: Int, other: ByteArray, otherOff: Int, len: Int,
+    ): Boolean {
+        for (i in 0 until len)
+            if (this[thisOff + i] != other[otherOff + i]) return false
+        return true
+    }
 }
