@@ -11,6 +11,14 @@ These apply to every commit, without being asked.
    being committed — so each commit rewrites the whole file rather than appending
    one line. Check `git log <last-tag>..HEAD` to rebuild it.
 
+   **The version must be bumped immediately after a tag**, so that value always
+   names an *unreleased* build. This rule was followed literally while the version
+   still said 44 after `v0.3.11` had shipped at 44, and a changelog describing
+   unreleased work was written into the released version's file — where F-Droid and
+   Play would have shown it against a build that did not contain any of it. Before
+   editing a changelog, confirm `git describe --tags --abbrev=0` does **not** match
+   the current `versionName`.
+
    Keep the established voice: `•` bullets, `New:` / `Fixed:` prefixes, phrased
    for an end user. Internal work (CI, refactors, benchmarks, docs) does not
    appear there.
