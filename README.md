@@ -42,6 +42,12 @@ The full device end-to-end suite (VeraCrypt unlock + mount against generated tes
 run on a QEMU Android emulator) is documented in `scripts/run_e2e_tests.sh` and is not part of CI,
 since it needs real USB-device emulation that isn't available on hosted runners.
 
+**Generating test data** — including how to add a fixture for a new cipher, hash,
+filesystem or container format, the per-case file contract, and the traps in the three
+generators — is documented in **[docs/TEST_DATA.md](docs/TEST_DATA.md)**. For measuring
+a drive rather than testing it, see [docs/RUNNING_BENCHMARKS.md](docs/RUNNING_BENCHMARKS.md)
+and the reference figures in [docs/BENCHMARK_RESULTS.md](docs/BENCHMARK_RESULTS.md).
+
 ### Running E2E Tests
 
 The E2E tests run on a local Android emulator via QEMU, which allows us to emulate USB mass-storage devices.
