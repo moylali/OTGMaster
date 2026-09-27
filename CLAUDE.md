@@ -40,6 +40,24 @@ These apply to every commit, without being asked.
    `<tag>.md`, and each must name the device, Android version, filesystem, and the
    measurements or checks that were run.
 
+## Benchmarking and verification
+
+Before changing anything in the I/O path — the block cache, the crypto layer, libaums,
+libexfat, or the DocumentsProvider — read these:
+
+- `docs/RUNNING_BENCHMARKS.md` — how to trigger runs by both paths, how reports are
+  retrieved, and what makes a result trustworthy.
+- `docs/BENCHMARK_RESULTS.md` — reference figures across four devices and both
+  filesystems, what to validate, and the comparison rules.
+- `docs/IO_PERFORMANCE.md` — the narrative, including three retracted claims and why
+  each was wrong.
+
+**A fix is not verified until a test that fails on the old code passes on the new one,
+on hardware.** Build success and green unit tests are not sufficient for anything
+touching the I/O path: several suites in this project have passed while real data
+corruption sat in the code, every time because of the test's shape rather than its
+logic.
+
 ## Constraints
 
 - **Do not push to mainline** unless explicitly asked. Commit to the working
