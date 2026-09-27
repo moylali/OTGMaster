@@ -28,6 +28,54 @@ class ExFatFileSystem(private val blockDevice: RawBlockDevice, val exfatPtr: Lon
     }
 
     /**
+     * Node pointers waiting to be released, drained on a normal thread.
+     *
+     * ExFatFile.finalize() cannot do this itself. Finalizers run on a
+     * watchdog-monitored daemon that kills the process if one finalize() exceeds ten
+     * seconds, and exfat_put_node flushes the node — which means a real USB write.
+     * a492960 bounded the *lock wait* to 250 ms, but not the I/O that follows, so on a
+     * slow drive the write alone blew the budget:
+     *
+     *   FATAL EXCEPTION: FinalizerWatchdogDaemon
+     *   TimeoutException: ExFatFile.finalize() timed out after 10 seconds
+     *       at UsbDeviceConnection.native_bulk_request
+     *       at LibaumsRawBlockDevice.writeBlocks
+     *
+     * Observed on a Huawei P20 Lite, where writes run at 0.43 MB/s — four to five
+     * times slower than the other test devices, which is why it appeared only there.
+     *
+     * Bounded on purpose. If the queue is full the node is dropped and left for
+     * exfat_unmount to reclaim, which is the same trade-off the previous fix made: a
+     * leak until unmount is strictly better than killing the process.
+     */
+    private val pendingReleases = java.util.concurrent.ArrayBlockingQueue<Long>(512)
+
+    private val releaser: Thread = Thread {
+        try {
+            while (true) {
+                val ptr = pendingReleases.take()
+                if (ptr == STOP_RELEASER) break
+                // A normal thread may block here as long as it needs to.
+                lock.withLock {
+                    if (isUnmounted) return@withLock
+                    runCatching { ExFatNative.putNode(exfatPtr, ptr) }
+                }
+            }
+        } catch (_: InterruptedException) {
+            // Shutting down; exfat_unmount reclaims whatever is left.
+        }
+    }.apply { name = "ExFatNodeReleaser"; isDaemon = true; start() }
+
+    /**
+     * Queues a node for release. Never blocks and never throws, so it is safe to call
+     * from a finalizer.
+     */
+    internal fun releaseNodeLater(nodePtr: Long) {
+        if (isUnmounted) return
+        pendingReleases.offer(nodePtr)
+    }
+
+    /**
      * Runs [body] with the libexfat lock held, refusing to enter native code once
      * unmount() has freed the `struct exfat`.
      *
@@ -78,5 +126,16 @@ class ExFatFileSystem(private val blockDevice: RawBlockDevice, val exfatPtr: Lon
             ExFatNative.flush(exfatPtr)
             ExFatNative.unmount(exfatPtr)
         }
+        // Stop the releaser after the flag is set, so anything still queued is
+        // discarded rather than handed a freed struct exfat. exfat_unmount has already
+        // reclaimed those nodes.
+        pendingReleases.clear()
+        pendingReleases.offer(STOP_RELEASER)
+        releaser.interrupt()
+    }
+
+    private companion object {
+        /** Sentinel telling the releaser thread to finish. Not a valid pointer. */
+        const val STOP_RELEASER = -1L
     }
 }

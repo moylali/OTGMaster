@@ -18,3 +18,5 @@
 • Fixed: opening a folder on a damaged drive no longer crashes the app — an implausible folder size is now rejected with an error
 • Fixed: if a folder cannot be read on an exFAT drive, the app now reports the error instead of showing the folder as empty
 • New: a Report issue button next to the log, which opens a feedback form pre-filled with your device and drive details — you choose exactly what to include, or nothing at all, and review it before anything leaves the app
+• Fixed: the app could close itself while tidying up after browsing a drive — most likely on slower drives, where the cleanup work took long enough for Android to intervene
+• Fixed: a mounted drive is no longer disconnected when the app's main screen is closed by Android in the background

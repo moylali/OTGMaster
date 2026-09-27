@@ -251,37 +251,22 @@ class ExFatFile(
     }
 
     /**
-     * Releases the native node if it can be done promptly.
+     * Queues the native node for release on a normal thread.
      *
-     * Must never block: finalizers run on a watchdog-monitored daemon thread
-     * that kills the process when a single finalize() exceeds 10 seconds, and
-     * close() both takes the filesystem lock and (previously) flushed — either
-     * of which can sit behind a multi-second USB transfer. Listing a
-     * 10,000-entry directory crashed the app exactly this way:
-     *
-     *   FATAL EXCEPTION: FinalizerWatchdogDaemon
-     *   TimeoutException: ExFatFile.finalize() timed out after 10 seconds
-     *
-     * If the lock cannot be taken quickly the node is left for exfat_unmount to
-     * reclaim — a bounded leak until unmount, which is strictly better than
-     * killing the process.
+     * A finalizer must do no work that can block. Finalizers run on a
+     * watchdog-monitored daemon that kills the process when one finalize() exceeds ten
+     * seconds, and releasing a node means flushing it, which means a USB write. See
+     * ExFatFileSystem.pendingReleases for the failure this replaces.
      */
     protected fun finalize() {
         if (isClosed || isRoot) return
-        try {
-            if (!fileSystem.lock.tryLock(FINALIZE_LOCK_TIMEOUT_MS, TimeUnit.MILLISECONDS)) return
-            try {
-                if (isClosed || fileSystem.isUnmounted) return
-                isClosed = true
-                ExFatNative.putNode(fileSystem.exfatPtr, node.nodePtr)
-            } finally {
-                fileSystem.lock.unlock()
-            }
-        } catch (e: InterruptedException) {
-            Thread.currentThread().interrupt()
-        } catch (_: Throwable) {
-            // A throwing finalizer would also take the process down.
-        }
+        // Hand off and return immediately. Doing the release here is what killed the
+        // process on a slow drive: exfat_put_node flushes the node, that is a USB
+        // write, and on a Huawei P20 Lite (0.43 MB/s) it exceeded the ten-second
+        // finalizer budget. Taking the lock with a timeout, as this used to, bounded
+        // only the wait — not the transfer that follows it.
+        isClosed = true
+        runCatching { fileSystem.releaseNodeLater(node.nodePtr) }
     }
 
     private companion object {
