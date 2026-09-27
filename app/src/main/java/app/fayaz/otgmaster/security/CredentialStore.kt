@@ -5,6 +5,7 @@ import android.content.SharedPreferences
 import android.net.Uri
 import androidx.security.crypto.EncryptedSharedPreferences
 import androidx.security.crypto.MasterKey
+import app.fayaz.otgmaster.veracrypt.ContainerType
 import org.json.JSONArray
 import org.json.JSONObject
 
@@ -34,7 +35,8 @@ class CredentialStore(context: Context) {
         val keyfileUris: List<Uri>,
         val cipherName: String,
         val hashName: String,
-        val candidateStartBlock: Long = 0L
+        val candidateStartBlock: Long = 0L,
+        val containerType: ContainerType = ContainerType.VERACRYPT
     )
 
     private val prefs = openEncryptedPrefs(context)
@@ -91,6 +93,7 @@ class CredentialStore(context: Context) {
         keyfileUris: List<Uri>,
         cipherName: String,
         hashName: String,
+        containerType: ContainerType = ContainerType.VERACRYPT,
     ) {
         val json = JSONObject().apply {
             put("password", password)
@@ -99,6 +102,7 @@ class CredentialStore(context: Context) {
             put("cipher", cipherName)
             put("hash", hashName)
             put("startBlock", startBlock)
+            put("containerType", containerType.name)
         }.toString()
         prefs?.edit()?.putString(partitionKey(deviceKey, startBlock), json)?.apply()
     }
@@ -149,13 +153,20 @@ class CredentialStore(context: Context) {
             val uris = (0 until arr.length()).mapNotNull { i ->
                 try { Uri.parse(arr.getString(i)) } catch (e: Exception) { null }
             }
+            val typeStr = obj.optString("containerType", ContainerType.VERACRYPT.name)
+            val containerType = try {
+                ContainerType.valueOf(typeStr)
+            } catch (_: IllegalArgumentException) {
+                ContainerType.VERACRYPT
+            }
             Credentials(
                 password = obj.getString("password"),
                 pim = obj.optString("pim", ""),
                 keyfileUris = uris,
                 cipherName = obj.optString("cipher", "AES"),
                 hashName = obj.optString("hash", "SHA_512"),
-                candidateStartBlock = obj.optLong("startBlock", 0L)
+                candidateStartBlock = obj.optLong("startBlock", 0L),
+                containerType = containerType
             )
         } catch (e: Exception) {
             null

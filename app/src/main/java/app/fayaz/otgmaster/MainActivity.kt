@@ -822,9 +822,9 @@ class MainActivity : AppCompatActivity() {
                     onComplete()
                     mountFormResetKey.value++
                     if (autoMountEnabled.value) {
-                        credentialStore.save(deviceName, candidate.startBlock, password, pim?.toString() ?: "", keyfiles, cipher.name, hash.name)
+                        credentialStore.save(deviceName, candidate.startBlock, password, pim?.toString() ?: "", keyfiles, cipher.name, hash.name, candidate.containerType)
                         sessionPlaintextCreds[deviceName] = app.fayaz.otgmaster.security.CredentialStore.Credentials(
-                            password, pim?.toString() ?: "", keyfiles, cipher.name, hash.name, candidate.startBlock
+                            password, pim?.toString() ?: "", keyfiles, cipher.name, hash.name, candidate.startBlock, candidate.containerType
                         )
                         appendLog(getString(R.string.log_credentials_saved, deviceDisplayName))
                     }
