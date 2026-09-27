@@ -101,3 +101,9 @@ jobs:
           releaseFiles: app/build/outputs/bundle/release/*.aab
           track: internal
           status: completed
+          # Play was previously uploaded with no release notes at all, so they had to
+          # be typed into the Console by hand. Play caps notes at 500 characters per
+          # language, which is why this is a separate, shorter file: the Fastlane
+          # changelog F-Droid reads runs to a few thousand characters and cannot be
+          # reused here.
+          whatsNewDirectory: distribution/whatsnew

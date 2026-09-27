@@ -23,6 +23,14 @@ These apply to every commit, without being asked.
    for an end user. Internal work (CI, refactors, benchmarks, docs) does not
    appear there.
 
+   **Two files, two audiences.** F-Droid reads the Fastlane changelog above and has
+   no length limit. Google Play caps release notes at **500 characters per
+   language**, so it gets a separate condensed file at
+   `distribution/whatsnew/whatsnew-en-US`, wired into `release.yml` via
+   `whatsNewDirectory`. Update both, and check the Play one's length —
+   `wc -c distribution/whatsnew/whatsnew-en-US` must be ≤ 500, or the upload is
+   rejected.
+
 2. **Every commit message carries a summary of changes.** A subject line alone is
    not enough. State what changed, and why — including the reasoning or evidence
    that justified it, so the commit stands on its own later.
