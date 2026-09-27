@@ -1,6 +1,7 @@
 package app.fayaz.otgmaster.veracrypt
 
 import app.fayaz.otgmaster.block.RawBlockDevice
+import app.fayaz.otgmaster.luks.LuksParser
 
 class VeraCryptUnlocker {
     fun probeCandidates(device: RawBlockDevice): List<VolumeCandidate> {
@@ -9,41 +10,74 @@ class VeraCryptUnlocker {
         val hexPrefix = sector0.take(32).joinToString("") { String.format("%02X", it) }
         val hexSuffix = sector0.slice(510..511).joinToString("") { String.format("%02X", it) }
         android.util.Log.i("VeraCryptUnlocker", "Sector 0 prefix: $hexPrefix, suffix: $hexSuffix")
-        
+
         val partitions = app.fayaz.otgmaster.partition.MbrParser.parse(sector0)
         android.util.Log.i("VeraCryptUnlocker", "MBR partitions found: ${partitions.joinToString()}")
 
-        val wholeDevice = VolumeCandidate(
+        val wholeDevice = classifyCandidate(
             label = "Whole device",
             startBlock = 0,
             blockCount = device.blockCount,
+            device = device,
         )
 
         val candidates = mutableListOf(wholeDevice)
         val hasGpt = partitions.any { it.type == 0xEE }
         android.util.Log.i("VeraCryptUnlocker", "Has GPT partition? $hasGpt")
-        
+
         if (hasGpt) {
             val gptPartitions = app.fayaz.otgmaster.partition.GptParser.parse(device)
             android.util.Log.i("VeraCryptUnlocker", "GPT partitions found: ${gptPartitions.joinToString()}")
             candidates.addAll(gptPartitions.map {
-                VolumeCandidate(
+                classifyCandidate(
                     label = "GPT partition ${it.index + 1}",
                     startBlock = it.firstLba,
                     blockCount = it.sectorCount,
+                    device = device,
                 )
             })
         } else {
             candidates.addAll(partitions.map {
-                VolumeCandidate(
+                classifyCandidate(
                     label = "MBR partition ${it.index + 1} type 0x${it.type.toString(16)}",
                     startBlock = it.firstLba,
                     blockCount = it.sectorCount,
+                    device = device,
                 )
             })
         }
-        
+
         return candidates
+    }
+
+    private fun classifyCandidate(
+        label: String,
+        startBlock: Long,
+        blockCount: Long?,
+        device: RawBlockDevice,
+    ): VolumeCandidate {
+        val containerType = try {
+            val sector = device.readBlocks(startBlock, 1)
+            if (LuksParser.hasLuksMagic(sector)) {
+                when (LuksParser.getVersion(sector)) {
+                    1    -> ContainerType.LUKS1
+                    2    -> ContainerType.LUKS2
+                    else -> ContainerType.UNKNOWN
+                }
+            } else {
+                ContainerType.VERACRYPT
+            }
+        } catch (e: Exception) {
+            ContainerType.UNKNOWN
+        }
+        val typeSuffix = when (containerType) {
+            ContainerType.LUKS1     -> " [LUKS1]"
+            ContainerType.LUKS2     -> " [LUKS2]"
+            ContainerType.VERACRYPT -> ""
+            ContainerType.UNKNOWN   -> ""
+        }
+        android.util.Log.i("VeraCryptUnlocker", "Candidate '$label': $containerType")
+        return VolumeCandidate(label = "$label$typeSuffix", startBlock = startBlock, blockCount = blockCount, containerType = containerType)
     }
 
     class UnsupportedAlgorithmException(message: String) : Exception(message)

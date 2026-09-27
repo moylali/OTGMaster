@@ -17,7 +17,8 @@
 
     <!-- VeraCrypt mount section -->
     <string name="mount_veracrypt_drive">Mount VeraCrypt Encrypted Drive</string>
-    <string name="no_candidates_found">No VeraCrypt volume candidates found.</string>
+    <string name="no_candidates_found">No VeraCrypt or LUKS encrypted volumes found on this device.</string>
+    <string name="label_password">Password</string>
     <string name="label_volume_to_unlock">Volume to Unlock</string>
     <string name="label_veracrypt_password">VeraCrypt Password</string>
     <string name="label_pim">PIM (leave blank for default)</string>

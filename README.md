@@ -151,3 +151,4 @@ distributed binary therefore must be licensed under terms compatible with the GP
 | [mbedTLS](app/src/main/cpp/mbedtls/) | Apache-2.0 OR GPL-2.0-or-later | AES, PBKDF2, SHA-512 primitives |
 | `libexfat` (`app/src/main/cpp/exfat/`) | GPL-2.0-or-later | exFAT filesystem driver |
 | Serpent reference implementation (`app/src/main/cpp/serpent/`) | Public domain | See [PROVENANCE.md](app/src/main/cpp/serpent/PROVENANCE.md) for the exact source and the one portability fix applied |
+| [argon2kt](https://github.com/lambdapioneer/argon2kt) (`com.lambdapioneer.argon2kt:argon2kt:1.6.0`) | Apache-2.0 | Argon2id KDF for LUKS2 key derivation; ships native `.so` in the APK |

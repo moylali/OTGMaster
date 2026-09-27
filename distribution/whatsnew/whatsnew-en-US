@@ -1,9 +1,3 @@
-Data-integrity release.
-
-• Fixed cases where writing to a FAT32 drive could damage nearby data, or leave a file unreadable after being replaced
-• Fixed reads returning leftover content from deleted files
-• Files of 2 GB or more now read correctly
-• Much faster browsing: large folders open in seconds, not minutes
-• Encryption keys wiped from memory straight after use
-• Fixed several crashes
-• New: Report issue button
+• New: LUKS1 and LUKS2 encrypted volumes now supported alongside VeraCrypt
+• New: Unlock form auto-detects LUKS vs VeraCrypt — shows only relevant fields
+• New: Clear message when no encrypted volumes are found on a drive

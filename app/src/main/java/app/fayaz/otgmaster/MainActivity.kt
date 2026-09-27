@@ -557,8 +557,12 @@ class MainActivity : AppCompatActivity() {
         val device = app.fayaz.otgmaster.block.FileBlockDevice(sda)
         lifecycleScope.launch(Dispatchers.IO) {
             try {
-                val candidates = app.fayaz.otgmaster.veracrypt.VeraCryptUnlocker().probeCandidates(device)
-                val plainPartitions = detectPlainPartitions(device, candidates)
+                val allCandidates = app.fayaz.otgmaster.veracrypt.VeraCryptUnlocker().probeCandidates(device)
+                val plainPartitions = detectPlainPartitions(device, allCandidates)
+                // Only show candidates that are positively identified as VeraCrypt or LUKS.
+                val candidates = allCandidates.filter {
+                    it.containerType != app.fayaz.otgmaster.veracrypt.ContainerType.UNKNOWN
+                }
                 withContext(Dispatchers.Main) {
                     isQemuProbing = false
                     val qemuCandidate = UsbDeviceCandidate(QEMU_DEVICE_KEY, getString(R.string.qemu_test_disk_label), device, candidates, plainPartitions)
@@ -634,14 +638,18 @@ class MainActivity : AppCompatActivity() {
                 val baseIndex = _deviceCandidates.value.size
                 val newCandidates = openedList.mapIndexed { index, opened ->
                     val displayName = UsbDeviceDescriber.friendlyName(opened.usbDevice, baseIndex + index)
-                    val candidates = try {
+                    val allCandidates = try {
                         VeraCryptUnlocker().probeCandidates(opened.blockDevice)
                     } catch (e: Exception) {
                         e.printStackTrace()
                         emptyList()
                     }
                     // Detect plain filesystems on IO thread (readBlocks is blocking).
-                    val plainPartitions = detectPlainPartitions(opened.blockDevice, candidates)
+                    val plainPartitions = detectPlainPartitions(opened.blockDevice, allCandidates)
+                    // Only show candidates that are positively identified as VeraCrypt or LUKS.
+                    val candidates = allCandidates.filter {
+                        it.containerType != app.fayaz.otgmaster.veracrypt.ContainerType.UNKNOWN
+                    }
                     UsbDeviceCandidate(opened.deviceKey, displayName, opened.blockDevice, candidates, plainPartitions)
                 }
 
@@ -729,10 +737,23 @@ class MainActivity : AppCompatActivity() {
 
         lifecycleScope.launch(Dispatchers.IO) {
             try {
-                val decryptedDevice = VeraCryptUnlocker().unlock(
-                    device, candidate, password.toCharArray(), pim, keyfiles, contentResolver,
-                    cipher, hash
-                )
+                val decryptedDevice = when (candidate.containerType) {
+                    app.fayaz.otgmaster.veracrypt.ContainerType.LUKS1,
+                    app.fayaz.otgmaster.veracrypt.ContainerType.LUKS2 -> {
+                        val passwordBytes = password.toByteArray(Charsets.UTF_8)
+                        try {
+                            app.fayaz.otgmaster.luks.LuksUnlocker().unlock(
+                                device, candidate.startBlock, candidate.blockCount, passwordBytes
+                            )
+                        } finally {
+                            passwordBytes.fill(0)
+                        }
+                    }
+                    else -> VeraCryptUnlocker().unlock(
+                        device, candidate, password.toCharArray(), pim, keyfiles, contentResolver,
+                        cipher, hash
+                    )
+                }
                 withContext(Dispatchers.Main) { appendLog(getString(R.string.log_unlock_successful)) }
 
                 val detected = FilesystemDetector.detect(decryptedDevice)
@@ -1711,6 +1732,8 @@ fun VeraCryptMountSection(
         sessionCreds?.let { sc -> selectedDevice?.candidates?.find { it.startBlock == sc.candidateStartBlock } }
             ?: selectedDevice?.candidates?.firstOrNull()
     ) }
+    val isLuks = selectedCandidate?.containerType == app.fayaz.otgmaster.veracrypt.ContainerType.LUKS1 ||
+                 selectedCandidate?.containerType == app.fayaz.otgmaster.veracrypt.ContainerType.LUKS2
     var expanded by remember { mutableStateOf(false) }
 
     var password by remember(selectedDevice) { mutableStateOf(sessionCreds?.password ?: "") }
@@ -1861,7 +1884,7 @@ fun VeraCryptMountSection(
             OutlinedTextField(
                 value = password,
                 onValueChange = { if (!isPreFilled) password = it },
-                label = { Text(stringResource(R.string.label_veracrypt_password)) },
+                label = { Text(stringResource(if (isLuks) R.string.label_password else R.string.label_veracrypt_password)) },
                 singleLine = true,
                 readOnly = isPreFilled,
                 keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Password, autoCorrect = false, imeAction = androidx.compose.ui.text.input.ImeAction.Done),
@@ -1882,6 +1905,7 @@ fun VeraCryptMountSection(
                     .semantics { contentDescription = "password_input" }
             )
 
+            if (!isLuks) {
             OutlinedTextField(
                 value = pim,
                 onValueChange = { if (!isPreFilled) pim = it },
@@ -1924,6 +1948,7 @@ fun VeraCryptMountSection(
                     color = MaterialTheme.colorScheme.onSurfaceVariant
                 )
             }
+            } // end if (!isLuks) for PIM + keyfiles
 
             if (autoMountEnabled) {
                 Row(
@@ -1942,6 +1967,7 @@ fun VeraCryptMountSection(
                 }
             }
 
+            if (!isLuks) {
             @OptIn(ExperimentalMaterial3Api::class)
             ExposedDropdownMenuBox(
                 expanded = if (isPreFilled) false else cipherExpanded,
@@ -2005,6 +2031,7 @@ fun VeraCryptMountSection(
                     }
                 }
             }
+            } // end if (!isLuks) for cipher + hash
 
             Button(
                 onClick = {
@@ -2018,7 +2045,7 @@ fun VeraCryptMountSection(
                 },
                 modifier = Modifier.fillMaxWidth().semantics { contentDescription = "mount_button" },
                 enabled = selectedDevice != null && selectedCandidate != null &&
-                    (password.isNotEmpty() || keyfiles.isNotEmpty()) && !isUnlocking
+                    (password.isNotEmpty() || (!isLuks && keyfiles.isNotEmpty())) && !isUnlocking
             ) {
                 if (isUnlocking) {
                     androidx.compose.material3.CircularProgressIndicator(modifier = Modifier.size(24.dp), color = MaterialTheme.colorScheme.onPrimary)
