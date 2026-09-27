@@ -14,37 +14,39 @@ class VeraCryptUnlocker {
         val partitions = app.fayaz.otgmaster.partition.MbrParser.parse(sector0)
         android.util.Log.i("VeraCryptUnlocker", "MBR partitions found: ${partitions.joinToString()}")
 
-        val wholeDevice = classifyCandidate(
-            label = "Whole device",
-            startBlock = 0,
-            blockCount = device.blockCount,
-            device = device,
-        )
-
-        val candidates = mutableListOf(wholeDevice)
         val hasGpt = partitions.any { it.type == 0xEE }
         android.util.Log.i("VeraCryptUnlocker", "Has GPT partition? $hasGpt")
+
+        val candidates = mutableListOf<VolumeCandidate>()
 
         if (hasGpt) {
             val gptPartitions = app.fayaz.otgmaster.partition.GptParser.parse(device)
             android.util.Log.i("VeraCryptUnlocker", "GPT partitions found: ${gptPartitions.joinToString()}")
             candidates.addAll(gptPartitions.map {
                 classifyCandidate(
-                    label = "GPT partition ${it.index + 1}",
+                    label = "Partition ${it.index + 1}",
+                    startBlock = it.firstLba,
+                    blockCount = it.sectorCount,
+                    device = device,
+                )
+            })
+        } else if (partitions.isNotEmpty()) {
+            candidates.addAll(partitions.map {
+                classifyCandidate(
+                    label = "Partition ${it.index + 1}",
                     startBlock = it.firstLba,
                     blockCount = it.sectorCount,
                     device = device,
                 )
             })
         } else {
-            candidates.addAll(partitions.map {
-                classifyCandidate(
-                    label = "MBR partition ${it.index + 1} type 0x${it.type.toString(16)}",
-                    startBlock = it.firstLba,
-                    blockCount = it.sectorCount,
-                    device = device,
-                )
-            })
+            // No partition table — treat the whole device as one volume.
+            candidates.add(classifyCandidate(
+                label = "Whole device",
+                startBlock = 0,
+                blockCount = device.blockCount,
+                device = device,
+            ))
         }
 
         return candidates
