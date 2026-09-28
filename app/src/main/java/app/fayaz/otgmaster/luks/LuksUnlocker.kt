@@ -260,11 +260,21 @@ class LuksUnlocker {
         masterKey: ByteArray,
         payloadOffsetSectors: Long
     ): RawBlockDevice {
-        // payloadOffsetSectors is from the start of the PARTITION (not the physical disk).
-        // NativeDecryptedBlockDevice's volumeDataOffset is in blocks from the start of 'device'.
-        val volumeDataOffsetBlocks = partitionStartBlock + payloadOffsetSectors
+        // payloadOffsetSectors is from the start of the PARTITION (not the physical disk),
+        // and LUKS counts it in 512-byte sectors regardless of the medium.
+        // NativeDecryptedBlockDevice's volumeDataOffset is in *device blocks*, so the two
+        // units only coincide on a 512-byte-sector device.  Adding them directly put the
+        // data area 8x too close to the partition start on a 4Kn drive, which decrypts
+        // and writes at the wrong offset — silently, in both directions.
+        val payloadOffsetBytes = payloadOffsetSectors * 512L
+        require(payloadOffsetBytes % device.blockSize == 0L) {
+            "LUKS payload offset $payloadOffsetBytes B is not a multiple of the " +
+            "device block size ${device.blockSize} B"
+        }
+        val payloadOffsetBlocks    = payloadOffsetBytes / device.blockSize
+        val volumeDataOffsetBlocks = partitionStartBlock + payloadOffsetBlocks
         val totalPartitionBlocks   = blockCount ?: (device.blockCount - partitionStartBlock)
-        val decryptedBlocks        = totalPartitionBlocks - payloadOffsetSectors
+        val decryptedBlocks        = totalPartitionBlocks - payloadOffsetBlocks
 
         // LUKS plain64 IV: tweak sector = 0 for first payload sector, so tweakDataOffset = 0.
         // This differs from VeraCrypt where tweakDataOffset = dataOffsetSectors (≈256).
@@ -314,7 +324,16 @@ class LuksUnlocker {
             val end   = minOf(pos + hLen, buf.size)
             val count = end - pos
             md.reset()
-            md.update(byteArrayOf(0, 0, (chunk shr 8).toByte(), chunk.toByte()))
+            // The chunk index is a full 32-bit big-endian counter in the LUKS AF spec.
+            // Hardcoding the top two bytes to zero is correct for any key material we
+            // will ever see (chunk peaks near 1; reaching 65536 needs a ~1.3 MB buffer)
+            // but only by accident of size.
+            md.update(byteArrayOf(
+                (chunk shr 24).toByte(),
+                (chunk shr 16).toByte(),
+                (chunk shr 8).toByte(),
+                chunk.toByte(),
+            ))
             md.update(buf, pos, count)
             val hash = md.digest()
             hash.copyInto(result, pos, 0, count)

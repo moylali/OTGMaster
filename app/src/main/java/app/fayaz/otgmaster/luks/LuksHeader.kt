@@ -162,6 +162,16 @@ object LuksParser {
 
         val bb = ByteBuffer.wrap(data).order(ByteOrder.BIG_ENDIAN)
         val hdrSize = bb.getLong(8)  // total size of primary + secondary headers
+        // hdrSize comes off the medium, so a malformed or hostile header can make it
+        // smaller than the binary header it must follow. copyOfRange then gets a
+        // fromIndex above its toIndex and throws IllegalArgumentException, taking the
+        // app down instead of refusing the volume.
+        if (hdrSize <= LUKS2_BINARY_HDR_SIZE) {
+            throw LuksUnlocker.UnsupportedFormatException(
+                "LUKS2 header size $hdrSize is not larger than the " +
+                "$LUKS2_BINARY_HDR_SIZE-byte binary header"
+            )
+        }
 
         // JSON area: bytes [4096 .. hdrSize) of the primary header block
         val jsonEnd = minOf(hdrSize, data.size.toLong()).toInt()
