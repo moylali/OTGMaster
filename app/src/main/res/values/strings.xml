@@ -74,7 +74,7 @@
     <string name="cd_copy_version">Copy version</string>
     <string name="cd_close_settings">Close settings</string>
     <string name="auto_mount_title">Auto mount</string>
-    <string name="auto_mount_description">When a known device is connected, OTG Master will prompt for your device lock and then mount all recognized VeraCrypt drives automatically. Credentials are stored in AES-256 encrypted form in Android Keystore — they cannot be extracted without your device lock.</string>
+    <string name="auto_mount_description">When a known device is connected, OTG Master will prompt for your device lock and then mount all recognized encrypted drives automatically. Credentials are stored in AES-256 encrypted form in Android Keystore — they cannot be extracted without your device lock.</string>
     <string name="cd_clear_keyfiles">Clear keyfiles</string>
     <string name="auto_mount_prompt_title">Authenticate to mount</string>
     <string name="auto_mount_prompt_subtitle_single">Auto mount %1$s</string>
