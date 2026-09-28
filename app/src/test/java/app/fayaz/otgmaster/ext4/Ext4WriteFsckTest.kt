@@ -89,8 +89,13 @@ class Ext4WriteFsckTest {
     }
 
     /** Open the image, run [block] against it, and always close the device. */
-    private fun <R> withFs(block: (Ext4FileSystem) -> R): R {
-        val dev = FileBlockDevice(img)
+    private fun <R> withFs(cached: Boolean = false, block: (Ext4FileSystem) -> R): R {
+        val raw = FileBlockDevice(img)
+        // On a device every ext4 read and write goes through CachedBlockDevice.
+        // A test that talks to the image directly cannot see a bug that depends
+        // on what the cache serves back, so the cached path is exercised too.
+        val dev: app.fayaz.otgmaster.block.RawBlockDevice =
+            if (cached) app.fayaz.otgmaster.block.CachedBlockDevice(raw) else raw
         try {
             return block(Ext4FileSystem.create(dev))
         } finally {
@@ -208,6 +213,141 @@ class Ext4WriteFsckTest {
             (0 until 4).forEach { root.search("frag$it.bin")!!.delete() }
         }
         assertFsckClean("fragmented delete")
+    }
+
+    /**
+     * Mirrors what the benchmark's write-verify section actually does: a file
+     * inside a subdirectory, written 64 KiB at a time through one handle, then
+     * the whole directory removed.
+     *
+     * The suite reported "write verify: ALL PASSED" on hardware while leaving
+     * 3616 blocks allocated and owned by nothing, so the shape of the write
+     * matters, not just the total size.
+     */
+    @Test
+    fun deletingADirectoryWrittenInChunksReleasesEveryBlock() {
+        val chunk = ByteArray(64 * 1024) { (it and 0xFF).toByte() }
+        val total = 16 * 1024 * 1024L
+
+        withFs { f ->
+            val dir = f.rootDirectory.createDirectory("BENCH_WRITE")
+            val file = dir.createFile("verify.bin")
+            var off = 0L
+            while (off < total) {
+                file.write(off, ByteBuffer.wrap(chunk))
+                off += chunk.size
+            }
+            file.flush()
+        }
+        assertFsckClean("16 MiB chunked write")
+
+        withFs { f ->
+            val dir = f.rootDirectory.search("BENCH_WRITE")!!
+            dir.search("verify.bin")!!.delete()
+            dir.delete()
+        }
+        assertFsckClean("delete of chunk-written file and its directory")
+    }
+
+    /**
+     * The same write-and-delete cycle, but through CachedBlockDevice, which is
+     * what a real mount uses.
+     *
+     * On hardware this sequence reported "write verify: ALL PASSED" and still
+     * left 3616 blocks allocated and owned by no inode; the uncached version of
+     * this test passes, so the cache is the only layer that differs.
+     */
+    @Test
+    fun deletingThroughTheBlockCacheReleasesEveryBlock() {
+        val chunk = ByteArray(64 * 1024) { (it and 0xFF).toByte() }
+        val total = 16 * 1024 * 1024L
+
+        withFs(cached = true) { f ->
+            val dir = f.rootDirectory.createDirectory("BENCH_WRITE")
+            val file = dir.createFile("verify.bin")
+            var off = 0L
+            while (off < total) {
+                file.write(off, ByteBuffer.wrap(chunk))
+                off += chunk.size
+            }
+            file.flush()
+        }
+        assertFsckClean("cached 16 MiB chunked write")
+
+        withFs(cached = true) { f ->
+            val dir = f.rootDirectory.search("BENCH_WRITE")!!
+            dir.search("verify.bin")!!.delete()
+            dir.delete()
+        }
+        assertFsckClean("cached delete")
+    }
+
+    /**
+     * A large file written into a fragmented volume, then deleted.
+     *
+     * The hardware drive already holds 2 GiB of fixtures, so the benchmark's
+     * 16 MiB file lands in holes and its extent tree is wide rather than the
+     * one or two extents a clean image produces.  That run leaked 3616 blocks
+     * in group 0 while reporting every check as passing, so the tree's shape at
+     * delete time is what this reproduces.
+     */
+    @Test
+    fun deletingALargeFileFromAFragmentedVolumeReleasesEveryBlock() {
+        val filler = ByteArray(64 * 1024) { 'f'.code.toByte() }
+        withFs { f ->
+            val root = f.rootDirectory
+            repeat(300) { i -> root.createFile("fill$i.bin").writeAll(filler) }
+        }
+        // Punch alternating holes so the next allocation cannot be contiguous.
+        withFs { f ->
+            val root = f.rootDirectory
+            (0 until 300 step 2).forEach { i -> root.search("fill$i.bin")!!.delete() }
+        }
+        assertFsckClean("fragmenting fill")
+
+        val chunk = ByteArray(64 * 1024) { (it and 0xFF).toByte() }
+        withFs { f ->
+            val file = f.rootDirectory.createDirectory("BENCH_WRITE").createFile("verify.bin")
+            var off = 0L
+            while (off < 8 * 1024 * 1024L) {
+                file.write(off, ByteBuffer.wrap(chunk))
+                off += chunk.size
+            }
+            file.flush()
+        }
+        assertFsckClean("write into fragmented free space")
+
+        withFs { f ->
+            val dir = f.rootDirectory.search("BENCH_WRITE")!!
+            dir.search("verify.bin")!!.delete()
+            dir.delete()
+        }
+        assertFsckClean("delete of fragmented large file")
+    }
+
+    /**
+     * A write whose file is never flushed must still leave the volume consistent.
+     *
+     * allocateBlocks() makes the bitmap and superblock durable immediately and the
+     * data blocks go straight to the medium, but the extent tree lives in the
+     * in-memory inode.  If nothing writes that inode back, the bitmap claims
+     * blocks no inode references — orphaned blocks, exactly what e2fsck reports
+     * as leaked.  Every other test here calls flush(), which is why none of them
+     * could see it.
+     */
+    @Test
+    fun aWriteThatIsNeverFlushedLeavesNoOrphanedBlocks() {
+        val chunk = ByteArray(64 * 1024) { (it and 0xFF).toByte() }
+        withFs { f ->
+            val file = f.rootDirectory.createFile("unflushed.bin")
+            var off = 0L
+            while (off < 4 * 1024 * 1024L) {
+                file.write(off, ByteBuffer.wrap(chunk))
+                off += chunk.size
+            }
+            // Deliberately no flush() and no close(): the caller walks away.
+        }
+        assertFsckClean("write with no flush")
     }
 
     /**

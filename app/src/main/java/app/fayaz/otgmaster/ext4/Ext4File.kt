@@ -11,7 +11,12 @@ import java.nio.ByteOrder
  * Write safety:
  *  - The filesystem is marked dirty (s_state) before any write begins.
  *  - Data blocks are written before metadata (extent tree, inode size, bitmaps).
- *  - [flush] / [close] writes the inode back and marks the filesystem clean.
+ *  - [write] and the [length] setter flush the inode before returning. The
+ *    bitmap and superblock are made durable by the allocator as soon as blocks
+ *    are taken, so an inode left dirty in memory describes blocks the volume
+ *    already considers allocated — orphaned the moment the caller walks away or
+ *    the drive is pulled. Metadata lands with the data it describes.
+ *  - [flush] / [close] remain for callers that mutate through other paths.
  *  - The journal is bypassed entirely; on an unclean disconnect Linux will run
  *    fsck and recover correctly from the safe write order.
  *
@@ -23,8 +28,8 @@ import java.nio.ByteOrder
  *    pointing at one leaf block.  Sequential runs are merged into the preceding
  *    extent, so capacity is bounded by fragmentation rather than file size, but
  *    a sufficiently fragmented file still fails with "extent tree full".
- *  - [freeBlocksAbove] only walks a depth-0 tree, so truncating or deleting a
- *    file large enough to have grown a depth-1 tree leaks its blocks.
+ *  - Index entries in a depth-1 tree are appended unsorted, which breaks
+ *    extentSearch's ei_block ordering assumption for out-of-order writes.
  */
 class Ext4File private constructor(
     private val fs: Ext4FileSystem,
@@ -45,6 +50,8 @@ class Ext4File private constructor(
         private const val EXT4_EXTENTS_FL    = 0x00080000
         private const val EXT4_INLINE_DATA_FL = 0x10000000
         private const val EXTENT_MAGIC       = 0xF30A
+        /** Max blocks in an initialised extent; above this ee_len flags it uninitialised. */
+        private const val MAX_INIT_EXTENT_LEN = 32768
         private const val S_IFDIR            = 0x4000
         private const val S_IFLNK            = 0xA000
         private const val S_IFREG            = 0x8000
@@ -254,7 +261,7 @@ class Ext4File private constructor(
         var scanPos = offset
         while (scanPos < endOff) {
             val lb = scanPos / fs.blockSize
-            if (resolveBlock(lb) == null) newLogical.add(lb)
+            if (resolveBlock(lb, mappedOnly = true) == null) newLogical.add(lb)
             scanPos = (lb + 1) * fs.blockSize
         }
         if (newLogical.isNotEmpty()) {
@@ -264,10 +271,16 @@ class Ext4File private constructor(
             while (i < newLogical.size) {
                 val logStart  = newLogical[i]
                 val physStart = physBlocks[i]
+                // ee_len above 32768 marks an *uninitialized* extent of
+                // (len - 32768) blocks, so a longer run must be split rather
+                // than written as one entry — otherwise the tail of it is
+                // invisible to every later walk of the tree, including the one
+                // that frees blocks on delete.
                 var run = 1
                 while (i + run < newLogical.size &&
                        newLogical[i + run] == logStart + run &&
-                       physBlocks[i + run] == physStart + run) run++
+                       physBlocks[i + run] == physStart + run &&
+                       run < MAX_INIT_EXTENT_LEN) run++
                 appendExtent(logStart, physStart, run)
                 i += run
             }
@@ -279,7 +292,7 @@ class Ext4File private constructor(
         while (written < data.size) {
             val logicalBlock = pos / fs.blockSize
             val blockOff     = (pos % fs.blockSize).toInt()
-            val phys         = resolveBlock(logicalBlock)!!
+            val phys         = resolveBlock(logicalBlock, mappedOnly = true)!!
             val toCopy       = minOf(data.size - written, fs.blockSize - blockOff)
 
             if (blockOff == 0 && toCopy == fs.blockSize) {
@@ -300,6 +313,14 @@ class Ext4File private constructor(
         }
         touchMtime()
         dirty = true
+        // The bitmap and superblock were updated synchronously by allocateBlocks,
+        // and the data blocks are already on the medium; only the inode still
+        // knows where those blocks belong.  Leaving it dirty in memory means a
+        // caller that never closes the file — or a drive pulled mid-write —
+        // leaves blocks marked allocated that no inode claims, which is exactly
+        // what e2fsck reports as a leak.  Metadata has to land with the data it
+        // describes, not at the caller's convenience.
+        flush()
     }
 
     @Throws(IOException::class)
@@ -335,7 +356,10 @@ class Ext4File private constructor(
             var pos = currentSize
             while (pos < newLength) {
                 val logicalBlock = pos / fs.blockSize
-                if (resolveBlock(logicalBlock) == null) {
+                // mappedOnly: an uninitialised extent is already allocated, so
+                // treating it as absent here would allocate over it and strand
+                // the blocks it holds.
+                if (resolveBlock(logicalBlock, mappedOnly = true) == null) {
                     val phys = fs.allocator.allocateBlocks(1)[0]
                     appendExtent(logicalBlock, phys, 1)
                     // Zero the newly-allocated block.
@@ -354,6 +378,7 @@ class Ext4File private constructor(
         updateInodeSize(newLength)
         touchMtime()
         dirty = true
+        flush()  // same reasoning as write(): the freed/allocated bitmap is already durable
     }
 
     /**
@@ -1036,16 +1061,34 @@ class Ext4File private constructor(
     // Block resolution: extent tree or legacy block map (read, unchanged)
     // -----------------------------------------------------------------------
 
-    private fun resolveBlock(logicalBlock: Long): Long? {
+    /**
+     * Physical block backing [logicalBlock], or null if nothing does.
+     *
+     * [mappedOnly] asks whether the block is *allocated*, which is what the
+     * write path needs so it does not allocate over an existing mapping.  A
+     * reader must leave it false: an extent flagged uninitialised is allocated
+     * but its contents are undefined, and ext4 requires zeros to be returned
+     * for it.  Reporting the physical block to a reader handed back whatever
+     * those sectors still held, which on a volume with fallocate'd files —
+     * torrent clients, VM images, databases all preallocate this way — means
+     * serving the remains of previously deleted files.
+     */
+    private fun resolveBlock(logicalBlock: Long, mappedOnly: Boolean = false): Long? {
         return if (inodesFlags() and EXT4_EXTENTS_FL != 0)
-            extentLookup(logicalBlock)
+            extentLookup(logicalBlock, mappedOnly)
         else
             blockMapLookup(logicalBlock)
     }
 
-    private fun extentLookup(target: Long): Long? = extentSearch(inode, 40, target)
+    private fun extentLookup(target: Long, mappedOnly: Boolean): Long? =
+        extentSearch(inode, 40, target, mappedOnly)
 
-    private fun extentSearch(data: ByteArray, offset: Int, target: Long): Long? {
+    private fun extentSearch(
+        data: ByteArray,
+        offset: Int,
+        target: Long,
+        mappedOnly: Boolean,
+    ): Long? {
         val bb      = ByteBuffer.wrap(data).order(ByteOrder.LITTLE_ENDIAN)
         val magic   = bb.getShort(offset).toInt() and 0xFFFF
         if (magic != EXTENT_MAGIC) throw IOException(
@@ -1059,8 +1102,12 @@ class Ext4File private constructor(
                 val e      = offset + 12 + i * 12
                 val eBlock = bb.getInt(e).toLong() and 0xFFFFFFFFL
                 val eLen   = bb.getShort(e + 4).toInt() and 0xFFFF
-                val count  = if (eLen > 32768) eLen - 32768 else eLen
+                val uninitialised = eLen > MAX_INIT_EXTENT_LEN
+                val count  = if (uninitialised) eLen - MAX_INIT_EXTENT_LEN else eLen
                 if (target >= eBlock && target < eBlock + count) {
+                    // Allocated but undefined: a read must see zeros, which the
+                    // caller produces by treating this as a hole.
+                    if (uninitialised && !mappedOnly) return null
                     val startHi = (bb.getShort(e + 6).toInt() and 0xFFFF).toLong()
                     val startLo = bb.getInt(e + 8).toLong() and 0xFFFFFFFFL
                     return (startHi shl 32) or startLo + (target - eBlock)
@@ -1079,7 +1126,7 @@ class Ext4File private constructor(
             }
             if (childPhys < 0) return null
             val childData = fs.readBlock(childPhys)
-            extentSearch(childData, 0, target)
+            extentSearch(childData, 0, target, mappedOnly)
         }
     }
 
