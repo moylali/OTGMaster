@@ -1443,6 +1443,15 @@ class MainActivity : AppCompatActivity() {
 
 }
 
+/** Tag text and colour for a container type, shared by the drive cards and the volume picker. */
+fun encryptionTag(type: app.fayaz.otgmaster.veracrypt.ContainerType?): Pair<String, Color> =
+    when (type) {
+        app.fayaz.otgmaster.veracrypt.ContainerType.VERACRYPT -> Pair("VERACRYPT", Color(0xFF3949AB))
+        app.fayaz.otgmaster.veracrypt.ContainerType.LUKS1     -> Pair("LUKS1",     Color(0xFFE65100))
+        app.fayaz.otgmaster.veracrypt.ContainerType.LUKS2     -> Pair("LUKS2",     Color(0xFF6A1B9A))
+        else -> Pair("UNENCRYPTED", Color(0xFF546E7A))
+    }
+
 @Composable
 fun DriveTag(label: String, color: Color) {
     Surface(
@@ -1578,12 +1587,7 @@ fun OtgMasterApp(
 
                         // Encryption + filesystem tags
                         Row(horizontalArrangement = Arrangement.spacedBy(6.dp)) {
-                            val encTag = when (drive.sourceVolumeCandidate?.containerType) {
-                                app.fayaz.otgmaster.veracrypt.ContainerType.VERACRYPT -> Pair("VERACRYPT", Color(0xFF3949AB))
-                                app.fayaz.otgmaster.veracrypt.ContainerType.LUKS1    -> Pair("LUKS1",     Color(0xFFE65100))
-                                app.fayaz.otgmaster.veracrypt.ContainerType.LUKS2    -> Pair("LUKS2",     Color(0xFF6A1B9A))
-                                else -> Pair("UNENCRYPTED", Color(0xFF546E7A))
-                            }
+                            val encTag = encryptionTag(drive.sourceVolumeCandidate?.containerType)
                             DriveTag(label = encTag.first, color = encTag.second)
 
                             if (drive.filesystemName.isNotEmpty()) {
@@ -1897,8 +1901,18 @@ fun VeraCryptMountSection(
                     onDismissRequest = { expanded = false }
                 ) {
                     candidates.forEach { candidate ->
+                        val tag = encryptionTag(candidate.containerType)
                         DropdownMenuItem(
-                            text = { Text(candidate.label) },
+                            text = {
+                                Row(
+                                    modifier = Modifier.fillMaxWidth(),
+                                    verticalAlignment = Alignment.CenterVertically,
+                                ) {
+                                    Text(candidate.label, modifier = Modifier.weight(1f))
+                                    Spacer(modifier = Modifier.width(8.dp))
+                                    DriveTag(label = tag.first, color = tag.second)
+                                }
+                            },
                             onClick = {
                                 selectedCandidate = candidate
                                 expanded = false

@@ -72,14 +72,11 @@ class VeraCryptUnlocker {
         } catch (e: Exception) {
             ContainerType.UNKNOWN
         }
-        val typeSuffix = when (containerType) {
-            ContainerType.LUKS1     -> " [LUKS1]"
-            ContainerType.LUKS2     -> " [LUKS2]"
-            ContainerType.VERACRYPT -> ""
-            ContainerType.UNKNOWN   -> ""
-        }
+        // The container type is carried as a field and rendered as a tag in the
+        // UI; baking it into the label leaked "[LUKS1]" into every place the
+        // label is shown or logged.
         android.util.Log.i("VeraCryptUnlocker", "Candidate '$label': $containerType")
-        return VolumeCandidate(label = "$label$typeSuffix", startBlock = startBlock, blockCount = blockCount, containerType = containerType)
+        return VolumeCandidate(label = label, startBlock = startBlock, blockCount = blockCount, containerType = containerType)
     }
 
     class UnsupportedAlgorithmException(message: String) : Exception(message)

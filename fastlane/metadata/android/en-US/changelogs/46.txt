@@ -4,3 +4,4 @@
 • New: The unlock form automatically detects whether a partition is LUKS or VeraCrypt and shows only the relevant fields
 • New: Drives with no recognisable encrypted partitions now display a clear "no encrypted volumes found" message instead of a confusing empty list
 • New: Mounted drive cards show the device name and partition, with colour-coded tags for encryption type and filesystem
+• New: The volume picker tags each partition with its encryption type, so you can tell LUKS1, LUKS2 and VeraCrypt apart at a glance
