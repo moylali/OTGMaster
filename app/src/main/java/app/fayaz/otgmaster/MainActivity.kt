@@ -75,6 +75,7 @@ import app.fayaz.otgmaster.veracrypt.VeraCryptUnlocker
 import app.fayaz.otgmaster.veracrypt.VolumeCandidate
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.sync.withLock
 import kotlinx.coroutines.withContext
 import kotlinx.coroutines.withTimeoutOrNull
 import me.jahnen.libaums.core.fs.fat32.Fat32FileSystemCreator
@@ -113,6 +114,35 @@ class MainActivity : AppCompatActivity() {
     // Keyed by UsbDevice.deviceName. Kept open (not closed) while listed here, since the
     // user may switch the dropdown selection before deciding which one to unlock.
     private val openedDevices = mutableMapOf<String, RawBlockDevice>()
+
+    /**
+     * Serialises volume unlocks across partitions.
+     *
+     * Every partition of a drive shares one USB mass-storage device with a
+     * single command pipe.  Auto-mount fires attemptUnlock() per candidate and
+     * each one launches on Dispatchers.IO, so a four-partition drive had four
+     * unlocks reading the same device at once: on a Pixel 10 Pro XL the
+     * transport collapsed with "Could not read from device, result == -1" and
+     * "MAX_RECOVERY_ATTEMPTS Exceeded", two partitions never mounted, and the
+     * retry storm ran long enough to starve the next unmount.  Reads are
+     * already serialised inside LibaumsRawBlockDevice; this keeps whole unlock
+     * sequences from interleaving, which is what the device could not take.
+     */
+    private val deviceMutex = kotlinx.coroutines.sync.Mutex()
+
+    /**
+     * In-flight unmounts per USB device, so the shared connection is closed by
+     * the last one rather than the first.
+     *
+     * unmountDrive() calls OtgMasterState.removeDrive() synchronously and does
+     * the device work in a coroutine, so unmounting every partition at once
+     * empties mountedDrives before any coroutine runs.  The first to reach the
+     * "am I the last partition?" test then saw an empty list, closed the USB
+     * connection, and the partitions still flushing metadata behind it failed
+     * with "MAX_RECOVERY_ATTEMPTS Exceeded" — which is what stopped a
+     * four-partition drive from ever surviving a remount.
+     */
+    private val pendingUnmounts = java.util.concurrent.ConcurrentHashMap<String, Int>()
     private val _deviceCandidates = mutableStateOf<List<UsbDeviceCandidate>>(emptyList())
     // Guards against overlapping probes (e.g. from rapid repeated ATTACHED broadcasts on a
     // flaky connection) racing to open/add the same device twice. Touched only on the UI
@@ -737,6 +767,7 @@ class MainActivity : AppCompatActivity() {
         }
 
         lifecycleScope.launch(Dispatchers.IO) {
+            deviceMutex.withLock {
             try {
                 val decryptedDevice = when (candidate.containerType) {
                     app.fayaz.otgmaster.veracrypt.ContainerType.LUKS1,
@@ -861,7 +892,13 @@ class MainActivity : AppCompatActivity() {
                 e.printStackTrace()
                 withContext(Dispatchers.Main) {
                     onComplete()
-                    if (fromCache) {
+                    // An I/O error says nothing about whether the password is
+                    // right — the USB transport drops under load and the read
+                    // fails long before any key is tested — so it must not throw
+                    // away the user's saved credentials.  Discarding them on any
+                    // exception meant a transport blip silently un-saved a
+                    // partition the user had asked to be remembered.
+                    if (fromCache && e !is java.io.IOException) {
                         credentialStore.deletePartition(deviceName, candidate.startBlock)
                         sessionPlaintextCreds.remove(deviceName)
                         appendLog(getString(R.string.log_cached_credentials_invalid, deviceDisplayName))
@@ -869,6 +906,7 @@ class MainActivity : AppCompatActivity() {
                     toastState.value = Pair("Mount failed: ${e.message ?: "Unknown error"}", false)
                     appendLog(getString(R.string.log_failed_to_unlock, deviceDisplayName, e.message))
                 }
+            }
             }
         }
     }
@@ -911,6 +949,9 @@ class MainActivity : AppCompatActivity() {
                 saveManuallyUnmountedDevices()
             }
         }
+        drive.sourceDeviceName?.let { key ->
+            pendingUnmounts.merge(key, 1) { a, b -> a + b }
+        }
         OtgMasterState.removeDrive(drive.id)
         contentResolver.notifyChange(
             android.provider.DocumentsContract.buildRootsUri("app.fayaz.otgmaster.documents"), null
@@ -922,13 +963,23 @@ class MainActivity : AppCompatActivity() {
             // before unmounting — prevents a use-after-free if the OS is still flushing a
             // file write when exfat_unmount frees the ef pointer.
             app.fayaz.otgmaster.provider.VeraCryptDocumentProvider.drainCallbacks()
-            if (drive.fileSystem is app.fayaz.otgmaster.exfat.ExFatFileSystem) {
-                drive.fileSystem.unmount()
+            // Unmounting flushes filesystem metadata, so it writes to the same shared
+            // USB device as every other partition.  Remounting empties the whole mount
+            // list at once, and four concurrent single-block writes killed the
+            // transport with "MAX_RECOVERY_ATTEMPTS Exceeded", which then failed the
+            // unlocks that followed.  Only the device work is serialised —
+            // drainCallbacks() above waits on in-flight file callbacks that can need
+            // the device themselves, so holding the lock across it deadlocks every
+            // later mount and unmount.
+            deviceMutex.withLock {
+                if (drive.fileSystem is app.fayaz.otgmaster.exfat.ExFatFileSystem) {
+                    drive.fileSystem.unmount()
+                }
+                // drive.blockDevice is either NativeDecryptedBlockDevice (close zeros the key but
+                // does NOT close the underlying USB connection) or RawBlockDeviceAdapter (noop close).
+                // The raw USB connection is managed below — closed only when no other partitions remain.
+                drive.blockDevice?.close()
             }
-            // drive.blockDevice is either NativeDecryptedBlockDevice (close zeros the key but
-            // does NOT close the underlying USB connection) or RawBlockDeviceAdapter (noop close).
-            // The raw USB connection is managed below — closed only when no other partitions remain.
-            drive.blockDevice?.close()
             withContext(Dispatchers.Main) {
                 toastState.value = Pair("Unmounted: ${drive.name}", true)
                 appendLog(getString(R.string.log_drive_unmounted, drive.name))
@@ -938,10 +989,11 @@ class MainActivity : AppCompatActivity() {
                 val volCandidate = drive.sourceVolumeCandidate
 
                 if (sourceKey != null && rawDevice != null) {
+                    val stillUnmounting = (pendingUnmounts.merge(sourceKey, -1) { a, b -> a + b } ?: 0) > 0
                     val otherMounted = OtgMasterState.mountedDrives.any { it.sourceDeviceName == sourceKey }
                     val candidatesInForm = _deviceCandidates.value.any { it.deviceName == sourceKey }
 
-                    if (!otherMounted && !candidatesInForm) {
+                    if (!stillUnmounting && !otherMounted && !candidatesInForm) {
                         // Last partition from this USB — safe to release the USB connection.
                         // Only close if we actually removed it; detach handler may have beaten us.
                         val removed = openedDevices.remove(sourceKey)

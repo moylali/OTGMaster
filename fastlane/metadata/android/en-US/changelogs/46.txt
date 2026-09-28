@@ -5,3 +5,5 @@
 • New: Drives with no recognisable encrypted partitions now display a clear "no encrypted volumes found" message instead of a confusing empty list
 • New: Mounted drive cards show the device name and partition, with colour-coded tags for encryption type and filesystem
 • New: The volume picker tags each partition with its encryption type, so you can tell LUKS1, LUKS2 and VeraCrypt apart at a glance
+• Fixed: On drives with several encrypted partitions, some partitions could fail to mount, and unmounting one could disconnect the others
+• Fixed: A temporary USB read error no longer discards the credentials you asked the app to remember for a partition

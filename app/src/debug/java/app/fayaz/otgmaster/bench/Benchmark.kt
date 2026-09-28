@@ -185,11 +185,23 @@ object Benchmark {
                 emit("*** no mount handler installed — is MainActivity running? ***")
             } else {
                 handler.mount(mount.password, mount.pim, mount.cipher, mount.hash)
-                // attemptUnlock is asynchronous; wait for a drive to appear.
+                // attemptUnlock is asynchronous and unlocks are serialised across
+                // partitions, so they appear one at a time. Waiting only for the
+                // list to become non-empty snapshotted it mid-sequence and ran the
+                // whole suite against 2 partitions of a 4-partition drive. Wait for
+                // the count to stop growing instead.
                 val deadline = System.currentTimeMillis() + MOUNT_TIMEOUT_MS
-                while (OtgMasterState.mountedDrives.isEmpty() &&
-                        System.currentTimeMillis() < deadline) {
-                    Thread.sleep(500)
+                var lastCount = -1
+                var stableSince = System.currentTimeMillis()
+                while (System.currentTimeMillis() < deadline) {
+                    val n = OtgMasterState.mountedDrives.size
+                    if (n != lastCount) {
+                        lastCount = n
+                        stableSince = System.currentTimeMillis()
+                    } else if (n > 0 && System.currentTimeMillis() - stableSince >= 3_000) {
+                        break
+                    }
+                    Thread.sleep(300)
                 }
                 if (OtgMasterState.mountedDrives.isEmpty()) {
                     emit("*** mount did not complete within ${MOUNT_TIMEOUT_MS / 1000}s ***")
