@@ -19,9 +19,12 @@ import java.nio.ByteOrder
  *  - Only extent-tree files are writable.  Legacy block-map files (ext2/3) can
  *    still be read but writes on them throw [UnsupportedOperationException].
  *  - No inline-data writes.
- *  - Extent tree growth beyond the four inline extents allocates a single index
- *    block; beyond that a second allocation is attempted.  Deeply fragmented
- *    files are unsupported.
+ *  - The extent tree grows to depth 1 only: four inline index entries, each
+ *    pointing at one leaf block.  Sequential runs are merged into the preceding
+ *    extent, so capacity is bounded by fragmentation rather than file size, but
+ *    a sufficiently fragmented file still fails with "extent tree full".
+ *  - [freeBlocksAbove] only walks a depth-0 tree, so truncating or deleting a
+ *    file large enough to have grown a depth-1 tree leaks its blocks.
  */
 class Ext4File private constructor(
     private val fs: Ext4FileSystem,
@@ -188,24 +191,27 @@ class Ext4File private constructor(
     }
 
     private fun readBytes(fileOffset: Long, len: Int): ByteArray {
+        if (fileOffset >= currentSize) return ByteArray(0)
+        val actualLen = minOf(len.toLong(), currentSize - fileOffset).toInt()
+
         val flags = inodesFlags()
 
         if (flags and EXT4_INLINE_DATA_FL != 0) {
             val inline = inode.copyOfRange(40, 100)
             val start  = fileOffset.toInt()
-            val end    = minOf(start + len, inline.size)
+            val end    = minOf(start + actualLen, inline.size)
             return if (start >= inline.size) ByteArray(0) else inline.copyOfRange(start, end)
         }
 
-        val result  = ByteArray(len)
+        val result  = ByteArray(actualLen)
         var written = 0
         var pos     = fileOffset
 
-        while (written < len) {
+        while (written < actualLen) {
             val logicalBlock = pos / fs.blockSize
             val blockOff     = (pos % fs.blockSize).toInt()
             val phys         = resolveBlock(logicalBlock)
-            val toCopy       = minOf(len - written, fs.blockSize - blockOff)
+            val toCopy       = minOf(actualLen - written, fs.blockSize - blockOff)
 
             if (phys != null) {
                 val data = fs.readBlock(phys)
@@ -238,25 +244,47 @@ class Ext4File private constructor(
         fs.markDirty()
 
         val data = ByteArray(source.remaining()).also { source.get(it) }
+
+        // Pre-scan: find every logical block that needs a fresh physical allocation.
+        // Batch-allocating all of them at once lets the allocator return a contiguous
+        // run of physical blocks, which can then be registered as a single extent
+        // entry instead of one entry per block — keeping the extent tree shallow.
+        val endOff = offset + data.size
+        val newLogical = mutableListOf<Long>()
+        var scanPos = offset
+        while (scanPos < endOff) {
+            val lb = scanPos / fs.blockSize
+            if (resolveBlock(lb) == null) newLogical.add(lb)
+            scanPos = (lb + 1) * fs.blockSize
+        }
+        if (newLogical.isNotEmpty()) {
+            val physBlocks = fs.allocator.allocateBlocks(newLogical.size)
+            // Group consecutive (logical, physical) pairs into single extents.
+            var i = 0
+            while (i < newLogical.size) {
+                val logStart  = newLogical[i]
+                val physStart = physBlocks[i]
+                var run = 1
+                while (i + run < newLogical.size &&
+                       newLogical[i + run] == logStart + run &&
+                       physBlocks[i + run] == physStart + run) run++
+                appendExtent(logStart, physStart, run)
+                i += run
+            }
+        }
+
+        // Write the data block-by-block.  All needed blocks are now allocated.
         var written = 0
         var pos     = offset
-
         while (written < data.size) {
             val logicalBlock = pos / fs.blockSize
             val blockOff     = (pos % fs.blockSize).toInt()
+            val phys         = resolveBlock(logicalBlock)!!
             val toCopy       = minOf(data.size - written, fs.blockSize - blockOff)
-
-            val phys = resolveBlock(logicalBlock) ?: run {
-                // Block not yet allocated — allocate and append an extent.
-                val newBlock = fs.allocator.allocateBlocks(1)[0]
-                appendExtent(logicalBlock, newBlock, 1)
-                newBlock
-            }
 
             if (blockOff == 0 && toCopy == fs.blockSize) {
                 fs.writeBlock(phys, data.copyOfRange(written, written + toCopy))
             } else {
-                // Partial block: read-modify-write.
                 val block = fs.readBlock(phys).copyOf()
                 System.arraycopy(data, written, block, blockOff, toCopy)
                 fs.writeBlock(phys, block)
@@ -353,10 +381,12 @@ class Ext4File private constructor(
             if (eBlock > lastBlock) {
                 // Entire extent is past the truncation point — free all its blocks.
                 for (b in 0 until count) fs.allocator.freeBlock(physStart + b)
+                addToIBlocks(-count)
             } else if (eBlock + count - 1 > lastBlock) {
                 // Extent straddles the boundary — keep the prefix, free the rest.
                 val keepBlocks = (lastBlock - eBlock + 1).toInt()
                 for (b in keepBlocks until count) fs.allocator.freeBlock(physStart + b)
+                addToIBlocks(-(count - keepBlocks))
                 // Rewrite this extent entry with the trimmed length.
                 bb.putShort(e + 4, keepBlocks.toShort())
                 keepCount++
@@ -385,6 +415,7 @@ class Ext4File private constructor(
         incrLinkCount(0)  // parent mtime update only
         touchMtime()
         dirty = true
+        flush()  // the parent's own inode (size, i_blocks, mtime) must reach disk too
         return child
     }
 
@@ -442,6 +473,9 @@ class Ext4File private constructor(
         incrLinkCount(+1)  // parent link count +1 for the ".." back-reference
         touchMtime()
         dirty = true
+        // Without this the bumped link count stays in memory and e2fsck reports
+        // "Inode 2 ref count is 3, should be 4" for every directory created.
+        flush()
         return child
     }
 
@@ -459,7 +493,7 @@ class Ext4File private constructor(
             // Free directory blocks.
             freeBlocksAbove(-1L)
             // Decrement parent link count for the ".." entry.
-            (p as? Ext4File)?.run { incrLinkCount(-1); touchMtime(); dirty = true }
+            (p as? Ext4File)?.run { incrLinkCount(-1); touchMtime(); dirty = true; flush() }
         } else {
             freeBlocksAbove(-1L)
         }
@@ -650,6 +684,28 @@ class Ext4File private constructor(
     }
 
     /**
+     * Write an extent tree block (leaf or index), embedding its tail checksum.
+     *
+     * An extent block carries a 4-byte et_checksum immediately after the space
+     * eh_max reserves for entries, over the bytes before it under the per-inode
+     * seed.  Omitting it made e2fsck reject every extent block once a file grew
+     * a tree of its own: "extent block passes checks, but checksum does not
+     * match extent".
+     */
+    private fun writeExtentBlock(phys: Long, data: ByteArray) {
+        if (fs.hasMetadataCsum) {
+            val ehMax = ByteBuffer.wrap(data).order(ByteOrder.LITTLE_ENDIAN)
+                .getShort(4).toInt() and 0xFFFF
+            val tailOff = 12 + ehMax * 12
+            if (tailOff + 4 <= data.size) {
+                val csum = fs.csumWithInodeSeed(inodeNum, inode, data.copyOfRange(0, tailOff))
+                ByteBuffer.wrap(data).order(ByteOrder.LITTLE_ENDIAN).putInt(tailOff, csum)
+            }
+        }
+        fs.writeBlock(phys, data)
+    }
+
+    /**
      * Write the CRC32c tail entry at the end of a directory block.
      * The tail is the last 12 bytes of the block.
      */
@@ -668,7 +724,10 @@ class Ext4File private constructor(
         // Re-zero checksum after writing header (putInt above may have non-zero values).
         data[tailOff + 8] = 0; data[tailOff + 9] = 0
         data[tailOff + 10] = 0; data[tailOff + 11] = 0
-        val csum = fs.csumDirBlock(dirIno, dirInode, data)
+        // The checksum covers the dirents only — the first blockSize-12 bytes,
+        // excluding the tail itself.  Hashing the whole block made every
+        // directory block fail: "directory passes checks but fails checksum".
+        val csum = fs.csumDirBlock(dirIno, dirInode, data.copyOfRange(0, tailOff))
         ByteBuffer.wrap(data, tailOff + 8, 4).order(ByteOrder.LITTLE_ENDIAN)
             .putInt(csum)
     }
@@ -685,10 +744,32 @@ class Ext4File private constructor(
      * allocated and the tree grows to depth 1.
      */
     private fun appendExtent(logicalBlock: Long, physStart: Long, count: Int) {
+        addToIBlocks(count)
         val bb      = ByteBuffer.wrap(inode).order(ByteOrder.LITTLE_ENDIAN)
         val entries = bb.getShort(42).toInt() and 0xFFFF
         val maxInline = bb.getShort(44).toInt() and 0xFFFF
         val depth   = bb.getShort(46).toInt() and 0xFFFF
+
+        // Grow the previous extent instead of adding a new one when this run
+        // continues it both logically and physically.  A sequential write
+        // arrives one call per chunk, so without merging a 4 GiB file needs
+        // thousands of extents and overflows the tree ("Extent tree full");
+        // merged, it needs one per 32767 blocks.
+        if (depth == 0 && entries > 0) {
+            val e = 52 + (entries - 1) * 12
+            val pBlock = bb.getInt(e).toLong() and 0xFFFFFFFFL
+            val pLen   = bb.getShort(e + 4).toInt() and 0xFFFF
+            val pPhys  = ((bb.getShort(e + 6).toInt() and 0xFFFF).toLong() shl 32) or
+                         (bb.getInt(e + 8).toLong() and 0xFFFFFFFFL)
+            if (pLen in 1..32767 &&
+                pBlock + pLen == logicalBlock &&
+                pPhys + pLen == physStart &&
+                pLen + count <= 32767
+            ) {
+                bb.putShort(e + 4, (pLen + count).toShort())
+                return
+            }
+        }
 
         if (depth == 0 && entries < maxInline) {
             // Room in the inline leaf.
@@ -705,6 +786,7 @@ class Ext4File private constructor(
             // Inline tree full — allocate an index block, move extents there,
             // make the inline tree point to it (depth 1).
             val idxPhys = fs.allocator.allocateBlocks(1)[0]
+            addToIBlocks(1)  // the extent tree's own blocks count toward i_blocks
             val idxData = ByteArray(fs.blockSize)
             val ib = ByteBuffer.wrap(idxData).order(ByteOrder.LITTLE_ENDIAN)
             // Write extent header for the leaf block.
@@ -724,7 +806,7 @@ class Ext4File private constructor(
             ib.putShort(ne + 6, (physStart ushr 32).toShort())
             ib.putInt(ne + 8, (physStart and 0xFFFFFFFFL).toInt())
             ib.putShort(2, (entries + 1).toShort())
-            fs.writeBlock(idxPhys, idxData)
+            writeExtentBlock(idxPhys, idxData)
 
             // Rewrite the inode inline area as a depth-1 index with one entry.
             val firstBlock = bb.getInt(52).toLong() and 0xFFFFFFFFL  // first logical block
@@ -743,23 +825,77 @@ class Ext4File private constructor(
         }
 
         if (depth == 1) {
-            // Find the single index entry, read its leaf block, and append there.
-            val idxEiLeafLo = bb.getInt(56).toLong() and 0xFFFFFFFFL
-            val idxEiLeafHi = (bb.getShort(60).toInt() and 0xFFFF).toLong()
-            val leafPhys    = (idxEiLeafHi shl 32) or idxEiLeafLo
-            val leafData    = fs.readBlock(leafPhys).copyOf()
-            val lb          = ByteBuffer.wrap(leafData).order(ByteOrder.LITTLE_ENDIAN)
-            val lEntries    = lb.getShort(2).toInt() and 0xFFFF
-            val lMax        = lb.getShort(4).toInt() and 0xFFFF
+            // Find the last index entry whose ei_block <= logicalBlock, read its leaf.
+            val idxEntries = entries
+            var targetIdx = 0
+            for (i in 0 until idxEntries) {
+                val ixBlock = bb.getInt(52 + i * 12).toLong() and 0xFFFFFFFFL
+                if (ixBlock <= logicalBlock) targetIdx = i
+            }
+            val idxBase  = 52 + targetIdx * 12
+            val leafLo   = bb.getInt(idxBase + 4).toLong() and 0xFFFFFFFFL
+            val leafHi   = (bb.getShort(idxBase + 8).toInt() and 0xFFFF).toLong()
+            val leafPhys = (leafHi shl 32) or leafLo
+            val leafData = fs.readBlock(leafPhys).copyOf()
+            val lb       = ByteBuffer.wrap(leafData).order(ByteOrder.LITTLE_ENDIAN)
+            val lEntries = lb.getShort(2).toInt() and 0xFFFF
+            val lMax     = lb.getShort(4).toInt() and 0xFFFF
 
-            if (lEntries >= lMax) throw IOException("Extent tree full (depth=1, leaf full)")
-            val e = 12 + lEntries * 12
-            lb.putInt(e, logicalBlock.toInt())
-            lb.putShort(e + 4, count.toShort())
-            lb.putShort(e + 6, (physStart ushr 32).toShort())
-            lb.putInt(e + 8, (physStart and 0xFFFFFFFFL).toInt())
-            lb.putShort(2, (lEntries + 1).toShort())
-            fs.writeBlock(leafPhys, leafData)
+            // Same merge as the inline case: a sequential write must not add one
+            // extent per call once the tree has been promoted to depth 1, or a
+            // 4 GiB file exhausts all four index entries.
+            if (lEntries > 0) {
+                val e = 12 + (lEntries - 1) * 12
+                val pBlock = lb.getInt(e).toLong() and 0xFFFFFFFFL
+                val pLen   = lb.getShort(e + 4).toInt() and 0xFFFF
+                val pPhys  = ((lb.getShort(e + 6).toInt() and 0xFFFF).toLong() shl 32) or
+                             (lb.getInt(e + 8).toLong() and 0xFFFFFFFFL)
+                if (pLen in 1..32767 &&
+                    pBlock + pLen == logicalBlock &&
+                    pPhys + pLen == physStart &&
+                    pLen + count <= 32767
+                ) {
+                    lb.putShort(e + 4, (pLen + count).toShort())
+                    writeExtentBlock(leafPhys, leafData)
+                    return
+                }
+            }
+
+            if (lEntries < lMax) {
+                val e = 12 + lEntries * 12
+                lb.putInt(e, logicalBlock.toInt())
+                lb.putShort(e + 4, count.toShort())
+                lb.putShort(e + 6, (physStart ushr 32).toShort())
+                lb.putInt(e + 8, (physStart and 0xFFFFFFFFL).toInt())
+                lb.putShort(2, (lEntries + 1).toShort())
+                writeExtentBlock(leafPhys, leafData)
+                return
+            }
+
+            // Leaf is full — allocate a new leaf and add an index entry to the inline tree.
+            if (idxEntries >= maxInline)
+                throw IOException("Extent tree full (all $maxInline inline index entries used)")
+            val newLeafPhys = fs.allocator.allocateBlocks(1)[0]
+            addToIBlocks(1)  // the extent tree's own blocks count toward i_blocks
+            val newLeafData = ByteArray(fs.blockSize)
+            val nlb = ByteBuffer.wrap(newLeafData).order(ByteOrder.LITTLE_ENDIAN)
+            nlb.putShort(0, EXTENT_MAGIC.toShort())
+            nlb.putShort(2, 1.toShort())
+            nlb.putShort(4, ((fs.blockSize - 12) / 12).toShort())
+            nlb.putShort(6, 0.toShort())
+            nlb.putInt(8, 0)
+            nlb.putInt(12, logicalBlock.toInt())
+            nlb.putShort(16, count.toShort())
+            nlb.putShort(18, (physStart ushr 32).toShort())
+            nlb.putInt(20, (physStart and 0xFFFFFFFFL).toInt())
+            writeExtentBlock(newLeafPhys, newLeafData)
+
+            val newIdxBase = 52 + idxEntries * 12
+            bb.putInt(newIdxBase,     logicalBlock.toInt())
+            bb.putInt(newIdxBase + 4, (newLeafPhys and 0xFFFFFFFFL).toInt())
+            bb.putShort(newIdxBase + 8, (newLeafPhys ushr 32).toShort())
+            bb.putShort(newIdxBase + 10, 0)
+            bb.putShort(42, (idxEntries + 1).toShort())
             return
         }
 
@@ -774,6 +910,23 @@ class Ext4File private constructor(
         val bb = ByteBuffer.wrap(inode).order(ByteOrder.LITTLE_ENDIAN)
         bb.putInt(4, (size and 0xFFFFFFFFL).toInt())
         if (!isDir_) bb.putInt(108, (size ushr 32 and 0xFFFFFFFFL).toInt())
+        dirty = true
+    }
+
+    /**
+     * Adjust i_blocks_lo (inode offset 28) by [blockDelta] filesystem blocks.
+     *
+     * i_blocks counts 512-byte sectors, not filesystem blocks, and covers the
+     * extent tree's own index and leaf blocks as well as data.  Leaving it at 0
+     * is what made e2fsck report "i_blocks is 0, should be 8" for every inode
+     * this code created.
+     */
+    private fun addToIBlocks(blockDelta: Int) {
+        val sectorsPerBlock = fs.blockSize / 512
+        val bb = ByteBuffer.wrap(inode).order(ByteOrder.LITTLE_ENDIAN)
+        val current = bb.getInt(28).toLong() and 0xFFFFFFFFL
+        val updated = (current + blockDelta.toLong() * sectorsPerBlock).coerceAtLeast(0L)
+        bb.putInt(28, (updated and 0xFFFFFFFFL).toInt())
         dirty = true
     }
 

@@ -58,6 +58,38 @@ touching the I/O path: several suites in this project have passed while real dat
 corruption sat in the code, every time because of the test's shape rather than its
 logic.
 
+**Any I/O path change must be validated on at least one physical device before the
+commit is pushed to the remote.** "Validated" means a relevant E2E test or manual
+exercise completes successfully on a real device with a real (or emulator-backed)
+filesystem — not just a clean build and install. Do not push until this is done.
+
+**Benchmark runs must cover at least four devices before a release is tagged.**
+Commit rule 3 (the tagging regression report) is the gate; this reinforces it:
+the four-device bar applies to benchmark figures, not just smoke checks.
+
+**A content hash does not verify a filesystem write — run the filesystem's own
+checker.** A write path must leave the volume structurally valid, and SHA-256 over
+the bytes just written cannot see otherwise. The ext4 write support reported
+`write verify: ALL PASSED` with matching hashes on all three passes (cached,
+cache-dropped, remounted) while it was destroying the volume: the checksum seed was
+read from the wrong superblock offset, so every superblock, inode, bitmap, group
+descriptor and directory checksum it wrote was invalid. The drive ended up so
+damaged that `blkid` could not identify it as ext4, and the only visible symptom
+was one fixture directory reading back as a regular file.
+
+So for any filesystem write change:
+
+- keep a host-side test that drives the real write code against a loopback image
+  and asserts the checker is clean — `Ext4WriteFsckTest` does this with
+  `mkfs.ext4` + `e2fsck -fn`, and it reproduced in seconds what cost a drive;
+- after a device run, re-check the volume from the host (`e2fsck -fn` on the
+  mapped LUKS device). Hash-clean is not fsck-clean, and the device path goes
+  through the crypto layer that host tests cannot cover;
+- assert both: the content matches *and* the filesystem still validates.
+
+Keep a second prepared drive untouched by the change. Drive C staying clean is what
+proved the damage came from this code and not from the preparation script.
+
 ## Test media and test data
 
 `docs/TEST_DATA.md` is the **single reference for preparing every kind of test media**:

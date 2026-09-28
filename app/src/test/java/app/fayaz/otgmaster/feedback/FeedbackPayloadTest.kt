@@ -13,7 +13,7 @@ class FeedbackPayloadTest {
         logLines: List<String> = listOf("line one", "line two"),
         dropped: Int = 0,
         partitions: List<FeedbackPayload.Partition> = listOf(
-            FeedbackPayload.Partition("62.0", "exFAT", true)
+            FeedbackPayload.Partition("62.0", "exFAT", true, "veracrypt")
         ),
         usbMake: String = "PNY USB 3.2.1 FD",
         usbSize: String = "62.0 GB",

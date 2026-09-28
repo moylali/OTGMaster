@@ -57,27 +57,27 @@ class FilesystemDetectorTest {
         assertTrue(r is DetectedFilesystem.Unsupported && r.displayName == "HFS+")
     }
 
-    @Test fun ext4IsUnsupported() {
+    @Test fun ext4IsSupported() {
         val data = buf()
         data[1080] = 0x53; data[1081] = 0xEF.toByte()
         data[1120] = 0x40  // INCOMPAT_EXTENTS bit → ext4
         val r = FilesystemDetector.detectFromBytes(data)
-        assertTrue(r is DetectedFilesystem.Unsupported && r.displayName == "ext4")
+        assertTrue(r is DetectedFilesystem.Supported && r.displayName == "ext4")
     }
 
-    @Test fun ext3IsUnsupported() {
+    @Test fun ext3IsSupported() {
         val data = buf()
         data[1080] = 0x53; data[1081] = 0xEF.toByte()
         data[1116] = 0x04  // COMPAT_HAS_JOURNAL bit → ext3
         val r = FilesystemDetector.detectFromBytes(data)
-        assertTrue(r is DetectedFilesystem.Unsupported && r.displayName == "ext3")
+        assertTrue(r is DetectedFilesystem.Supported && r.displayName == "ext3")
     }
 
-    @Test fun ext2IsUnsupported() {
+    @Test fun ext2IsSupported() {
         val data = buf()
         data[1080] = 0x53; data[1081] = 0xEF.toByte()
         val r = FilesystemDetector.detectFromBytes(data)
-        assertTrue(r is DetectedFilesystem.Unsupported)
+        assertTrue(r is DetectedFilesystem.Supported)
         assertTrue(r.displayName == "ext2" || r.displayName == "ext2/3/4")
     }
 

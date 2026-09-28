@@ -8,17 +8,28 @@ import java.nio.ByteOrder
 import java.io.IOException
 
 /**
- * Read-only ext2/3/4 filesystem driver backed by [RawBlockDevice].
+ * ext2/3/4 filesystem driver backed by [RawBlockDevice], readable and writable.
  *
  * Supports:
  *  - ext4 extent trees (EXT4_EXTENTS_FL)
- *  - ext2/3 block maps (direct + single/double/triple indirect)
+ *  - ext2/3 block maps (direct + single/double/triple indirect), read only
  *  - Linear and hash-tree (htree/dx) directories
- *  - Inline data (EXT4_INLINE_DATA_FL) for tiny files
+ *  - Inline data (EXT4_INLINE_DATA_FL) for tiny files, read only
  *
- * Write operations throw [UnsupportedOperationException] — the driver is intentionally
- * read-only. Adding write support would require journaling awareness to avoid
- * corrupting the volume on an unclean dismount.
+ * Writes bypass the journal: the volume is marked dirty in s_state for the
+ * duration and data is written before the metadata that references it, so an
+ * unclean disconnect leaves a filesystem fsck can recover rather than one with
+ * live data hanging off unwritten metadata.
+ *
+ * Every metadata write must refresh its checksum when metadata_csum is set, and
+ * the checksums do not share one convention — the superblock's covers
+ * sb[0..1019] under crc32c(~0), a bitmap's covers only the bytes its group uses
+ * and folds in no group number, a group descriptor's does fold in the group
+ * number, and a directory or extent block's uses a per-inode seed.  Getting the
+ * seed alone wrong (it lives at s_checksum_seed, 0x270) invalidated all of them
+ * at once and destroyed a test drive while content hashes still matched, so
+ * [app.fayaz.otgmaster.ext4.Ext4WriteFsckTest] checks each write path against
+ * `e2fsck` rather than against a hash of the bytes just written.
  */
 class Ext4FileSystem private constructor(
     internal val device: RawBlockDevice,
@@ -70,16 +81,22 @@ class Ext4FileSystem private constructor(
     internal fun writeInode(inodeNum: Long, data: ByteArray) {
         if (hasMetadataCsum) {
             // Compute and embed checksum before writing.
-            val gen = ByteBuffer.wrap(data).order(ByteOrder.LITTLE_ENDIAN).getInt(100)
+            val bbIn = ByteBuffer.wrap(data).order(ByteOrder.LITTLE_ENDIAN)
+            val gen = bbIn.getInt(100)
+            // i_checksum_hi only exists when i_extra_isize (at 128) reaches it.
+            // Writing it regardless left every deleted inode mismatched, because
+            // zeroing an inode also zeroes i_extra_isize.
+            val extraIsize = if (data.size > 129) bbIn.getShort(128).toInt() and 0xFFFF else 0
+            val hasHi = data.size > 131 && extraIsize >= 4
             val zeroed = data.copyOf()
-            if (zeroed.size > 124) { zeroed[124] = 0; zeroed[125] = 0 }  // l_i_checksum_lo
-            if (zeroed.size > 130) { zeroed[130] = 0; zeroed[131] = 0 }  // i_checksum_hi
+            zeroed[124] = 0; zeroed[125] = 0  // l_i_checksum_lo
+            if (hasHi) { zeroed[130] = 0; zeroed[131] = 0 }  // i_checksum_hi
             val csum = Ext4Crc.update(
                 Ext4Crc.update(Ext4Crc.update(csumSeed, Ext4Crc.leInt(inodeNum.toInt())),
                     Ext4Crc.leInt(gen)), zeroed)
             ByteBuffer.wrap(data).order(ByteOrder.LITTLE_ENDIAN).run {
-                if (data.size > 124) putShort(124, (csum and 0xFFFF).toShort())
-                if (data.size > 130) putShort(130, (csum ushr 16 and 0xFFFF).toShort())
+                putShort(124, (csum and 0xFFFF).toShort())
+                if (hasHi) putShort(130, (csum ushr 16 and 0xFFFF).toShort())
             }
         }
         val inodeIdxInGroup = ((inodeNum - 1) % inodesPerGroup).toInt()
@@ -117,6 +134,14 @@ class Ext4FileSystem private constructor(
     }
 
     internal fun writeSuperblockBytes(sb: ByteArray) {
+        // s_checksum (0x3FC = 1020) is crc32c(~0, sb[0..1019]) — a running
+        // state, not inverted, and it does not use s_checksum_seed.  Every
+        // superblock write has to refresh it or the primary superblock is
+        // rejected outright: "Superblock checksum does not match superblock".
+        if (hasMetadataCsum && sb.size >= 1024) {
+            val csum = Ext4Crc.update(Ext4Crc.SEED, sb.copyOfRange(0, 1020))
+            ByteBuffer.wrap(sb).order(ByteOrder.LITTLE_ENDIAN).putInt(1020, csum)
+        }
         val sectorSize = device.blockSize
         val startSector = sbOffsetBytes / sectorSize
         val offInSector = (sbOffsetBytes % sectorSize).toInt()
@@ -194,11 +219,19 @@ class Ext4FileSystem private constructor(
      * from [inodeData], over the block content [blockData] with the tail's
      * checksum field zeroed.
      */
-    internal fun csumDirBlock(dirIno: Long, inodeData: ByteArray, blockData: ByteArray): Int {
+    internal fun csumDirBlock(dirIno: Long, inodeData: ByteArray, blockData: ByteArray): Int =
+        csumWithInodeSeed(dirIno, inodeData, blockData)
+
+    /**
+     * CRC32c over [payload] under the per-inode seed, which every block owned by
+     * an inode (directory blocks, extent tree blocks) is checksummed with:
+     * crc32c(crc32c(crc32c(s_csum_seed, inode), i_generation), payload).
+     */
+    internal fun csumWithInodeSeed(inodeNum: Long, inodeData: ByteArray, payload: ByteArray): Int {
         val gen = ByteBuffer.wrap(inodeData).order(ByteOrder.LITTLE_ENDIAN).getInt(100)
         return Ext4Crc.update(
-            Ext4Crc.update(Ext4Crc.update(csumSeed, Ext4Crc.leInt(dirIno.toInt())),
-                Ext4Crc.leInt(gen)), blockData)
+            Ext4Crc.update(Ext4Crc.update(csumSeed, Ext4Crc.leInt(inodeNum.toInt())),
+                Ext4Crc.leInt(gen)), payload)
     }
 
     // -----------------------------------------------------------------------
@@ -265,8 +298,14 @@ class Ext4FileSystem private constructor(
             val inodesPerGroup = bb.getInt(40)
             val blocksPerGroup = bb.getInt(32)
             val inodeSize = bb.getShort(88).toInt() and 0xFFFF
-            val featIncompat = bb.getInt(100)
-            val featROCompat = bb.getInt(104)
+            // s_feature_compat 0x5C=92, s_feature_incompat 0x60=96,
+            // s_feature_ro_compat 0x64=100.  These were previously read one
+            // word late, so featROCompat came out of s_uuid and is64bit tested
+            // the wrong word — which made groupDescSize 32 on a 64bit volume
+            // whose descriptors are 64 bytes, and every group descriptor past
+            // group 0 was then read at the wrong stride.
+            val featIncompat = bb.getInt(96)
+            val featROCompat = bb.getInt(100)
             val is64bit = (featIncompat and 0x80) != 0
 
             val groupDescSize = if (is64bit) {
@@ -289,19 +328,23 @@ class Ext4FileSystem private constructor(
 
             val totalInodes = bb.getInt(0).toLong() and 0xFFFFFFFFL
 
-            // Checksum seed: prefer the pre-computed value stored in the superblock
-            // (metadata_csum_seed feature, bit 14 of featROCompat = 0x400 is metadata_csum,
-            //  metadata_csum_seed stores the seed at SB offset 252).
-            // Fall back to computing it from the UUID.
+            // metadata_csum is RO_COMPAT 0x400; metadata_csum_seed is
+            // INCOMPAT 0x2000 and stores the seed in s_checksum_seed at
+            // 0x270 = 624 — not at 252, which is s_def_hash_version /
+            // s_jnl_backup_type / s_desc_size.  Reading 252 yielded a seed of
+            // 0x00400101 on a volume whose real seed was 0xdef1e86e, so every
+            // metadata checksum written (superblock, inodes, bitmaps, group
+            // descriptors, directory tails) was wrong and e2fsck rejected the
+            // filesystem outright.
             val hasMetadataCsum = (featROCompat and 0x400) != 0
-            val hasMetadataCsumSeed = (featROCompat and 0x4000) != 0
+            val hasMetadataCsumSeed = (featIncompat and 0x2000) != 0
             val csumSeed: Int = when {
                 !hasMetadataCsum -> Ext4Crc.SEED
-                hasMetadataCsumSeed && sb.size >= 256 ->
-                    bb.getInt(252)  // stored running state, already incorporates UUID
+                hasMetadataCsumSeed && sb.size >= 628 ->
+                    bb.getInt(624)  // s_checksum_seed: running state over the UUID
                 else -> {
-                    // Compute from UUID (16 bytes at SB offset 108).
-                    val uuid = sb.copyOfRange(108, 124)
+                    // Compute from UUID (16 bytes at SB offset 104).
+                    val uuid = sb.copyOfRange(104, 120)
                     Ext4Crc.update(Ext4Crc.SEED, uuid)
                 }
             }

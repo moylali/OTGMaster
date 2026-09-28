@@ -1,5 +1,5 @@
 • New: LUKS1 and LUKS2 encrypted volumes now supported alongside VeraCrypt
-• New: ext4 write support — create, write, delete, rename files and directories
-• New: ext2/3/4 filesystems now supported (ext4 read/write, FAT32/exFAT unchanged)
+• New: ext2/3/4 supported — ext4 read/write, ext2/3 read-only, FAT32/exFAT unchanged
+• New: On ext4: create, write, modify, delete and rename files and directories
 • New: Unlock form auto-detects LUKS vs VeraCrypt — shows only relevant fields
 • New: Drive cards show encryption and filesystem type as colour tags
