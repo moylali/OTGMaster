@@ -28,8 +28,10 @@ import java.nio.ByteOrder
  *    pointing at one leaf block.  Sequential runs are merged into the preceding
  *    extent, so capacity is bounded by fragmentation rather than file size, but
  *    a sufficiently fragmented file still fails with "extent tree full".
- *  - Index entries in a depth-1 tree are appended unsorted, which breaks
- *    extentSearch's ei_block ordering assumption for out-of-order writes.
+ *  - Preallocated (uninitialised) extents are read as zeros, per the spec, but
+ *    cannot be written into: splitting one and marking the written part
+ *    initialised is not implemented, so such a write is refused rather than
+ *    silently lost.
  */
 class Ext4File private constructor(
     private val fs: Ext4FileSystem,
@@ -261,7 +263,23 @@ class Ext4File private constructor(
         var scanPos = offset
         while (scanPos < endOff) {
             val lb = scanPos / fs.blockSize
-            if (resolveBlock(lb, mappedOnly = true) == null) newLogical.add(lb)
+            val mapped = resolveBlock(lb, mappedOnly = true)
+            if (mapped == null) {
+                newLogical.add(lb)
+            } else if (resolveBlock(lb) == null) {
+                // Mapped but not readable means the extent is flagged
+                // uninitialised — fallocate'd space. Writing into it would put
+                // real bytes on the medium while the extent still says
+                // "undefined", so a compliant driver reads them back as zeros
+                // and the data is silently lost. Splitting the extent and
+                // marking the written part initialised is what ext4 does and is
+                // not implemented, so refuse rather than lose the write.
+                throw IOException(
+                    "Cannot write into preallocated (uninitialised) space at " +
+                    "block $lb of '$entryName': splitting uninitialised extents " +
+                    "is not supported"
+                )
+            }
             scanPos = (lb + 1) * fs.blockSize
         }
         if (newLogical.isNotEmpty()) {
@@ -276,6 +294,18 @@ class Ext4File private constructor(
                 // than written as one entry — otherwise the tail of it is
                 // invisible to every later walk of the tree, including the one
                 // that frees blocks on delete.
+                //
+                // Deliberately untested. Reaching it needs one write() call
+                // allocating a contiguous run past 32768 blocks, and this
+                // allocator cannot produce one on a small image: runs break at
+                // every group carrying a sparse_super backup (0, 1, 3, 5, 7,
+                // …), so a 40960-block request on a 1 GiB image measured a
+                // longest run of 28457 — exactly 32768 minus group 0's
+                // metadata. Two adjacent groups without a backup are needed,
+                // the first pair being 10/11, which means filling ~1.25 GiB
+                // first. A test written against 1 KiB blocks passed with this
+                // cap removed, i.e. proved nothing, and was dropped rather than
+                // left to imply coverage it did not have.
                 var run = 1
                 while (i + run < newLogical.size &&
                        newLogical[i + run] == logStart + run &&
@@ -965,7 +995,24 @@ class Ext4File private constructor(
             nlb.putInt(20, (physStart and 0xFFFFFFFFL).toInt())
             writeExtentBlock(newLeafPhys, newLeafData)
 
-            val newIdxBase = 52 + idxEntries * 12
+            // Index entries must stay ordered by ei_block.  extentSearch picks
+            // the last entry with ei_block <= target, which only finds the right
+            // leaf in a sorted array; appending blindly is correct for ascending
+            // writes and silently wrong for a write that lands before an
+            // existing leaf's range, sending later lookups to the wrong leaf.
+            var insertAt = idxEntries
+            for (i in 0 until idxEntries) {
+                val ixBlock = bb.getInt(52 + i * 12).toLong() and 0xFFFFFFFFL
+                if (ixBlock > logicalBlock) { insertAt = i; break }
+            }
+            if (insertAt < idxEntries) {
+                System.arraycopy(
+                    inode, 52 + insertAt * 12,
+                    inode, 52 + (insertAt + 1) * 12,
+                    (idxEntries - insertAt) * 12,
+                )
+            }
+            val newIdxBase = 52 + insertAt * 12
             bb.putInt(newIdxBase,     logicalBlock.toInt())
             bb.putInt(newIdxBase + 4, (newLeafPhys and 0xFFFFFFFFL).toInt())
             bb.putShort(newIdxBase + 8, (newLeafPhys ushr 32).toShort())

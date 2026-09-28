@@ -351,6 +351,63 @@ class Ext4WriteFsckTest {
     }
 
     /**
+     * A depth-1 tree whose second leaf covers blocks *below* the first must
+     * still read back correctly.
+     *
+     * extentSearch picks the last index entry with ei_block <= target, so the
+     * index array has to stay sorted.  Appending a new index entry blindly is
+     * right for ascending writes and wrong the moment a write lands before an
+     * existing leaf's range, which sends lookups to the wrong leaf.
+     *
+     * Built by fragmenting a file high up until its leaf fills, then filling the
+     * hole left at block 0 — the new leaf's ei_block is then lower than the
+     * existing entry's and must be inserted first, not appended.
+     */
+    @Test
+    fun aLeafCoveringLowerBlocksIsIndexedInOrder() {
+        val blk = fs_blockSizeGuess
+        val high = ByteArray(blk) { 'H'.code.toByte() }
+        val low  = ByteArray(blk) { 'L'.code.toByte() }
+
+        withFs { f ->
+            val root = f.rootDirectory
+            val target = root.createFile("outoforder.bin")
+            val spacer = root.createFile("spacer.bin")
+            // Interleave so no two of target's runs are physically adjacent and
+            // the merge in appendExtent cannot collapse them.
+            for (i in 0 until 400) {
+                target.write((1000L + i) * blk, ByteBuffer.wrap(high))
+                spacer.write(i.toLong() * blk, ByteBuffer.wrap(low))
+            }
+            target.flush(); spacer.flush()
+            // Now fill the hole below everything already indexed.
+            target.write(0L, ByteBuffer.wrap(low))
+            target.flush()
+        }
+        assertFsckClean("out-of-order depth-1 index")
+
+        withFs { f ->
+            val target = f.rootDirectory.search("outoforder.bin")
+                ?: throw AssertionError(
+                    "outoforder.bin is gone after the out-of-order write — an " +
+                    "unsorted index sends lookups to the wrong leaf"
+                )
+            val head = ByteArray(blk)
+            target.read(0L, ByteBuffer.wrap(head))
+            assertEquals("block 0 must read back as written", 'L'.code.toByte(), head[0])
+            val tail = ByteArray(blk)
+            target.read(1000L * blk, ByteBuffer.wrap(tail))
+            assertEquals("block 1000 must read back as written", 'H'.code.toByte(), tail[0])
+            val mid = ByteArray(blk)
+            target.read(1399L * blk, ByteBuffer.wrap(mid))
+            assertEquals("block 1399 must read back as written", 'H'.code.toByte(), mid[0])
+        }
+    }
+
+    /** ext4 block size for the images these tests build. */
+    private val fs_blockSizeGuess = 4096
+
+    /**
      * Crosses the 32-bit size boundary, where i_size_high and the extent tree's
      * per-extent limits come into play.  Verified by hash, not just by fsck,
      * and read back after a reopen.
