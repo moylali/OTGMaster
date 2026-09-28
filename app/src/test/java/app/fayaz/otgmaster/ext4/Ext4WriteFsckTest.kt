@@ -181,6 +181,36 @@ class Ext4WriteFsckTest {
     }
 
     /**
+     * Deleting a file whose extent tree grew past the four inline entries must
+     * release its blocks, including the leaf blocks of the tree itself.
+     *
+     * Interleaving appends across several files fragments each one, so no run is
+     * contiguous with the previous and the merge in appendExtent cannot collapse
+     * them — the tree is forced to depth 1 without writing gigabytes.
+     */
+    @Test
+    fun deletingAFragmentedFileReleasesItsExtentTree() {
+        val chunk = ByteArray(4096) { 'x'.code.toByte() }
+        withFs { f ->
+            val root = f.rootDirectory
+            val files = (0 until 4).map { root.createFile("frag$it.bin") }
+            repeat(40) { round ->
+                files.forEach { file ->
+                    file.write(round.toLong() * chunk.size, ByteBuffer.wrap(chunk))
+                }
+            }
+            files.forEach { it.flush() }
+        }
+        assertFsckClean("fragmented create")
+
+        withFs { f ->
+            val root = f.rootDirectory
+            (0 until 4).forEach { root.search("frag$it.bin")!!.delete() }
+        }
+        assertFsckClean("fragmented delete")
+    }
+
+    /**
      * Crosses the 32-bit size boundary, where i_size_high and the extent tree's
      * per-extent limits come into play.  Verified by hash, not just by fsck,
      * and read back after a reopen.

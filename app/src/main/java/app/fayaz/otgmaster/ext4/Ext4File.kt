@@ -357,45 +357,95 @@ class Ext4File private constructor(
     }
 
     /**
-     * Free all physical blocks mapped to logical blocks > [lastBlock].
-     * Removes the corresponding extents from the inline extent tree.
-     * Does not yet handle multi-level extent trees (depth > 0); those blocks
-     * are simply freed from bitmaps without updating the index node.
+     * Free all physical blocks mapped to logical blocks > [lastBlock], removing
+     * the corresponding extents from the tree.
+     *
+     * Handles a depth-1 tree as well as the inline one: each leaf is trimmed in
+     * place, and a leaf left with no extents is freed along with its index
+     * entry.  Bailing out on depth > 0 leaked every block of any file large or
+     * fragmented enough to have grown a tree — e2fsck reported them as still
+     * allocated but owned by nothing.
      */
     private fun freeBlocksAbove(lastBlock: Long) {
         val bb = ByteBuffer.wrap(inode).order(ByteOrder.LITTLE_ENDIAN)
         val entries = bb.getShort(42).toInt() and 0xFFFF
         val depth   = bb.getShort(46).toInt() and 0xFFFF
-        if (depth != 0) return  // tree too deep — leave extents in place (conservative)
 
-        var keepCount = 0
+        if (depth == 0) {
+            bb.putShort(42, trimExtents(inode, 40, entries, lastBlock).toShort())
+            dirty = true
+            return
+        }
+
+        var keptIdx = 0
         for (i in 0 until entries) {
-            val e = 52 + i * 12  // inode offset 40 (header 12) + i*12
+            val ix       = 52 + i * 12
+            val leafLo   = bb.getInt(ix + 4).toLong() and 0xFFFFFFFFL
+            val leafHi   = (bb.getShort(ix + 8).toInt() and 0xFFFF).toLong()
+            val leafPhys = (leafHi shl 32) or leafLo
+            val leafData = fs.readBlock(leafPhys).copyOf()
+            val lb       = ByteBuffer.wrap(leafData).order(ByteOrder.LITTLE_ENDIAN)
+            if ((lb.getShort(6).toInt() and 0xFFFF) != 0)
+                throw IOException("Extent tree deeper than one level is not supported")
+
+            val lEntries = lb.getShort(2).toInt() and 0xFFFF
+            val kept = trimExtents(leafData, 0, lEntries, lastBlock)
+            if (kept == 0) {
+                fs.allocator.freeBlock(leafPhys)
+                addToIBlocks(-1)  // the leaf block itself counted toward i_blocks
+                continue
+            }
+            lb.putShort(2, kept.toShort())
+            writeExtentBlock(leafPhys, leafData)
+            if (keptIdx != i) System.arraycopy(inode, ix, inode, 52 + keptIdx * 12, 12)
+            keptIdx++
+        }
+
+        bb.putShort(42, keptIdx.toShort())
+        if (keptIdx == 0) {
+            // Nothing left to index — collapse back to an empty inline tree so
+            // the next write starts from depth 0 rather than a dangling index.
+            bb.putShort(44, 4.toShort())
+            bb.putShort(46, 0.toShort())
+        }
+        dirty = true
+    }
+
+    /**
+     * Free every block above [lastBlock] in the extent array belonging to the
+     * header at [offset] in [data], trimming an extent that straddles the
+     * boundary.  Surviving extents are compacted to the front; returns how many
+     * are left.
+     */
+    private fun trimExtents(data: ByteArray, offset: Int, entries: Int, lastBlock: Long): Int {
+        val bb = ByteBuffer.wrap(data).order(ByteOrder.LITTLE_ENDIAN)
+        var kept = 0
+        for (i in 0 until entries) {
+            val e = offset + 12 + i * 12
             val eBlock = bb.getInt(e).toLong() and 0xFFFFFFFFL
             val eLen   = bb.getShort(e + 4).toInt() and 0xFFFF
             val count  = if (eLen > 32768) eLen - 32768 else eLen
             val startHi = (bb.getShort(e + 6).toInt() and 0xFFFF).toLong()
-            val startLo  = bb.getInt(e + 8).toLong() and 0xFFFFFFFFL
+            val startLo = bb.getInt(e + 8).toLong() and 0xFFFFFFFFL
             val physStart = (startHi shl 32) or startLo
 
             if (eBlock > lastBlock) {
                 // Entire extent is past the truncation point — free all its blocks.
                 for (b in 0 until count) fs.allocator.freeBlock(physStart + b)
                 addToIBlocks(-count)
-            } else if (eBlock + count - 1 > lastBlock) {
+                continue
+            }
+            if (eBlock + count - 1 > lastBlock) {
                 // Extent straddles the boundary — keep the prefix, free the rest.
                 val keepBlocks = (lastBlock - eBlock + 1).toInt()
                 for (b in keepBlocks until count) fs.allocator.freeBlock(physStart + b)
                 addToIBlocks(-(count - keepBlocks))
-                // Rewrite this extent entry with the trimmed length.
                 bb.putShort(e + 4, keepBlocks.toShort())
-                keepCount++
-            } else {
-                keepCount++
             }
+            if (kept != i) System.arraycopy(data, e, data, offset + 12 + kept * 12, 12)
+            kept++
         }
-        bb.putShort(42, keepCount.toShort())
-        dirty = true
+        return kept
     }
 
     // -----------------------------------------------------------------------
