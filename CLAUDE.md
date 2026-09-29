@@ -84,7 +84,7 @@ So for any filesystem write change:
   `mkfs.ext4` + `e2fsck -fn`, and it reproduced in seconds what cost a drive;
 - **after every device run, re-check that volume from the host** — not just after
   a run that looked wrong, and not just for ext4.
-  `scripts/verify_veracrypt_volume.sh /dev/sdX1` opens whatever container is
+  `scripts/verify_volume.sh /dev/sdX1` opens whatever container is
   there (LUKS, VeraCrypt or plain), asks `blkid` what is inside, and runs that
   filesystem's own checker read-only. Hash-clean is not fsck-clean, and the
   device path goes through the crypto layer that host tests cannot cover.
