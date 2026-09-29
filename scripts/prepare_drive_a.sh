@@ -195,11 +195,12 @@ _manifest() {
                     if   [ -d "$f" ]; then printf '%s\tdir\n' "$f"
                     elif [ -f "$f" ]; then printf '%s\t%s\n' "$f" "$(stat -c%s "$f")"
                     fi
-                   done | LC_ALL=C sort | sha256sum | cut -d' ' -f1)"
+                   done | LC_ALL=C sort | head -c -1 | sha256sum | cut -d' ' -f1)"
         done
         local L
         L=$(find "$B/nested" -name leaf_at_depth_10.dat)
-        printf 'nested/leaf_at_depth_10.dat\t%s\t%s\n' \
+        RELPATH="${L#$B/}"
+        printf '%s\t%s\t%s\n' "$RELPATH" \
             "$(stat -c%s "$L")" "$(sha256sum "$L" | cut -d' ' -f1)"
     } > "$B/MANIFEST.txt"
     echo "  manifest: $B/MANIFEST.txt"

@@ -60,6 +60,43 @@ Awake and unthrottled at both ends. Full run completed successfully on the devic
 ---
 
 
+### OnePlus 7 (GM1901) · Android 16 (SDK 36) · build 0.4.0 (46) commit 5f00fd0 — drive A, all four partitions
+
+Clean tree, installed immediately before the run, awake and unthrottled at both
+ends, battery 100%. All four partitions in one pass.
+
+| Partition | seq read (512 KiB) | write verify | unaligned | correctness | fixtures |
+|---|---|---|---|---|---|
+| P1 LUKS1 + FAT32 | 11.58 MB/s | **ALL PASSED** | **A + B PASS** | **ALL PASSED** | 3 of 3 FAILED |
+| P2 LUKS1 + exFAT | 11.06 MB/s | **ALL PASSED** | **A + B PASS** | **ALL PASSED** | 3 of 3 FAILED |
+| P3 LUKS2 + exFAT | 11.09 MB/s | **ALL PASSED** | **A + B PASS** | **ALL PASSED** | 3 of 3 FAILED |
+| P4 LUKS2 + FAT32 | 11.28 MB/s | **ALL PASSED** | **A + B PASS** | **ALL PASSED** | 3 of 3 FAILED |
+
+**The multi-partition path works.** On the Samsung the day before, the same
+drive gave a result for its first partition only; every section on partitions
+2–4 failed with `block device is closed (volume was unmounted)`. That run is what
+exposed the three runner defects fixed in `6df73db` (stale references across
+drives), `d216ed8` (within one drive) and `dc29660` (the remount check racing the
+app's own auto-mount). This is the A/B for all three on the drive that found them.
+
+**The fixtures failures are a manifest bug, not the drive.** All four partitions
+report byte-identical results — `dense_short/` and `dense_lfn/` "LISTING
+DIFFERS" with the same expected and actual hashes, and
+`nested/leaf_at_depth_10.dat missing`. Two FAT32 and two exFAT volumes cannot
+corrupt into identical hashes. The cause is `prepare_drive_a.sh`, which wrote the
+manifest two ways its siblings had already been corrected away from: it hashed
+the directory listings including a trailing newline, where the benchmark joins
+entries with `\n` as a separator, and it recorded the leaf as
+`nested/leaf_at_depth_10.dat` when the file is ten directories deeper. Fixed in
+the same commit as this row. The drive's manifests need regenerating before its
+fixtures verdicts mean anything; its file contents have not been shown to be
+wrong.
+
+Host fsck on all four partitions is still outstanding — in particular the two
+exFAT ones, which threw `EIO` on the Samsung and have never been checked since.
+
+---
+
 ### Huawei P20 Lite (ANE-LX1) · Android 9 (SDK 28) · build 0.3.13 (46) commit dc29660 — VeraCrypt + FAT32, re-prepared drive
 
 **The hardware confirmation of the FAT chain fix (V8, `f514eac`).** Same device

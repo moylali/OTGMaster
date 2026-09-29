@@ -54,7 +54,7 @@ cell means sampled-clean, not audited-clean.
 or the full read section set. Detail in the run log.
 🔄 running · ❌ not attempted.
 
-**Coverage: 18 of 24 cells, 10 full. The Pixel's row is complete — all six
+**Coverage: 16 of 24 cells, 10 full. The Pixel's row is complete — all six
 cases measured on one device.**
 
 **D4·C3 is resolved.** Four attempts; the fourth, on `dc29660`, passes every
