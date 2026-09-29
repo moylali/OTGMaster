@@ -60,6 +60,49 @@ Awake and unthrottled at both ends. Full run completed successfully on the devic
 ---
 
 
+### Huawei P20 Lite (ANE-LX1) · Android 9 (SDK 28) · build 0.4.0 (46) commit 3b03bae — VeraCrypt + FAT32, mirror fix
+
+**The hardware confirmation of V9 (`149b2d2`) — the first FAT32 drive written by
+this app to pass `fsck.fat` outright.** Before the run the drive's two FATs had
+been resynced with `fsck.fat -a` and a fresh baseline taken, so any divergence
+afterwards could only come from this build.
+
+Report label reads `3b03bae-dirty`; the dirt was an untracked report file in the
+repo root, since ignored in `5f00fd0`. The code is exactly `3b03bae`, which
+carries V8 and V9.
+
+| Field | Value |
+|---|---|
+| Drive | PNY 59151 MiB — VeraCrypt (AES/SHA-512, PIM 1) + FAT32, `VCFAT` |
+| block read | 2.05 / 6.95 / 7.95 / 8.20 MB/s |
+| seq read | 1.51 / 3.77 / 3.73 MB/s |
+| random read | 16.7 ms each, 59.9 IOPS |
+| write | 16 MiB → 1.15 MB/s |
+| write verify | **ALL PASSED** (cached, cache-dropped, remounted) |
+| unaligned | **A + B PASS** |
+| correctness | **ALL PASSED** (A–G) |
+| fixtures | **ALL 16 MATCHED the host-computed hashes** |
+| fsck | **CLEAN** — `fsck.fat`: 20087 files, 14241971/15113321 clusters, no "FATs differ" |
+
+Against the baseline taken before the run:
+
+| Region | Change |
+|---|---|
+| files | 1 added (the report), 1 modified (`INDEX.txt`) — both runner output |
+| FAT[0] | 7 bytes at byte 57,000,901, ~1 entry |
+| FAT[1] | **7 bytes at byte 57,000,901, ~1 entry — identical to FAT[0]** |
+| reserved | 3 bytes at offset 1000 — the FSInfo free-cluster count |
+
+The previous run on this drive, before V9, showed FAT[0] changed and FAT[1]
+byte-identical to its baseline — never written. Here both change, by the same
+bytes at the same offset.
+
+Taken together with the run before it, both libaums FAT32 defects fixed in this
+release are now confirmed on the hardware that exposed them: V8 (a corrupt chain
+no longer wipes unrelated clusters) and V9 (every FAT copy is written).
+
+---
+
 ### OnePlus 7 (GM1901) · Android 16 (SDK 36) · build 0.4.0 (46) commit 5f00fd0 — drive A, all four partitions
 
 Clean tree, installed immediately before the run, awake and unthrottled at both
