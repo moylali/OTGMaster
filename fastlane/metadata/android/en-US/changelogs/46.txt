@@ -1,6 +1,7 @@
 • New: LUKS1 and LUKS2 encrypted volumes are now supported alongside VeraCrypt
 • New: ext4 filesystems are now supported for reading and writing, alongside FAT32 and exFAT
 • New: On ext4 you can create files and directories, write and modify data, delete, and rename
+• New: Read-only mode — mount an encrypted partition so nothing can be written to the drive. Choose per partition in the unlock form, or turn it on for all partitions in Settings
 • New: The unlock form automatically detects whether a partition is LUKS or VeraCrypt and shows only the relevant fields
 • New: Drives with no recognisable encrypted partitions now display a clear "no encrypted volumes found" message instead of a confusing empty list
 • New: Mounted drive cards show the device name and partition, with colour-coded tags for encryption type and filesystem

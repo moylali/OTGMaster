@@ -37,7 +37,7 @@ static jobject createExFatNode(JNIEnv* env, struct exfat_node* node) {
 }
 
 extern "C" JNIEXPORT jlong JNICALL
-Java_app_fayaz_otgmaster_exfat_ExFatNative_mount(JNIEnv *env, jobject thiz, jobject blockDevice) {
+Java_app_fayaz_otgmaster_exfat_ExFatNative_mount(JNIEnv *env, jobject thiz, jobject blockDevice, jboolean readOnly) {
     jobject globalBlockDevice = env->NewGlobalRef(blockDevice);
     
     struct exfat* ef = (struct exfat*) malloc(sizeof(struct exfat));
@@ -50,7 +50,7 @@ Java_app_fayaz_otgmaster_exfat_ExFatNative_mount(JNIEnv *env, jobject thiz, jobj
     char spec[64];
     snprintf(spec, sizeof(spec), "%lld", (long long) globalBlockDevice);
     
-    int rc = exfat_mount(ef, spec, "");
+    int rc = exfat_mount(ef, spec, readOnly ? "ro" : "");
     if (rc != 0) {
         LOGE("exfat_mount failed with %d", rc);
         if (rc == -ENODEV) {
@@ -60,7 +60,7 @@ Java_app_fayaz_otgmaster_exfat_ExFatNative_mount(JNIEnv *env, jobject thiz, jobj
         return 0;
     }
     
-    LOGI("exfat mounted successfully");
+    LOGI("exfat mounted successfully%s", readOnly ? " (read-only)" : "");
     return (jlong) ef;
 }
 

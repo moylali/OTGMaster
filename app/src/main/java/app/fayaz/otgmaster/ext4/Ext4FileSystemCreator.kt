@@ -43,7 +43,10 @@ class Ext4FileSystemCreator : FileSystemCreator {
                 override fun close() {}
             }
 
-            Ext4FileSystem.create(rawDevice)
+            Ext4FileSystem.create(
+                rawDevice,
+                readOnly = blockDevice is app.fayaz.otgmaster.block.ReadOnlyBlockDeviceDriver,
+            )
         } catch (e: Exception) {
             android.util.Log.e("Ext4", "Failed to mount ext filesystem", e)
             null

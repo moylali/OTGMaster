@@ -27,11 +27,17 @@ data class MountedDrive(
     /** Partition label shown in the card header (e.g. "Partition 1", "Whole device"). */
     val partitionLabel: String = "",
     /** Detected filesystem name for the tag chip (e.g. "exFAT", "ext4", "FAT32"). */
-    val filesystemName: String = ""
+    val filesystemName: String = "",
+    /** The user chose read-only for this partition; see ReadOnlyBlockDeviceDriver. */
+    val mountedReadOnly: Boolean = false,
 ) {
-    /** Why the volume refuses writes, or null if it is writable. Only ext4 can refuse today. */
+    /**
+     * Why the volume refuses writes, or null if it is writable. ext4 can refuse on
+     * its own (a journal needing recovery), and its reason takes precedence.
+     */
     val readOnlyReason: String?
         get() = (fileSystem as? app.fayaz.otgmaster.ext4.Ext4FileSystem)?.readOnlyReason
+            ?: if (mountedReadOnly) app.fayaz.otgmaster.ext4.Ext4FileSystem.MOUNTED_READ_ONLY else null
 
     val isReadOnly: Boolean get() = readOnlyReason != null
 }

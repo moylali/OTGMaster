@@ -14,7 +14,8 @@ object ExFatNative {
      * @param blockDevice The Kotlin BlockDevice to read from.
      * @return A pointer to the native `struct exfat` or 0 if failed.
      */
-    external fun mount(blockDevice: RawBlockDevice): Long
+    /** @param readOnly mount with libexfat's `ro` option: no write reaches the device, including the volume-dirty flag. */
+    external fun mount(blockDevice: RawBlockDevice, readOnly: Boolean): Long
 
     /**
      * Unmounts the exFAT filesystem and frees memory.

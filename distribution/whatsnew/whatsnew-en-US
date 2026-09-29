@@ -1,6 +1,6 @@
 • New: LUKS1 and LUKS2 volumes alongside VeraCrypt
 • New: ext4 read/write support
-• New: Picker lists only unlockable partitions
+• New: Read-only mode for encrypted partitions
 • Fixed: SD card readers failing on first plug-in
 • Fixed: Unclean ext4 drives now open read-only
 • Fixed: FAT32 drives flagged as damaged by disk checkers

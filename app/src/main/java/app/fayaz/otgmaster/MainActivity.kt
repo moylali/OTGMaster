@@ -174,6 +174,8 @@ class MainActivity : AppCompatActivity() {
         private const val SHARE_TARGET_CATEGORY = "app.fayaz.otgmaster.category.SHARE_TARGET"
         private const val PREF_MANUALLY_UNMOUNTED = "manually_unmounted_devices"
         private const val PREF_LAST_BOOT_TIME = "last_boot_time_ms"
+        private const val PREF_READ_ONLY_DEFAULT = "read_only_default"
+        private const val PREF_READ_ONLY_CHOICES = "read_only_partitions"
     }
 
     private lateinit var sharedPreferences: SharedPreferences
@@ -203,6 +205,10 @@ class MainActivity : AppCompatActivity() {
     private val deferredCandidates = LinkedHashMap<String, UsbDeviceCandidate>()
     private val sessionPlaintextCreds = androidx.compose.runtime.snapshots.SnapshotStateMap<String, app.fayaz.otgmaster.security.CredentialStore.Credentials>()
     private val excludedDeviceKeys = mutableStateOf<Set<String>>(emptySet())
+    /** Settings → Read-only mode: the default for any partition with no choice of its own. */
+    private val readOnlyDefault = mutableStateOf(false)
+    /** Per-partition read-only choices made in the unlock form, keyed by [partitionKey]. */
+    private val readOnlyChoices = mutableStateOf<Map<String, Boolean>>(emptyMap())
 
     // Debounce buffer: collects hub devices that arrive in rapid succession so they
     // all go into a single biometric prompt rather than triggering separate ones.
@@ -371,6 +377,10 @@ class MainActivity : AppCompatActivity() {
         credentialStore = app.fayaz.otgmaster.security.CredentialStore(this)
         autoMountEnabled.value = sharedPreferences.getBoolean("auto_mount", false)
         excludedDeviceKeys.value = credentialStore.loadExcludedKeys()
+        readOnlyDefault.value = sharedPreferences.getBoolean(PREF_READ_ONLY_DEFAULT, false)
+        readOnlyChoices.value = sharedPreferences.getStringSet(PREF_READ_ONLY_CHOICES, emptySet()).orEmpty()
+            .mapNotNull { e -> e.substringBeforeLast('|', "").takeIf { it.isNotEmpty() }?.let { it to e.endsWith("|1") } }
+            .toMap()
         loadManuallyUnmountedDevices(usbMgr)
 
         setContent {
@@ -413,6 +423,13 @@ class MainActivity : AppCompatActivity() {
                             else credentialStore.load(deviceKey, startBlock) != null
                         },
                         isExcluded = { deviceKey -> deviceKey in excludedDeviceKeys.value },
+                        readOnlyDefault = readOnlyDefault.value,
+                        onReadOnlyDefaultChange = { enabled ->
+                            readOnlyDefault.value = enabled
+                            sharedPreferences.edit().putBoolean(PREF_READ_ONLY_DEFAULT, enabled).apply()
+                        },
+                        isPartitionReadOnly = { deviceKey, startBlock -> isPartitionReadOnly(deviceKey, startBlock) },
+                        onSetPartitionReadOnly = { deviceKey, startBlock, ro -> setPartitionReadOnly(deviceKey, startBlock, ro) },
                         onRefreshDevices = { refreshDevices() },
                         onUnlock = { deviceName, candidate, pwd, pim, keyfiles, cipher, hash, onComplete ->
                             attemptUnlock(deviceName, candidate, pwd, pim, keyfiles, cipher, hash, onComplete = onComplete)
@@ -562,6 +579,25 @@ class MainActivity : AppCompatActivity() {
      * the last unmount to finish costs nothing: that one refreshes too.
      */
     private fun isUnmounting(key: String): Boolean = (pendingUnmounts[key] ?: 0) > 0
+
+    /** Key for a partition: the same device key + start block saved credentials use. */
+    private fun partitionKey(deviceKey: String, startBlock: Long) = "$deviceKey@$startBlock"
+
+    /**
+     * Whether this partition mounts read-only: its own choice from the unlock form
+     * if it has one, otherwise the Read-only mode setting. Read by attemptUnlock, so
+     * every unlock path honours it — the form, auto mount, quick unlock and the
+     * programmatic mount request.
+     */
+    private fun isPartitionReadOnly(deviceKey: String, startBlock: Long): Boolean =
+        readOnlyChoices.value[partitionKey(deviceKey, startBlock)] ?: readOnlyDefault.value
+
+    private fun setPartitionReadOnly(deviceKey: String, startBlock: Long, readOnly: Boolean) {
+        val updated = readOnlyChoices.value + (partitionKey(deviceKey, startBlock) to readOnly)
+        readOnlyChoices.value = updated
+        sharedPreferences.edit().putStringSet(PREF_READ_ONLY_CHOICES,
+            updated.map { (k, v) -> "$k|${if (v) 1 else 0}" }.toSet()).apply()
+    }
 
     /** Identity of a connection object, for tracing which one a code path holds. */
     private fun objId(o: Any?): String =
@@ -819,6 +855,7 @@ class MainActivity : AppCompatActivity() {
         onComplete: () -> Unit
     ) {
         val device = openedDevices[deviceName]
+        val readOnly = isPartitionReadOnly(deviceName, candidate.startBlock)
         android.util.Log.i("OTGMaster",
             "attemptUnlock ${candidate.label} @${candidate.startBlock} via ${objId(device)}")
         if (device == null) {
@@ -905,8 +942,10 @@ class MainActivity : AppCompatActivity() {
                 val byteDevice = me.jahnen.libaums.core.driver.ByteBlockDevice(
                     cachedDevice as me.jahnen.libaums.core.driver.BlockDeviceDriver
                 )
+                val fsDevice: me.jahnen.libaums.core.driver.BlockDeviceDriver =
+                    if (readOnly) app.fayaz.otgmaster.block.ReadOnlyBlockDeviceDriver(byteDevice) else byteDevice
                 val fileSystem = try {
-                    FileSystemFactory.createFileSystem(dummyEntry, byteDevice)
+                    FileSystemFactory.createFileSystem(dummyEntry, fsDevice)
                 } catch (e: Exception) {
                     android.util.Log.e("OTG_MOUNT", "Failed to mount file system", e)
                     val msg = if (detected is DetectedFilesystem.Unknown)
@@ -930,7 +969,8 @@ class MainActivity : AppCompatActivity() {
                     rawBlockDevice = device,
                     sourceVolumeCandidate = candidate,
                     partitionLabel = candidate.label,
-                    filesystemName = detected.displayName
+                    filesystemName = detected.displayName,
+                    mountedReadOnly = readOnly,
                 )
 
                 OtgMasterState.addDrive(mountedDrive)
@@ -1687,6 +1727,10 @@ fun OtgMasterApp(
     sessionCredentials: Map<String, app.fayaz.otgmaster.security.CredentialStore.Credentials>,
     hasCachedCreds: (String, Long?) -> Boolean,
     isExcluded: (String) -> Boolean,
+    readOnlyDefault: Boolean,
+    onReadOnlyDefaultChange: (Boolean) -> Unit,
+    isPartitionReadOnly: (String, Long) -> Boolean,
+    onSetPartitionReadOnly: (String, Long, Boolean) -> Unit,
     onRefreshDevices: () -> Unit,
     onUnlock: (String, VolumeCandidate, String, Int?, List<Uri>, app.fayaz.otgmaster.veracrypt.VeraCryptCipher, app.fayaz.otgmaster.veracrypt.VeraCryptHash, () -> Unit) -> Unit,
     onUnmount: (MountedDrive) -> Unit,
@@ -1885,6 +1929,8 @@ fun OtgMasterApp(
                             hasCachedCreds = hasCachedCreds,
                             isExcluded = isExcluded,
                             onSetExcluded = onSetExcluded,
+                            isPartitionReadOnly = isPartitionReadOnly,
+                            onSetPartitionReadOnly = onSetPartitionReadOnly,
                             onQuickUnlock = onQuickUnlock
                         )
                     }
@@ -1943,7 +1989,9 @@ fun OtgMasterApp(
         onAutoMountEnabledChange = onAutoMountEnabledChange,
         onClearAllCredentials = onClearAllCredentials,
         onCopyText = onCopyText,
-        onDismiss = { showSettings = false }
+        onDismiss = { showSettings = false },
+        readOnlyDefault = readOnlyDefault,
+        onReadOnlyDefaultChange = onReadOnlyDefaultChange,
     )
 
     AnimatedVisibility(
@@ -1985,6 +2033,8 @@ fun VeraCryptMountSection(
     hasCachedCreds: (String, Long?) -> Boolean = { _, _ -> false },
     isExcluded: (String) -> Boolean = { false },
     onSetExcluded: (String, Boolean) -> Unit = { _, _ -> },
+    isPartitionReadOnly: (String, Long) -> Boolean = { _, _ -> false },
+    onSetPartitionReadOnly: (String, Long, Boolean) -> Unit = { _, _, _ -> },
     onQuickUnlock: ((String, VolumeCandidate, () -> Unit) -> Unit)? = null
 ) {
     var isUnlocking by remember { mutableStateOf(false) }
@@ -2272,6 +2322,26 @@ fun VeraCryptMountSection(
                 }
             }
 
+            // Per partition, starting from Settings → Read-only mode. Stored, so auto
+            // mount and quick unlock mount this partition the same way next time.
+            selectedCandidate?.let { sc ->
+                Row(
+                    verticalAlignment = Alignment.CenterVertically,
+                    modifier = Modifier.fillMaxWidth()
+                ) {
+                    Text(
+                        stringResource(R.string.mount_read_only),
+                        modifier = Modifier.weight(1f),
+                        style = MaterialTheme.typography.bodyMedium
+                    )
+                    Switch(
+                        checked = isPartitionReadOnly(currentDeviceName, sc.startBlock),
+                        onCheckedChange = { onSetPartitionReadOnly(currentDeviceName, sc.startBlock, it) },
+                        modifier = Modifier.semantics { contentDescription = "read_only_switch" }
+                    )
+                }
+            }
+
             if (!isLuks) {
             @OptIn(ExperimentalMaterial3Api::class)
             ExposedDropdownMenuBox(
@@ -2427,7 +2497,9 @@ fun SettingsDrawer(
     onAutoMountEnabledChange: (Boolean) -> Unit,
     onClearAllCredentials: () -> Unit,
     onCopyText: (String, String) -> Unit,
-    onDismiss: () -> Unit
+    onDismiss: () -> Unit,
+    readOnlyDefault: Boolean = false,
+    onReadOnlyDefaultChange: (Boolean) -> Unit = {},
 ) {
     if (!visible) return
 
@@ -2533,6 +2605,31 @@ fun SettingsDrawer(
                             ) {
                                 Text(stringResource(R.string.auto_mount_clear_credentials))
                             }
+                        }
+                    }
+
+                    SettingsExpandableRow(
+                        title = stringResource(R.string.read_only_mode_title),
+                        summary = if (readOnlyDefault) "On" else "Off"
+                    ) {
+                        Text(
+                            stringResource(R.string.read_only_mode_description),
+                            style = MaterialTheme.typography.bodySmall,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant,
+                            modifier = Modifier.padding(bottom = 8.dp)
+                        )
+                        Row(
+                            verticalAlignment = Alignment.CenterVertically,
+                            modifier = Modifier.fillMaxWidth()
+                        ) {
+                            Text(
+                                stringResource(R.string.read_only_mode_title),
+                                modifier = Modifier.weight(1f)
+                            )
+                            Switch(
+                                checked = readOnlyDefault,
+                                onCheckedChange = onReadOnlyDefaultChange
+                            )
                         }
                     }
 

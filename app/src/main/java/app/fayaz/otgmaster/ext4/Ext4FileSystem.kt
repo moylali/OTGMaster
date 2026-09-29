@@ -302,8 +302,10 @@ class Ext4FileSystem private constructor(
         private const val EXT4_SUPER_MAGIC = 0xEF53
         /** s_feature_incompat bit for a journal that needs replaying (`needs_recovery`). */
         private const val INCOMPAT_RECOVER = 0x4
+        const val MOUNTED_READ_ONLY = "it was mounted read-only"
 
-        fun create(device: RawBlockDevice): Ext4FileSystem {
+        /** @param readOnly the user chose to mount this partition read-only. */
+        fun create(device: RawBlockDevice, readOnly: Boolean = false): Ext4FileSystem {
             // Superblock sits at byte offset 1024 from the filesystem start.
             // Our device block 0 is the first payload byte, so the superblock
             // is at sector 2 for 512-byte sectors.  Read the first 4 KiB to
@@ -390,10 +392,13 @@ class Ext4FileSystem private constructor(
                 totalInodes     = totalInodes,
                 csumSeed        = csumSeed,
                 hasMetadataCsum = hasMetadataCsum,
-                readOnlyReason  = if ((featIncompat and INCOMPAT_RECOVER) != 0)
-                    "its journal needs recovery — it was not unmounted cleanly. " +
-                        "Check it on a computer (e2fsck) before writing to it."
-                else null,
+                readOnlyReason  = when {
+                    (featIncompat and INCOMPAT_RECOVER) != 0 ->
+                        "its journal needs recovery — it was not unmounted cleanly. " +
+                            "Check it on a computer (e2fsck) before writing to it."
+                    readOnly -> MOUNTED_READ_ONLY
+                    else -> null
+                },
             )
         }
 

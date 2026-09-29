@@ -42,7 +42,8 @@ class ExFatFileSystemCreator : FileSystemCreator {
                 override fun close() {}
             }
             
-            val exfatPtr = ExFatNative.mount(rawBlockDevice)
+            val readOnly = blockDevice is app.fayaz.otgmaster.block.ReadOnlyBlockDeviceDriver
+            val exfatPtr = ExFatNative.mount(rawBlockDevice, readOnly)
             if (exfatPtr == 0L) return null
             
             return ExFatFileSystem(rawBlockDevice, exfatPtr)

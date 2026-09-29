@@ -89,6 +89,9 @@
     <string name="clear_cached_credentials">Clear credentials</string>
     <string name="log_cached_credentials_invalid">Cached credentials invalid for %1$s — cleared. Enter credentials again to re-enable Auto mount.</string>
     <string name="auto_mount_exclude_device">Opt out of Auto mount for this device</string>
+    <string name="mount_read_only">Mount this partition read-only</string>
+    <string name="read_only_mode_title">Read-only mode</string>
+    <string name="read_only_mode_description">Mount encrypted partitions read-only by default</string>
     <string name="auto_mount_clear_credentials">Clear all cached credentials</string>
     <string name="log_auto_mount_credentials_cleared">All Auto mount cached credentials cleared.</string>
 
