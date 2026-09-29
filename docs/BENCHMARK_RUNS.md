@@ -35,6 +35,52 @@ to a row here.
 
 ## 2026-09-28
 
+### Huawei P20 Lite (ANE-LX1) · Android 9 (SDK 28) · build 0.3.13 (46) commit dc29660 — drive D, VeraCrypt + ext4
+
+The fourth attempt at this cell, and the first to pass. Sections `write`,
+`unaligned`, `correct` only — the read sections were measured on an earlier
+attempt and are unchanged.
+
+| Field | Value |
+|---|---|
+| Drive | Realtek card reader, 11927 MiB — VeraCrypt (AES/SHA-512, PIM 1) + ext4, `VCEXT4` |
+| write verify | **ALL PASSED** — cached, cache-dropped, **and remounted** |
+| unaligned | **A + B PASS** |
+| correctness | **ALL PASSED** (A–G) |
+
+The A/B for `dc29660`. The three preceding attempts, on `6da214b`, `d216ed8` and
+`99c4ab3`, all reported `verify (remounted): NOT PERFORMED` and lost the
+remount-dependent sections. Same drive, same device, same command.
+
+The cause was never a slow unmount. Instrumenting it showed the unmount
+completing in 7 ms and the app re-mounting the still-attached drive 24 ms later
+on its own; the benchmark's 300 ms poll never saw the gap and concluded the
+volume had not unmounted. Two earlier fixes aimed at the consequences of that.
+
+---
+
+### Samsung Galaxy M30 — VeraCrypt + exFAT, verified against its baseline
+
+The run itself is recorded below. This is its post-run verification, and it is
+the clearest demonstration so far of what the baseline tool adds:
+
+| | |
+|---|---|
+| `fsck.exfat` | **CLEAN** — 19 directories, 20,097 files |
+| files changed | **none** beyond the runner's own report and `INDEX.txt` |
+| boot region | **identical** |
+| FAT | **7 bytes of 60,817,408 differ — about one entry** |
+
+One allocation-table entry moved, for the one file the run wrote.
+
+Set against the FAT32 drive measured by the same tool earlier the same day —
+526,547 bytes and roughly 131,636 entries changed, entry 0 zeroed, and an
+unrelated `FILL/` file's chain destroyed — the two are four orders of magnitude
+apart. Both drives passed every on-device check. Only this comparison
+distinguishes them.
+
+---
+
 ### OnePlus 7 (GM1901) · Android 16 (SDK 36) · build 0.3.13 (46) commit d216ed8 — LUKS2 + ext4
 
 APK sha256 `02312fe0…`, clean tree, awake and unthrottled, battery 92%.
