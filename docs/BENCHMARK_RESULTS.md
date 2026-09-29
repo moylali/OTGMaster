@@ -10,6 +10,10 @@ as a regression, read the comparison rules in §6 — most of the wrong conclusi
 reached while gathering this data came from comparing numbers that were not
 comparable.
 
+**Every run these figures come from is logged in
+[`BENCHMARK_RUNS.md`](BENCHMARK_RUNS.md)**, one row per run. This file is the curated
+comparison; that one is the raw record.
+
 ## 1. Devices
 
 | Short name | Model | Android | SDK | Notes |

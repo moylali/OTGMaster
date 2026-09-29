@@ -90,6 +90,51 @@ So for any filesystem write change:
 Keep a second prepared drive untouched by the change. Drive C staying clean is what
 proved the damage came from this code and not from the preparation script.
 
+**Every benchmark run gets recorded in `docs/BENCHMARK_RUNS.md`, in the same commit
+as the work it validates.** A run that exists only in logcat and on the drive did not
+happen as far as the repo is concerned: logcat is cleared between runs, the on-drive
+`BENCH/reports/` travels with the drive rather than the code, and neither can be
+diffed against the commit it was meant to justify. One row per run, and the row names
+the device, Android version, container, filesystem, the commit the APK was built from,
+the sections that actually ran, and each verdict.
+
+**Commit the code before building the APK you benchmark.** The report stamps itself
+with `git describe` at build time, so an APK built from a dirty tree is labelled with
+the commit it is *not* — it carries uncommitted work the label does not name. This
+happened on the first day the log existed: a run was recorded against `6d33f88` while
+the APK it measured contained the changes committed afterwards as `654ceda`, which
+would have sent a later reader to the wrong diff to explain the numbers. A run whose
+report ends in `-dirty` cannot be traced to a tree, so commit first, build, install,
+then run. If a dirty run happens anyway, the row states what the APK actually
+contained rather than repeating the label.
+
+**A run that did not complete can be dropped; a run that completed must be recorded.**
+If the drive stopped responding, the USB handle died, the app crashed or the run was
+interrupted, there is no result and nothing to log — delete it and start again. The
+exemption is for runs that produced no result, **not** for runs that produced an
+unwelcome one. A completed run with bad numbers, a `FAILED` section, a `PARTIAL`
+verdict or a `*** CONTAMINATED ***` flag is a result and goes in the log with that
+flag intact. Silently dropping those is how a log stops being evidence and starts
+being a highlight reel, and it is the failure mode this file is most exposed to,
+because the person deciding what counts as "didn't complete" is the same one whose
+change is being judged.
+
+Three things the row must be honest about, because each has produced a false result
+before:
+
+- **Which sections ran.** Omitting `--es tests` runs the read-only sections only and
+  skips the five write sections silently. A row that does not say what ran cannot be
+  distinguished from a row where the write path was never exercised.
+- **`PARTIAL` and `NOT VERIFIED` are recorded as themselves**, never rounded up to a
+  pass and never left out. They mean the suite could not support a verdict — which is
+  information, not a gap to tidy away.
+- **Whether the host `e2fsck` was run afterwards, and its result.** Hash-clean is not
+  fsck-clean.
+
+`BENCHMARK_RESULTS.md` stays what it is: the curated reference figures and the rules
+for comparing them. `BENCHMARK_RUNS.md` is the raw append-only log every one of those
+figures can be traced back to.
+
 ## Test media and test data
 
 `docs/TEST_DATA.md` is the **single reference for preparing every kind of test media**:
