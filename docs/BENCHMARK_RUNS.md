@@ -35,6 +35,41 @@ to a row here.
 
 ## 2026-09-28
 
+### Pixel 10 Pro XL · Android 17 (SDK 37) · build 0.3.13 (46) commit e78cf0a
+
+APK sha256 `2db42f29…`, clean tree. Verification run for the `fixtures` fix.
+
+| Field | Value |
+|---|---|
+| Drive | PNY USB 3.2.1 FD, 59151 MiB — VeraCrypt (AES/SHA-512, PIM 1) + exFAT |
+| Report | `otgbench-Pixel_10_Pro_XL-20260928-184209.txt` |
+| Sections | fixtures |
+| fixtures | **ALL 16 MATCHED the host-computed hashes** |
+| fsck | `fsck.exfat` CLEAN earlier the same day (19 dirs, 20091 files) |
+
+This is the same drive and the same section that reported
+`FAILED java.io.IOException: File is closed` on `110e1cd`. The fix is closing the
+handle after the last read of it rather than before. Confirmed on hardware: the
+section fails on the old build and passes on the new one.
+
+**Throughput from this run is not usable.** The runner flagged it:
+
+```
+power : interactive=true deviceIdle=false powerSave=true
+*** DEVICE IS IDLE OR THROTTLED — throughput here is not comparable
+*** to an awake run; wake the screen and disable Doze before measuring
+```
+
+The phone had dropped to 20% battery and Android turned on battery saver. That
+does not affect this run's verdict, which is a hash comparison rather than a
+measurement, but none of its MB/s figures are quoted anywhere and none should be.
+
+Before this run the drive had dropped off the USB bus entirely — `dumpsys usb`
+listed no device, and a benchmark attempt sat through its full 90 s mount timeout
+reporting `NO DRIVES MOUNTED`. Replugging restored it. The phone was powering a
+USB 3.2 stick from a 21% battery at the time, which is the most likely
+explanation. That attempt produced no result and is not logged as a run.
+
 ### Pixel 10 Pro XL · Android 17 (SDK 37) · build 0.3.13 (46) commit 110e1cd
 
 APK sha256 `ab7f758f…`. Clean tree — the first run whose label names a tree it was
