@@ -35,6 +35,42 @@ to a row here.
 
 ## 2026-09-28
 
+### Pixel 10 Pro XL · Android 17 (SDK 37) · build 0.3.13 (46) commit e78cf0a — FAT32
+
+APK sha256 `2db42f29…`, clean tree, awake and unthrottled, on a powered hub.
+**The reference VeraCrypt+FAT32 run** — first complete one with every section
+passing.
+
+| Field | Value |
+|---|---|
+| Drive | PNY USB 3.2.1 FD, 59151 MiB — VeraCrypt (AES/SHA-512, PIM 1) + FAT32, `VCFAT` |
+| Report | `otgbench-Pixel_10_Pro_XL-20260928-190012.txt` |
+| Sections | free, block, dir, path, seq, random, opens, write, unaligned, correct, fixtures |
+| block read | 2.02 / 16.92 / 29.68 / 32.59 MB/s (4 / 64 / 512 / 4096 KiB span) |
+| seq read | 9.70 / 22.59 / 22.56 MB/s (32 / 128 / 512 KiB buf) |
+| random read | 7.1 ms each, 141.4 IOPS |
+| dir listing | dense_short cold 743.0 / warm 249.1 ms; dense_lfn cold 915.0 / warm 112.0 |
+| opens | short 306.2 ms each, lfn 121.2 ms each |
+| write | 16 MiB → 1.91 MB/s |
+| write verify | **ALL PASSED** (cached, cache-dropped, remounted) |
+| unaligned | **A + B PASS** |
+| correctness | **ALL PASSED** (A–G) |
+| fixtures | **ALL 16 MATCHED the host-computed hashes** |
+| fsck | not yet run — drive still on the phone |
+
+First FAT32 run with working fixture hashing: three large files read end to end
+(`seq_2g.bin` 78.0 s at 26.25 MB/s), two 10,000-entry listings, eleven nested
+files. Both prerequisites landed today — the manifest had no hashes until
+`regen_manifest.sh` was generalised, and the section that checks them was broken
+until `e78cf0a`.
+
+**Not comparable to the `d455547` FAT32 run.** Its write figure was 0.59 MB/s
+against 1.91 here, which looks like a large improvement and is not a measurement
+of one: the block-layer controls differ by 7% (32.59 against 35.09 MB/s at
+4096 KiB), which is past the threshold this project treats as comparable, and
+the earlier run was made on a phone at 21% battery powering the drive from its
+own cell. Nothing in the code between those builds touches the FAT32 write path.
+
 ### Pixel 10 Pro XL · Android 17 (SDK 37) · build 0.3.13 (46) commit e78cf0a
 
 APK sha256 `2db42f29…`, clean tree, awake and unthrottled throughout, on a
