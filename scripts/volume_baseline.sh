@@ -47,8 +47,18 @@
 
 set -uo pipefail
 
-MODE="${1:?Usage: sudo bash $0 {snapshot|compare} /dev/sdX1 [options]}"; shift
-PART="${1:?Usage: sudo bash $0 {snapshot|compare} /dev/sdX1 [options]}"; shift
+usage() {
+    echo "Usage: sudo bash $0 snapshot|compare /dev/sdX1 [options]" >&2
+    echo "  --name NAME  --password PASS  --pim N  --store DIR" >&2
+    exit 1
+}
+
+# Checked rather than expanded with ${1:?...}: that form ends at the first '}',
+# so a usage string containing braces silently appends its own tail to the
+# variable — "/dev/sdd1 /dev/sdX1 [options]} is not a block device".
+[[ $# -ge 2 ]] || usage
+MODE="$1"; shift
+PART="$1"; shift
 
 NAME=""
 PASS=password123
@@ -68,7 +78,7 @@ done
 die() { echo "ERROR: $*" >&2; exit 1; }
 [[ $EUID -eq 0 ]] || die "run with sudo."
 [[ -b "$PART" ]] || die "$PART is not a block device."
-[[ "$MODE" == "snapshot" || "$MODE" == "compare" ]] || die "mode must be snapshot or compare."
+[[ "$MODE" == "snapshot" || "$MODE" == "compare" ]] || usage
 
 MNT=/mnt/otgBaseline
 MAPPER=otgBaseline
