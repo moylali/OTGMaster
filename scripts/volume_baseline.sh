@@ -260,8 +260,8 @@ if (( META_ONLY == 1 )); then
 else
 echo "=== contents ==="
 # Paths present in one side only, and paths whose hash moved.
-awk '{ h=$1; $1=""; sub(/^  /,""); print $0"\t"h }' "$DIR/files.sha256" | LC_ALL=C sort > "$NEW/old.tsv"
-awk '{ h=$1; $1=""; sub(/^  /,""); print $0"\t"h }' "$NEW/files.sha256"  | LC_ALL=C sort > "$NEW/new.tsv"
+awk '{ h=$1; $1=""; sub(/^[[:space:]]+/,""); print $0"\t"h }' "$DIR/files.sha256" | LC_ALL=C sort > "$NEW/old.tsv"
+awk '{ h=$1; $1=""; sub(/^[[:space:]]+/,""); print $0"\t"h }' "$NEW/files.sha256"  | LC_ALL=C sort > "$NEW/new.tsv"
 cut -f1 "$NEW/old.tsv" > "$NEW/old.paths"; cut -f1 "$NEW/new.tsv" > "$NEW/new.paths"
 
 REMOVED=$(LC_ALL=C comm -23 "$NEW/old.paths" "$NEW/new.paths" | wc -l)
