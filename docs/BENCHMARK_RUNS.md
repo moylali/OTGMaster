@@ -37,7 +37,44 @@ to a row here.
 
 ### Pixel 10 Pro XL · Android 17 (SDK 37) · build 0.3.13 (46) commit e78cf0a
 
-APK sha256 `2db42f29…`, clean tree. Verification run for the `fixtures` fix.
+APK sha256 `2db42f29…`, clean tree, awake and unthrottled throughout, on a
+powered hub. **The reference VeraCrypt+exFAT run** — the first complete one with
+every section passing.
+
+| Field | Value |
+|---|---|
+| Drive | PNY USB 3.2.1 FD, 59151 MiB — VeraCrypt (AES/SHA-512, PIM 1) + exFAT |
+| Report | `otgbench-Pixel_10_Pro_XL-20260928-185058.txt` |
+| Sections | free, block, dir, path, seq, random, opens, write, unaligned, correct, fixtures |
+| freeSpace | first 101.8 ms, then 68.6 ms avg |
+| block read | 3.09 / 26.90 / 35.37 / 35.33 MB/s (4 / 64 / 512 / 4096 KiB span) |
+| seq read | 30.07 / 31.24 / 31.27 MB/s (32 / 128 / 512 KiB buf) |
+| random read | 2.6 ms each, 385.8 IOPS |
+| dir listing | dense_short cold 1203.6 / warm 13.7 ms; dense_lfn cold 2057.5 / warm 20.0 |
+| opens | short 12.0 ms each, lfn 16.1 ms each |
+| write | 16 MiB → 0.63 MB/s |
+| write verify | **ALL PASSED** (cached, cache-dropped, remounted) |
+| unaligned | **A + B PASS** |
+| correctness | **ALL PASSED** (A–G) |
+| fixtures | **ALL 16 MATCHED the host-computed hashes** |
+| fsck | `fsck.exfat` CLEAN earlier the same day (19 dirs, 20091 files) |
+
+The fixture hashes are the part worth noting: three large files read end to end
+and hashed (`seq_1g.bin` 33.1 s, `seq_2g.bin` 64.9 s, `seq_256m.bin` 8.0 s at
+~31 MB/s), two 10,000-entry directory listings, and eleven files down the nested
+tree — all matching hashes computed on the host. This drive had **no** fixture
+hash coverage at all until `regen_manifest.sh` was generalised, and the section
+that checks them was broken until `e78cf0a`.
+
+Block-layer control at 4096 KiB is 35.33 MB/s here against 36.25 on `110e1cd`,
+a 2.5% difference, so the two runs are comparable and nothing regressed.
+
+---
+
+### Pixel 10 Pro XL · Android 17 (SDK 37) · build 0.3.13 (46) commit e78cf0a — fixtures only
+
+APK sha256 `2db42f29…`, clean tree. The first verification run for the `fixtures`
+fix, superseded by the full run above but kept because it is the A/B pair.
 
 | Field | Value |
 |---|---|
