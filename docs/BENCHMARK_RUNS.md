@@ -35,6 +35,34 @@ to a row here.
 
 ## 2026-09-28
 
+### Huawei P20 Lite (ANE-LX1) · Android 9 (SDK 28) · build 0.3.13 (46) commit 98fae8f — LUKS2 + ext4
+
+APK sha256 `ee9188b0…`, clean tree, awake and unthrottled at both ends.
+
+| Field | Value |
+|---|---|
+| Drive | PNY 59136 MiB — LUKS2 (Argon2id) + ext4, `LUKS2EXT4` |
+| Sections | free, block, dir, path, seq, random, opens, write, unaligned, correct, fixtures |
+| block read | 3.44 / 6.25 / 7.23 / 8.18 MB/s |
+| seq read | 6.81 / 6.70 / 6.79 MB/s |
+| random read | 8.4 ms each, 119.2 IOPS |
+| dir listing | dense_short cold 652.5 / warm 212.4 ms; dense_lfn cold 708.7 / warm 242.5 |
+| opens | short 216.8 ms each, lfn 231.3 ms each |
+| write | 16 MiB → 0.53 MB/s |
+| write verify | **ALL PASSED** (cached, cache-dropped, remounted) |
+| unaligned | **A + B PASS** |
+| correctness | **ALL PASSED** (A–G) |
+| fixtures | **ALL 5 MATCHED the host-computed hashes** |
+| fsck | pending |
+
+Argon2id on the slowest device in the fleet, which is the case this cell exists
+for: LUKS2's key derivation is memory-hard, and `prepare_drive_c.sh` pins
+`--pbkdf-memory 65536` precisely because cryptsetup's desktop default of 1–4 GB
+gets the process killed by Android's low-memory killer. It unlocked and ran
+through without incident here.
+
+---
+
 ### Huawei P20 Lite (ANE-LX1) · Android 9 (SDK 28) · build 0.3.13 (46) commit 98fae8f — exFAT
 
 APK sha256 `ee9188b0…`, clean tree, awake and unthrottled at both ends, over WiFi.
