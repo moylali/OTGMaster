@@ -36,7 +36,7 @@ device's result.
 |---|---|---|---|---|---|---|
 | **D1** Pixel 10 Pro XL | ✅ full | ✅ full | ✅ full | ✅ partial | ✅ partial | ✅ partial |
 | **D2** OnePlus 7 | ❌ | ❌ | ❌ | ✅ partial | ✅ partial | ❌ |
-| **D3** Samsung M30 | ❌ | ❌ | ❌ | ✅ full | ✅ full | ❌ |
+| **D3** Samsung M30 | ❌ | ✅ partial | ❌ | ✅ full | ✅ full | ❌ |
 | **D4** Huawei P20 Lite | ⚠️ see note | ✅ full | ❌ | ❌ | ✅ partial | ❌ |
 
 ✅ full — every section run and passed, including `fixtures`, on the current
@@ -53,8 +53,12 @@ cell means sampled-clean, not audited-clean.
 or the full read section set. Detail in the run log.
 🔄 running · ❌ not attempted.
 
-**Coverage: 14 of 24 cells, 6 full. The Pixel's row is complete — all six
+**Coverage: 15 of 24 cells, 6 full. The Pixel's row is complete — all six
 cases measured on one device.**
+
+⚠️ **D4·C3 is partial and blocked.** Three attempts, all losing the
+remount-dependent sections to a 30 s unmount budget tuned on fast hardware.
+Fixed in `d7c8fcd`; needs a fourth run on that build.
 
 ⚠️ **D4·C1 is withdrawn.** Every on-device section passed, but the host
 `fsck.fat` afterwards found FAT entry 0 zeroed and ~514 MB of an unrelated

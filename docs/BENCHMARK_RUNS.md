@@ -35,6 +35,60 @@ to a row here.
 
 ## 2026-09-28
 
+### Samsung Galaxy M30 (SM-M305F) · Android 10 (SDK 29) · build 0.3.13 (46) commit d216ed8 — VeraCrypt + exFAT
+
+APK sha256 `02312fe0…`, clean tree, awake and unthrottled at both ends, charging.
+
+| Field | Value |
+|---|---|
+| Drive | PNY 59151 MiB — VeraCrypt (AES/SHA-512, PIM 1) + exFAT |
+| Sections | free, block, dir, path, seq, random, opens, write, unaligned, correct, fixtures |
+| block read | 3.37 / 12.04 / 12.97 / 11.29 MB/s |
+| seq read | 9.73 / 9.91 / 10.01 MB/s |
+| random read | 6.2 ms each, 160.8 IOPS |
+| write | 16 MiB → 0.35 MB/s |
+| write verify | **ALL PASSED** (cached, cache-dropped, remounted) |
+| unaligned | **A + B PASS** |
+| correctness | **ALL PASSED** (A–G) |
+| fixtures | **ALL 16 MATCHED the host-computed hashes** |
+| fsck | pending |
+
+---
+
+### Huawei P20 Lite (ANE-LX1) · Android 9 (SDK 28) · build 0.3.13 (46) commit d216ed8 — drive D, VeraCrypt + ext4
+
+APK sha256 `02312fe0…`, clean tree, awake and unthrottled. **Partial — the
+remount-dependent sections were lost.**
+
+| Field | Value |
+|---|---|
+| Drive | Realtek card reader, 11927 MiB — VeraCrypt (AES/SHA-512, PIM 1) + ext4, `VCEXT4` |
+| Sections | free, block, dir, path, seq, random, opens, write, unaligned, correct, fixtures |
+| seq read | 6.61 / 6.82 / 7.10 MB/s |
+| write verify | **PARTIAL — 2 of 3**; the remount pass was not performed |
+| unaligned | **FAILED** — `block device is closed (volume was unmounted)` |
+| correctness | **NOT RUN** — "no live mount" |
+| fixtures | **ALL 5 MATCHED the host-computed hashes** |
+| fsck | pending |
+
+The drive was healthy throughout: `fixtures` hashed five entries against host
+values in the same run, after the two failures. What was lost was the *ability to
+judge* the write path, not the write path itself.
+
+Cause, and why this run still shows it: `remountAndProve` waited a flat 30 s for
+the unmount, gave up, and returned — and the unmount then landed anyway, moments
+later. The volume vanished after the function had concluded it had not, and
+nothing re-mounted it, because the mount request is only issued past that return.
+Fixed in `d7c8fcd`, which raises the budget to the 90 s already allowed for a
+mount and re-issues the mount request before bailing. This run predates that
+build.
+
+Two earlier attempts at this cell failed the same way, on `6da214b` and
+`d216ed8`. Both are recorded as this row rather than separately: same drive, same
+device, same failure, differing only in which fix had landed.
+
+---
+
 ### Pixel 10 Pro XL · Android 17 (SDK 37) · build 0.3.13 (46) commit d216ed8 — LUKS2 + ext4
 
 APK sha256 `02312fe0…`, clean tree, awake and unthrottled at both ends.
