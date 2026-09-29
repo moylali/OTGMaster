@@ -178,8 +178,15 @@ object Benchmark {
             Thread.sleep(1500)   // let the USB handle settle before re-probing
         }
 
-        if (OtgMasterState.mountedDrives.isEmpty() && mount != null) {
-            emit("no drives mounted — requesting mount (PIM ${mount.pim ?: "default"}, ${mount.cipher}/${mount.hash})")
+        // Request the mount whenever credentials were given, not only when nothing is
+        // mounted. On a drive with a plain partition beside an encrypted one, the
+        // re-probe after the unmount above auto-mounts the plain partition within
+        // ~50 ms; testing "nothing mounted" then skipped the unlock, and the run
+        // measured the plain partition alone. Already-mounted partitions are not in
+        // the candidate list, so requesting again cannot double-mount them.
+        if (mount != null) {
+            emit("requesting mount (PIM ${mount.pim ?: "default"}, ${mount.cipher}/${mount.hash}); " +
+                "${OtgMasterState.mountedDrives.size} drive(s) already mounted")
             val handler = OtgMasterState.mountRequest
             if (handler == null) {
                 emit("*** no mount handler installed — is MainActivity running? ***")
@@ -190,15 +197,24 @@ object Benchmark {
                 // list to become non-empty snapshotted it mid-sequence and ran the
                 // whole suite against 2 partitions of a 4-partition drive. Wait for
                 // the count to stop growing instead.
+                //
+                // When partitions were already mounted before the request, a steady
+                // count proves nothing until it has grown: a key derivation takes
+                // seconds, so 3 s of no change is expected before the first unlock
+                // lands. The 15 s fallback covers a request with nothing left to unlock.
+                val startCount = OtgMasterState.mountedDrives.size
                 val deadline = System.currentTimeMillis() + MOUNT_TIMEOUT_MS
                 var lastCount = -1
                 var stableSince = System.currentTimeMillis()
                 while (System.currentTimeMillis() < deadline) {
                     val n = OtgMasterState.mountedDrives.size
+                    val steady = System.currentTimeMillis() - stableSince
                     if (n != lastCount) {
                         lastCount = n
                         stableSince = System.currentTimeMillis()
-                    } else if (n > 0 && System.currentTimeMillis() - stableSince >= 3_000) {
+                    } else if (n > startCount && steady >= 3_000) {
+                        break
+                    } else if (n > 0 && steady >= 15_000) {
                         break
                     }
                     Thread.sleep(300)
