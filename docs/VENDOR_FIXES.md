@@ -90,6 +90,19 @@ then reports unit attention 0x28, once.
 The third row passes on both by design: it fails if the retry is ever widened
 past the one code a card insertion produces.
 
+**Confirmed on hardware.** Same Huawei P20 Lite and Realtek reader, build
+`f8b8042`, card unplugged and reinserted with no rescan:
+
+```
+06:38:22.921  W ScsiBlockDevice: Unit attention (ASC: 40, ASCQ: 0)
+06:38:22.921  I ScsiBlockDevice: medium changed (unit attention 0x28) during init, retrying
+06:38:23.027  I ScsiBlockDevice: Block size: 512
+06:38:23.057  I VeraCryptUnlocker: Candidate 'Partition 1': VERACRYPT
+```
+
+The same condition that failed the open twice earlier that morning, retried once
+and opened 106 ms later.
+
 ## V9 — the second FAT was never written
 
 **What upstream does wrong.** `FAT` computes `fatOffset[]` for every copy when
