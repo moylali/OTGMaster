@@ -270,19 +270,50 @@ MODIFIED=$(LC_ALL=C join -t$'\t' "$NEW/old.tsv" "$NEW/new.tsv" 2>/dev/null \
            | awk -F'\t' '$2 != $3' | wc -l)
 
 printf '  removed : %s\n  added   : %s\n  modified: %s\n' "$REMOVED" "$ADDED" "$MODIFIED"
+
+# The benchmark writes its report and appends to the index on every run, so those
+# two paths changing is the expected outcome, not a finding. Reporting them under
+# the same heading as real surprises trains the reader to skim the heading —
+# which is the failure mode this whole tool exists to avoid.
+expected_path() {
+    case "$1" in
+        ./BENCH/reports/*|./BENCH_UNALIGNED*|./BENCH/bench_*|./otgbench-*) return 0 ;;
+        *) return 1 ;;
+    esac
+}
+
 if (( MODIFIED > 0 )); then
-    echo
-    echo "  *** FILES WHOSE CONTENTS CHANGED — this is the serious one. A file the"
-    echo "      run did not write must not have different bytes afterwards:"
-    LC_ALL=C join -t$'\t' "$NEW/old.tsv" "$NEW/new.tsv" 2>/dev/null \
-        | awk -F'\t' '$2 != $3 { print "      " $1 }' | head -40
-    CHANGED=1
+    MOD_LIST=$(LC_ALL=C join -t$'\t' "$NEW/old.tsv" "$NEW/new.tsv" 2>/dev/null \
+        | awk -F'\t' '$2 != $3 { print $1 }')
+    UNEXPECTED=""
+    EXPECTED=""
+    while IFS= read -r f; do
+        [[ -z "$f" ]] && continue
+        if expected_path "$f"; then EXPECTED+="$f"$'\n'; else UNEXPECTED+="$f"$'\n'; fi
+    done <<< "$MOD_LIST"
+
+    if [[ -n "$EXPECTED" ]]; then
+        echo "  modified, and expected to be — the runner writes these:"
+        printf '%s' "$EXPECTED" | head -20 | sed 's/^/      /'
+    fi
+    if [[ -n "$UNEXPECTED" ]]; then
+        echo
+        echo "  *** MODIFIED AND NOT EXPLAINED BY THE RUN — this is the serious one."
+        echo "      A file the benchmark does not write must not have different bytes"
+        echo "      afterwards. This is the shape the FAT32 corruption had:"
+        printf '%s' "$UNEXPECTED" | head -40 | sed 's/^/      /'
+        CHANGED=1
+    fi
 fi
 if (( REMOVED > 0 )); then
     echo "  removed paths:"; LC_ALL=C comm -23 "$NEW/old.paths" "$NEW/new.paths" | head -20 | sed 's/^/      /'
 fi
 if (( ADDED > 0 )); then
-    echo "  added paths:"; LC_ALL=C comm -13 "$NEW/old.paths" "$NEW/new.paths" | head -20 | sed 's/^/      /'
+    echo "  added paths:"
+    LC_ALL=C comm -13 "$NEW/old.paths" "$NEW/new.paths" | while IFS= read -r f; do
+        if expected_path "$f"; then echo "      $f   (expected — runner output)"
+        else echo "      $f"; CHANGED=1; fi
+    done
 fi
 fi
 
