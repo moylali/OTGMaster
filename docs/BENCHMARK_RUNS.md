@@ -35,6 +35,131 @@ to a row here.
 
 ## 2026-09-29
 
+### OnePlus 7 (GM1901) · Android 16 (SDK 36) · build 0.4.0 (46) commit dae0ebf — drive D, p2 plain ext4 + p1 VeraCrypt + ext4
+
+**The hardware confirmation of `9404e46`**, and the first run on any device in
+which a plain partition passed the remount pass. Clean tree, installed
+immediately before the run, awake and unthrottled at both ends, on battery at
+81%. An earlier start on the same code was stopped during the read-only sections
+because its APK had been built before `dae0ebf` was committed and was labelled
+`9404e46-dirty`; nothing had been written.
+
+With `dae0ebf` the runner requests the unlock even though the re-probe has
+already auto-mounted p2, so both partitions were mounted — and every remount in
+the run unmounted and remounted **two drives on one USB connection**, the case
+that failed on `b850696`.
+
+| Field | p2 plain ext4, `PLAINEXT4` | p1 VeraCrypt + ext4, `VCEXT4` |
+|---|---|---|
+| block read | 1.97 / 43.88 / 62.13 / 59.33 MB/s | 4.60 / 19.84 / 23.45 / 23.84 MB/s |
+| seq read | 31.19 / 34.17 / 36.50 MB/s | 21.12 / 20.22 / 21.23 MB/s |
+| random read | 3.9 ms each, 253.8 IOPS | **94.7 ms each, 10.6 IOPS** — 5.5 ms on the same card and phone this morning; unexplained |
+| write | 16 MiB → 3.40 MB/s | 16 MiB → 3.17 MB/s |
+| write verify | **ALL PASSED** (cached, cache-dropped, remounted) | **ALL PASSED** |
+| unaligned | **A + B PASS** | **A + B PASS** |
+| correctness | **ALL PASSED** (A–G) | **ALL PASSED** (A–G) |
+| fixtures | **ALL 5 MATCHED** | **ALL 5 MATCHED** |
+| e2fsck / compare | pending | pending |
+
+Report `otgbench-GM1901-20260929-080242.txt`, written to both partitions.
+
+---
+
+### OnePlus 7 (GM1901) · Android 16 (SDK 36) · build 0.4.0 (46) commit 9404e46 — drive D p2, plain ext4
+
+The first run with the connection fix, before the runner change. After the
+runner's startup unmount the re-probe auto-mounted p2, the runner then saw a
+mounted drive and skipped the unlock, so this run measured **p2 only** — the
+defect `dae0ebf` fixes.
+
+| Field | Value |
+|---|---|
+| seq read | 34.88 / 33.28 / 35.69 MB/s |
+| write | 16 MiB → 3.38 MB/s |
+| write verify | **PARTIAL — 2 of 3**; the remount pass was not performed. p2 was the only drive mounted, p1's candidate held the connection, so nothing re-probed and p2 did not come back. |
+| unaligned | **A + B PASS** |
+| correctness | **ALL PASSED** (A–G) |
+| fixtures | **ALL 5 MATCHED** |
+
+The trace confirms the fix. At 07:54:00 a two-drive unmount went: p2 done with
+`stillUnmounting=true` and **no probe**; p1 done 3 ms later, old connection
+closed; then one probe, one new connection (`11bd0c8`), and p1 unlocked through
+it. On `b850696` a probe opened a second connection while p1 was still
+unmounting.
+
+---
+
+### OnePlus 7 (GM1901) · Android 16 (SDK 36) · build 0.4.0 (46) commit a03da36 — drive D, two `write,unaligned` repros
+
+Instrumented build (connection identities logged), run twice with
+`--es tests write,unaligned` to reproduce the `b850696` failure. **Neither
+reproduced it** — the window depends on p1's unmount finishing after the re-probe,
+and in both runs it finished within 4 ms of p2's. Both runs happened to measure
+p2, the first drive mounted.
+
+| Run | write verify | unaligned |
+|---|---|---|
+| 07:41 | **PARTIAL — 2 of 3** (p2 did not come back; p1 did) | **A + B PASS** |
+| 07:44 | **PARTIAL — 2 of 3** | **A + B PASS** |
+
+What they did show: every unmount logged `opened=null`, so the old connection
+was never closed, and at 07:44:46 a probe opened a new connection 19 ms after
+the first of two unmounts finished, while the second was still in progress.
+Both are fixed in `9404e46`.
+
+---
+
+### Samsung Galaxy M30 (SM-M305F) · Android 10 (SDK 29) · build 0.4.0 (46) commit a03da36 — VeraCrypt + FAT32
+
+Clean tree, installed immediately before the run, awake and unthrottled at both
+ends, on the charger directly (no hub) at 100%. `a03da36` is logging only; a
+single-partition drive does not reach the path `9404e46` changes.
+
+| Field | Value |
+|---|---|
+| Drive | PNY 59151 MiB — VeraCrypt (AES/SHA-512, PIM 1) + FAT32, `VCFAT` |
+| Report | `Documents/otgbench-SM-M305F-20260929-075345.txt` on the phone only — writing it to the drive failed |
+| block read | 1.97 / 5.41 / 13.24 / 10.86 MB/s |
+| seq read | 2.85 / 7.26 / 7.22 MB/s |
+| random read | 7.1 ms each, 141.8 IOPS |
+| write | 16 MiB → 1.04 MB/s |
+| write verify | **ALL PASSED** (cached, cache-dropped, remounted) |
+| unaligned | **A + B PASS** |
+| correctness | **ALL PASSED** (A–G) |
+| fixtures | **FAILED** — `IllegalArgumentException` from `ByteBuffer.limit()` in libaums `transferOneCommand` |
+| fsck / compare | pending |
+
+A read returned `-1`, the retry got `wrong csw tag!`, and the next retry threw.
+`transferOneCommand` takes `inBuffer.position()` as each attempt's start, but the
+failed attempt had already advanced it with a partial read, so the retry set a
+limit past the buffer's end. `IllegalArgumentException` is not an `IOException`,
+so it escaped the retry loop at once: a transport hiccup the loop exists to
+absorb became a hard failure, and the device stayed out of step for the report
+write too. A libaums defect, not the drive.
+
+---
+
+### VeraCrypt + exFAT (PNY, `VCEXFAT`) — host check and repair after the dropped Samsung run
+
+The Samsung run of 06:54 lost this drive's transport during `write verify` and
+was force-stopped (not logged; no result). On the host:
+
+| Check | Result |
+|---|---|
+| `fsck.exfat` | **ERROR** — `/BENCH_WRITE: cluster 0xd70633 is marked as free` |
+| compare | only two earlier reports and `INDEX.txt` changed; FAT ~1 entry; boot region identical. `BENCH_WRITE` unreadable on the host (`Input/output error`). |
+| repair | `fsck.exfat -y` truncated `BENCH_WRITE` → `clean. directories 20, files 20098` |
+| re-verify | **CLEAN** |
+
+`BENCH_WRITE` is the directory `write verify` was creating when the transport
+died (`Failed to create exFAT directory: -5`). Its directory entry reached the
+disk and the bitmap update did not — the torn write exFAT's lack of a journal
+allows, in the worse of the two orders: bitmap-first would have leaked a cluster
+harmlessly, entry-first leaves a cluster a later allocation can hand out twice.
+Whether that order is libexfat's or the block cache's flush order is not yet
+known. Reachable only when a drive drops mid-write. The baseline predates the
+repair and is being retaken.
+
 ### Huawei P20 Lite (ANE-LX1) · Android 9 (SDK 28) · build 0.4.0 (46) commit b850696 — LUKS1 + ext4
 
 Clean tree, installed immediately before the run, awake and unthrottled at both
