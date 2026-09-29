@@ -322,15 +322,17 @@ class MainActivity : AppCompatActivity() {
         registerUsbReceiver()
 
         // Let components without an activity reference write to the log pane.
-        OtgMasterState.logSink = { line -> runOnUiThread { appendLog(line) } }
+        installedLogSink = { line -> runOnUiThread { appendLog(line) } }
+        OtgMasterState.logSink = installedLogSink
 
-        OtgMasterState.unmountAllRequest = {
+        installedUnmountAll = {
             runOnUiThread {
                 OtgMasterState.mountedDrives.toList().forEach { unmountDrive(it) }
             }
         }
+        OtgMasterState.unmountAllRequest = installedUnmountAll
 
-        OtgMasterState.mountRequest = OtgMasterState.MountRequest { pw, pim, cipherName, hashName ->
+        installedMountRequest = OtgMasterState.MountRequest { pw, pim, cipherName, hashName ->
             // Probe first if nothing has been scanned yet. Without this the request
             // depended on the UI having already scanned, which does not happen while
             // the screen is off or locked — and needing the screen unlocked defeats
@@ -346,6 +348,7 @@ class MainActivity : AppCompatActivity() {
                 mountProbedCandidates(pw, pim, cipherName, hashName)
             }
         }
+        OtgMasterState.mountRequest = installedMountRequest
         
         sharedPreferences = getSharedPreferences("otgmaster_prefs", Context.MODE_PRIVATE)
         val savedTheme = sharedPreferences.getString("theme_mode", ThemeMode.SYSTEM.name)
@@ -468,10 +471,26 @@ class MainActivity : AppCompatActivity() {
         restoreDeferredCandidates()
     }
 
+    // The handlers this instance installed, so onDestroy can tell them apart from a
+    // successor's. See onDestroy.
+    private var installedMountRequest: OtgMasterState.MountRequest? = null
+    private var installedUnmountAll: (() -> Unit)? = null
+    private var installedLogSink: ((String) -> Unit)? = null
+
     override fun onDestroy() {
-        OtgMasterState.logSink = null
-        OtgMasterState.mountRequest = null
-        OtgMasterState.unmountAllRequest = null
+        // Clear only what *this* instance installed. Nulling unconditionally let a
+        // finishing instance wipe the handlers its replacement had already
+        // installed, because onCreate of the new one can run before onDestroy of
+        // the old. The app then sat visible and focused with no mount path at all:
+        // the benchmark reported "no mount handler installed — is MainActivity
+        // running?" twice in a row with MainActivity on screen. A user reaches the
+        // same state by backing out and relaunching straight away.
+        if (OtgMasterState.logSink === installedLogSink) OtgMasterState.logSink = null
+        if (OtgMasterState.mountRequest === installedMountRequest) OtgMasterState.mountRequest = null
+        if (OtgMasterState.unmountAllRequest === installedUnmountAll) OtgMasterState.unmountAllRequest = null
+        installedLogSink = null
+        installedMountRequest = null
+        installedUnmountAll = null
         closeOpenedDevices()
         unregisterReceiver(usbReceiver)
         super.onDestroy()

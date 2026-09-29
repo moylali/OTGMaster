@@ -35,6 +35,36 @@ to a row here.
 
 ## 2026-09-28
 
+### Pixel 10 Pro XL · Android 17 (SDK 37) · build 0.3.13 (46) commit d455547
+
+APK sha256 `d1a9adc7…`. Label `d455547-dirty`; the dirt is six untracked scratch
+scripts, so the tracked tree matches `d455547` exactly. (`gitDirty()` runs
+`git status --porcelain`, which counts untracked files — worth knowing before
+reading any `-dirty` label as uncommitted *code*.)
+
+| Field | Value |
+|---|---|
+| Drive | PNY USB 3.2.1 FD, 59151 MiB — VeraCrypt (AES/SHA-512, PIM 1) + FAT32, `VCFAT` |
+| Report | `otgbench-Pixel_10_Pro_XL-20260928-180144.txt` |
+| Sections | free, block, dir, path, seq, random, opens, write, unaligned, correct, fixtures |
+| block read | — / 18.39 / 30.58 / 35.09 MB/s (4 / 64 / 512 / 4096 KiB span) |
+| seq read | 9.78 / 22.11 / 22.86 MB/s (32 / 128 / 512 KiB buf) |
+| random read | 6.2 ms each, 160.0 IOPS |
+| dir listing | dense_short cold 786.9 / warm 310.4 ms; dense_lfn cold 821.8 / warm 110.3 |
+| opens | short 299.5 ms each, lfn 115.9 ms each |
+| write | 16 MiB → 0.59 MB/s |
+| write verify | **ALL PASSED** (cached, cache-dropped, remounted) |
+| unaligned | **A + B PASS** |
+| correctness | **ALL PASSED** (A–G) |
+| fixtures | not checked — manifest has no hashes (old prepare script) |
+| fsck | not yet run — drive still on the phone |
+
+Two earlier attempts at this run produced no result and are not logged: both died
+at `*** no mount handler installed — is MainActivity running? ***` with
+MainActivity visible and focused. That is the `onDestroy` ownership bug — a
+finishing instance nulling its successor's handlers — fixed in the same commit as
+this row.
+
 ### Pixel 10 Pro XL · Android 17 (SDK 37) · build 0.3.13 (46)
 
 APK sha256 `f9d3269c…`. Report label `6d33f88-dirty` — **built from a dirty tree**:
@@ -56,7 +86,7 @@ This is the run that prompted the commit-before-build rule.
 | unaligned | **A + B PASS** |
 | correctness | **ALL PASSED** (A–G) |
 | fixtures | not checked — this drive's manifest predates the hash check |
-| e2fsck | n/a (exFAT) |
+| fsck | **CLEAN** — `fsck.exfat` (exfatprogs 1.3.2): 19 directories, 20091 files |
 
 Regression check for `6d33f88` / `654ceda`. The volume still classifies as
 VERACRYPT, which is the case the classification change had to leave alone: a

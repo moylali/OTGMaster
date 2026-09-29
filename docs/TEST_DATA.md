@@ -579,6 +579,45 @@ sudo dmsetup ls        # should list no otg* entries
 lsblk /dev/sdX         # no crypt children
 ```
 
+## 12a. Giving a drive hashable fixtures
+
+The `fixtures` section is the only check that can see silent data corruption in
+the fixture tree, and it does nothing without hashes in `BENCH/MANIFEST.txt`.
+Drives built by `prepare_drive_*.sh` carry them. Drives built by the older
+`prepare_test_usb.sh` — the VeraCrypt FAT32 and exFAT benchmark drives — do not,
+so their runs report `nothing to check — manifest has no hashes`.
+
+Rebuilding a 60 GB drive to get hashes is not a reasonable price. Regenerate the
+manifest in place instead:
+
+```sh
+sudo bash scripts/regen_manifest.sh /dev/sdX1
+```
+
+It takes the **partition**, detects the container itself (LUKS, VeraCrypt, or a
+plain partition), mounts, rewrites `BENCH/MANIFEST.txt`, and unmounts. Nothing is
+reformatted. Password defaults to `password123` and VeraCrypt PIM to 1; pass them
+as the second and third arguments otherwise.
+
+**Regenerate from a drive you believe is good.** The manifest records the drive as
+it is now, so running it over a damaged drive blesses the damage as the new
+baseline and the check goes quiet again. A fresh preparation, or a volume that has
+just passed its filesystem checker, is the right moment. The benchmark's write
+sections use their own scratch files and never touch the fixture tree, so
+regenerating after a run is not unsound in itself — but a manifest generated right
+after an unexplained failure proves nothing.
+
+Two format details cost a debugging session each, and the script exists partly to
+stop them being retyped:
+
+- a directory record's size field **must** end in `files`. The older format wrote
+  `10 levels` there, next to a *file's* hash rather than a listing hash; comparing
+  those produces a mismatch indistinguishable from corruption, which is why the
+  benchmark skips such lines instead of failing them.
+- the directory hash is over the sorted `name<TAB>size` listing with the trailing
+  newline stripped (`head -c -1`), because the benchmark joins entries with `\n`
+  as a separator, not a terminator.
+
 ## 13. Resume checklist
 
 For an agent picking this up cold.
