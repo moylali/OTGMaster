@@ -11,6 +11,21 @@
 #   --password PASS    container password (default: password123)
 #   --pim N            VeraCrypt PIM (default: 1)
 #   --store DIR        where baselines live (default: /var/lib/otgmaster-baselines)
+#   --metadata-only    compare only the allocation tables, not file contents
+#
+# The two halves cost very different amounts and catch different things:
+#
+#   metadata   seconds. Copies and diffs the boot region and FAT. This is what
+#              would have caught the FAT32 damage on the first run — 131,600
+#              changed entries against a run that wrote about 20 MB is not a
+#              judgement call.
+#   contents   minutes, because it reads every byte — roughly 10 on a 54 GB
+#              drive over USB 3. Catches the case metadata cannot: correct
+#              structure holding wrong bytes.
+#
+# So --metadata-only is the routine check after each run, and the full compare is
+# for preparing a drive or for when something already looks wrong. snapshot
+# always captures both, so the choice is only ever made at compare time.
 #
 # ---------------------------------------------------------------------------
 # WHY
@@ -49,7 +64,7 @@ set -uo pipefail
 
 usage() {
     echo "Usage: sudo bash $0 snapshot|compare /dev/sdX1 [options]" >&2
-    echo "  --name NAME  --password PASS  --pim N  --store DIR" >&2
+    echo "  --name NAME  --password PASS  --pim N  --store DIR  --metadata-only" >&2
     exit 1
 }
 
@@ -64,6 +79,7 @@ NAME=""
 PASS=password123
 PIM=1
 STORE=/var/lib/otgmaster-baselines
+META_ONLY=0
 
 while [[ $# -gt 0 ]]; do
     case "$1" in
@@ -71,6 +87,7 @@ while [[ $# -gt 0 ]]; do
         --password) PASS="$2"; shift 2 ;;
         --pim)      PIM="$2";  shift 2 ;;
         --store)    STORE="$2"; shift 2 ;;
+        --metadata-only) META_ONLY=1; shift ;;
         *) echo "unknown option: $1" >&2; exit 1 ;;
     esac
 done
@@ -214,11 +231,16 @@ fi
 NEW=$(mktemp -d)
 echo "Capturing current state..."
 dump_metadata "$NEW/meta"
-dump_contents "$NEW"
+(( META_ONLY == 0 )) && dump_contents "$NEW"
 echo
 
 CHANGED=0
 
+if (( META_ONLY == 1 )); then
+    echo "=== contents ==="
+    echo "  SKIPPED (--metadata-only). File contents were not read, so a cluster"
+    echo "  holding the wrong bytes inside a valid chain would not be seen here."
+else
 echo "=== contents ==="
 # Paths present in one side only, and paths whose hash moved.
 awk '{ h=$1; $1=""; sub(/^  /,""); print $0"\t"h }' "$DIR/files.sha256" | LC_ALL=C sort > "$NEW/old.tsv"
@@ -244,6 +266,7 @@ if (( REMOVED > 0 )); then
 fi
 if (( ADDED > 0 )); then
     echo "  added paths:"; LC_ALL=C comm -13 "$NEW/old.paths" "$NEW/new.paths" | head -20 | sed 's/^/      /'
+fi
 fi
 
 echo
@@ -280,7 +303,12 @@ echo "A run that wrote tens of megabytes changing hundreds of thousands of FAT"
 echo "entries is the signal this tool exists to surface."
 echo
 if (( CHANGED == 0 )); then
-    echo ">>> NO CHANGE — every file and every metadata region is byte-identical."
+    if (( META_ONLY == 1 )); then
+        echo ">>> NO METADATA CHANGE — allocation tables byte-identical. File"
+        echo "    contents were not checked; run without --metadata-only for that."
+    else
+        echo ">>> NO CHANGE — every file and every metadata region is byte-identical."
+    fi
 else
     echo ">>> CHANGES FOUND — see above. Judge each against what the run should"
     echo "    have written; do not assume churn is benign because fsck is happy."
