@@ -35,6 +35,23 @@ to a row here.
 
 ## 2026-09-29
 
+### Samsung Galaxy M30 (SM-M305F) · Android 10 (SDK 29) — VeraCrypt + exFAT, read-only mode checks
+
+Three `--es tests write` runs to check read-only mode on exFAT, the one
+filesystem its host tests cannot cover (libexfat is native Android code). Clean
+tree each time, installed immediately before. Setting toggled through the real
+Settings drawer; the unlock form's switch followed it.
+
+| Time | Commit | Read-only | Result |
+|---|---|---|---|
+| 09:29 | `0aee16b` | on | mounted `exfat mounted successfully (read-only)`, card tagged **READ-ONLY**. `write verify` **FAILED** as intended — but the refusal came from `ReadOnlyBlockDeviceDriver` (`volume is mounted read-only`): libexfat's mkdir still issued a device write despite `ro`. Fixed in `640d05c`. |
+| 09:31 | `640d05c` | on | `write verify` **FAILED** as intended, now with `exFAT volume is mounted read-only` from the exFAT layer; no write reached the device layer. Report not written to the drive, as intended. |
+| 09:31 | `640d05c` | off | mounted read-write; 16 MiB → 0.36 MB/s; `write verify` **ALL PASSED** (remounted); report written to the drive. |
+
+`volume_baseline.sh compare` of this drive afterwards should show only the
+09:31 read-write run's report and `INDEX.txt` — anything from the read-only runs
+would be a finding.
+
 ### Samsung Galaxy M30 (SM-M305F) · Android 10 (SDK 29) · build 0.4.0 (46) commit 7beefe8 — VeraCrypt + exFAT
 
 Clean tree (later commits are docs only), installed immediately before the run,
