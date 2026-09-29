@@ -75,6 +75,35 @@ internal constructor(private val blockDevice: BlockDeviceDriver, bootSector: Fat
     private fun isValidCluster(cluster: Long): Boolean =
         cluster >= 2 && cluster <= maxValidCluster
 
+    /**
+     * LOCAL PATCH (docs/VENDOR_FIXES.md V9): write a FAT[0] buffer, then the same
+     * bytes to every other FAT copy.
+     *
+     * Upstream wrote fatOffset[0] only — its own comment read "TODO we should write
+     * in in all FATs when they are mirrored!" — so FAT[1] stayed exactly as mkfs
+     * left it and fsck.fat reported "FATs differ" on every volume this app wrote.
+     *
+     * The mirror copy is clamped to the FAT's own length. Buffers are two blocks,
+     * and a FAT whose sector count is odd (118,073 on the benchmark drive) ends
+     * half-way through its last buffer, which therefore overhangs into the start
+     * of FAT[1]. Replaying that whole buffer at FAT[1]'s offset would write past
+     * FAT[1]'s end into the data area — the root directory, which is cluster 2.
+     *
+     * Only safe to do after V8: mirroring while the free path could still zero
+     * entries it did not own would have copied that damage into the one FAT that
+     * still held the truth.
+     */
+    private fun writeFat(offset: Long, buffer: ByteBuffer) {
+        blockDevice.write(offset, buffer)
+        if (fatOffset.size < 2) return
+        val rel = offset - fatOffset[0]
+        if (rel < 0 || rel >= fatSizeBytes) return
+        val len = minOf(buffer.capacity().toLong(), fatSizeBytes - rel).toInt()
+        for (i in 1 until fatOffset.size) {
+            blockDevice.write(fatOffset[i] + rel, ByteBuffer.wrap(buffer.array(), 0, len))
+        }
+    }
+
     init {
         if (!bootSector.isFatMirrored) {
             val fatNumber = bootSector.validFat.toInt()
@@ -249,7 +278,8 @@ internal constructor(private val blockDevice: BlockDeviceDriver, bootSector: Fat
             }
         }
 
-        // TODO we should write in in all FATs when they are mirrored!
+        // LOCAL PATCH (docs/VENDOR_FIXES.md V9): every write below goes through
+        // writeFat, which mirrors it to all FAT copies.
         if (cluster.toInt() != -1) {
             // now it is time to write the partial cluster chain
             // start with the last cluster in the existing chain
@@ -274,7 +304,7 @@ internal constructor(private val blockDevice: BlockDeviceDriver, bootSector: Fat
             // if we have a new offset we are forced to read again
             if (lastOffset != offset) {
                 buffer.clear()
-                blockDevice.write(lastOffset, buffer)
+                writeFat(lastOffset, buffer)
                 buffer.clear()
                 blockDevice.read(offset, buffer)
                 lastOffset = offset
@@ -291,14 +321,14 @@ internal constructor(private val blockDevice: BlockDeviceDriver, bootSector: Fat
         // if we have a new offset we are forced to read again
         if (lastOffset != offset) {
             buffer.clear()
-            blockDevice.write(lastOffset, buffer)
+            writeFat(lastOffset, buffer)
             buffer.clear()
             blockDevice.read(offset, buffer)
             //lastOffset = offset
         }
         buffer.putInt(offsetInBlock.toInt(), FAT32_EOF_CLUSTER)
         buffer.clear()
-        blockDevice.write(offset, buffer)
+        writeFat(offset, buffer)
 
         // refresh the info structure
         fsInfoStructure.lastAllocatedClusterHint = currentCluster
@@ -374,7 +404,7 @@ internal constructor(private val blockDevice: BlockDeviceDriver, bootSector: Fat
             if (lastOffset != offset) {
                 if (lastOffset.toInt() != -1) {
                     buffer.clear()
-                    blockDevice.write(lastOffset, buffer)
+                    writeFat(lastOffset, buffer)
                 }
 
                 buffer.clear()
@@ -385,7 +415,8 @@ internal constructor(private val blockDevice: BlockDeviceDriver, bootSector: Fat
             buffer.putInt(offsetInBlock.toInt(), 0)
         }
 
-        // TODO we should write in in all FATs when they are mirrored!
+        // LOCAL PATCH (docs/VENDOR_FIXES.md V9): every write below goes through
+        // writeFat, which mirrors it to all FAT copies.
         if (offsetInChain > 0) {
             // write the end mark to last cluster in the new chain
             currentCluster = chain[offsetInChain - 1]
@@ -395,19 +426,19 @@ internal constructor(private val blockDevice: BlockDeviceDriver, bootSector: Fat
             // if we have a new offset we are forced to read again
             if (lastOffset != offset) {
                 buffer.clear()
-                blockDevice.write(lastOffset, buffer)
+                writeFat(lastOffset, buffer)
                 buffer.clear()
                 blockDevice.read(offset, buffer)
                 //lastOffset = offset
             }
             buffer.putInt(offsetInBlock.toInt(), FAT32_EOF_CLUSTER)
             buffer.clear()
-            blockDevice.write(offset, buffer)
+            writeFat(offset, buffer)
         } else {
             // if we freed all clusters we have to write the last change of the
             // for loop above
             buffer.clear()
-            blockDevice.write(lastOffset, buffer)
+            writeFat(lastOffset, buffer)
         }
 
         Log.i(TAG, "freed $numberOfClusters clusters")

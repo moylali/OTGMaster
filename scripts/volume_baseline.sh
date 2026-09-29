@@ -238,6 +238,11 @@ if [[ "$MODE" == "snapshot" ]]; then
     } > "$DIR/meta.txt"
     echo "Capturing metadata regions..."; dump_metadata "$DIR/meta"
     echo "Hashing every file..."; dump_contents "$DIR"
+    # This runs under sudo, so without this the baseline is root-owned and the
+    # user who asked for it cannot delete or retake it without sudo again.
+    if [[ -n "${SUDO_USER:-}" ]]; then
+        chown -R "$SUDO_USER": "$STORE" 2>/dev/null || true
+    fi
     echo
     echo ">>> baseline stored at $DIR"
     exit 0

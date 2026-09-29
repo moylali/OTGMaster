@@ -1,6 +1,8 @@
-• New: LUKS1 and LUKS2 encrypted volumes now supported alongside VeraCrypt
-• New: ext2/3/4 supported — ext4 read/write, ext2/3 read-only, FAT32/exFAT unchanged
-• New: On ext4: create, write, modify, delete and rename files and directories
-• New: Volume picker lists only partitions you can unlock, tagged by encryption type
-• Fixed: Unencrypted partitions were mislabelled "VERACRYPT" and failed to unlock
-• Fixed: Encrypted partition unreachable on a drive with unencrypted ones too
+• New: LUKS1 and LUKS2 volumes alongside VeraCrypt
+• New: ext4 read/write; ext2/3 read-only
+• New: On ext4: create, write, modify, delete, rename
+• New: Volume picker lists only unlockable partitions
+• Fixed: FAT32 drives flagged as damaged by disk checkers
+• Fixed: Deleting on a damaged FAT32 drive could wipe other files
+• Fixed: Unencrypted partitions mislabelled as VeraCrypt
+• Fixed: Encrypted partition unreachable beside unencrypted ones

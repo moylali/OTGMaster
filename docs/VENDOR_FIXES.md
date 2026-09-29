@@ -50,6 +50,56 @@ Vendored fork of [magnusja/libaums](https://github.com/magnusja/libaums).
 | `ClusterChain` | V6 — coalesce consecutive clusters on read | see below |
 | `FatDirectory` | V7 — refuse an implausible directory size instead of OOM | see below |
 | `FAT` | V8 — stop a corrupt chain instead of following it out of the FAT | see below |
+| `FAT` | V9 — write every FAT copy, clamped to the FAT's own length | see below |
+
+## V9 — the second FAT was never written
+
+**What upstream does wrong.** `FAT` computes `fatOffset[]` for every copy when
+the volume is mirrored, and logs that it knows — `"fat is mirrored, fat count:
+2"` — then writes only `fatOffset[0]`. Its own comment above the first write:
+`// TODO we should write in in all FATs when they are mirrored!`
+
+So FAT[1] stayed exactly as `mkfs` left it, and `fsck.fat` reported `FATs differ`
+on every FAT32 volume this app had written to. On the re-prepared benchmark
+drive, after one run and with the V8 fix in place, that was the *only* thing
+`fsck.fat` found.
+
+**The patch.** Every write in `FAT.kt` — seven sites across `alloc` and `free` —
+goes through `writeFat`, which writes the FAT[0] buffer and then the same bytes
+at each other copy's offset.
+
+The mirror is **clamped to the FAT's own length**. Writes go in two-block
+buffers, and a FAT with an odd sector count ends half-way through its last
+buffer, which therefore overhangs into FAT[1]. Replaying the whole buffer at
+FAT[1]'s offset writes its second half past FAT[1]'s end — onto cluster 2, the
+root directory. The benchmark drive's FAT is 118,073 sectors, so this was a
+live path, not a theoretical one.
+
+**Ordering.** V9 was held back deliberately until V8 was confirmed on hardware.
+While the free path could still zero entries it did not own, FAT[1] was the only
+record of the truth — it is what allowed the FAT32 damage to be diagnosed at all.
+Mirroring then would have written the damage into both copies.
+
+**Test.** `Fat32MirrorTest`, verified against three builds:
+
+| Build | Plain write | Write in the FAT's last, overhanging buffer |
+|---|---|---|
+| upstream, no mirror | FAIL — FATs differ | FAIL — FATs differ |
+| mirror, unclamped | pass | **FAIL — root directory overwritten** |
+| V9 | pass | pass |
+
+The overhang test places its file with the FSInfo next-free hint, on an image
+built with `mkfs.vfat -a` so the FAT keeps an odd sector count, and writes into a
+subdirectory. An earlier version wrote into the root and passed on the
+*unclamped* build: closing the file rewrites the root directory from memory,
+straight over the damage. On a real drive the writes land in subdirectories and
+nothing repairs it, so the test was rewritten until the unclamped build failed.
+
+**Existing volumes** keep whatever divergence they already have — V9 mirrors new
+writes, it does not copy history. Resync one with `fsck.fat -a` on the decrypted
+device, but only after confirming FAT[0] is the correct copy (a baseline compare
+showing only expected changes is enough). Doing it over a damaged FAT[0] copies
+the damage into the only good copy.
 
 ## V8 — a corrupt chain destroyed the rest of the volume
 
