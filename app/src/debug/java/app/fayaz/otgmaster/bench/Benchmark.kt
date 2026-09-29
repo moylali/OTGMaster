@@ -1564,10 +1564,23 @@ object Benchmark {
         //
         // Same budget as the mount side: if a mount may take 90s on the slowest
         // device, so may an unmount, and the unmount has metadata to flush.
+        // Latch the empty observation instead of requiring it to be true when the
+        // poll happens to look. The app re-mounts an attached drive on its own:
+        // measured on a Huawei P20 Lite, the mount list emptied 7ms after the
+        // request and the device was re-opened 24ms later. A 300ms poll never saw
+        // the gap, so this loop ran the full timeout and reported "did not unmount"
+        // about a drive that had unmounted and come back — costing the remount
+        // verdict, and before d7c8fcd every section after it.
+        //
+        // Polling faster narrows the race but does not remove it; latching does.
+        // The identity check at the end of this function is what actually proves a
+        // remount happened, and it is unaffected either way.
+        var sawEmpty = false
         var deadline = System.currentTimeMillis() + MOUNT_TIMEOUT_MS
-        while (OtgMasterState.mountedDrives.isNotEmpty() &&
-                System.currentTimeMillis() < deadline) Thread.sleep(300)
-        if (OtgMasterState.mountedDrives.isNotEmpty()) {
+        while (!sawEmpty && System.currentTimeMillis() < deadline) {
+            if (OtgMasterState.mountedDrives.isEmpty()) sawEmpty = true else Thread.sleep(50)
+        }
+        if (!sawEmpty) {
             // Put it back before giving up. Returning here used to strand the volume:
             // this function had unmounted it, so the sections after this one had
             // nothing to run against, and the whole drive's remaining results were

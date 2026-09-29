@@ -326,8 +326,23 @@ class MainActivity : AppCompatActivity() {
         OtgMasterState.logSink = installedLogSink
 
         installedUnmountAll = {
+            // Timed because an unmount on a Huawei P20 Lite took over 90s to be
+            // observed by the benchmark, with no app log at all in that window and
+            // everything firing at once the moment the wait expired. removeDrive is
+            // synchronous, so the mount list should empty the instant this body
+            // runs — which means the body was not running. These timestamps say
+            // whether the delay is before the post is serviced (main thread busy)
+            // or inside unmountDrive itself.
+            val posted = System.currentTimeMillis()
+            android.util.Log.i("OTGMaster", "unmountAll: posted to main thread")
             runOnUiThread {
+                val entered = System.currentTimeMillis()
+                android.util.Log.i("OTGMaster",
+                    "unmountAll: main thread entered after ${entered - posted}ms")
                 OtgMasterState.mountedDrives.toList().forEach { unmountDrive(it) }
+                android.util.Log.i("OTGMaster",
+                    "unmountAll: done in ${System.currentTimeMillis() - entered}ms, " +
+                    "${OtgMasterState.mountedDrives.size} drive(s) still listed")
             }
         }
         OtgMasterState.unmountAllRequest = installedUnmountAll
@@ -1004,12 +1019,25 @@ class MainActivity : AppCompatActivity() {
         drive.sourceDeviceName?.let { key ->
             pendingUnmounts.merge(key, 1) { a, b -> a + b }
         }
+        val t0 = System.currentTimeMillis()
         OtgMasterState.removeDrive(drive.id)
+        val tRemoved = System.currentTimeMillis()
         contentResolver.notifyChange(
             android.provider.DocumentsContract.buildRootsUri("app.fayaz.otgmaster.documents"), null
         )
+        val tNotified = System.currentTimeMillis()
         updateMountedDrives()
+        val tUpdated = System.currentTimeMillis()
         removeDriveShortcut(drive.id)
+        // All of this is main-thread work. updateMountedDrives reads free space,
+        // which is filesystem I/O, and on a slow card through a crypto layer that
+        // is the obvious candidate for a stall — but it runs after removeDrive, so
+        // in principle it cannot delay a waiter watching the mount list. Measured
+        // rather than assumed, because assuming has been wrong twice today.
+        android.util.Log.i("OTGMaster",
+            "unmountDrive ${drive.id}: remove=${tRemoved - t0}ms" +
+            " notify=${tNotified - tRemoved}ms update=${tUpdated - tNotified}ms" +
+            " shortcut=${System.currentTimeMillis() - tUpdated}ms")
         lifecycleScope.launch(Dispatchers.IO) {
             // Wait for any in-flight ProxyFileDescriptor onRelease() callbacks to finish
             // before unmounting — prevents a use-after-free if the OS is still flushing a
