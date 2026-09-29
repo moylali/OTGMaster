@@ -45,7 +45,30 @@ class Ext4FileSystem private constructor(
     /** CRC32c running state used as the base seed for all checksum computations. */
     internal val csumSeed: Int,
     internal val hasMetadataCsum: Boolean,
+    /**
+     * Why this volume must not be written, or null if it may be.
+     *
+     * Set when the journal holds changes not yet applied (INCOMPAT_RECOVER,
+     * `needs_recovery`). This driver bypasses the journal, so writing here puts
+     * new metadata underneath older journalled metadata, and the next Linux mount
+     * replays the journal over it. Linux refuses to write such a volume without
+     * replaying it first; this driver cannot replay a journal, so it refuses to
+     * write at all.
+     *
+     * Observed on a OnePlus 7 (Android 16): Android mounts ext4 USB volumes itself,
+     * and when OTG Master claimed the USB interface a second later, that mount was
+     * cut off with the flag still set. The app then wrote to the volume, and a
+     * laptop's read-only mount replayed the stale journal on top of those writes.
+     */
+    val readOnlyReason: String?,
 ) : FileSystem {
+
+    /** True when every write is refused; see [readOnlyReason]. */
+    val isReadOnly: Boolean get() = readOnlyReason != null
+
+    private fun checkWritable() {
+        readOnlyReason?.let { throw IOException("ext4 volume is read-only: $it") }
+    }
 
     override val volumeLabel: String get() = label
     override val capacity: Long get() = totalBlocks * blockSize
@@ -69,6 +92,7 @@ class Ext4FileSystem private constructor(
     }
 
     internal fun writeBlock(blockNum: Long, data: ByteArray) {
+        checkWritable()
         require(data.size == blockSize) { "writeBlock: data must be exactly $blockSize bytes" }
         val sectorsPerBlock = blockSize / device.blockSize
         device.writeBlocks(blockNum * sectorsPerBlock, data)
@@ -79,6 +103,7 @@ class Ext4FileSystem private constructor(
     // -----------------------------------------------------------------------
 
     internal fun writeInode(inodeNum: Long, data: ByteArray) {
+        checkWritable()
         if (hasMetadataCsum) {
             // Compute and embed checksum before writing.
             val bbIn = ByteBuffer.wrap(data).order(ByteOrder.LITTLE_ENDIAN)
@@ -134,6 +159,7 @@ class Ext4FileSystem private constructor(
     }
 
     internal fun writeSuperblockBytes(sb: ByteArray) {
+        checkWritable()
         // s_checksum (0x3FC = 1020) is crc32c(~0, sb[0..1019]) — a running
         // state, not inverted, and it does not use s_checksum_seed.  Every
         // superblock write has to refresh it or the primary superblock is
@@ -274,6 +300,8 @@ class Ext4FileSystem private constructor(
 
     companion object {
         private const val EXT4_SUPER_MAGIC = 0xEF53
+        /** s_feature_incompat bit for a journal that needs replaying (`needs_recovery`). */
+        private const val INCOMPAT_RECOVER = 0x4
 
         fun create(device: RawBlockDevice): Ext4FileSystem {
             // Superblock sits at byte offset 1024 from the filesystem start.
@@ -362,6 +390,10 @@ class Ext4FileSystem private constructor(
                 totalInodes     = totalInodes,
                 csumSeed        = csumSeed,
                 hasMetadataCsum = hasMetadataCsum,
+                readOnlyReason  = if ((featIncompat and INCOMPAT_RECOVER) != 0)
+                    "its journal needs recovery — it was not unmounted cleanly. " +
+                        "Check it on a computer (e2fsck) before writing to it."
+                else null,
             )
         }
 

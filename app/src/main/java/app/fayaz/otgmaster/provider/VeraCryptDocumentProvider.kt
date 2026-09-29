@@ -165,12 +165,12 @@ class VeraCryptDocumentProvider : DocumentsProvider() {
             val row = result.newRow()
             row.add(DocumentsContract.Root.COLUMN_ROOT_ID, rootIdForDrive(drive.id))
             row.add(DocumentsContract.Root.COLUMN_SUMMARY, "Unlocked Volume")
-            row.add(
-                DocumentsContract.Root.COLUMN_FLAGS,
-                DocumentsContract.Root.FLAG_SUPPORTS_IS_CHILD or 
-                DocumentsContract.Root.FLAG_LOCAL_ONLY or 
-                DocumentsContract.Root.FLAG_SUPPORTS_CREATE
-            )
+            // A read-only volume does not advertise create, so the Files app does
+            // not offer to save into it.
+            var rootFlags = DocumentsContract.Root.FLAG_SUPPORTS_IS_CHILD or
+                DocumentsContract.Root.FLAG_LOCAL_ONLY
+            if (!drive.isReadOnly) rootFlags = rootFlags or DocumentsContract.Root.FLAG_SUPPORTS_CREATE
+            row.add(DocumentsContract.Root.COLUMN_FLAGS, rootFlags)
             row.add(DocumentsContract.Root.COLUMN_TITLE, drive.name)
             row.add(DocumentsContract.Root.COLUMN_DOCUMENT_ID, rootDocIdForDrive(drive.id))
             row.add(DocumentsContract.Root.COLUMN_MIME_TYPES, "*/*")
@@ -314,15 +314,19 @@ class VeraCryptDocumentProvider : DocumentsProvider() {
         // than chase each one individually, treat any failure here as "unknown" (0).
         row.add(DocumentsContract.Document.COLUMN_SIZE, runCatching { if (file.isDirectory) 0L else file.length }.getOrDefault(0L))
 
-        var flags = DocumentsContract.Document.FLAG_SUPPORTS_DELETE or DocumentsContract.Document.FLAG_SUPPORTS_RENAME
+        // On a read-only volume the filesystem refuses every write anyway; not
+        // advertising the capabilities keeps the Files app from offering them.
+        val readOnly = parseDocId(docId)?.let { OtgMasterState.getDrive(it.driveId)?.isReadOnly } == true
+        var flags = if (readOnly) 0 else
+            DocumentsContract.Document.FLAG_SUPPORTS_DELETE or DocumentsContract.Document.FLAG_SUPPORTS_RENAME
         val mimeType: String
         if (file.isDirectory) {
             mimeType = DocumentsContract.Document.MIME_TYPE_DIR
-            flags = flags or DocumentsContract.Document.FLAG_DIR_SUPPORTS_CREATE
+            if (!readOnly) flags = flags or DocumentsContract.Document.FLAG_DIR_SUPPORTS_CREATE
         } else {
             val extension = file.name.substringAfterLast('.', "")
             mimeType = MimeTypeMap.getSingleton().getMimeTypeFromExtension(extension.lowercase()) ?: "application/octet-stream"
-            flags = flags or DocumentsContract.Document.FLAG_SUPPORTS_WRITE
+            if (!readOnly) flags = flags or DocumentsContract.Document.FLAG_SUPPORTS_WRITE
         }
 
         row.add(DocumentsContract.Document.COLUMN_MIME_TYPE, mimeType)

@@ -28,7 +28,13 @@ data class MountedDrive(
     val partitionLabel: String = "",
     /** Detected filesystem name for the tag chip (e.g. "exFAT", "ext4", "FAT32"). */
     val filesystemName: String = ""
-)
+) {
+    /** Why the volume refuses writes, or null if it is writable. Only ext4 can refuse today. */
+    val readOnlyReason: String?
+        get() = (fileSystem as? app.fayaz.otgmaster.ext4.Ext4FileSystem)?.readOnlyReason
+
+    val isReadOnly: Boolean get() = readOnlyReason != null
+}
 
 object OtgMasterState {
     val mountedDrives = CopyOnWriteArrayList<MountedDrive>()

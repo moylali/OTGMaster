@@ -118,6 +118,56 @@ class Ext4WriteFsckTest {
         return out
     }
 
+    /**
+     * A volume whose journal needs replaying must not be written.
+     *
+     * Observed on a OnePlus 7: Android mounted an ext4 USB volume itself, OTG
+     * Master claimed the USB interface a second later and cut that mount off with
+     * `needs_recovery` still set, then wrote to the volume. A laptop's read-only
+     * mount afterwards replayed the stale journal over those writes. The flag is
+     * set here by hand (s_feature_incompat |= 0x4); nothing in this driver reads
+     * the superblock checksum, so the edit does not need it refreshed.
+     */
+    /** Streams the image: 512 MiB read into one array exhausts the test heap. */
+    private fun imageSha256(): String {
+        val md = MessageDigest.getInstance("SHA-256")
+        img.inputStream().use { input ->
+            val buf = ByteArray(1 shl 20)
+            while (true) { val n = input.read(buf); if (n < 0) break; md.update(buf, 0, n) }
+        }
+        return md.digest().joinToString("") { "%02x".format(it) }
+    }
+
+    @Test
+    fun aVolumeWhoseJournalNeedsRecoveryIsReadOnly() {
+        RandomAccessFile(img, "rw").use { raf ->
+            raf.seek(1024L + 96)
+            val incompat = ByteArray(4).also { raf.readFully(it) }
+            incompat[0] = (incompat[0].toInt() or 0x4).toByte()
+            raf.seek(1024L + 96)
+            raf.write(incompat)
+        }
+        val before = imageSha256()
+
+        withFs { f ->
+            // Reads still work: the root lists.
+            f.rootDirectory.listFiles()
+            try {
+                f.rootDirectory.createFile("must-not-exist.txt").writeAll("x".toByteArray())
+                org.junit.Assert.fail("a write succeeded on a volume that needs recovery")
+            } catch (e: java.io.IOException) {
+                assertTrue(e.message!!, e.message!!.contains("read-only"))
+            }
+        }
+        assertEquals("not one byte of the image changed", before, imageSha256())
+        withFs { f -> assertTrue("reported read-only, for the READ-ONLY tag", f.isReadOnly) }
+    }
+
+    @Test
+    fun aCleanVolumeIsWritable() {
+        withFs { f -> assertTrue("a freshly formatted volume is writable", !f.isReadOnly) }
+    }
+
     @Test
     fun freshlyFormattedVolumeIsCleanBeforeWeTouchIt() {
         assertFsckClean("mkfs (control)")

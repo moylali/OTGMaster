@@ -934,6 +934,9 @@ class MainActivity : AppCompatActivity() {
                 )
 
                 OtgMasterState.addDrive(mountedDrive)
+                mountedDrive.readOnlyReason?.let { reason ->
+                    withContext(Dispatchers.Main) { appendLog("${mountedDrive.name} is read-only: $reason") }
+                }
                 contentResolver.notifyChange(
                     android.provider.DocumentsContract.buildRootsUri("app.fayaz.otgmaster.documents"), null
                 )
@@ -1199,6 +1202,9 @@ class MainActivity : AppCompatActivity() {
                     filesystemName = plain.filesystemName
                 )
                 OtgMasterState.addDrive(mountedDrive)
+                mountedDrive.readOnlyReason?.let { reason ->
+                    withContext(Dispatchers.Main) { appendLog("${mountedDrive.name} is read-only: $reason") }
+                }
                 contentResolver.notifyChange(
                     android.provider.DocumentsContract.buildRootsUri("app.fayaz.otgmaster.documents"), null
                 )
@@ -1793,6 +1799,12 @@ fun OtgMasterApp(
                                     else -> Color(0xFF37474F)
                                 }
                                 DriveTag(label = drive.filesystemName.uppercase(), color = fsColor)
+                            }
+
+                            // Red, not a filesystem colour: it is a warning that the
+                            // drive refuses writes, and why is in the log.
+                            if (drive.isReadOnly) {
+                                DriveTag(label = "READ-ONLY", color = Color(0xFFC62828))
                             }
                         }
 
