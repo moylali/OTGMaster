@@ -2211,6 +2211,28 @@ fun VeraCryptMountSection(
                 )
             }
 
+            // Per partition, starting from Settings → Read-only mode. Stored, so auto
+            // mount and quick unlock mount this partition the same way next time.
+            // Above both branches: with saved credentials the form is only the
+            // fingerprint button, and the switch has to be reachable there too.
+            selectedCandidate?.let { sc ->
+                Row(
+                    verticalAlignment = Alignment.CenterVertically,
+                    modifier = Modifier.fillMaxWidth()
+                ) {
+                    Text(
+                        stringResource(R.string.mount_read_only),
+                        modifier = Modifier.weight(1f),
+                        style = MaterialTheme.typography.bodyMedium
+                    )
+                    Switch(
+                        checked = isPartitionReadOnly(currentDeviceName, sc.startBlock),
+                        onCheckedChange = { onSetPartitionReadOnly(currentDeviceName, sc.startBlock, it) },
+                        modifier = Modifier.semantics { contentDescription = "read_only_switch" }
+                    )
+                }
+            }
+
             if (showQuickUnlock) {
                 Button(
                     onClick = {
@@ -2322,25 +2344,6 @@ fun VeraCryptMountSection(
                 }
             }
 
-            // Per partition, starting from Settings → Read-only mode. Stored, so auto
-            // mount and quick unlock mount this partition the same way next time.
-            selectedCandidate?.let { sc ->
-                Row(
-                    verticalAlignment = Alignment.CenterVertically,
-                    modifier = Modifier.fillMaxWidth()
-                ) {
-                    Text(
-                        stringResource(R.string.mount_read_only),
-                        modifier = Modifier.weight(1f),
-                        style = MaterialTheme.typography.bodyMedium
-                    )
-                    Switch(
-                        checked = isPartitionReadOnly(currentDeviceName, sc.startBlock),
-                        onCheckedChange = { onSetPartitionReadOnly(currentDeviceName, sc.startBlock, it) },
-                        modifier = Modifier.semantics { contentDescription = "read_only_switch" }
-                    )
-                }
-            }
 
             if (!isLuks) {
             @OptIn(ExperimentalMaterial3Api::class)
