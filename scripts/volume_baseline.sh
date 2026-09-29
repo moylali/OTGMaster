@@ -118,7 +118,9 @@ MAPPER=otgBaseline_$$
 OPENED=""
 DEV=""
 
+PARTIAL=""
 cleanup() {
+    [[ -n "$PARTIAL" && -d "$PARTIAL" ]] && rm -rf "$PARTIAL"
     mountpoint -q "$MNT" 2>/dev/null && umount "$MNT"
     [[ -d "$MNT" ]] && rmdir "$MNT" 2>/dev/null
     case "$OPENED" in
@@ -215,12 +217,28 @@ dump_metadata() {
 # ---------------------------------------------------------------------------
 dump_contents() {
     local out=$1
-    mkdir -p "$MNT"
-    mount -o ro "$DEV" "$MNT" || die "read-only mount failed."
-    ( cd "$MNT" && find . -mindepth 1 -printf '%y\t%s\t%p\n' | LC_ALL=C sort ) > "$out/tree.txt"
-    ( cd "$MNT" && find . -type f -print0 | LC_ALL=C sort -z \
+    local root existing
+    # Already mounted — typically the desktop auto-mounting a plain partition —
+    # is read in place rather than unmounted out from under its owner. NTFS in
+    # particular refuses a second mount: "the NTFS volume is already exclusively
+    # opened", which killed an NTFS snapshot half-way.
+    existing=$(findmnt -n -o TARGET --source "$DEV" 2>/dev/null | head -1)
+    if [[ -n "$existing" ]]; then
+        root="$existing"
+        if findmnt -n -o OPTIONS --source "$DEV" | grep -qw rw; then
+            echo "  WARNING: $DEV is mounted read-write at $existing by something else."
+            echo "           Anything writing there during or after this run changes the"
+            echo "           volume independently of the app. Unmount it for a clean result."
+        fi
+    else
+        mkdir -p "$MNT"
+        mount -o ro "$DEV" "$MNT" || die "read-only mount failed."
+        root="$MNT"
+    fi
+    ( cd "$root" && find . -mindepth 1 -printf '%y\t%s\t%p\n' | LC_ALL=C sort ) > "$out/tree.txt"
+    ( cd "$root" && find . -type f -print0 | LC_ALL=C sort -z \
         | xargs -0 -r sha256sum ) > "$out/files.sha256"
-    umount "$MNT"
+    [[ -z "$existing" ]] && umount "$MNT"
     echo "  files hashed: $(wc -l < "$out/files.sha256")"
     echo "  tree entries: $(wc -l < "$out/tree.txt")"
 }
@@ -228,6 +246,13 @@ dump_contents() {
 if [[ "$MODE" == "snapshot" ]]; then
     [[ -e "$DIR" ]] && die "$DIR already exists — move or remove it first, so a
        baseline is never silently replaced by a later, possibly damaged, state."
+    # Built under a temporary name and renamed only once complete. It used to be
+    # created in place, so a snapshot that died part-way left a folder holding
+    # metadata and no hashes — which the refuse-to-overwrite guard then protected,
+    # and which a later compare would read as "every file was added".
+    FINAL="$DIR"
+    DIR="$DIR.partial.$$"
+    PARTIAL="$DIR"
     mkdir -p "$DIR"
     {
         echo "taken:      $(date -u +%Y-%m-%dT%H:%M:%SZ)"
@@ -238,6 +263,7 @@ if [[ "$MODE" == "snapshot" ]]; then
     } > "$DIR/meta.txt"
     echo "Capturing metadata regions..."; dump_metadata "$DIR/meta"
     echo "Hashing every file..."; dump_contents "$DIR"
+    mv "$DIR" "$FINAL" && DIR="$FINAL" && PARTIAL=""
     # This runs under sudo, so without this the baseline is root-owned and the
     # user who asked for it cannot delete or retake it without sudo again.
     if [[ -n "${SUDO_USER:-}" ]]; then
