@@ -42,3 +42,8 @@ agy/
 # Volume baselines: raw FAT copies are 57 MB each. The hash lists inside are
 # small and may be worth committing later; that is undecided.
 baselines/
+
+# Benchmark reports pulled off a device into the repo root. Untracked files make
+# the build stamp itself -dirty (gitDirty counts them), so a stray report would
+# mislabel every APK built after it.
+/otgbench-*.txt
