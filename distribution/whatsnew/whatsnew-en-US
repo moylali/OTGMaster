@@ -1,5 +1,6 @@
 • New: LUKS1 and LUKS2 encrypted volumes now supported alongside VeraCrypt
 • New: ext2/3/4 supported — ext4 read/write, ext2/3 read-only, FAT32/exFAT unchanged
 • New: On ext4: create, write, modify, delete and rename files and directories
-• New: Unlock form auto-detects LUKS vs VeraCrypt — shows only relevant fields
-• New: Drive cards and the volume picker tag encryption and filesystem type in colour
+• New: Volume picker lists only partitions you can unlock, tagged by encryption type
+• Fixed: Unencrypted partitions were mislabelled "VERACRYPT" and failed to unlock
+• Fixed: Encrypted partition unreachable on a drive with unencrypted ones too

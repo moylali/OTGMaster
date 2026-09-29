@@ -1,6 +1,8 @@
 package app.fayaz.otgmaster.veracrypt
 
 import app.fayaz.otgmaster.block.RawBlockDevice
+import app.fayaz.otgmaster.fs.DetectedFilesystem
+import app.fayaz.otgmaster.fs.FilesystemDetector
 import app.fayaz.otgmaster.luks.LuksParser
 
 class VeraCryptUnlocker {
@@ -59,14 +61,29 @@ class VeraCryptUnlocker {
         device: RawBlockDevice,
     ): VolumeCandidate {
         val containerType = try {
-            val sector = device.readBlocks(startBlock, 1)
+            // Four sectors, not one: the LUKS magic and the FAT/NTFS OEM names sit
+            // in the first, but the ext2/3/4 and F2FS superblocks start at byte 1024.
+            val available = device.blockCount - startBlock
+            val sectors = if (available <= 0) 1 else minOf(4L, available).toInt()
+            val sector = device.readBlocks(startBlock, sectors)
             if (LuksParser.hasLuksMagic(sector)) {
                 when (LuksParser.getVersion(sector)) {
                     1    -> ContainerType.LUKS1
                     2    -> ContainerType.LUKS2
                     else -> ContainerType.UNKNOWN
                 }
+            } else if (FilesystemDetector.detectFromBytes(sector) !is DetectedFilesystem.Unknown) {
+                // A readable filesystem signature rules VeraCrypt out: the first
+                // sector of a VeraCrypt volume is its encrypted header, so it
+                // cannot spell "NTFS" or carry an ext4 magic. Without this check
+                // the else branch guessed VERACRYPT for every plain partition, so
+                // an NTFS partition was offered in the unlock picker tagged
+                // VERACRYPT and then ran PBKDF2 against its own boot sector.
+                ContainerType.UNENCRYPTED
             } else {
+                // Nothing identifiable. A VeraCrypt header is indistinguishable
+                // from random data without the password, so this is the residual
+                // guess, not a positive identification.
                 ContainerType.VERACRYPT
             }
         } catch (e: Exception) {

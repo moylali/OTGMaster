@@ -23,6 +23,7 @@
     <string name="label_veracrypt_password">Password</string>
     <string name="label_pim">PIM (leave blank for default)</string>
     <string name="select_keyfiles">Select Keyfiles (%1$d)</string>
+    <string name="volume_picker_filtered_note">Only partitions that can be unlocked are listed. Unencrypted volumes are mounted automatically, and partitions with an unsupported filesystem are skipped.</string>
     <string name="label_encryption_algorithm">Encryption Algorithm</string>
     <string name="label_hash_algorithm">Hash Algorithm</string>
     <string name="algorithm_not_supported">%1$s (not yet supported)</string>
@@ -114,6 +115,7 @@
     <string name="log_unrecognized_fs_not_mounted">Unrecognized filesystem could not be mounted. Supported: FAT32, exFAT.</string>
     <string name="log_failed_to_mount">Failed to mount %1$s: %2$s</string>
     <string name="log_mounted_successfully">Mounted %1$s successfully. Root capacity: %2$d MB</string>
+    <string name="log_volume_not_encrypted">%1$s is not encrypted — it holds a plain %2$s filesystem. Nothing to unlock.</string>
     <string name="log_failed_to_unlock">Failed to unlock %1$s: %2$s</string>
     <string name="log_drive_unmounted">Drive \'%1$s\' unmounted securely.</string>
     <string name="log_could_not_open_files_app">Could not open files app directly: %1$s</string>

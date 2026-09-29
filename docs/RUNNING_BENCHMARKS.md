@@ -26,8 +26,24 @@ adb shell am broadcast -a app.fayaz.otgmaster.RUN_BENCHMARK \
   device. This cost several dead-ended runs.
 
 Sections available in `--es tests`: `free`, `block`, `dir`, `path`, `seq`,
-`random`, `opens`, `write`, `unaligned`, `correct`, `saf`, `fixtures`. Omit
-`tests` for everything.
+`random`, `opens`, `write`, `unaligned`, `correct`, `saf`, `fixtures`.
+
+**Omitting `tests` does not run everything.** It runs the read-only sections only —
+`free`, `block`, `dir`, `path`, `seq`, `random`, `opens`. The five that write to the
+drive or take minutes (`write`, `unaligned`, `correct`, `saf`, `fixtures`) are opt-in
+and are skipped **silently**, with no line in the report saying so, so a default run
+looks complete while proving nothing about the write path. Name them explicitly:
+
+```sh
+--es tests "free,block,dir,path,seq,random,opens,write,unaligned,correct,fixtures"
+```
+
+**`write`, `unaligned` and `correct` need credentials even on an unencrypted volume.**
+Their verdicts are judged after a remount, and the only remount path the runner has is
+`mountRequest`, which takes a password. Without `--es password` they report `PARTIAL`
+or `NOT VERIFIED` rather than a pass — correct, but it means a plain partition's write
+path cannot be fully judged from the device. Close that gap from the host instead, with
+`e2fsck -fn` on the partition after the run.
 
 `--es drive` narrows a multi-drive run: `0`, `VCFAT`, or `0,1`. Every mounted drive
 runs in sequence by default.

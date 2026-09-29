@@ -113,6 +113,14 @@ android {
     composeOptions {
         kotlinCompilerExtensionVersion = "1.5.14"
     }
+    testOptions {
+        unitTests {
+            // Host tests exercise classes that log through android.util.Log, which
+            // throws "not mocked" by default. Returning defaults lets the probe and
+            // parser tests run on the JVM instead of needing an instrumented run.
+            isReturnDefaultValues = true
+        }
+    }
 }
 
 dependencies {

@@ -395,6 +395,41 @@ sudo mkdir -p /mnt/otgC && sudo mount /dev/mapper/otgC /mnt/otgC
 
 Populate with §12 (`SEQ_MB=2048`), then apply the same `chown`/`chmod` as §10.
 
+## 11a. Drive D — VeraCrypt + ext4, plain ext4, plain NTFS
+
+The only drive with a **mixed** partition table, and the only one covering VeraCrypt
+over ext4. Drives A–C are LUKS, so before this one the VeraCrypt+ext4 combination had
+never run on hardware.
+
+| Part | Share | Contents | Credentials |
+|---|---|---|---|
+| p1 | 40% | VeraCrypt (AES / SHA-512 / PIM 1) → ext4, label `VCEXT4` | `password123`, PIM 1 |
+| p2 | 30% | plain ext4, label `PLAINEXT4` | none |
+| p3 | 30% | plain NTFS, label `NTFSPLAIN` | none |
+
+**p2 is the control.** It carries a byte-identical fixture tree to p1, built by the same
+function in the script, so the two differ only by the crypto layer. An ext4 failure that
+appears on p1 and not on p2 is in the cipher path, not in the ext4 code — which is the
+distinction that took a destroyed drive to make the first time.
+
+**p3 must be refused.** NTFS is unsupported, so it carries only a marker file. It also
+covers the classification path: a partition whose first sector reads `NTFS` cannot be a
+VeraCrypt volume, and the app must not offer it in the unlock picker. It did, once,
+tagged `VERACRYPT` — see `ContainerClassificationTest`.
+
+Run it with the script rather than by hand; unlike A–C this one cannot detect an
+already-prepared state, because a VeraCrypt volume is indistinguishable from random
+data without the password, so every run starts from zero and prompts before wiping.
+
+```sh
+sudo bash scripts/prepare_drive_d.sh /dev/sdZ
+```
+
+`BIG_MIB`, `SMALL_MIB` and `DENSE_N` shrink the fixtures for a fast iteration, at the
+cost of comparability with drive C — leave them alone for a run whose numbers you
+intend to quote. The VeraCrypt parameters are written to
+`/root/otg-luks-fixtures/veracrypt-D.txt`.
+
 ## 12. The dummy files — what goes inside, and why
 
 Every drive gets the same `BENCH/` tree. **Each fixture exists to stress one specific
