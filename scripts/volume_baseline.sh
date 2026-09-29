@@ -60,6 +60,12 @@
 # baseline taken after the damage records the damage as normal. Snapshot when you
 # have reason to believe the volume is good — freshly prepared, or just checked.
 
+# Wrapped in { ... } so bash parses the whole script before running any of it.
+# Bash otherwise reads a script piece by piece as it executes, and a script edited
+# while it runs resumes at the old byte offset in the new file: a compare run that
+# had been hashing for minutes came back to "er: command not found" and executed a
+# fragment of the snapshot code instead.
+{
 set -uo pipefail
 
 usage() {
@@ -263,7 +269,9 @@ if [[ "$MODE" == "snapshot" ]]; then
     } > "$DIR/meta.txt"
     echo "Capturing metadata regions..."; dump_metadata "$DIR/meta"
     echo "Hashing every file..."; dump_contents "$DIR"
-    mv "$DIR" "$FINAL" && DIR="$FINAL" && PARTIAL=""
+    # -T: never move *into* an existing folder. Without it a rename onto a baseline
+    # that already exists nests the new one inside it rather than failing.
+    mv -T "$DIR" "$FINAL" && DIR="$FINAL" && PARTIAL=""
     # This runs under sudo, so without this the baseline is root-owned and the
     # user who asked for it cannot delete or retake it without sudo again.
     if [[ -n "${SUDO_USER:-}" ]]; then
@@ -341,10 +349,13 @@ if (( REMOVED > 0 )); then
 fi
 if (( ADDED > 0 )); then
     echo "  added paths:"
-    LC_ALL=C comm -13 "$NEW/old.paths" "$NEW/new.paths" | while IFS= read -r f; do
+    # Process substitution, not a pipe: a piped while-loop runs in a subshell, so
+    # CHANGED=1 for an unexpected added file was set there and lost, and the
+    # verdict ignored it.
+    while IFS= read -r f; do
         if expected_path "$f"; then echo "      $f   (expected — runner output)"
         else echo "      $f"; CHANGED=1; fi
-    done
+    done < <(LC_ALL=C comm -13 "$NEW/old.paths" "$NEW/new.paths")
 fi
 fi
 
@@ -381,7 +392,14 @@ echo "Allocation-table churn is expected in proportion to what the run wrote."
 echo "A run that wrote tens of megabytes changing hundreds of thousands of FAT"
 echo "entries is the signal this tool exists to surface."
 echo
-if (( CHANGED == 0 )); then
+# Whether anything moved at all, expected or not. Without this the verdict said
+# "every file and every metadata region is byte-identical" after a run that had
+# added a report and modified INDEX.txt — true of the flag, false of the volume.
+ANY_CONTENT_CHANGE=$(( ADDED + REMOVED + MODIFIED ))
+
+if (( CHANGED == 0 )) && (( ANY_CONTENT_CHANGE > 0 )); then
+    echo ">>> ONLY EXPECTED CHANGES — the runner's own output, and nothing else."
+elif (( CHANGED == 0 )); then
     if (( META_ONLY == 1 )); then
         echo ">>> NO METADATA CHANGE — allocation tables byte-identical. File"
         echo "    contents were not checked; run without --metadata-only for that."
@@ -394,3 +412,6 @@ else
 fi
 rm -rf "$NEW"
 exit $CHANGED
+
+exit
+}

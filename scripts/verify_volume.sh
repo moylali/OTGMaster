@@ -21,6 +21,12 @@
 # read-only); fsck.exfat runs with no repair flag, which is check-only; fsck.vfat
 # runs with -n. Nothing here is given permission to write.
 
+# Wrapped in { ... } so bash parses the whole script before running any of it.
+# Bash otherwise reads a script piece by piece as it executes, and a script edited
+# while it runs resumes at the old byte offset in the new file: a compare run that
+# had been hashing for minutes came back to "er: command not found" and executed a
+# fragment of the snapshot code instead.
+{
 set -uo pipefail
 
 PART="${1:?Usage: sudo bash $0 /dev/sdX1 [password] [pim]}"
@@ -88,3 +94,6 @@ else
     echo "    until the same drive checks clean without the change under test."
 fi
 exit $rc
+
+exit
+}

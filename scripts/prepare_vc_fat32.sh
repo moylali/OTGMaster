@@ -26,6 +26,12 @@
 #
 # DESTRUCTIVE. Validates the target first and asks before writing.
 
+# Wrapped in { ... } so bash parses the whole script before running any of it.
+# Bash otherwise reads a script piece by piece as it executes, and a script edited
+# while it runs resumes at the old byte offset in the new file: a compare run that
+# had been hashing for minutes came back to "er: command not found" and executed a
+# fragment of the snapshot code instead.
+{
 set -uo pipefail
 
 DEV="${1:?Usage: sudo bash $0 /dev/sdX [--fill-to-free GIB]}"; shift || true
@@ -203,3 +209,6 @@ echo
 echo "=== Done ==="
 echo "Password $VC_PASS, PIM $VC_PIM, $VC_ENC / $VC_HASH"
 echo "Verify with: sudo bash scripts/verify_volume.sh ${DEV}1"
+
+exit
+}

@@ -34,6 +34,12 @@
 # the fixture tree, so regenerating after a run is not in itself unsound; but a
 # manifest generated after an unexplained failure proves nothing.
 
+# Wrapped in { ... } so bash parses the whole script before running any of it.
+# Bash otherwise reads a script piece by piece as it executes, and a script edited
+# while it runs resumes at the old byte offset in the new file: a compare run that
+# had been hashing for minutes came back to "er: command not found" and executed a
+# fragment of the snapshot code instead.
+{
 set -uo pipefail
 
 PART="${1:?Usage: sudo bash $0 /dev/sdX1 [password] [pim]}"
@@ -148,3 +154,6 @@ echo
 cat "$B/MANIFEST.txt"
 echo
 echo "=== Done. Re-run the benchmark's fixtures section against this drive. ==="
+
+exit
+}
