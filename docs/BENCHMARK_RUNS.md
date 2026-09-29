@@ -35,6 +35,51 @@ to a row here.
 
 ## 2026-09-28
 
+### Pixel 10 Pro XL · Android 17 (SDK 37) · build 0.3.13 (46) commit 110e1cd
+
+APK sha256 `ab7f758f…`. Clean tree — the first run whose label names a tree it was
+actually built from.
+
+| Field | Value |
+|---|---|
+| Drive | PNY USB 3.2.1 FD, 59151 MiB — VeraCrypt (AES/SHA-512, PIM 1) + exFAT |
+| Report | `otgbench-Pixel_10_Pro_XL-20260928-181659.txt` |
+| Sections | free, block, dir, path, seq, random, opens, write, unaligned, correct, fixtures |
+| block read | 2.25 / 24.88 / 34.74 / 36.25 MB/s (4 / 64 / 512 / 4096 KiB span) |
+| seq read | 29.96 / 30.79 / 31.20 MB/s (32 / 128 / 512 KiB buf) |
+| random read | 2.5 ms each, 399.7 IOPS |
+| dir listing | dense_short cold 1256.4 / warm 15.9 ms; dense_lfn cold 1986.6 / warm 17.5 |
+| opens | short 12.6 ms each, lfn 16.5 ms each |
+| write | 16 MiB → 0.64 MB/s |
+| write verify | **ALL PASSED** (cached, cache-dropped, remounted) |
+| unaligned | **A + B PASS** |
+| correctness | **ALL PASSED** (A–G) |
+| fixtures | **FAILED — `java.io.IOException: File is closed`** |
+| fsck | `fsck.exfat` CLEAN before this run (19 dirs, 20091 files) |
+
+The manifest had been regenerated with `regen_manifest.sh`, so this is the first
+time the fixture hashing ran on this drive at all. It aborts roughly 29 s into the
+first large file, and reproduces on its own with `--es tests fixtures` — so it is
+not an interaction with the remount that the correctness section performs.
+
+**This is not a regression from the commits under test.** The same section passes
+on the ext4 drives (`ALL 5 MATCHED`), which go through libaums; the failure is in
+`ExFatFile`, which none of today's commits touch, and it could not have been seen
+here before because the manifest carried no hashes to check against.
+
+Suspected cause, not yet proven: `ExFatFile.finalize()` sets `isClosed = true` and
+queues its native node for release. `search()` builds a fresh `ExFatFile` for every
+directory entry it walks past, so a single lookup litters the heap with wrappers
+over live nodes — and ART may finalize an object while a method on it is still
+running, which is what `Reference.reachabilityFence` exists for. A long read loop
+under GC pressure is exactly the shape that provokes it. If that is right the same
+failure is reachable from the DocumentsProvider, where copying a large file off an
+exFAT drive runs the same loop, so it is worth settling rather than working around.
+
+This run also confirms the `onDestroy` handler-ownership fix on hardware: the
+sequence that produced "no mount handler installed" twice — back out of
+MainActivity, relaunch, broadcast — mounted cleanly here.
+
 ### Pixel 10 Pro XL · Android 17 (SDK 37) · build 0.3.13 (46) commit d455547
 
 APK sha256 `d1a9adc7…`. Label `d455547-dirty`; the dirt is six untracked scratch
