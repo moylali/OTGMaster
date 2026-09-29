@@ -1,5 +1,5 @@
 • New: LUKS1 and LUKS2 encrypted volumes are now supported alongside VeraCrypt
-• New: ext2, ext3 and ext4 filesystems are now supported — ext4 is read/write, ext2 and ext3 are read-only, and FAT32 and exFAT are unchanged
+• New: ext4 filesystems are now supported for reading and writing, alongside FAT32 and exFAT
 • New: On ext4 you can create files and directories, write and modify data, delete, and rename
 • New: The unlock form automatically detects whether a partition is LUKS or VeraCrypt and shows only the relevant fields
 • New: Drives with no recognisable encrypted partitions now display a clear "no encrypted volumes found" message instead of a confusing empty list
