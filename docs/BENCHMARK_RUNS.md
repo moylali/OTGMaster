@@ -83,7 +83,7 @@ APK sha256 `ee9188b0…`, clean tree, awake and unthrottled at both ends.
 | unaligned | **A + B PASS** |
 | correctness | **ALL PASSED** (A–G) |
 | fixtures | **ALL 5 MATCHED the host-computed hashes** |
-| fsck | pending |
+| fsck | **CLEAN** — `e2fsck -fn`: 20038/3792896 files, 927642/15142400 blocks |
 
 Unlike this device's LUKS2 run earlier, this one was awake from the start, so
 its throughput is usable. Against that LUKS2 run — same device, same session,
@@ -114,7 +114,7 @@ APK sha256 `ee9188b0…`, clean tree, on battery at 33%.
 | unaligned | **A + B PASS** |
 | correctness | **ALL PASSED** (A–G) |
 | fixtures | **ALL 5 MATCHED the host-computed hashes** |
-| fsck | not yet run — drive still on the phone |
+| fsck | **CLEAN** — `e2fsck -fn`: 20035/3784704 files, 927120/15138816 blocks |
 
 **Throughput from this run is not usable.** It began with the screen off:
 

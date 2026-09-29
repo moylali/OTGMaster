@@ -36,7 +36,7 @@ device's result.
 |---|---|---|---|---|---|---|
 | **D1** Pixel 10 Pro XL | ✅ full | ✅ full | ✅ full | ✅ partial | ❌ | ✅ partial |
 | **D2** OnePlus 7 | ❌ | ❌ | ❌ | ✅ partial | ✅ partial | ❌ |
-| **D3** Samsung M30 | ❌ | ❌ | ❌ | ✅ partial | ✅ partial | ❌ |
+| **D3** Samsung M30 | ❌ | ❌ | ❌ | ✅ full | ✅ full | ❌ |
 | **D4** Huawei P20 Lite | ⚠️ see note | ✅ partial | ❌ | ❌ | ❌ | ❌ |
 
 ✅ full — every section run and passed, including `fixtures`, on the current
@@ -45,7 +45,7 @@ build, with a host-side filesystem check afterwards.
 or the full read section set. Detail in the run log.
 🔄 running · ❌ not attempted.
 
-**Coverage: 12 of 24 cells, 3 full, 4 awaiting only a host fsck.**
+**Coverage: 12 of 24 cells, 5 full, 2 awaiting only a host fsck.**
 
 ⚠️ **D4·C1 is withdrawn.** Every on-device section passed, but the host
 `fsck.fat` afterwards found FAT entry 0 zeroed and ~514 MB of an unrelated
@@ -65,7 +65,9 @@ prepared drive before it counts.
 | D2·C4 | earlier | write ALL PASSED 0.76 MB/s, correctness ALL PASSED, fixtures ALL 5, `e2fsck` clean |
 | D2·C5 | earlier | write ALL PASSED 0.73 MB/s, correctness ALL PASSED, fixtures ALL 5, `e2fsck` clean |
 | D4·C1 | `98fae8f` | write verify 3/3, unaligned A+B, correctness A–G, fixtures ALL 16; **fsck pending** |
-| D3·C5 | `98fae8f` | write verify 3/3, unaligned A+B, correctness A–G, fixtures ALL 5; **throughput unusable (started throttled)**, fsck pending |
+| D3·C5 | `98fae8f` | write verify 3/3, unaligned A+B, correctness A–G, fixtures ALL 5, `e2fsck` clean; **throughput unusable (started throttled)** |
+| D3·C4 | `98fae8f` | write verify 3/3, unaligned A+B, correctness A–G, fixtures ALL 5, `e2fsck` clean |
+| D4·C2 | `98fae8f` | write verify 3/3, unaligned A+B, correctness A–G, fixtures ALL 16; **fsck pending** — the finalizer-watchdog device, no process kill |
 
 ## Known gaps, and which matter
 
