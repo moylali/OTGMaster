@@ -53,7 +53,8 @@ the drive repaired and re-baselined this morning.
 | unaligned | **A + B PASS** |
 | correctness | **ALL PASSED** (A–G) |
 | fixtures | **FAILED** — `exFAT read failed at offset 732692480 (262144 bytes): -5` |
-| fsck / compare | pending |
+| fsck | **CLEAN** — `fsck.exfat`: directories 19, files 20098 |
+| baseline compare | **NO CHANGE** in files, FAT or boot region against the post-repair baseline. One directory fewer (20 → 19; tree entries 20117 → 20116): `BENCH_WRITE`, left by the repair, which this run's `write verify` recreated and removed as designed. The script's verdict ignores directory-only changes — a gap in `volume_baseline.sh`, not in the drive. |
 
 A read returned `-1`; every retry then failed with `wrong csw tag!` until
 `MAX_RECOVERY_ATTEMPTS`, and so did the next command, and the report write after
