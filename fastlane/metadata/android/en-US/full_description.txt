@@ -11,7 +11,7 @@ Supported encryption:
 Supported filesystems:
 
 * FAT32 and exFAT — full read/write access
-* ext2 / ext3 / ext4 — read access
+* ext4 — full read/write access
 
 Other features:
 
