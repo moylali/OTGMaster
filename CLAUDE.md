@@ -42,6 +42,11 @@ These apply to every commit, without being asked.
 
 ## Benchmarking and verification
 
+**To run a benchmark, follow "Standard procedure" at the top of
+`docs/RUNNING_BENCHMARKS.md`** — host check and baseline, build and install,
+device preparation, start, monitor, collect, host verification, record. Each
+step is there because skipping it produced a wrong or unusable result.
+
 Before changing anything in the I/O path — the block cache, the crypto layer, libaums,
 libexfat, or the DocumentsProvider — read these:
 

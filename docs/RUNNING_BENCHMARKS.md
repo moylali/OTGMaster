@@ -4,6 +4,155 @@ How the I/O benchmark and correctness suites are actually driven, and what makes
 result trustworthy. Most of the pitfalls below were discovered by producing a wrong
 answer first.
 
+## Standard procedure — one run, start to finish
+
+Every step below exists because skipping it produced a wrong or unusable result
+at least once. Do them in order. `$A` is the device's adb address, `$P` the
+partition on the host.
+
+```sh
+ADB=/home/fayaz/android-sdk-local/platform-tools/adb
+A=192.168.1.9:33057        # from `adb devices -l`
+```
+
+### 1. Before the run — drive on the host
+
+Check the volume is healthy, then baseline it if it has no baseline yet. A
+baseline taken over damage records the damage as normal, so the check comes
+first.
+
+```sh
+sudo bash scripts/verify_volume.sh $P                   # must print >>> CLEAN
+sudo bash scripts/volume_baseline.sh snapshot $P        # once per drive
+```
+
+`snapshot` refuses if a baseline already exists; that is intended.
+
+### 2. Build and install the current commit
+
+Commit first, so the report's label names a real tree. Then install on the
+device **every time**, whether or not it looks current.
+
+```sh
+git status --porcelain                                  # must be empty
+./gradlew :app:assembleDebug -q
+$ADB -s $A install -r app/build/outputs/apk/debug/app-debug.apk
+```
+
+A signature mismatch (`INSTALL_FAILED_UPDATE_INCOMPATIBLE`) means a debug build
+from another keystore is installed. `adb uninstall app.fayaz.otgmaster` first;
+only cached test credentials are lost.
+
+### 3. Prepare the device
+
+Plug the drive into the phone, then:
+
+```sh
+$ADB -s $A shell input keyevent KEYCODE_WAKEUP
+$ADB -s $A shell am start -n app.fayaz.otgmaster/.MainActivity
+$ADB -s $A shell settings put system screen_off_timeout 86400000
+$ADB -s $A shell dumpsys deviceidle disable
+$ADB -s $A shell dumpsys battery | grep -E 'level|powered'
+$ADB -s $A logcat -d | grep 'VeraCryptUnlocker.*Candidate'
+```
+
+Check three things before going on:
+
+- **The candidate line names the right container** (`VERACRYPT`, `LUKS1`,
+  `LUKS2`). If there is none, a USB permission dialog or a BiometricPrompt is
+  probably up — dismiss it on the phone.
+- **Battery is charging, or above ~40%.** Two drives dropped off the bus today
+  on phones at 21% and 26% running on battery; a powered hub fixes it.
+- **The screen is on.** A run that starts with the screen off is flagged
+  `THROTTLED` and its throughput is unusable, even if it recovers.
+
+### 4. Start the run
+
+```sh
+$ADB -s $A logcat -c
+$ADB -s $A shell am broadcast -a app.fayaz.otgmaster.RUN_BENCHMARK \
+    -n app.fayaz.otgmaster/.bench.BenchmarkReceiver \
+    --es password password123 --es pim 1 --es cipher AES --es hash SHA-512 \
+    --es tests "free,block,dir,path,seq,random,opens,write,unaligned,correct,fixtures" \
+    --es cache default --es remount true
+```
+
+**Name every section.** Omitting `--es tests` silently skips all five write
+sections. For LUKS drives `pim`, `cipher` and `hash` are ignored and can be
+dropped.
+
+Within 30 seconds, read the header and confirm:
+
+```sh
+$ADB -s $A logcat -d | grep OTGBench | head -20
+```
+
+- `build: … commit <sha>` is the commit you just built — not an older one, not
+  `-dirty`;
+- `power : interactive=true … powerSave=false`;
+- `mounted:` lists the drive and `volumeLabel` is the one you expect.
+
+If any of those is wrong, stop and fix it now rather than after the run.
+
+### 5. Monitor
+
+The runner prints `still running: <section> (Ns in this step)` every 30 s.
+
+```sh
+$ADB -s $A logcat -d | grep OTGBench | tail -8
+```
+
+Expected durations: the whole run takes 5–10 minutes on the Pixel and OnePlus,
+20–40 on the Samsung and Huawei, most of it in `fixtures` hashing the large
+files.
+
+What a problem looks like:
+
+- **One section's counter climbing with no output for several minutes** — the
+  drive has stopped responding. Check `dumpsys usb | grep product_name`; if the
+  drive is gone, reattach it. The run is droppable.
+- **`EIO` / `-5` in read or write errors** — a real device error. Let the run
+  finish rather than pulling the drive mid-write, then `fsck` it on the host
+  before anything else touches it.
+- **`*** no mount handler installed ***`** — MainActivity is not alive. Press
+  back, relaunch it, and broadcast again.
+
+The run is done when `=== benchmark finished ===` appears.
+
+### 6. Collect the results
+
+```sh
+$ADB -s $A exec-out cat \
+  /storage/emulated/0/Android/data/app.fayaz.otgmaster/files/benchmark.txt
+```
+
+Read the verdict lines: `write verify`, `unaligned`, `correctness`, `fixtures`,
+and the `power` line at both ends. `PARTIAL`, `NOT VERIFIED` and `FAILED` are
+results and are recorded as themselves.
+
+### 7. Verify on the host
+
+Move the drive back to the laptop.
+
+```sh
+sudo bash scripts/verify_volume.sh $P
+sudo bash scripts/volume_baseline.sh compare $P
+```
+
+A clean result: `>>> CLEAN` from the checker, and in the comparison only the
+runner's own report and `INDEX.txt` changed, with the allocation table moving by
+a handful of entries. Anything under **"MODIFIED AND NOT EXPLAINED BY THE RUN"**,
+or allocation churn far out of proportion to the ~20 MB a run writes, is a
+finding — stop and investigate before re-running on that drive.
+
+### 8. Record it
+
+Add a row to `BENCHMARK_RUNS.md` in the same commit as the work it validates:
+device, Android version, container, filesystem, commit, sections run, every
+verdict, the `fsck` result, and the comparison result. Update the cell in
+`docs/test-reports/COVERAGE.md`. A completed run is recorded whatever it says; a
+run that produced no result can be dropped.
+
 ## Two ways to trigger a run
 
 ### Over adb (preferred)
