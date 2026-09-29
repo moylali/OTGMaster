@@ -33,6 +33,45 @@ to a row here.
 
 ---
 
+## 2026-09-29
+
+### Huawei P20 Lite (ANE-LX1) · Android 9 (SDK 28) · build 0.4.0 (46) commit 6c58cd4 — drive D p1, VeraCrypt + ext4
+
+Clean tree, awake and unthrottled at both ends. The first run on this card after
+`4ea6a49` made the report writer and `benchFixtures` resolve by tag rather than
+by position — the A/B for the host result logged below it, where six reports had
+landed on the wrong partition.
+
+| Field | Value |
+|---|---|
+| Drive | Realtek card reader, 11927 MiB — VeraCrypt (AES/SHA-512, PIM 1) + ext4, `VCEXT4` |
+| Report | `otgbench-ANE-LX1-20260929-063359.txt` |
+| seq read | 6.61 / 6.72 / 6.71 MB/s (32 / 128 / 512 KiB buf) |
+| write | 16 MiB → 1.62 MB/s |
+| write verify | **ALL PASSED** (cached, cache-dropped, remounted) |
+| unaligned | **A + B PASS** |
+| correctness | **ALL PASSED** (A–G) |
+| fixtures | **ALL 5 MATCHED the host-computed hashes** |
+
+**Host check (laptop, after the run):**
+
+| Partition | `e2fsck` / compare |
+|---|---|
+| p1 VeraCrypt + ext4 | **CLEAN**. Only this run's report added and `INDEX.txt` modified; free blocks 2368221 → 2368220, free inodes 743997 → 743996 — one file's worth. The script's verdict reads `CHANGES FOUND` because superblock and `dumpe2fs` differ, which the counters above account for. |
+| p2 plain ext4 | **CLEAN**, compare **NO CHANGE**. Before `4ea6a49` this partition received every report; now it receives none. |
+| p3 NTFS | `Android/data/` added (8 entries, incl. `.nomedia`, `com.huawei.appmarket/`, `com.huawei.systemmanager/`), all timestamped 06:25:00–01 — the moment the card was inserted, nine minutes before this report. **Written by EMUI, not OTG Master:** Huawei's Android 9 mounts NTFS natively and scaffolds `Android/data` on any volume it mounts. |
+
+The p3 result limits what the NTFS baseline can show: on a phone whose OS
+mounts NTFS itself, "p3 unchanged" cannot be used to prove the app never
+writes NTFS. The app-side claim rests on the partition being refused — it is
+filtered from the picker and never opened. The p3 baseline needs retaking
+before the next compare, or this change will show up again.
+
+The report's placement is the result this run was for: it is on p1, the drive
+measured, and not on p2. `4ea6a49` is confirmed on hardware.
+
+---
+
 ## 2026-09-28
 
 ### Huawei P20 Lite (ANE-LX1) · Android 9 (SDK 28) · build 0.3.13 (46) commit dc29660 — VeraCrypt + FAT32
@@ -70,8 +109,8 @@ first with `benchFixtures` and the report writer resolving by tag.
 |---|---|---|---|---|
 | P1 LUKS1 + FAT32 | **ALL PASSED** | **A + B PASS** | **ALL PASSED** | **ALL 4 MATCHED** |
 | P2 LUKS1 + exFAT | **ALL PASSED** | **A + B PASS** | **ALL PASSED** | **ALL 4 MATCHED** |
-| P3 LUKS2 + exFAT | **ALL PASSED** | **A + B PASS** | **ALL PASSED** | **ALL 4 MATCHED** |
-| P4 LUKS2 + FAT32 | **ALL PASSED** | **A + B PASS** | **ALL PASSED** | **ALL 4 MATCHED** |
+| P3 LUKS2 + FAT32 | **ALL PASSED** | **A + B PASS** | **ALL PASSED** | **ALL 4 MATCHED** |
+| P4 LUKS2 + exFAT | **ALL PASSED** | **A + B PASS** | **ALL PASSED** | **ALL 4 MATCHED** |
 
 Every section on every partition — against a drive that the day before gave a
 result for its first partition only, and this morning failed fixtures on all
@@ -80,8 +119,26 @@ four.
 What this run cannot show on its own: the four partitions carry identical
 fixtures, so a pass does not say which partition each fixtures section read. The
 host compare can, because the report writer now puts a copy on every drive the
-run measured — each of the four should carry this run's report. Host fsck and
-compare pending.
+run measured — each of the four should carry this run's report.
+
+**Host check (laptop, after the run):**
+
+| Partition | fsck | Compare against the pre-run baseline |
+|---|---|---|
+| P1 LUKS1 + FAT32 | **CLEAN** — 20025 files, 86191/4185352 clusters | **lost** — `volume_baseline.sh` was edited while the compare ran and bash read the new bytes mid-execution (`line 283: and: command not found`). To be re-run. |
+| P2 LUKS1 + exFAT | **CLEAN** — 17 dirs, 20006 files | report added, `INDEX.txt` modified; boot region and FAT identical. The script printed `NO CHANGE` despite listing the two — the verdict bug fixed in `f8b8042`. |
+| P3 LUKS2 + FAT32 | **CLEAN** — 20022 files, 86184/4182026 clusters | report + `INDEX.txt` added; FAT[0] and FAT[1] **each 17 bytes at byte 394,473, identical** (V9); FSInfo 3 bytes |
+| P4 LUKS2 + exFAT | **CLEAN** — 17 dirs, 20006 files | report added, `INDEX.txt` modified; boot region identical; FAT ~4,081 entries changed |
+
+The report landed on every partition the run measured (P2–P4 confirmed, P1
+shows it via the file count), so each partition's `fixtures` pass is now
+attributable to it.
+
+P4's FAT churn is consistent with the run, not with damage: the 16 MiB write
+test is 4,096 × 4 KiB clusters, and exFAT only writes FAT entries for a
+fragmented file. It leaves them stale when the file is freed, which `fsck.exfat`
+accepts. The allocation bitmap was not captured, so this is plausible rather
+than proven.
 
 ---
 
@@ -186,8 +243,8 @@ ends, battery 100%. All four partitions in one pass.
 |---|---|---|---|---|---|
 | P1 LUKS1 + FAT32 | 11.58 MB/s | **ALL PASSED** | **A + B PASS** | **ALL PASSED** | 3 of 3 FAILED |
 | P2 LUKS1 + exFAT | 11.06 MB/s | **ALL PASSED** | **A + B PASS** | **ALL PASSED** | 3 of 3 FAILED |
-| P3 LUKS2 + exFAT | 11.09 MB/s | **ALL PASSED** | **A + B PASS** | **ALL PASSED** | 3 of 3 FAILED |
-| P4 LUKS2 + FAT32 | 11.28 MB/s | **ALL PASSED** | **A + B PASS** | **ALL PASSED** | 3 of 3 FAILED |
+| P3 LUKS2 + FAT32 | 11.09 MB/s | **ALL PASSED** | **A + B PASS** | **ALL PASSED** | 3 of 3 FAILED |
+| P4 LUKS2 + exFAT | 11.28 MB/s | **ALL PASSED** | **A + B PASS** | **ALL PASSED** | 3 of 3 FAILED |
 
 **The multi-partition path works.** On the Samsung the day before, the same
 drive gave a result for its first partition only; every section on partitions

@@ -79,7 +79,13 @@ baseline compare shows FAT[0] and FAT[1] changing by the same single entry.
 | D3·C5 | `98fae8f` | write verify 3/3, unaligned A+B, correctness A–G, fixtures ALL 5, `e2fsck` clean; **throughput unusable (started throttled)** |
 | D3·C4 | `98fae8f` | write verify 3/3, unaligned A+B, correctness A–G, fixtures ALL 5, `e2fsck` clean |
 | D4·C2 | `98fae8f` | write verify 3/3, unaligned A+B, correctness A–G, fixtures ALL 16, `fsck.exfat` clean — the finalizer-watchdog device, no process kill |
+| D4·C3 | `6c58cd4` | write verify 3/3, unaligned A+B, correctness A–G, fixtures ALL 5, `e2fsck` clean; report on p1 only — the tag-resolution fix confirmed |
 | D4·C5 | `98fae8f` | write verify 3/3, unaligned A+B, correctness A–G, fixtures ALL 5; **fsck pending** — Argon2id on the slowest device |
+
+**Drive A (LUKS1/2 + FAT32/exFAT, outside the grid):** OnePlus 7 on `4ea6a49`,
+all four partitions pass every section including fixtures; host `fsck` clean on
+all four. P3's FAT[0] and FAT[1] change identically (V9). P1's compare was lost
+and needs re-running.
 
 ## Known gaps, and which matter
 
