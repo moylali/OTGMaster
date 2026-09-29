@@ -59,6 +59,22 @@ internal constructor(private val blockDevice: BlockDeviceDriver, bootSector: Fat
     private var fatNumbers: IntArray
     private val cache = LRUCache<Long, Array<Long>>(64)
 
+    /** LOCAL PATCH (docs/VENDOR_FIXES.md V8): bounds for [isValidCluster]. */
+    private val fatSizeBytes: Long
+    private val maxValidCluster: Long
+
+    /**
+     * LOCAL PATCH (docs/VENDOR_FIXES.md V8): whether [cluster] can name an entry
+     * inside this FAT.
+     *
+     * Clusters 0 and 1 are reserved — 0 is the media descriptor, 1 the
+     * end-of-chain marker carrying the dirty flags — so neither is part of any
+     * file. Anything at or past [maxValidCluster] would address a byte outside
+     * the table, which is how zeros ended up in the data area.
+     */
+    private fun isValidCluster(cluster: Long): Boolean =
+        cluster >= 2 && cluster <= maxValidCluster
+
     init {
         if (!bootSector.isFatMirrored) {
             val fatNumber = bootSector.validFat.toInt()
@@ -77,7 +93,14 @@ internal constructor(private val blockDevice: BlockDeviceDriver, bootSector: Fat
         for (i in fatOffset.indices) {
             fatOffset[i] = bootSector.getFatOffset(fatNumbers[i])
         }
+
+        // LOCAL PATCH (docs/VENDOR_FIXES.md V8): the size of one FAT, so a cluster
+        // number read out of the table can be checked against the table's own
+        // extent before it is turned into a byte offset.
+        fatSizeBytes = bootSector.sectorsPerFat * bootSector.bytesPerSector.toLong()
+        maxValidCluster = fatSizeBytes / 4 - 1
     }
+
 
     /**
      * This methods gets a chain by following the given start cluster to an end
@@ -116,6 +139,7 @@ internal constructor(private val blockDevice: BlockDeviceDriver, bootSector: Fat
         var offset: Long
         var offsetInBlock: Long
         var lastOffset: Long = -1
+        var corrupt = false
 
         do {
             result.add(currentCluster)
@@ -130,10 +154,28 @@ internal constructor(private val blockDevice: BlockDeviceDriver, bootSector: Fat
             }
 
             currentCluster = (buffer.getInt(offsetInBlock.toInt()) and 0x0FFFFFFF).toLong()
+
+            // LOCAL PATCH (docs/VENDOR_FIXES.md V8): upstream tests only the upper
+            // end, so any cluster below FAT32_EOF_CLUSTER is followed — including 0.
+            // A single 0 mid-chain therefore did not end the walk: the loop added 0
+            // to the chain, read FAT entry 0 (the media descriptor, 0x0FFFFFF0),
+            // found that below the EOF marker too, and carried on into offsets more
+            // than a gigabyte past the end of a 57 MiB FAT — reading the data area
+            // as though it were FAT entries. free() then zeroed every one of them.
+            // Measured on a benchmark drive: entry 0 wiped and ~514 MB of another
+            // file's chain zeroed, while the app's own read path saw nothing wrong.
+            if (currentCluster < FAT32_EOF_CLUSTER && !isValidCluster(currentCluster)) {
+                Log.w(TAG, "corrupt FAT: cluster $currentCluster is outside the table" +
+                        " (valid 2..$maxValidCluster); truncating chain from $startCluster")
+                corrupt = true
+                break
+            }
         } while (currentCluster < FAT32_EOF_CLUSTER)
 
         val arr = result.toTypedArray()
-        cache[startCluster] = arr
+        // LOCAL PATCH (docs/VENDOR_FIXES.md V8): a chain cut short by corruption is
+        // not this file's extent, so it must not be memoised as one.
+        if (!corrupt) cache[startCluster] = arr
 
         return arr
     }
@@ -315,6 +357,16 @@ internal constructor(private val blockDevice: BlockDeviceDriver, bootSector: Fat
         // free all unneeded clusters
         for (i in offsetInChain until chain.size) {
             currentCluster = chain[i]
+            // LOCAL PATCH (docs/VENDOR_FIXES.md V8): this loop is where the zeros are
+            // written, and it trusted its input completely. Guarding only the producer
+            // (getChain) would leave every other caller able to destroy the volume, so
+            // the check is repeated at the point the damage happens. Skipping leaks a
+            // cluster until the next full check; following it corrupts user data.
+            if (!isValidCluster(currentCluster)) {
+                Log.w(TAG, "refusing to free cluster $currentCluster: outside the FAT" +
+                        " (valid 2..$maxValidCluster)")
+                continue
+            }
             offset = (fatOffset[0] + currentCluster * 4) / bufferSize * bufferSize
             offsetInBlock = (fatOffset[0] + currentCluster * 4) % bufferSize
 

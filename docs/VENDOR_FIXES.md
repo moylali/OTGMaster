@@ -49,6 +49,68 @@ Vendored fork of [magnusja/libaums](https://github.com/magnusja/libaums).
 | `ByteBlockDevice` | V5 — no `array()`, so direct buffers work | see below |
 | `ClusterChain` | V6 — coalesce consecutive clusters on read | see below |
 | `FatDirectory` | V7 — refuse an implausible directory size instead of OOM | see below |
+| `FAT` | V8 — stop a corrupt chain instead of following it out of the FAT | see below |
+
+## V8 — a corrupt chain destroyed the rest of the volume
+
+**What upstream does wrong.** `FAT.getChain` follows any cluster below
+`FAT32_EOF_CLUSTER` (`0x0FFFFFF8`), testing only the upper end:
+
+```kotlin
+currentCluster = (buffer.getInt(offsetInBlock.toInt()) and 0x0FFFFFFF).toLong()
+} while (currentCluster < FAT32_EOF_CLUSTER)
+```
+
+Cluster 0 is below that marker, so a single zero in the middle of a chain does
+not end the walk. The loop appends 0, reads FAT entry 0 — the media descriptor,
+`0x0FFFFFF0` — finds that below the marker too, and continues to cluster
+268,435,440, whose byte offset is about 1.07 GB into a volume whose FAT is
+57 MiB. From there it reads the **data area** as though it were FAT entries and
+keeps walking. `free()` is then handed the whole fabricated chain and faithfully
+writes zeros to every offset in it.
+
+Upstream already refuses `startCluster == 0` in the same function — it knows 0
+is not a cluster — but never applies the test mid-walk.
+
+**Why it mattered.** Found by running `fsck.fat` on a benchmark drive after a
+run that passed every on-device check: write verify on all three passes,
+unaligned A and B, correctness A–G, and `fixtures` against host-computed hashes.
+The drive had FAT entry 0 zeroed and roughly 514 MB of an unrelated file's chain
+wiped — `/FILL/fill_0023.bin`, a fixture no part of the benchmark writes to.
+
+It stayed invisible because the app reads the same FAT it had corrupted. Only a
+byte-level comparison of the two FAT copies exposed it, and that comparison was
+only possible because of a *second* upstream defect: libaums writes
+`fatOffset[0]` and never mirrors, so FAT[1] still held the correct chains. That
+defect is still open, deliberately — fixing it first would have copied the
+corruption into the only intact record and made the drive unrecoverable.
+
+**The patch.** Bound the cluster at both ends, against the FAT's own extent:
+
+```kotlin
+private fun isValidCluster(cluster: Long): Boolean =
+    cluster >= 2 && cluster <= maxValidCluster   // fatSizeBytes / 4 - 1
+```
+
+applied in `getChain` (break, with a warning, and do not cache a chain cut short
+by corruption) and again in `free` (skip the entry). The check is repeated at the
+destructive site on purpose: guarding only the producer leaves any other caller
+able to destroy the volume, and `free` is where the zeros are written.
+
+A lower bound alone is not sufficient. Any value in `[2, 0x0FFFFFF7]` past the
+end of the table computes an offset outside the FAT and lands in user data;
+`0x0FFFFFF0` is itself such a value. The upper bound is what turns "writes zeros
+into user data" into "leaks a cluster".
+
+**Test.** `Fat32CorruptChainTest` builds a FAT32 image, creates a file, plants
+one zeroed entry mid-chain, deletes the file, and asserts that FAT entry 0 and a
+byte in the data area are untouched. It fails on the unpatched code with
+`FAT entry 0 … expected:<-8> but was:<0>` — the media descriptor `0xF8` zeroed by
+a delete — and passes on the patched code.
+
+The assertions deliberately are not "is `fsck` happy". `fsck.fat` passed the
+damaged drive by reading FAT[1], which libaums never writes and which was
+therefore fine; a clean checker would not have caught this.
 
 ## V1 and V2 — reproduced on hardware, then fixed
 

@@ -9,5 +9,6 @@
 • Fixed: Unencrypted partitions were labelled "VERACRYPT" in the volume picker, and selecting one produced a misleading "failed to unlock" instead of saying it is not encrypted
 • Fixed: On a drive holding both encrypted and unencrypted partitions, the encrypted partition could become unreachable after dismissing the Auto mount prompt
 • Fixed: An unencrypted drive's card offered to clear cached credentials it does not have
+• Fixed: On a FAT32 drive whose allocation table was already damaged, deleting a file could wipe parts of other files and of the drive's own structures. The damage is now contained to the file being deleted
 • Fixed: On drives with several encrypted partitions, some partitions could fail to mount, and unmounting one could disconnect the others
 • Fixed: A temporary USB read error no longer discards the credentials you asked the app to remember for a partition
