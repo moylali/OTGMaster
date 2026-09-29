@@ -35,6 +35,37 @@ to a row here.
 
 ## 2026-09-29
 
+### Samsung Galaxy M30 (SM-M305F) · Android 10 (SDK 29) · build 0.4.0 (46) commit 7beefe8 — VeraCrypt + exFAT
+
+Clean tree (later commits are docs only), installed immediately before the run,
+awake and unthrottled at both ends, AC powered at 100% — through the USB-C
+multiport adapter the drive also hangs off. The V12 validation run.
+
+| Field | Value |
+|---|---|
+| Drive | PNY 59151 MiB — VeraCrypt (AES/SHA-512, PIM 1) + exFAT, `exFAT` |
+| Report | `Documents/otgbench-SM-M305F-20260929-085653.txt` on the phone only |
+| block read | 3.84 / 11.65 / 12.97 / 11.68 MB/s |
+| seq read | 9.76 / 9.99 / 10.04 MB/s |
+| random read | 6.5 ms each, 154.0 IOPS |
+| write | 16 MiB → **0.36 MB/s** (0.68 on the previous run) |
+| write verify | **ALL PASSED** (cached, cache-dropped, remounted) |
+| unaligned | **A + B PASS** |
+| correctness | **ALL PASSED** (A–G) |
+| fixtures | **FAILED** — `exFAT read failed at offset 615776256 (262144 bytes): -5` |
+| fsck / compare | pending |
+
+**The adapter disconnected, not the app.** At 08:56:51.5 `UsbHostManager` logged
+the removal of every device on the multiport adapter at once — its gigabit LAN
+(`0bda:8153`), its hub (`2109:8817`) and the drive (`154b:1006`). Every transfer
+then returned `-1`; V12's Reset Recovery ran before each retry and failed
+immediately (`bulk only mass storage reset failed!`) because there was no device
+to reset, was logged, and the retries proceeded to `MAX_RECOVERY_ATTEMPTS` as
+before. So this run shows V11 + V12 do not disturb normal transfers — every write
+section passed — but not V12's recovery succeeding on hardware; that rests on
+`ScsiResetRecoveryTest`. This morning's dropped Samsung exFAT run went through the
+same adapter.
+
 ### Samsung Galaxy M30 (SM-M305F) · Android 10 (SDK 29) · build 0.4.0 (46) commit a192b12 — VeraCrypt + exFAT
 
 Clean tree, installed immediately before the run, awake and unthrottled at both
