@@ -64,8 +64,9 @@ landed on the wrong partition.
 The p3 result limits what the NTFS baseline can show: on a phone whose OS
 mounts NTFS itself, "p3 unchanged" cannot be used to prove the app never
 writes NTFS. The app-side claim rests on the partition being refused — it is
-filtered from the picker and never opened. The p3 baseline needs retaking
-before the next compare, or this change will show up again.
+filtered from the picker and never opened. The p3 baseline is not being
+retaken: NTFS is unsupported, so future compares of p3 are skipped rather than
+re-armed against the OS's own writes.
 
 The report's placement is the result this run was for: it is on p1, the drive
 measured, and not on p2. `4ea6a49` is confirmed on hardware.
