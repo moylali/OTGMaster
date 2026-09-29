@@ -585,9 +585,9 @@ class MainActivity : AppCompatActivity() {
 
     /**
      * Whether this partition mounts read-only: its own choice from the unlock form
-     * if it has one, otherwise the Read-only mode setting. Read by attemptUnlock, so
-     * every unlock path honours it — the form, auto mount, quick unlock and the
-     * programmatic mount request.
+     * if it has one, otherwise the Read-only mode setting. Read by attemptUnlock for
+     * the form, quick unlock and the programmatic mount request. Auto mount uses the
+     * setting alone (readOnlyOverride), since it shows no form.
      */
     private fun isPartitionReadOnly(deviceKey: String, startBlock: Long): Boolean =
         readOnlyChoices.value[partitionKey(deviceKey, startBlock)] ?: readOnlyDefault.value
@@ -852,10 +852,12 @@ class MainActivity : AppCompatActivity() {
         cipher: app.fayaz.otgmaster.veracrypt.VeraCryptCipher,
         hash: app.fayaz.otgmaster.veracrypt.VeraCryptHash,
         fromCache: Boolean = false,
+        /** Overrides the partition's stored choice; auto mount passes the Settings default. */
+        readOnlyOverride: Boolean? = null,
         onComplete: () -> Unit
     ) {
         val device = openedDevices[deviceName]
-        val readOnly = isPartitionReadOnly(deviceName, candidate.startBlock)
+        val readOnly = readOnlyOverride ?: isPartitionReadOnly(deviceName, candidate.startBlock)
         android.util.Log.i("OTGMaster",
             "attemptUnlock ${candidate.label} @${candidate.startBlock} via ${objId(device)}")
         if (device == null) {
@@ -1467,7 +1469,10 @@ class MainActivity : AppCompatActivity() {
                         val hash = app.fayaz.otgmaster.veracrypt.VeraCryptHash.entries
                             .find { it.name == creds.hashName }
                             ?: app.fayaz.otgmaster.veracrypt.VeraCryptHash.DEFAULT
-                        attemptUnlock(device.deviceName, candidate, creds.password, creds.pim.toIntOrNull(), creds.keyfileUris, cipher, hash, fromCache = true) {}
+                        // Auto mount follows Settings → Read-only mode, not a choice made
+                        // for this partition in the form: there is no form here to show it.
+                        attemptUnlock(device.deviceName, candidate, creds.password, creds.pim.toIntOrNull(), creds.keyfileUris, cipher, hash,
+                            fromCache = true, readOnlyOverride = readOnlyDefault.value) {}
                     }
                 }
             }
