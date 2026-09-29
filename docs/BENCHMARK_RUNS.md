@@ -35,6 +35,69 @@ to a row here.
 
 ## 2026-09-29
 
+### Huawei P20 Lite (ANE-LX1) · Android 9 (SDK 28) · build 0.4.0 (46) commit b850696 — LUKS1 + ext4
+
+Clean tree, installed immediately before the run, awake and unthrottled at both
+ends, on battery at 82%. The first LUKS1+ext4 run on this device.
+
+| Field | Value |
+|---|---|
+| Drive | PNY USB 3.2.1 FD — LUKS1 + ext4, `LUKS1EXT4` |
+| Report | `otgbench-ANE-LX1-20260929-070630.txt` |
+| Sections | free, block, dir, path, seq, random, opens, write, unaligned, correct, fixtures |
+| block read | 1.96 / 5.30 / 7.73 / 8.29 MB/s (4 / 64 / 512 / 4096 KiB span) |
+| seq read | 6.17 / 6.53 / 6.73 MB/s (32 / 128 / 512 KiB buf) |
+| random read | 9.0 ms each, 110.6 IOPS |
+| write | 16 MiB → 0.57 MB/s |
+| write verify | **ALL PASSED** (cached, cache-dropped, remounted) |
+| unaligned | **A + B PASS** |
+| correctness | **ALL PASSED** (A–G) |
+| fixtures | **ALL 5 MATCHED the host-computed hashes** |
+| e2fsck / compare | pending |
+
+---
+
+### OnePlus 7 (GM1901) · Android 16 (SDK 36) · build 0.4.0 (46) commit b850696 — drive D p1, VeraCrypt + ext4
+
+Clean tree, installed immediately before the run, awake and unthrottled at both
+ends, on battery at 91%. **Completed with failures — an app defect, not the card.**
+
+| Field | Value |
+|---|---|
+| Drive | Realtek card reader, 11927 MiB — VeraCrypt (AES/SHA-512, PIM 1) + ext4, `VCEXT4` |
+| Report | `Documents/otgbench-GM1901-20260929-070404.txt` on the phone only — nothing was mounted at the end, so no copy reached the card |
+| Sections | free, block, dir, path, seq, random, opens, write, unaligned, correct, fixtures |
+| block read | 1.81 / 15.43 / 26.10 / 23.07 MB/s |
+| seq read | 20.82 / 21.39 / 20.99 MB/s |
+| random read | 5.5 ms each, 180.6 IOPS |
+| write | 16 MiB → 3.15 MB/s |
+| write verify | **ALL PASSED** (cached, cache-dropped, remounted) |
+| unaligned | **NOT VERIFIED** — the drive did not come back after unmounting |
+| correctness | **could not run** — no live mount |
+| fixtures | **FAILED** — `block device is closed (volume was unmounted)` |
+| e2fsck / compare | pending |
+
+What happened, from logcat. The runner's startup `unmountAll` took down the
+plain p2 the app had auto-mounted, and the mount request that followed covers
+encrypted candidates only, so the run started with p1 alone. `write verify`'s
+remount re-probed the card, and the app auto-mounted p2 again. The next remount
+(`unaligned`) therefore unmounted **two** drives on one USB device. The app
+re-opened the card, and the mount request that followed was issued for **2
+candidates** — the card has one encrypted partition. Reads on it failed with
+`result == -1`, the signature of a USB connection that has been closed, and
+nothing mounted. Every later section then had no drive.
+
+The duplicate candidate points at a stale restored entry holding a closed
+connection. Not yet confirmed; to be reproduced with instrumentation before
+any fix. It bears directly on plain-partition coverage: a runner that also
+remounts p2 would make every remount this two-drive case.
+
+A Samsung M30 run on the same build, with VC+exFAT and VC+FAT32 attached
+through a hub, was force-stopped and is not logged: the exFAT drive's transport
+died during `write verify` (`MAX_RECOVERY_ATTEMPTS Exceeded`), and the run then
+sat in `unaligned` against the dead handle for nine minutes. No result. That
+drive is to be checked on the host before anything else touches it.
+
 ### Huawei P20 Lite (ANE-LX1) · Android 9 (SDK 28) · build 0.4.0 (46) commit 6c58cd4 — drive D p1, VeraCrypt + ext4
 
 Clean tree, awake and unthrottled at both ends. The first run on this card after
