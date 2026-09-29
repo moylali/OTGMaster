@@ -10,7 +10,7 @@
 #   --name NAME        baseline directory name (default: the volume label)
 #   --password PASS    container password (default: password123)
 #   --pim N            VeraCrypt PIM (default: 1)
-#   --store DIR        where baselines live (default: /var/lib/otgmaster-baselines)
+#   --store DIR        where baselines live (default: baselines/ in the workspace)
 #   --metadata-only    compare only the allocation tables, not file contents
 #
 # The two halves cost very different amounts and catch different things:
@@ -78,7 +78,17 @@ PART="$1"; shift
 NAME=""
 PASS=password123
 PIM=1
-STORE=/var/lib/otgmaster-baselines
+# In the workspace rather than /var/lib. These are evidence, not system state:
+# they are the reference a later comparison is judged against, so they should sit
+# with the rest of the project's evidence and survive this machine. The directory
+# is gitignored for now — the raw FAT copies are 57 MB each and have no business
+# in git, while the hash lists are small and arguably should be committed. That
+# split is not decided yet.
+#
+# Deliberately NOT stored on the drive itself: a volume that corrupts its own
+# data can corrupt its own baseline, which is exactly how the FAT32 drive kept a
+# valid-looking MANIFEST.txt while its allocation table was wrecked.
+STORE="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)/baselines"
 META_ONLY=0
 
 while [[ $# -gt 0 ]]; do

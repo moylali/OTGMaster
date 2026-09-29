@@ -38,3 +38,7 @@ logcat_*.txt
 
 # Agent artifacts
 agy/
+
+# Volume baselines: raw FAT copies are 57 MB each. The hash lists inside are
+# small and may be worth committing later; that is undecided.
+baselines/
