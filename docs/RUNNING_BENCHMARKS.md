@@ -79,6 +79,57 @@ Every run writes three copies, and runs accumulate rather than overwrite:
 `INDEX.txt` carries the model, Android version, commit, awake/DOZED and the
 correctness and fixtures verdicts, so a set of runs can be read without opening each.
 
+## Proving a run changed nothing it should not have
+
+`scripts/volume_baseline.sh` records a volume's full state, so a later comparison
+can show exactly what a run touched. It handles LUKS, VeraCrypt and plain
+partitions, is read-only throughout, and works on ext4, exFAT and FAT32.
+
+Take the baseline once, while the volume is believed good — freshly prepared, or
+just checked:
+
+```sh
+sudo bash scripts/volume_baseline.sh snapshot /dev/sdX1
+```
+
+Compare after a run:
+
+```sh
+sudo bash scripts/volume_baseline.sh compare /dev/sdX1
+```
+
+Add `--metadata-only` for a routine check: it skips the file hashes and diffs
+only the allocation tables, taking seconds instead of the ~10 minutes a full
+compare needs on a 54 GB drive.
+
+**What it adds over `fsck` and `fixtures`.** `fsck` validates structure, not
+contents — no filesystem here carries data checksums, so a cluster holding the
+wrong bytes inside a structurally valid chain is invisible to it. `fixtures`
+validates contents, but only for the manifest's entries: 14 files of 20,096 on
+the exFAT drive. The FAT32 corruption found on 2026-09-28 lived in exactly that
+gap — in a `FILL/` file no manifest entry covered — so that drive reported
+`fixtures: ALL 16 MATCHED` while its allocation table was wrecked.
+
+**Reading the output.** Paths the benchmark owns — `BENCH/reports/`,
+`BENCH_UNALIGNED`, its scratch files — are listed as expected and do not count as
+findings. The signal is a **modified** file the run never wrote, and allocation
+churn out of proportion to what was written. For scale, both measured with this
+tool on the same day:
+
+| | exFAT, healthy | FAT32, corrupted |
+|---|---|---|
+| FAT bytes changed | 7 of 60,817,408 | 526,547 of 60,453,376 |
+| entries changed | ~1 | ~131,636 |
+| boot region | identical | entry 0 zeroed |
+| unexplained file changes | none | `FILL/fill_0023.bin` |
+
+**Where baselines live.** `baselines/` in the workspace, gitignored. They are not
+kept on the drive itself, deliberately: a volume that corrupts its own data can
+corrupt its own baseline, which is precisely how the FAT32 drive kept a
+valid-looking `MANIFEST.txt` while its allocation table was destroyed. `snapshot`
+refuses to overwrite an existing baseline, so a later and possibly damaged state
+cannot silently become the reference.
+
 ## What makes a result trustworthy
 
 These are the checks that turn output into evidence. Each exists because its absence

@@ -98,6 +98,39 @@ So for any filesystem write change:
   host-computed hashes. That is exactly the state the drive was in when it was
   destroyed. No amount of on-device checking can substitute, and the run log
   records for each run whether this was done;
+- **baseline the drive before a run and compare after it.**
+  `scripts/volume_baseline.sh snapshot /dev/sdX1` once, while the volume is
+  believed good; `… compare /dev/sdX1` after each run. This is the only check
+  that covers *every* file rather than a sample, and the only one that can diff
+  an allocation table against a known-good copy.
+
+  It exists because the two checks above both have blind spots that a real
+  corruption walked straight through. `fsck` validates structure, not contents —
+  no filesystem here carries data checksums, so a cluster holding the wrong bytes
+  inside a valid chain is invisible to `e2fsck`, `fsck.exfat` and `fsck.vfat`
+  alike. `fixtures` validates contents, but only for manifest entries: 14 files of
+  20,096 on the exFAT drive. The FAT32 damage sat in that gap, in a `FILL/` file
+  no entry named, which is why that drive reported `fixtures: ALL 16 MATCHED`
+  while wrecked.
+
+  What the comparison looks like when it is working, measured the same day on the
+  same tool:
+
+  | | exFAT, healthy | FAT32, corrupted |
+  |---|---|---|
+  | FAT bytes changed | 7 of 60,817,408 | 526,547 of 60,453,376 |
+  | entries changed | ~1 | ~131,636 |
+  | unexplained file changes | none | `FILL/fill_0023.bin` |
+
+  Four orders of magnitude, from a check that takes minutes. Use
+  `--metadata-only` for a quick pass after routine runs; it diffs the allocation
+  tables in seconds and is the half that catches damage of that shape.
+
+  Take the baseline when you have reason to believe the volume is good — freshly
+  prepared, or just checked. A baseline taken over damage records the damage as
+  normal, and the tool then passes forever. It refuses to overwrite an existing
+  baseline for that reason.
+
 - assert both: the content matches *and* the filesystem still validates.
 
 Keep a second prepared drive untouched by the change. Drive C staying clean is what
