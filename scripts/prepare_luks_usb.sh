@@ -1,7 +1,53 @@
 #!/bin/bash
-# Prepare USBs or disk images for LUKS testcases.
-# Usage: sudo ./scripts/prepare_luks_usb.sh --disk /dev/sdX --layout 1
+# Build one 4-partition LUKS test volume, on a real disk or a loopback image.
+#
+# Usage: sudo ./scripts/prepare_luks_usb.sh --disk /dev/sdX  --layout 1
 #        sudo ./scripts/prepare_luks_usb.sh --image test.img --layout 2
+#
+# This is the worker the rest of the small-media set is built on;
+# generate_luks_testcases.sh calls it three times to produce the whole matrix.
+#
+# Layouts, each four ~50 MB primary partitions:
+#   1  mixed containers   exFAT, FAT32, LUKS1, LUKS2 side by side on one disk —
+#                         the case that proves the prober classifies each
+#                         partition independently rather than by disk.
+#   2  LUKS1 inner-FS     ext2, ext3, ext4, FAT32 each inside a LUKS1 container.
+#   3  LUKS2 inner-FS     the same four inside LUKS2 (Argon2id).
+#
+# --image makes a 200 MB file and attaches it with losetup -P, so the whole
+# matrix can be rebuilt with no hardware attached. --disk repartitions a real
+# device and prompts for an uppercase YES first; it is destructive.
+#
+# Password is password123 throughout, matching scripts/generate_testdata.sh so
+# the E2E suite and these images agree.
+#
+# PART OF THE SMALL-MEDIA LUKS FIXTURE SET
+#
+# Two families of test media exist in this project, for different questions:
+#
+#   scripts/prepare_drive_{a,b,c,d}.sh   64 GB physical drives, 2 GiB fixtures,
+#                                        hash manifests. Answer "how fast, and
+#                                        does it stay correct under load".
+#   this set                             ~200 MB loopback images or small
+#                                        partitions, tiny fixtures. Answer "does
+#                                        the app parse and handle this format".
+#
+# The small set covers far more *combinations* than the big drives do — LUKS1 and
+# LUKS2 over ext2, ext3, ext4 and FAT32, plus a mixed-container disk — and
+# regenerates in seconds instead of an hour, which is what makes it the one to
+# reach for when adding a container format or a filesystem. The big drives cannot
+# cover that matrix; there are only four of them and each takes an hour to build.
+#
+# What this set deliberately does NOT do:
+#   - no MANIFEST.txt, so the benchmark's `fixtures` section has nothing to check
+#     against and will report "nothing to check". These images prove a volume is
+#     *handled*, not that its bytes survived a write. Use a big drive plus
+#     scripts/regen_manifest.sh for that.
+#   - no throughput meaning. 50 MB partitions and 64 MB fixtures sit inside any
+#     cache; numbers measured here are not comparable to anything in
+#     docs/BENCHMARK_RESULTS.md and must not be quoted as figures.
+#
+# See docs/TEST_DATA.md for the per-case contract these images are consumed under.
 
 set -e
 

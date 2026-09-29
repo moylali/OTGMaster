@@ -1,5 +1,44 @@
 #!/bin/bash
-# Prepares physical USBs in parallel
+# prepare_physical_usbs.sh, with the three drives prepared concurrently.
+#
+# Usage: sudo ./scripts/prepare_parallel.sh
+#
+# Identical layouts and identical fixture tree; only the scheduling differs.
+# Worth using because preparation is dominated by waiting on slow USB writes
+# rather than by CPU, so three at once costs little more than one — but it
+# interleaves output from three jobs, which makes a failure harder to attribute.
+# Prefer the sequential script when something has already gone wrong once.
+#
+# DESTRUCTIVE: it repartitions the devices named inside it. Read which ones
+# before running.
+#
+# PART OF THE SMALL-MEDIA LUKS FIXTURE SET
+#
+# Two families of test media exist in this project, for different questions:
+#
+#   scripts/prepare_drive_{a,b,c,d}.sh   64 GB physical drives, 2 GiB fixtures,
+#                                        hash manifests. Answer "how fast, and
+#                                        does it stay correct under load".
+#   this set                             ~200 MB loopback images or small
+#                                        partitions, tiny fixtures. Answer "does
+#                                        the app parse and handle this format".
+#
+# The small set covers far more *combinations* than the big drives do — LUKS1 and
+# LUKS2 over ext2, ext3, ext4 and FAT32, plus a mixed-container disk — and
+# regenerates in seconds instead of an hour, which is what makes it the one to
+# reach for when adding a container format or a filesystem. The big drives cannot
+# cover that matrix; there are only four of them and each takes an hour to build.
+#
+# What this set deliberately does NOT do:
+#   - no MANIFEST.txt, so the benchmark's `fixtures` section has nothing to check
+#     against and will report "nothing to check". These images prove a volume is
+#     *handled*, not that its bytes survived a write. Use a big drive plus
+#     scripts/regen_manifest.sh for that.
+#   - no throughput meaning. 50 MB partitions and 64 MB fixtures sit inside any
+#     cache; numbers measured here are not comparable to anything in
+#     docs/BENCHMARK_RESULTS.md and must not be quoted as figures.
+#
+# See docs/TEST_DATA.md for the per-case contract these images are consumed under.
 
 set -e
 PASSWORD="password123"
