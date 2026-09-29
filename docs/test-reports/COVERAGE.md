@@ -34,8 +34,8 @@ device's result.
 
 | | C1 VC+FAT32 | C2 VC+exFAT | C3 VC+ext4 | C4 LUKS1+ext4 | C5 LUKS2+ext4 | C6 plain+NTFS |
 |---|---|---|---|---|---|---|
-| **D1** Pixel 10 Pro XL | ✅ full | ✅ full | ✅ full | ✅ partial | ✅ partial | ✅ partial |
-| **D2** OnePlus 7 | ❌ | ❌ | ❌ | ✅ partial | ✅ partial | ❌ |
+| **D1** Pixel 10 Pro XL | ✅ full | ✅ full | ✅ full | ✅ full | ✅ full | ✅ partial |
+| **D2** OnePlus 7 | ❌ | ❌ | ❌ | ✅ partial | ✅ full | ❌ |
 | **D3** Samsung M30 | ❌ | ✅ partial | ❌ | ✅ full | ✅ full | ❌ |
 | **D4** Huawei P20 Lite | ⚠️ see note | ✅ full | ❌ | ❌ | ✅ partial | ❌ |
 
@@ -53,7 +53,7 @@ cell means sampled-clean, not audited-clean.
 or the full read section set. Detail in the run log.
 🔄 running · ❌ not attempted.
 
-**Coverage: 15 of 24 cells, 6 full. The Pixel's row is complete — all six
+**Coverage: 15 of 24 cells, 9 full. The Pixel's row is complete — all six
 cases measured on one device.**
 
 ⚠️ **D4·C3 is partial and blocked.** Three attempts, all losing the

@@ -35,6 +35,65 @@ to a row here.
 
 ## 2026-09-28
 
+### OnePlus 7 (GM1901) · Android 16 (SDK 36) · build 0.3.13 (46) commit d216ed8 — LUKS2 + ext4
+
+APK sha256 `02312fe0…`, clean tree, awake and unthrottled, battery 92%.
+
+| Field | Value |
+|---|---|
+| Drive | PNY 59136 MiB — LUKS2 (Argon2id) + ext4, `LUKS2EXT4` |
+| Sections | free, block, dir, path, seq, random, opens, write, unaligned, correct, fixtures |
+| block read | 7.41 / 26.02 / 28.19 / 26.51 MB/s |
+| seq read | 26.04 / 27.71 / 28.40 MB/s |
+| random read | 3.5 ms each, 284.7 IOPS |
+| write | 16 MiB → 0.78 MB/s |
+| write verify | **ALL PASSED** (cached, cache-dropped, remounted) |
+| unaligned | **A + B PASS** |
+| correctness | **ALL PASSED** (A–G) |
+
+Replaces this device's earlier LUKS2 result, which was measured on a build
+predating the ext4 metadata fixes and could not have gone into a tag report. The
+fastest reads in the fleet — 28.4 MB/s sequential against the Pixel's 16.5 on the
+same drive, which is a device difference and not a code one.
+
+---
+
+### Pixel 10 Pro XL · Android 17 (SDK 37) · build 0.3.13 (46) commit d216ed8 — LUKS1 + ext4
+
+| Field | Value |
+|---|---|
+| Drive | PNY 59150 MiB — LUKS1 (PBKDF2) + ext4, `LUKS1EXT4` |
+| block read | 1.26 / 13.39 / 19.32 / 22.26 MB/s |
+| seq read | 16.54 / 16.41 / 15.85 MB/s |
+| random read | 5.0 ms each, 199.9 IOPS |
+| write | 16 MiB → 0.62 MB/s |
+| write verify | **ALL PASSED** (cached, cache-dropped, remounted) |
+| unaligned | **A + B PASS** |
+| correctness | **ALL PASSED** (A–G) |
+| fixtures | **ALL 5 MATCHED the host-computed hashes** |
+| fsck | **CLEAN** — `e2fsck -fn`: 20039/3792896 files, 927643/15142400 blocks |
+| baseline compare | **CLEAN** — see below |
+
+**First pair of runs verified against a stored baseline.** Both this and the
+Pixel's LUKS2 run were baselined before the run and compared after, with
+`scripts/volume_baseline.sh`:
+
+| | LUKS2 + ext4 | LUKS1 + ext4 |
+|---|---|---|
+| files unchanged | 20,007 of 20,009 | 20,009 of 20,011 |
+| added | its own report | its own report |
+| modified | `BENCH/reports/INDEX.txt` | `BENCH/reports/INDEX.txt` |
+| free blocks | −1 | −1 |
+| free inodes | −1 | −1 |
+
+Every change is the benchmark's own output, and the metadata delta is exactly one
+file's worth. This is a materially stronger statement than `fixtures` can make on
+its own: that section covers 5 manifest entries, while this covers all ~20,000
+files. The FAT32 corruption lived precisely in that gap — in a `FILL/` file no
+manifest entry named.
+
+---
+
 ### Samsung Galaxy M30 (SM-M305F) · Android 10 (SDK 29) · build 0.3.13 (46) commit d216ed8 — VeraCrypt + exFAT
 
 APK sha256 `02312fe0…`, clean tree, awake and unthrottled at both ends, charging.
