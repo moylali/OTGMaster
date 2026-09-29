@@ -60,6 +60,55 @@ Awake and unthrottled at both ends. Full run completed successfully on the devic
 ---
 
 
+### OnePlus 7 (GM1901) · Android 16 (SDK 36) · build 0.4.0 (46) commit eb26e3e — VeraCrypt + FAT32
+
+Clean tree, installed immediately before the run, awake and unthrottled at both
+ends. FAT32 on a third device, after both FAT fixes.
+
+| Field | Value |
+|---|---|
+| Drive | PNY 59151 MiB — VeraCrypt (AES/SHA-512, PIM 1) + FAT32, `VCFAT` |
+| block read | 2.81 / 16.55 / 14.82 / 15.90 MB/s |
+| seq read | 3.83 / 9.21 / 9.27 MB/s |
+| random read | 10.8 ms each, 92.7 IOPS |
+| write | 16 MiB → 1.28 MB/s |
+| write verify | **ALL PASSED** (cached, cache-dropped, remounted) |
+| unaligned | **A + B PASS** |
+| correctness | **ALL PASSED** (A–G) |
+| fixtures | **ALL 16 MATCHED the host-computed hashes** |
+| fsck / compare | pending |
+
+---
+
+### SD card (drive D) — host verification after its Huawei runs
+
+Checked on the laptop against baselines taken before the six Huawei runs of
+2026-09-28 (21:02–21:44). Every run measured the VeraCrypt partition only.
+
+| Partition | `e2fsck` | Compare |
+|---|---|---|
+| p1 VeraCrypt + ext4 | **CLEAN** | **no files changed**; free blocks and free inodes unchanged |
+| p2 plain ext4 | **CLEAN** | 6 reports added, `INDEX.txt` modified; 6 blocks, 6 inodes |
+
+Both partitions are healthy, and every change on each is accounted for — but the
+reports are on the wrong one. The runner wrote each run's report to whichever
+volume was first in the mount list at the end, and the app had re-mounted the
+plain partition on its own. Fixed in the same commit as this row: reports now go
+to the drive the run measured, resolved by tag.
+
+On p1 the one metadata change is group 0's unused-inode count, 8107 → 8103, with
+free inodes unchanged. `bg_itable_unused` is a high-water mark: allocating
+inodes lowers it and freeing them does not raise it. The runs created and deleted
+their scratch files, leaving exactly that trace, and `e2fsck` agrees it is
+consistent.
+
+Also: this card's earlier `fixtures: ALL 5 MATCHED` on the Huawei may have been
+read from p2 rather than p1 — `benchFixtures` resolved by position until this
+commit, and both partitions carry identical fixtures, so the pass does not say
+which. p1's health is not in question; the compare above shows it untouched.
+
+---
+
 ### Huawei P20 Lite (ANE-LX1) · Android 9 (SDK 28) · build 0.4.0 (46) commit 3b03bae — VeraCrypt + FAT32, mirror fix
 
 **The hardware confirmation of V9 (`149b2d2`) — the first FAT32 drive written by
@@ -125,8 +174,14 @@ app's own auto-mount). This is the A/B for all three on the drive that found the
 **The fixtures failures are a manifest bug, not the drive.** All four partitions
 report byte-identical results — `dense_short/` and `dense_lfn/` "LISTING
 DIFFERS" with the same expected and actual hashes, and
-`nested/leaf_at_depth_10.dat missing`. Two FAT32 and two exFAT volumes cannot
-corrupt into identical hashes. The cause is `prepare_drive_a.sh`, which wrote the
+`nested/leaf_at_depth_10.dat missing`.
+
+*Correction, same day:* the identical results are **not** evidence on their own.
+`benchFixtures` still resolved its volume by position — the fix meant for it in
+`6df73db` had landed in `benchUnaligned` instead — so all four sections read the
+same partition and this is one comparison reported four times. The conclusion
+survives because the cause was found independently in the script itself: the
+cause is `prepare_drive_a.sh`, which wrote the
 manifest two ways its siblings had already been corrected away from: it hashed
 the directory listings including a trailing newline, where the benchmark joins
 entries with `\n` as a separator, and it recorded the leaf as

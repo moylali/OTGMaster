@@ -378,7 +378,7 @@ object Benchmark {
         emit("--- conditions at the end of the run ---")
         emitPowerState(context, ::emit)
         val text = out.toString()
-        save(context, text)
+        save(context, text, plan)
         emit("=== benchmark finished ===")
         return text
     }
@@ -776,12 +776,11 @@ object Benchmark {
         emit: (String) -> Unit,
         mount: MountCredentials? = null,
     ) {
-        // Resolve by tag, not by position. firstOrNull() returns whichever volume
-        // happens to be first in the mount list, so on a multi-partition drive every
-        // partition's fixtures section hashed the *same* partition — which is why
-        // partitions 1 and 2 of the four-partition drive reported byte-identical
-        // "LISTING DIFFERS" hashes, a result that looked like corruption and was the
-        // wrong volume being read.
+        // Resolve by tag, not by position: with several volumes mounted,
+        // firstOrNull() picks whichever is first in the mount list, so the unaligned
+        // cases would write to and judge a volume other than the one under test.
+        // (This change was aimed at benchFixtures in 6df73db and landed here by
+        // mistake; benchFixtures got it separately later. Both were wrong.)
         val root = rootForTag(driveTag(drive)) ?: drive.fileSystem.rootDirectory
         val dir = freshDir(root, "BENCH_UNALIGNED")
         val dirName = dir.name
@@ -1079,7 +1078,10 @@ object Benchmark {
         // FAT32's close() flushed unconditionally, and read() touches the access
         // time, so purely reading a file rewrote the whole parent directory table.
         // ExFatFile already tracks a dirty flag for exactly this.
-        val cache = OtgMasterState.mountedDrives.firstOrNull()?.blockDevice
+        // The drive under test, not the first mounted one: with several volumes
+        // mounted this read another volume's cache counters, and "F read-only open
+        // wrote nothing" was then a statement about a drive nothing had touched.
+        val cache = driveForTag(driveTag(drive))?.blockDevice
                 as? app.fayaz.otgmaster.block.CachedBlockDevice
         if (cache == null) emit("correctness   : F skipped (no cache in the stack)")
         else {
@@ -1324,8 +1326,15 @@ object Benchmark {
      * ("fixtures") rather than part of a default run.
      */
     private fun benchFixtures(drive: MountedDrive, emit: (String) -> Unit) {
-        val root = OtgMasterState.mountedDrives.firstOrNull()?.fileSystem?.rootDirectory
-            ?: drive.fileSystem.rootDirectory
+        // Resolve by tag, not by position. 6df73db meant to make this change and made
+        // it in benchUnaligned instead: the same line appears there first, and the
+        // replacement took the first match. So on any run with more than one volume
+        // mounted, every drive's fixtures section read whichever volume happened to
+        // be first in the mount list — including all four partitions of the
+        // LUKS1/2 + FAT32/exFAT drive, which then reported one comparison four
+        // times, and the SD card, where the VeraCrypt partition's fixtures may have
+        // been read from the plain partition beside it.
+        val root = rootForTag(driveTag(drive)) ?: drive.fileSystem.rootDirectory
         val bench = root.search("BENCH") ?: return emit("fixtures      : BENCH/ not found")
         val manifest = bench.search("MANIFEST.txt")
             ?: return emit("fixtures      : MANIFEST.txt missing — re-run prepare_test_usb.sh")
@@ -1685,18 +1694,22 @@ object Benchmark {
      *     exactly the modern devices where it still exists.
      *  3. **getExternalFilesDir**, unchanged, as the last resort and for adb pulls.
      */
-    private fun save(context: Context, text: String) {
+    private fun save(context: Context, text: String, tags: List<String> = emptyList()) {
         val stamp = java.text.SimpleDateFormat("yyyyMMdd-HHmmss", java.util.Locale.US)
             .format(java.util.Date())
         val model = android.os.Build.MODEL.replace(Regex("[^A-Za-z0-9._-]"), "_")
         val name = "otgbench-$model-$stamp.txt"
 
         // 1. onto the drive, one file per run plus a one-line index entry
-        runCatching {
-            val root = OtgMasterState.mountedDrives
-                .firstOrNull { (it.fileSystem as? ExFatFileSystem)?.isUnmounted != true }
-                ?.fileSystem?.rootDirectory
-            if (root != null) {
+        // Onto every drive this run measured, resolved by tag. It used to go to
+        // whichever volume was first in the mount list at the end of the run. On the
+        // SD card that was the plain ext4 partition — the app had re-mounted it on its
+        // own — so six runs measuring the VeraCrypt partition wrote their reports to a
+        // partition none of them had tested, and a baseline compare of that partition
+        // found files the run was never supposed to put there.
+        val roots = tags.mapNotNull { rootForTag(it) }
+        for (root in roots) runCatching {
+            run {
                 val bench = root.search("BENCH") ?: root.createDirectory("BENCH")
                 val reports = bench.search("reports") ?: bench.createDirectory("reports")
                 val bytes = text.toByteArray()
