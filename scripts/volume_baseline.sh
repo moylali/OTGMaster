@@ -97,13 +97,20 @@ die() { echo "ERROR: $*" >&2; exit 1; }
 [[ -b "$PART" ]] || die "$PART is not a block device."
 [[ "$MODE" == "snapshot" || "$MODE" == "compare" ]] || usage
 
-MNT=/mnt/otgBaseline
-MAPPER=otgBaseline
+# Per-invocation names. These were fixed strings, which made two concurrent runs
+# collide on one mount point: Linux stacks mounts rather than refusing, so a
+# second run mounted its volume over the first's and its cleanup then popped the
+# mount out from under a job still walking that directory. The visible symptom
+# was "umount: /mnt/otgBaseline: target is busy"; the invisible one was a
+# baseline that may have hashed files from the wrong volume.
+MNT=/mnt/otgBaseline.$$
+MAPPER=otgBaseline_$$
 OPENED=""
 DEV=""
 
 cleanup() {
     mountpoint -q "$MNT" 2>/dev/null && umount "$MNT"
+    [[ -d "$MNT" ]] && rmdir "$MNT" 2>/dev/null
     case "$OPENED" in
         luks)      cryptsetup close "$MAPPER" 2>/dev/null ;;
         veracrypt) veracrypt -t -d "$PART" --non-interactive >/dev/null 2>&1 ;;
