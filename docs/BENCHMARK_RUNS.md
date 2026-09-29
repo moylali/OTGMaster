@@ -154,7 +154,8 @@ single-partition drive does not reach the path `9404e46` changes.
 | unaligned | **A + B PASS** |
 | correctness | **ALL PASSED** (A–G) |
 | fixtures | **FAILED** — `IllegalArgumentException` from `ByteBuffer.limit()` in libaums `transferOneCommand` |
-| fsck / compare | pending |
+| fsck | **CLEAN** — `fsck.fat`: 20088 files, 14241973/15113321 clusters, no "FATs differ" |
+| baseline compare | **identical to the compare taken before this run**: the same two earlier reports and `INDEX.txt`, and FAT[0]/FAT[1] each the same 14 bytes at byte 57,000,901. This run's scratch files were all removed and its report never reached the drive, so it left no trace — the fixtures failure was a read. |
 
 A read returned `-1`, the retry got `wrong csw tag!`, and the next retry threw.
 `transferOneCommand` takes `inBuffer.position()` as each attempt's start, but the
@@ -205,7 +206,8 @@ ends, on battery at 82%. The first LUKS1+ext4 run on this device.
 | unaligned | **A + B PASS** |
 | correctness | **ALL PASSED** (A–G) |
 | fixtures | **ALL 5 MATCHED the host-computed hashes** |
-| e2fsck / compare | pending |
+| e2fsck | **CLEAN** — `LUKS1EXT4: 20040/3792896 files, 927644/15142400 blocks` |
+| baseline compare | 2 reports added — this run's and `otgbench-Pixel_10_Pro_XL-20260928-212429.txt`, which postdates the baseline — and `INDEX.txt` modified. Free blocks 14214758 → 14214756, free inodes 3772858 → 3772856: one block and one inode per report. Superblock, group 0 and bitmap checksums changed with them. Nothing else. |
 
 ---
 
