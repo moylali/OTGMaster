@@ -1,0 +1,96 @@
+# Release coverage matrix — 4 devices × 6 cases
+
+The live picture of what has been exercised on hardware and what has not. A
+tagging report (`docs/test-reports/<tag>.md`) is cut from this once the grid is
+full enough to justify the tag; `CLAUDE.md` requires at least four devices.
+
+Every ✅ here traces to a row in [`../BENCHMARK_RUNS.md`](../BENCHMARK_RUNS.md).
+Nothing is marked done on the strength of a build, a unit test, or another
+device's result.
+
+**Last updated:** 2026-09-28, against build `98fae8f` (0.3.13 / 46).
+
+## Devices
+
+| # | Device | Model | Android | Address | Notes |
+|---|---|---|---|---|---|
+| D1 | Pixel 10 Pro XL | mustang | 17 (SDK 37) | `192.168.1.9:33057` | fastest reads; the reference device |
+| D2 | OnePlus 7 | — | 16 | *offline* | Wireless Debugging port rotates; not reachable today |
+| D3 | Samsung Galaxy M30 | SM-M305F | 10 (SDK 29) | `192.168.1.18:5555` | the API-29 boundary for `Documents/` |
+| D4 | Huawei P20 Lite | ANE-LX1 | 9 (SDK 28) | `192.168.1.17:5555` | slowest by 4–5×; the finalizer-watchdog device |
+
+## Cases
+
+| # | Case | Media |
+|---|---|---|
+| C1 | VeraCrypt + FAT32 | PNY 64 GB, `VCFAT` |
+| C2 | VeraCrypt + exFAT | PNY 64 GB, `exFAT` |
+| C3 | VeraCrypt + ext4 | Drive D p1, `VCEXT4` |
+| C4 | LUKS1 + ext4 | Drive B, `LUKS1EXT4` |
+| C5 | LUKS2 + ext4 | Drive C, `LUKS2EXT4` |
+| C6 | Unencrypted ext4 + NTFS refusal | Drive D p2 `PLAINEXT4`, p3 `NTFSPLAIN` |
+
+## The grid
+
+| | C1 VC+FAT32 | C2 VC+exFAT | C3 VC+ext4 | C4 LUKS1+ext4 | C5 LUKS2+ext4 | C6 plain+NTFS |
+|---|---|---|---|---|---|---|
+| **D1** Pixel 10 Pro XL | ✅ full | ✅ full | ✅ full | ✅ partial | ❌ | ✅ partial |
+| **D2** OnePlus 7 | ❌ | ❌ | ❌ | ✅ partial | ✅ partial | ❌ |
+| **D3** Samsung M30 | ❌ | ❌ | ❌ | ❌ | 🔄 running | ❌ |
+| **D4** Huawei P20 Lite | 🔄 running | ❌ | ❌ | ❌ | ❌ | ❌ |
+
+✅ full — every section run and passed, including `fixtures`, on the current
+build, with a host-side filesystem check afterwards.
+✅ partial — passed, but missing at least one of: fixture hashes, a host `fsck`,
+or the full read section set. Detail in the run log.
+🔄 running · ❌ not attempted.
+
+**Coverage: 9 of 24 cells, 3 of them full.**
+
+## What each ✅ actually covers
+
+| Cell | Build | Evidence |
+|---|---|---|
+| D1·C1 | `e78cf0a` | write verify 3/3, unaligned A+B, correctness A–G, fixtures ALL 16 |
+| D1·C2 | `e78cf0a` | write verify 3/3, unaligned A+B, correctness A–G, fixtures ALL 16, `fsck.exfat` clean |
+| D1·C3 | `cdd87b5` | write verify 3/3, unaligned A+B, correctness A–G, fixtures ALL 5, `e2fsck` clean |
+| D1·C4 | earlier | write ALL PASSED 0.82 MB/s, correctness ALL PASSED, fixtures ALL 5, `e2fsck` clean |
+| D1·C6 | `cdd87b5` | write verify **PARTIAL 2/3**, fixtures ALL 5, `e2fsck` clean; NTFS correctly refused |
+| D2·C4 | earlier | write ALL PASSED 0.76 MB/s, correctness ALL PASSED, fixtures ALL 5, `e2fsck` clean |
+| D2·C5 | earlier | write ALL PASSED 0.73 MB/s, correctness ALL PASSED, fixtures ALL 5, `e2fsck` clean |
+
+## Known gaps, and which matter
+
+**D4 (Huawei, Android 9) has no completed case.** This is the gap with the most
+history behind it: it is the device whose 0.43 MB/s writes blew the 10-second
+finalizer budget and killed the process, which is why
+`ExFatFileSystem.pendingReleases` exists. C2 on D4 is the single most valuable
+missing cell, because it exercises that path on the hardware that broke it.
+
+**No device has run C3 except D1.** ext4 write support is the largest change in
+this release and it has been validated on one phone. The LUKS+ext4 cells (C4,
+C5) cover the ext4 code on other devices, so ext4 itself is not single-device —
+but VeraCrypt+ext4 as a combination is.
+
+**C6's write path cannot be fully judged on-device.** `write`/`unaligned`/
+`correct` decide their verdicts after a remount, and the runner's only remount
+path takes a password, so an unencrypted partition reports `PARTIAL` /
+`NOT VERIFIED`. Covered from the host with `e2fsck` instead. This is a runner
+limitation, not a result — see `RUNNING_BENCHMARKS.md`.
+
+**D2 is offline.** Its two cells are from an earlier session on an older build.
+They should be re-run on the release build before they are quoted in a tag
+report, since neither predates the ext4 metadata fixes.
+
+**Fixture hashing is new.** Until today the VeraCrypt drives carried no hashes,
+so every `fixtures` verdict on C1 and C2 before build `e78cf0a` was vacuous. Any
+result quoted from before then covers throughput and structure, not data
+integrity.
+
+## Before tagging
+
+1. Finish the two runs in flight (D4·C1, D3·C5).
+2. Re-run D2's cells on the release build, once the OnePlus is reachable.
+3. Get C2 onto D4 — the finalizer path on the device that broke it.
+4. Host `fsck` every drive after its last run. Hash-clean is not fsck-clean.
+5. Cut `docs/test-reports/<tag>.md` from this file.
