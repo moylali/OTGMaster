@@ -36,7 +36,7 @@ device's result.
 | | C1 VC+FAT32 | C2 VC+exFAT | C3 VC+ext4 | C4 LUKS1+ext4 | C5 LUKS2+ext4 | C6 plain+NTFS |
 |---|---|---|---|---|---|---|
 | **D1** Pixel 10 Pro XL | ✅ full | ✅ full | ✅ full | ✅ full | ✅ full | ✅ partial |
-| **D2** OnePlus 7 | ✅ partial | ✅ partial | ❌ | ✅ partial | ✅ full | ❌ |
+| **D2** OnePlus 7 | ✅ full | ✅ partial | ❌ | ✅ partial | ✅ full | ❌ |
 | **D3** Samsung M30 | ❌ | ✅ partial | ❌ | ✅ full | ✅ full | ❌ |
 | **D4** Huawei P20 Lite | ✅ full | ✅ full | ✅ full | ❌ | ✅ partial | ❌ |
 
@@ -54,7 +54,7 @@ cell means sampled-clean, not audited-clean.
 or the full read section set. Detail in the run log.
 🔄 running · ❌ not attempted.
 
-**Coverage: 17 of 24 cells, 11 full. The Pixel's row is complete — all six
+**Coverage: 17 of 24 cells, 12 full. The Pixel's row is complete — all six
 cases measured on one device.**
 
 **D4·C3 is resolved.** Four attempts; the fourth, on `dc29660`, passes every
@@ -73,6 +73,7 @@ baseline compare shows FAT[0] and FAT[1] changing by the same single entry.
 | D1·C3 | `cdd87b5` | write verify 3/3, unaligned A+B, correctness A–G, fixtures ALL 5, `e2fsck` clean |
 | D1·C4 | earlier | write ALL PASSED 0.82 MB/s, correctness ALL PASSED, fixtures ALL 5, `e2fsck` clean |
 | D1·C6 | `cdd87b5` | write verify **PARTIAL 2/3**, fixtures ALL 5, `e2fsck` clean; NTFS correctly refused |
+| D2·C1 | `eb26e3e` | write verify 3/3, unaligned A+B, correctness A–G, fixtures ALL 16, `fsck.fat` clean; FAT[0]/FAT[1] change identically (V9) |
 | D2·C4 | earlier | write ALL PASSED 0.76 MB/s, correctness ALL PASSED, fixtures ALL 5, `e2fsck` clean |
 | D2·C5 | earlier | write ALL PASSED 0.73 MB/s, correctness ALL PASSED, fixtures ALL 5, `e2fsck` clean |
 | D4·C1 | `98fae8f` | write verify 3/3, unaligned A+B, correctness A–G, fixtures ALL 16; **fsck pending** |

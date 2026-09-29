@@ -158,7 +158,11 @@ ends. FAT32 on a third device, after both FAT fixes.
 | unaligned | **A + B PASS** |
 | correctness | **ALL PASSED** (A–G) |
 | fixtures | **ALL 16 MATCHED the host-computed hashes** |
-| fsck / compare | pending |
+| fsck | **CLEAN** — `fsck.fat`, no "FATs differ" |
+| baseline compare | 2 reports added (this run's and the Huawei run at 05:52, both since the baseline), `INDEX.txt` modified; **FAT[0] and FAT[1] each 14 bytes at byte 57,000,901, identical**; FSInfo 3 bytes |
+
+V9 on a second device: both FAT copies written, byte for byte the same. The
+compare spans two runs, so the 14 bytes are the two runs combined.
 
 ---
 
