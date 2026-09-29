@@ -37,7 +37,7 @@ device's result.
 | **D1** Pixel 10 Pro XL | ✅ full | ✅ full | ✅ full | ✅ full | ✅ full | ✅ partial |
 | **D2** OnePlus 7 | ❌ | ✅ partial | ❌ | ✅ partial | ✅ full | ❌ |
 | **D3** Samsung M30 | ❌ | ✅ partial | ❌ | ✅ full | ✅ full | ❌ |
-| **D4** Huawei P20 Lite | ⚠️ see note | ✅ full | ✅ full | ❌ | ✅ partial | ❌ |
+| **D4** Huawei P20 Lite | ✅ partial | ✅ full | ✅ full | ❌ | ✅ partial | ❌ |
 
 ✅ full — every section run and passed, including `fixtures`, on the current
 build, with a host-side filesystem check afterwards.
@@ -53,18 +53,18 @@ cell means sampled-clean, not audited-clean.
 or the full read section set. Detail in the run log.
 🔄 running · ❌ not attempted.
 
-**Coverage: 17 of 24 cells, 10 full. The Pixel's row is complete — all six
+**Coverage: 18 of 24 cells, 10 full. The Pixel's row is complete — all six
 cases measured on one device.**
 
 **D4·C3 is resolved.** Four attempts; the fourth, on `dc29660`, passes every
 section including the remount. The cause was the benchmark's unmount check racing
 the app's own auto-mount, not a slow unmount — see `BENCHMARK_RUNS.md`.
 
-⚠️ **D4·C1 is withdrawn.** Every on-device section passed, but the host
-`fsck.fat` afterwards found FAT entry 0 zeroed and ~514 MB of an unrelated
-file's chain wiped — see `agy/FAT32_MIRROR_NOT_WRITTEN.md` and the V8 patch.
-The cause is fixed (`f514eac`); the cell needs re-running on a freshly
-prepared drive before it counts.
+**D4·C1 is reinstated.** Re-run on a freshly prepared drive after the V8
+fix: every section passes and the baseline compare shows ~2 FAT entries changed,
+all accounted for, against ~131,636 before the fix. Held at *partial* only because
+`fsck.fat` still reports the two FATs differing — the unmirrored-FAT defect, now
+safe to fix.
 
 ## What each ✅ actually covers
 

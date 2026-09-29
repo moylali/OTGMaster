@@ -60,6 +60,53 @@ Awake and unthrottled at both ends. Full run completed successfully on the devic
 ---
 
 
+### Huawei P20 Lite (ANE-LX1) · Android 9 (SDK 28) · build 0.3.13 (46) commit dc29660 — VeraCrypt + FAT32, re-prepared drive
+
+**The hardware confirmation of the FAT chain fix (V8, `f514eac`).** Same device
+and same container/filesystem as the run that found the corruption, on a drive
+re-prepared with `prepare_vc_fat32.sh --fill-to-free 4` and baselined before
+the run.
+
+| Field | Value |
+|---|---|
+| Drive | PNY 59151 MiB — VeraCrypt (AES/SHA-512, PIM 1) + FAT32, `VCFAT`, filled to ~4 GiB free |
+| Report | `otgbench-ANE-LX1-20260928-223833.txt` |
+| Sections | free, block, dir, path, seq, random, opens, write, unaligned, correct, fixtures |
+| block read | 1.65 / 5.46 / 7.16 / 7.92 MB/s |
+| seq read | 1.49 / 3.74 / 3.80 MB/s |
+| random read | 11.2 ms each, 89.1 IOPS |
+| write | 16 MiB → 0.98 MB/s |
+| write verify | **ALL PASSED** (cached, cache-dropped, remounted) |
+| unaligned | **A + B PASS** |
+| correctness | **ALL PASSED** (A–G) |
+| fixtures | **ALL 16 MATCHED the host-computed hashes** |
+| fsck | exit 1 — `FATs differ but appear to be intact. Using first FAT.` Nothing else. |
+| baseline compare | see below |
+
+Against the baseline taken before the run:
+
+| Region | Change | Accounted for by |
+|---|---|---|
+| files | 2 added, 0 modified, 0 removed | the report and `INDEX.txt` (fresh drive, so the index is new) |
+| FAT[0] | 11 bytes, ~2 entries | the clusters for those two files |
+| FAT[1] | identical | libaums never writes it |
+| reserved sectors | 3 bytes at offset 1000 | FSInfo free-cluster count (sector 1, field at 488) |
+
+Set against the run that found the damage — same device, same filesystem, the
+full suite — FAT[0] went from roughly 131,636 changed entries to about 2, entry 0
+from zeroed to untouched, and unexplained file changes from a destroyed 1 GiB
+fixture to none. `fsck.fat` went from free clusters inside chains, a truncated
+file and 720 MB reclaimed, to a single complaint.
+
+That remaining complaint is the mirror defect, left open on purpose: fixing it
+while the free path could still zero entries would have written the damage into
+the only surviving good copy. With V8 now confirmed here, it is safe to fix, and
+after it a FAT32 volume the app has written should be `fsck.fat`-clean outright.
+
+D4-C1 is reinstated.
+
+---
+
 ### OnePlus 7 (GM1901) · Android 16 (SDK 36) · build 0.3.13 (46) commit dc29660 — VeraCrypt + exFAT
 
 APK sha256 `cd657759…`, clean tree, installed immediately before the run,
