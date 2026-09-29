@@ -60,6 +60,31 @@ Awake and unthrottled at both ends. Full run completed successfully on the devic
 ---
 
 
+### OnePlus 7 (GM1901) · Android 16 (SDK 36) · build 0.4.0 (46) commit 4ea6a49 — LUKS1/2 + FAT32/exFAT, manifests regenerated
+
+Clean tree, awake and unthrottled. The first run of this drive after its
+manifests were regenerated with the fixed `prepare_drive_a.sh` logic, and the
+first with `benchFixtures` and the report writer resolving by tag.
+
+| Partition | write verify | unaligned | correctness | fixtures |
+|---|---|---|---|---|
+| P1 LUKS1 + FAT32 | **ALL PASSED** | **A + B PASS** | **ALL PASSED** | **ALL 4 MATCHED** |
+| P2 LUKS1 + exFAT | **ALL PASSED** | **A + B PASS** | **ALL PASSED** | **ALL 4 MATCHED** |
+| P3 LUKS2 + exFAT | **ALL PASSED** | **A + B PASS** | **ALL PASSED** | **ALL 4 MATCHED** |
+| P4 LUKS2 + FAT32 | **ALL PASSED** | **A + B PASS** | **ALL PASSED** | **ALL 4 MATCHED** |
+
+Every section on every partition — against a drive that the day before gave a
+result for its first partition only, and this morning failed fixtures on all
+four.
+
+What this run cannot show on its own: the four partitions carry identical
+fixtures, so a pass does not say which partition each fixtures section read. The
+host compare can, because the report writer now puts a copy on every drive the
+run measured — each of the four should carry this run's report. Host fsck and
+compare pending.
+
+---
+
 ### OnePlus 7 (GM1901) · Android 16 (SDK 36) · build 0.4.0 (46) commit eb26e3e — VeraCrypt + FAT32
 
 Clean tree, installed immediately before the run, awake and unthrottled at both
