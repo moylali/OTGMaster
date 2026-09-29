@@ -23,7 +23,7 @@
     <string name="label_veracrypt_password">Password</string>
     <string name="label_pim">PIM (leave blank for default)</string>
     <string name="select_keyfiles">Select Keyfiles (%1$d)</string>
-    <string name="volume_picker_filtered_note">Only partitions that can be unlocked are listed. Unencrypted volumes are mounted automatically, and partitions with an unsupported filesystem are skipped.</string>
+    <string name="volume_picker_filtered_note">Only mountable partitions are listed.</string>
     <string name="label_encryption_algorithm">Encryption Algorithm</string>
     <string name="label_hash_algorithm">Hash Algorithm</string>
     <string name="algorithm_not_supported">%1$s (not yet supported)</string>

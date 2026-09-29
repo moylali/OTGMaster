@@ -1738,7 +1738,10 @@ fun OtgMasterApp(
                                 }
                             }
                             val deviceKey = drive.sourceDeviceName
-                            if (deviceKey != null && hasCachedCreds(deviceKey, null)) {
+                            // hasCachedCreds is keyed by device, not partition, so on a
+                            // mixed drive the unencrypted partition's card offered to
+                            // clear the *encrypted* partition's credentials.
+                            if (!drive.isPlain && deviceKey != null && hasCachedCreds(deviceKey, null)) {
                                 Button(onClick = { onClearDeviceCreds(deviceKey) }) {
                                     Text(stringResource(R.string.clear_cached_credentials))
                                 }
@@ -1983,6 +1986,21 @@ fun VeraCryptMountSection(
             if (candidates.isEmpty()) {
                 Text(stringResource(R.string.no_candidates_found), color = MaterialTheme.colorScheme.error)
             } else {
+            // With one candidate there is nothing to choose, so no picker is drawn —
+            // which left its encryption type shown nowhere in the UI. Render the same
+            // label-and-tag row the picker uses, without the dropdown affordance.
+            if (candidates.size == 1) {
+                val only = candidates.first()
+                val tag = encryptionTag(only.containerType)
+                Row(
+                    modifier = Modifier.fillMaxWidth().padding(vertical = 4.dp),
+                    verticalAlignment = Alignment.CenterVertically,
+                ) {
+                    Text(only.label, modifier = Modifier.weight(1f))
+                    Spacer(modifier = Modifier.width(8.dp))
+                    DriveTag(label = tag.first, color = tag.second)
+                }
+            }
             // Partition picker: always visible when there are multiple candidates so the
             // user can choose which one to unlock, regardless of whether quick-unlock applies.
             if (candidates.size > 1) {
