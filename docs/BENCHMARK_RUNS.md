@@ -35,6 +35,45 @@ to a row here.
 
 ## 2026-09-28
 
+### Huawei P20 Lite (ANE-LX1) · Android 9 (SDK 28) · build 0.3.13 (46) commit 98fae8f
+
+APK sha256 `ee9188b0…`, clean tree, awake and unthrottled at both ends, on
+battery. Driven entirely over WiFi — see the note below.
+
+| Field | Value |
+|---|---|
+| Drive | PNY USB 3.2.1 FD, 59151 MiB — VeraCrypt (AES/SHA-512, PIM 1) + FAT32, `VCFAT` |
+| Report | `otgbench-ANE-LX1-20260928-192814.txt` |
+| Sections | free, block, dir, path, seq, random, opens, write, unaligned, correct, fixtures |
+| block read | 1.63 / 6.13 / 7.87 / 8.06 MB/s (4 / 64 / 512 / 4096 KiB span) |
+| seq read | 1.50 / 4.00 / 3.90 MB/s (32 / 128 / 512 KiB buf) |
+| random read | 17.5 ms each, 57.2 IOPS |
+| dir listing | dense_short cold 4834.9 / warm 1733.2 ms; dense_lfn cold 2550.9 / warm 588.5 |
+| opens | short 1265.9 ms each, lfn 466.0 ms each |
+| write | 16 MiB → 1.83 MB/s |
+| write verify | **ALL PASSED** (cached, cache-dropped, remounted) |
+| unaligned | **A + B PASS** |
+| correctness | **ALL PASSED** (A–G) |
+| fixtures | **ALL 16 MATCHED the host-computed hashes** |
+| fsck | not yet run — drive still on the phone |
+
+First completed case on this device. It is the slowest of the four by a wide
+margin — 8.06 MB/s block read against the Pixel's 35.33, and hashing `seq_2g.bin`
+took 432 s at 4.74 MB/s against the Pixel's 65 s. Those figures are a device
+characteristic, not a regression: `IO_PERFORMANCE.md` already records this phone
+at roughly a quarter to a fifth of the others.
+
+**`adb tcpip` over WiFi survived unplugging USB on this Android 9 device.**
+`RUNNING_BENCHMARKS.md` states that legacy `adb tcpip` "does not survive losing
+the USB transport", and steers Android ≤10 devices to the on-device OTG Bench
+flow, which cannot verify on-disk correctness because backgrounding MainActivity
+nulls the mount handlers. This entire run — install, mount, benchmark, remount
+for the correctness section — was driven over `192.168.1.17:5555` with the cable
+out, so that guidance is at least not universally true. Worth re-testing before
+the doc is rewritten, since one success does not disprove a flaky behaviour.
+
+---
+
 ### Pixel 10 Pro XL · Android 17 (SDK 37) · build 0.3.13 (46) commit e78cf0a — FAT32
 
 APK sha256 `2db42f29…`, clean tree, awake and unthrottled, on a powered hub.

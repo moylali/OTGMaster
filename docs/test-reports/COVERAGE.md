@@ -37,7 +37,7 @@ device's result.
 | **D1** Pixel 10 Pro XL | ✅ full | ✅ full | ✅ full | ✅ partial | ❌ | ✅ partial |
 | **D2** OnePlus 7 | ❌ | ❌ | ❌ | ✅ partial | ✅ partial | ❌ |
 | **D3** Samsung M30 | ❌ | ❌ | ❌ | ❌ | 🔄 running | ❌ |
-| **D4** Huawei P20 Lite | 🔄 running | ❌ | ❌ | ❌ | ❌ | ❌ |
+| **D4** Huawei P20 Lite | ✅ partial | ❌ | ❌ | ❌ | ❌ | ❌ |
 
 ✅ full — every section run and passed, including `fixtures`, on the current
 build, with a host-side filesystem check afterwards.
@@ -45,7 +45,7 @@ build, with a host-side filesystem check afterwards.
 or the full read section set. Detail in the run log.
 🔄 running · ❌ not attempted.
 
-**Coverage: 9 of 24 cells, 3 of them full.**
+**Coverage: 9 of 24 cells, 3 full, 1 awaiting only a host fsck.**
 
 ## What each ✅ actually covers
 
@@ -58,11 +58,12 @@ or the full read section set. Detail in the run log.
 | D1·C6 | `cdd87b5` | write verify **PARTIAL 2/3**, fixtures ALL 5, `e2fsck` clean; NTFS correctly refused |
 | D2·C4 | earlier | write ALL PASSED 0.76 MB/s, correctness ALL PASSED, fixtures ALL 5, `e2fsck` clean |
 | D2·C5 | earlier | write ALL PASSED 0.73 MB/s, correctness ALL PASSED, fixtures ALL 5, `e2fsck` clean |
+| D4·C1 | `98fae8f` | write verify 3/3, unaligned A+B, correctness A–G, fixtures ALL 16; **fsck pending** |
 
 ## Known gaps, and which matter
 
-**D4 (Huawei, Android 9) has no completed case.** This is the gap with the most
-history behind it: it is the device whose 0.43 MB/s writes blew the 10-second
+**D4 (Huawei, Android 9) has one case done — C1 — awaiting only its host fsck.**
+The gap that remains there has the most history behind it: it is the device whose 0.43 MB/s writes blew the 10-second
 finalizer budget and killed the process, which is why
 `ExFatFileSystem.pendingReleases` exists. C2 on D4 is the single most valuable
 missing cell, because it exercises that path on the hardware that broke it.
