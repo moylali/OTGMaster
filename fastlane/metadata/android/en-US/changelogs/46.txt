@@ -14,4 +14,5 @@
 • Fixed: FAT32 drives written by the app were reported as damaged by disk checkers on Windows, macOS and Linux, because only one of the drive's two allocation tables was being updated
 • Fixed: On a FAT32 drive whose allocation table was already damaged, deleting a file could wipe parts of other files and of the drive's own structures. The damage is now contained to the file being deleted
 • Fixed: On drives with several encrypted partitions, some partitions could fail to mount, and unmounting one could disconnect the others
+• Fixed: A brief USB error during a read or write could make it fail, or in some cases read or write the wrong data without reporting an error
 • Fixed: A temporary USB read error no longer discards the credentials you asked the app to remember for a partition

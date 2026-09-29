@@ -52,6 +52,54 @@ Vendored fork of [magnusja/libaums](https://github.com/magnusja/libaums).
 | `FAT` | V8 — stop a corrupt chain instead of following it out of the FAT | see below |
 | `FAT` | V9 — write every FAT copy, clamped to the FAT's own length | see below |
 | `ScsiBlockDevice` | V10 — retry a medium-changed unit attention during init | see below |
+| `ScsiBlockDevice` | V11 — restart every retry from the caller's buffer window | see below |
+
+## V11 — a retried transfer read into, or wrote from, the wrong place
+
+**What upstream does wrong.** `transferCommand` retries a failed command up to
+`MAX_RECOVERY_ATTEMPTS` times, and `transferOneCommand` starts each attempt's data
+phase at `inBuffer.position()`. But a transfer that fails part-way has already
+moved the position: `JellyBeanMr2Communication` advances it by whatever a partial
+`bulkTransfer` moved before a later call returns `-1`. The retry then takes the
+advanced position as its start and sets `limit = position + transferLength`.
+
+**Why it mattered.** Two outcomes, depending on the buffer's shape:
+
+- **The limit overruns the capacity** and `ByteBuffer.limit()` throws
+  `IllegalArgumentException`. That is not an `IOException`, so it escapes the retry
+  loop: a hiccup the loop exists to absorb becomes a hard failure. Observed on a
+  Samsung M30 (VeraCrypt + FAT32, `a03da36`): a read returned `-1`, the retry got
+  `wrong csw tag!`, the next threw, and `fixtures` failed; the report write after
+  it failed too.
+- **The limit fits**, and the retry silently transfers from the wrong offset. This
+  is the common case, not the exception: `LibaumsRawBlockDevice` passes each chunk
+  as `ByteBuffer.wrap(array, offset, length)`, whose capacity is the whole array,
+  so every chunk but the last has room. A read then lands shifted and returns
+  wrong bytes; **a write sends bytes from partway into the buffer — including the
+  next chunk's data — to the chunk's starting block.** No error is raised either
+  way. The Samsung failure threw only because its partial read had got far
+  enough; a shorter one would have been silent.
+
+**The patch.** `transferCommand` records the buffer's position and limit once and
+restores both before every attempt, including the retry after a successful
+REQUEST SENSE. Re-sending a whole READ(10) or WRITE(10) is safe: both are
+idempotent at the block level.
+
+**Test.** `ScsiRetryPositionTest` drives the real `ScsiBlockDevice` against a fake
+reader that delivers half of one data phase and then fails the transfer the way
+`JellyBeanMr2Communication` does on `-1` — position already advanced, then an
+`IOException`.
+
+| Case | Upstream | V11 |
+|---|---|---|
+| read cut short, exact-size buffer | FAIL — `newLimit > capacity: (6144 > 4096)`, the Samsung's error | pass |
+| read cut short, chunk of a larger array | FAIL — wrong bytes from offset 2048, no error | pass |
+| write cut short, chunk of a larger array | FAIL — the device received the wrong bytes, no error | pass |
+| no fault | pass | pass |
+
+The write case's data must not repeat within the chunk. The first version used
+`0xA5 xor i`, whose 256-byte period made the misplaced bytes identical to the
+right ones, and it passed on upstream.
 
 ## V10 — a USB card reader failed its first open
 

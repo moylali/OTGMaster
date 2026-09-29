@@ -5,5 +5,5 @@
 • Fixed: SD card readers failing on first plug-in
 • Fixed: FAT32 drives flagged as damaged by disk checkers
 • Fixed: Deleting on a damaged FAT32 drive could wipe other files
-• Fixed: Unencrypted partitions mislabelled as VeraCrypt
+• Fixed: Brief USB errors could misplace data
 • Fixed: Encrypted partition unreachable beside unencrypted ones

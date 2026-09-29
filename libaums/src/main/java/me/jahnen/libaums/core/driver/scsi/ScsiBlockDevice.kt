@@ -178,7 +178,16 @@ class ScsiBlockDevice(private val usbCommunication: UsbCommunication, private va
     @Throws(IOException::class)
     private fun transferCommand(command: CommandBlockWrapper, inBuffer: ByteBuffer) {
         var lastException: Exception? = null
+        // LOCAL PATCH (docs/VENDOR_FIXES.md V11): every attempt restarts the data
+        // phase from the caller's window. A failed partial transfer has already moved
+        // the position, and upstream re-derived the start from it: the retry threw
+        // IllegalArgumentException, or — when the backing array had room — read into
+        // or wrote from the wrong offset without any error.
+        val startPosition = inBuffer.position()
+        val startLimit = inBuffer.limit()
         for(i in 0..MAX_RECOVERY_ATTEMPTS) {
+            inBuffer.limit(startLimit)
+            inBuffer.position(startPosition)
             try {
                 val result = transferOneCommand(command, inBuffer)
                 val senseWasNotIssued = handleCommandResult(result)
