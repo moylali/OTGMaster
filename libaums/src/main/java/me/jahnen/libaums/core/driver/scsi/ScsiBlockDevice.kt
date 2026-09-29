@@ -219,6 +219,17 @@ class ScsiBlockDevice(private val usbCommunication: UsbCommunication, private va
             } catch (e: IOException) {
                 // Retry
                 Log.w(TAG, (e.message ?: "IOException") + ", retrying...")
+                // LOCAL PATCH (docs/VENDOR_FIXES.md V12): resynchronise before retrying.
+                // A transfer that failed part-way leaves the rest of its data and its
+                // CSW queued in the device; a retry without Reset Recovery reads that
+                // stale CSW ("wrong csw tag!"), and every later command stays one
+                // status behind until the drive is replugged. BOT 1.0 §5.3.4 requires
+                // Reset Recovery after an invalid CSW.
+                try {
+                    bulkOnlyMassStorageReset()
+                } catch (r: Exception) {
+                    Log.w(TAG, "reset recovery failed: ${r.message}")
+                }
                 lastException = e
             }
 

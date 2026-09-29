@@ -53,6 +53,53 @@ Vendored fork of [magnusja/libaums](https://github.com/magnusja/libaums).
 | `FAT` | V9 — write every FAT copy, clamped to the FAT's own length | see below |
 | `ScsiBlockDevice` | V10 — retry a medium-changed unit attention during init | see below |
 | `ScsiBlockDevice` | V11 — restart every retry from the caller's buffer window | see below |
+| `ScsiBlockDevice` | V12 — Reset Recovery before retrying a failed transfer | see below |
+
+## V12 — one failed transfer left the drive out of step for good
+
+**What upstream does wrong.** `transferCommand` retries an `IOException` by
+sending the command again, and nothing else. It only sends Reset Recovery —
+`bulkOnlyMassStorageReset()`, the class reset plus clearing halt on both
+endpoints — for a `PipeException` or a phase error. But a transfer that fails
+part-way leaves the rest of its data and its CSW queued in the device. The retry
+reads that stale CSW, gets `wrong csw tag!`, retries again the same way, and
+reaches `MAX_RECOVERY_ATTEMPTS`. The next command then starts one status behind,
+and so does every command after it. BOT 1.0 §5.3.4 requires Reset Recovery after
+an invalid CSW.
+
+**Why it mattered.** Found by V11's hardware validation. Samsung M30, VeraCrypt +
+exFAT, `a192b12`, during `fixtures`:
+
+```
+08:16:23.179  Could not read from device, result == -1 errno 0 null, retrying...
+08:16:23.286  wrong csw tag!, retrying...      (x5, then MAX_RECOVERY_ATTEMPTS)
+08:16:23.865  wrong csw tag!, retrying...      (the next command: the same)
+```
+
+V11 had done its part — no `IllegalArgumentException`, nothing misplaced — but
+the drive was unusable to the app from that point until replugged; the report
+write that followed failed too. A single brief transfer error became the loss of
+the drive.
+
+**The patch.** The `IOException` branch sends Reset Recovery before the retry. A
+reset that itself fails is logged and the retry proceeds, so the outcome is never
+worse than before. The retried command is re-sent whole (V11), which is safe for
+READ(10) and WRITE(10).
+
+**Test.** `ScsiResetRecoveryTest`, against a fake that behaves like the device: a
+failed command's leftover data and CSW stay queued until the class reset
+(`0x21`/`0xFF`) arrives.
+
+| Case | Upstream + V11 | V12 |
+|---|---|---|
+| read fails part-way | FAIL — `MAX_RECOVERY_ATTEMPTS Exceeded`, the Samsung's error | pass, exactly one reset |
+| the command after a failure | FAIL — `MAX_RECOVERY_ATTEMPTS Exceeded` | pass |
+| no fault | pass | pass, no reset |
+
+The fake needs real `UsbInterface` / `UsbEndpoint` objects, since the reset reads
+the interface id and clears both endpoints. Their constructors are hidden; the
+test calls the package-private ones by reflection, which the mockable
+`android.jar` allows.
 
 ## V11 — a retried transfer read into, or wrote from, the wrong place
 

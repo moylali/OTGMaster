@@ -35,6 +35,33 @@ to a row here.
 
 ## 2026-09-29
 
+### Samsung Galaxy M30 (SM-M305F) · Android 10 (SDK 29) · build 0.4.0 (46) commit a192b12 — VeraCrypt + exFAT
+
+Clean tree, installed immediately before the run, awake and unthrottled at both
+ends, on the charger directly at 100%. The hardware validation run for V11, on
+the drive repaired and re-baselined this morning.
+
+| Field | Value |
+|---|---|
+| Drive | PNY 59151 MiB — VeraCrypt (AES/SHA-512, PIM 1) + exFAT, `exFAT` |
+| Report | `Documents/otgbench-SM-M305F-20260929-081623.txt` on the phone only — writing it to the drive failed |
+| block read | 3.08 / 12.04 / 12.88 / 11.82 MB/s |
+| seq read | 9.82 / 9.93 / 10.05 MB/s |
+| random read | 6.3 ms each, 159.3 IOPS |
+| write | 16 MiB → 0.68 MB/s |
+| write verify | **ALL PASSED** (cached, cache-dropped, remounted) |
+| unaligned | **A + B PASS** |
+| correctness | **ALL PASSED** (A–G) |
+| fixtures | **FAILED** — `exFAT read failed at offset 732692480 (262144 bytes): -5` |
+| fsck / compare | pending |
+
+A read returned `-1`; every retry then failed with `wrong csw tag!` until
+`MAX_RECOVERY_ATTEMPTS`, and so did the next command, and the report write after
+that. **V11 held** — no `IllegalArgumentException`, nothing misplaced — but it
+exposed V12: libaums never sent Reset Recovery after a failed transfer, so the
+device's leftover CSW kept every later command one status behind. The failure
+was a read, after every write section had finished, so no write was in flight.
+
 ### OnePlus 7 (GM1901) · Android 16 (SDK 36) · build 0.4.0 (46) commit dae0ebf — drive D, p2 plain ext4 + p1 VeraCrypt + ext4
 
 **The hardware confirmation of `9404e46`**, and the first run on any device in
