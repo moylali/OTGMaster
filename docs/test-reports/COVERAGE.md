@@ -36,8 +36,8 @@ device's result.
 |---|---|---|---|---|---|---|
 | **D1** Pixel 10 Pro XL | ✅ full | ✅ full | ✅ full | ✅ partial | ❌ | ✅ partial |
 | **D2** OnePlus 7 | ❌ | ❌ | ❌ | ✅ partial | ✅ partial | ❌ |
-| **D3** Samsung M30 | ❌ | ❌ | ❌ | ❌ | ✅ partial | ❌ |
-| **D4** Huawei P20 Lite | ✅ partial | 🔄 running | ❌ | ❌ | ❌ | ❌ |
+| **D3** Samsung M30 | ❌ | ❌ | ❌ | ✅ partial | ✅ partial | ❌ |
+| **D4** Huawei P20 Lite | ⚠️ see note | ✅ partial | ❌ | ❌ | ❌ | ❌ |
 
 ✅ full — every section run and passed, including `fixtures`, on the current
 build, with a host-side filesystem check afterwards.
@@ -45,7 +45,13 @@ build, with a host-side filesystem check afterwards.
 or the full read section set. Detail in the run log.
 🔄 running · ❌ not attempted.
 
-**Coverage: 10 of 24 cells, 3 full, 2 awaiting only a host fsck.**
+**Coverage: 12 of 24 cells, 3 full, 4 awaiting only a host fsck.**
+
+⚠️ **D4·C1 is withdrawn.** Every on-device section passed, but the host
+`fsck.fat` afterwards found FAT entry 0 zeroed and ~514 MB of an unrelated
+file's chain wiped — see `agy/FAT32_MIRROR_NOT_WRITTEN.md` and the V8 patch.
+The cause is fixed (`f514eac`); the cell needs re-running on a freshly
+prepared drive before it counts.
 
 ## What each ✅ actually covers
 

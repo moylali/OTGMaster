@@ -35,6 +35,66 @@ to a row here.
 
 ## 2026-09-28
 
+### Huawei P20 Lite (ANE-LX1) · Android 9 (SDK 28) · build 0.3.13 (46) commit 98fae8f — exFAT
+
+APK sha256 `ee9188b0…`, clean tree, awake and unthrottled at both ends, over WiFi.
+
+| Field | Value |
+|---|---|
+| Drive | PNY 59151 MiB — VeraCrypt (AES/SHA-512, PIM 1) + exFAT |
+| Sections | free, block, dir, path, seq, random, opens, write, unaligned, correct, fixtures |
+| block read | 2.32 / 7.72 / 9.04 / 8.58 MB/s |
+| seq read | 6.54 / 6.77 / 6.69 MB/s |
+| random read | 10.3 ms each, 97.0 IOPS |
+| dir listing | dense_short cold 5460.3 / warm 433.9 ms; dense_lfn cold 8689.6 / warm 81.1 |
+| opens | short 64.3 ms each, lfn 82.9 ms each |
+| write | 16 MiB → 0.41 MB/s |
+| write verify | **ALL PASSED** (cached, cache-dropped, remounted) |
+| unaligned | **A + B PASS** |
+| correctness | **ALL PASSED** (A–G) |
+| fixtures | **ALL 16 MATCHED the host-computed hashes** |
+| fsck | pending |
+
+**The cell this fleet most needed.** This is the device whose 0.43 MB/s writes
+exceeded the ten-second `FinalizerWatchdogDaemon` budget and killed the process,
+which is why `ExFatFileSystem.pendingReleases` exists. It ran the full exFAT
+suite — including hashing `seq_2g.bin` end to end over 329 s and two
+10,000-entry listings — with no kill and no failure. The mechanism is exercised
+on the hardware that broke it, not merely on faster phones where it never fired.
+
+Its 0.41 MB/s write is the slowest figure in the log and is a device
+characteristic, not a regression.
+
+---
+
+### Samsung Galaxy M30 (SM-M305F) · Android 10 (SDK 29) · build 0.3.13 (46) commit 98fae8f — LUKS1
+
+APK sha256 `ee9188b0…`, clean tree, awake and unthrottled at both ends.
+
+| Field | Value |
+|---|---|
+| Drive | PNY 59150 MiB — LUKS1 (PBKDF2) + ext4, `LUKS1EXT4` |
+| Sections | free, block, dir, path, seq, random, opens, write, unaligned, correct, fixtures |
+| block read | 1.64 / 5.36 / 10.87 / 10.47 MB/s |
+| seq read | 10.64 / 10.30 / 10.59 MB/s |
+| random read | 6.2 ms each, 161.6 IOPS |
+| write | 16 MiB → 0.45 MB/s |
+| write verify | **ALL PASSED** (cached, cache-dropped, remounted) |
+| unaligned | **A + B PASS** |
+| correctness | **ALL PASSED** (A–G) |
+| fixtures | **ALL 5 MATCHED the host-computed hashes** |
+| fsck | pending |
+
+Unlike this device's LUKS2 run earlier, this one was awake from the start, so
+its throughput is usable. Against that LUKS2 run — same device, same session,
+block-layer control 10.47 against 10.88 MB/s, 4% apart and therefore comparable —
+LUKS1 reads slightly faster (10.6 against 10.0 MB/s sequential) and writes
+slightly slower (0.45 against 0.56 MB/s). Both differences are small enough to be
+run-to-run noise on a phone this slow; neither should be quoted as a LUKS1/LUKS2
+finding without repeats.
+
+---
+
 ### Samsung Galaxy M30 (SM-M305F) · Android 10 (SDK 29) · build 0.3.13 (46) commit 98fae8f
 
 APK sha256 `ee9188b0…`, clean tree, on battery at 33%.
