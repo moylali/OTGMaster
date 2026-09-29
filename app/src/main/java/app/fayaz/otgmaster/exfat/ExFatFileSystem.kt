@@ -7,7 +7,23 @@ import java.io.IOException
 import java.util.concurrent.locks.ReentrantLock
 import kotlin.concurrent.withLock
 
-class ExFatFileSystem(private val blockDevice: RawBlockDevice, val exfatPtr: Long) : FileSystem {
+/**
+ * @param readOnly mounted with libexfat's `ro` option. libexfat honours that flag
+ *   in some paths only — its FUSE layer, which enforces it, is not built here — so
+ *   on-device its mkdir still issued a write that only the block layer stopped.
+ *   Every mutating call is refused here instead, before libexfat can change any
+ *   in-memory state an unmount would then try to flush.
+ */
+class ExFatFileSystem(
+    private val blockDevice: RawBlockDevice,
+    val exfatPtr: Long,
+    val readOnly: Boolean = false,
+) : FileSystem {
+
+    internal fun checkWritable() {
+        if (readOnly) throw IOException("exFAT volume is mounted read-only")
+    }
+
     /**
      * Guards every libexfat call. Was an intrinsic monitor (`synchronized(this)`
      * / `synchronized(fileSystem)`), but ExFatFile.finalize() has to acquire it
@@ -123,7 +139,7 @@ class ExFatFileSystem(private val blockDevice: RawBlockDevice, val exfatPtr: Lon
         lock.withLock {
             if (isUnmounted) return
             isUnmounted = true
-            ExFatNative.flush(exfatPtr)
+            if (!readOnly) ExFatNative.flush(exfatPtr)
             ExFatNative.unmount(exfatPtr)
         }
         // Stop the releaser after the flag is set, so anything still queued is

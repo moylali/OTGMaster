@@ -46,7 +46,7 @@ class ExFatFileSystemCreator : FileSystemCreator {
             val exfatPtr = ExFatNative.mount(rawBlockDevice, readOnly)
             if (exfatPtr == 0L) return null
             
-            return ExFatFileSystem(rawBlockDevice, exfatPtr)
+            return ExFatFileSystem(rawBlockDevice, exfatPtr, readOnly)
         } catch (e: Exception) {
             e.printStackTrace()
             return null
