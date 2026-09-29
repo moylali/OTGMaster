@@ -322,17 +322,44 @@ object Benchmark {
             if (wants("random")) runCatching { benchRandomRead(bench, ::emit) }.onFailure { emit("random read   : FAILED ${it}") }
             phase("dense opens")
             if (wants("opens")) runCatching { benchDenseOpens(bench, ::emit) }.onFailure { emit("dense opens   : FAILED ${it}") }
+            // Each remounting section below replaces the MountedDrive, so the
+            // reference captured at the top of this drive's turn is dead as soon as
+            // the first of them runs. Re-resolving per *drive* is not enough; it has
+            // to be per *section*.
+            //
+            // Seen on the Huawei P20 Lite: write verify remounted successfully, then
+            // unaligned failed with "block device is closed (volume was unmounted)"
+            // against the stale reference, correctness reported "no live mount", and
+            // fixtures — running later still — found the volume perfectly fine. The
+            // volume had come back all along; only the references were dead. On
+            // faster phones the remount lands inside the section's own wait and none
+            // of this shows.
+            //
+            // It waits rather than giving up at once, because on the slowest devices
+            // the volume returns seconds after a section would have. Falling back to
+            // the previous reference preserves the old behaviour when nothing comes
+            // back, so a genuinely absent drive still reports as absent.
+            fun live(): MountedDrive {
+                val deadline = System.currentTimeMillis() + 30_000
+                var d = driveForTag(tag)
+                while (d == null && System.currentTimeMillis() < deadline) {
+                    Thread.sleep(500)
+                    d = driveForTag(tag)
+                }
+                return d ?: drive
+            }
+
             // Opt-in only: this one writes to the drive, so a default run stays
             // read-only.
             phase("write verification")
-            if (only.contains("write")) runCatching { benchWriteVerify(drive, ::emit, mount) }
+            if (only.contains("write")) runCatching { benchWriteVerify(live(), ::emit, mount) }
                 .onFailure { emit("write verify  : FAILED ${it}") }
             // Opt-in: writes, and deliberately unaligned.
             phase("unaligned writes")
-            if (only.contains("unaligned")) runCatching { benchUnaligned(drive, ::emit, mount) }
+            if (only.contains("unaligned")) runCatching { benchUnaligned(live(), ::emit, mount) }
                 .onFailure { emit("unaligned     : FAILED ${it}") }
             phase("correctness")
-            if (only.contains("correct")) runCatching { benchCorrectness(drive, ::emit, mount) }
+            if (only.contains("correct")) runCatching { benchCorrectness(live(), ::emit, mount) }
                 .onFailure { emit("correctness   : FAILED ${it}") }
             phase("SAF path")
             if (only.contains("saf")) runCatching { benchSaf(context, ::emit) }
@@ -342,7 +369,7 @@ object Benchmark {
             // The trace, not just the message: this handler printed
             // "FAILED java.io.IOException: File is closed" and dropped the one
             // piece of information that identified the throwing line.
-            if (only.contains("fixtures")) runCatching { benchFixtures(drive, ::emit) }
+            if (only.contains("fixtures")) runCatching { benchFixtures(live(), ::emit) }
                 .onFailure { emit("fixtures      : FAILED ${it.stackTraceToString()}") }
             emit("")
         }
