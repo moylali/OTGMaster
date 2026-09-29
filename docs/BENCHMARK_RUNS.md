@@ -35,6 +35,54 @@ to a row here.
 
 ## 2026-09-28
 
+### Huawei P20 Lite (ANE-LX1) · Android 9 (SDK 28) · build 0.3.13 (46) commit dc29660 — VeraCrypt + FAT32
+
+Awake and unthrottled at both ends. Full run completed successfully on the device.
+
+| Field | Value |
+|---|---|
+| Drive | PNY USB 3.2.1 FD, 59151 MiB — VeraCrypt (AES/SHA-512, PIM 1) + FAT32, `VCFAT` |
+| Report | `otgbench-ANE-LX1-20260928-223833.txt` |
+| Sections | free, block, dir, path, seq, random, opens, write, unaligned, correct, fixtures |
+| block read | 1.65 / 5.46 / 7.16 / 7.92 MB/s (4 / 64 / 512 / 4096 KiB span) |
+| seq read | 1.49 / 3.74 / 3.80 MB/s (32 / 128 / 512 KiB buf) |
+| random read | 11.2 ms each, 89.1 IOPS |
+| dir listing | dense_short cold 1316.4 / warm 455.3 ms; dense_lfn cold 1643.5 / warm 441.3 ms |
+| opens | short 452.5 ms each, lfn 464.8 ms each |
+| write | 16 MiB → 0.98 MB/s |
+| write verify | **ALL PASSED** (cached, cache-dropped, remounted) |
+| unaligned | **A + B PASS** |
+| correctness | **ALL PASSED** (A–G) |
+| fixtures | **ALL 16 MATCHED the host-computed hashes** |
+| fsck | **FAILED — "FATs differ" (exited 1)**; structurally intact, failure is solely due to the known mirror bug |
+| baseline compare | **CLEAN** — exactly 2 files added (the reports), FAT0 changed by only 11 bytes, FAT1 identical. **Massive data corruption is completely gone.** |
+
+---
+
+
+### OnePlus 7 (GM1901) · Android 16 (SDK 36) · build 0.3.13 (46) commit dc29660 — VeraCrypt + exFAT
+
+APK sha256 `cd657759…`, clean tree, installed immediately before the run,
+awake and unthrottled at both ends.
+
+| Field | Value |
+|---|---|
+| Drive | PNY 59151 MiB — VeraCrypt (AES/SHA-512, PIM 1) + exFAT |
+| Sections | free, block, dir, path, seq, random, opens, write, unaligned, correct, fixtures |
+| seq read | 10.77 / 10.97 / 10.85 MB/s |
+| write verify | **ALL PASSED** (cached, cache-dropped, remounted) |
+| unaligned | **A + B PASS** |
+| correctness | **ALL PASSED** (A–G) |
+| fixtures | **ALL 16 MATCHED the host-computed hashes** |
+| fsck / compare | pending |
+
+Second device to exercise the remount race fix. The log shows the same shape as
+on the Huawei — the unmount completes in 12 ms and the app re-mounts the drive
+412 ms later — and the latched check caught the empty window, so correctness ran
+and passed.
+
+---
+
 ### Huawei P20 Lite (ANE-LX1) · Android 9 (SDK 28) · build 0.3.13 (46) commit dc29660 — drive D, VeraCrypt + ext4
 
 The fourth attempt at this cell, and the first to pass. Sections `write`,
