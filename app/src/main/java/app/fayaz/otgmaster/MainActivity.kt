@@ -552,6 +552,10 @@ class MainActivity : AppCompatActivity() {
         }
     }
 
+    /** Identity of a connection object, for tracing which one a code path holds. */
+    private fun objId(o: Any?): String =
+        if (o == null) "null" else Integer.toHexString(System.identityHashCode(o))
+
     private fun refreshDevices() {
         val devices = usbDeviceProvider.getDevices()
         appendLog(getString(R.string.log_found_usb_devices, devices.size))
@@ -708,6 +712,9 @@ class MainActivity : AppCompatActivity() {
                 }
 
                 val baseIndex = _deviceCandidates.value.size
+                openedList.forEach {
+                    android.util.Log.i("OTGMaster", "probe opened ${it.deviceKey} as ${objId(it.blockDevice)}")
+                }
                 val newCandidates = openedList.mapIndexed { index, opened ->
                     val displayName = UsbDeviceDescriber.friendlyName(opened.usbDevice, baseIndex + index)
                     val allCandidates = try {
@@ -799,6 +806,8 @@ class MainActivity : AppCompatActivity() {
         onComplete: () -> Unit
     ) {
         val device = openedDevices[deviceName]
+        android.util.Log.i("OTGMaster",
+            "attemptUnlock ${candidate.label} @${candidate.startBlock} via ${objId(device)}")
         if (device == null) {
             appendLog(getString(R.string.log_no_block_device_opened))
             onComplete()
@@ -1072,6 +1081,10 @@ class MainActivity : AppCompatActivity() {
                     val stillUnmounting = (pendingUnmounts.merge(sourceKey, -1) { a, b -> a + b } ?: 0) > 0
                     val otherMounted = OtgMasterState.mountedDrives.any { it.sourceDeviceName == sourceKey }
                     val candidatesInForm = _deviceCandidates.value.any { it.deviceName == sourceKey }
+                    android.util.Log.i("OTGMaster",
+                        "unmountDrive ${drive.id} done: plain=${drive.isPlain} stillUnmounting=$stillUnmounting" +
+                        " otherMounted=$otherMounted candidatesInForm=$candidatesInForm" +
+                        " raw=${objId(rawDevice)} opened=${objId(openedDevices[sourceKey])}")
 
                     if (!stillUnmounting && !otherMounted && !candidatesInForm) {
                         // Last partition from this USB — safe to release the USB connection.
@@ -1253,6 +1266,9 @@ class MainActivity : AppCompatActivity() {
         appendLog(msg)
         android.util.Log.i("OTGMaster", msg)
         devices.forEach { device ->
+            android.util.Log.i("OTGMaster",
+                "Mount request: ${device.deviceName} holds ${objId(device.blockDevice)}," +
+                " candidates @${device.candidates.map { it.startBlock }}")
             device.candidates.forEach { candidate ->
                 attemptUnlock(
                     device.deviceName, candidate, password, pim,
