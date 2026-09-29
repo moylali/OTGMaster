@@ -1554,11 +1554,27 @@ object Benchmark {
         val before = OtgMasterState.mountedDrives.map { it.id }.toSet()
 
         unmountAll.invoke()
-        var deadline = System.currentTimeMillis() + 30_000
+        // Was a flat 30s. On a Huawei P20 Lite unmounting ext4-in-VeraCrypt from an
+        // SD card, that expired before the unmount landed — and the unmount then
+        // completed anyway, moments later. The volume therefore disappeared *after*
+        // this function had concluded it had not, leaving every later section with a
+        // closed device and nothing to bring it back, because the mount request is
+        // only issued past this point. The visible result was one PARTIAL followed by
+        // "block device is closed" and "no live mount" on a drive that was fine.
+        //
+        // Same budget as the mount side: if a mount may take 90s on the slowest
+        // device, so may an unmount, and the unmount has metadata to flush.
+        var deadline = System.currentTimeMillis() + MOUNT_TIMEOUT_MS
         while (OtgMasterState.mountedDrives.isNotEmpty() &&
                 System.currentTimeMillis() < deadline) Thread.sleep(300)
         if (OtgMasterState.mountedDrives.isNotEmpty()) {
-            why("the drive did not unmount within 30s, so nothing was discarded")
+            // Put it back before giving up. Returning here used to strand the volume:
+            // this function had unmounted it, so the sections after this one had
+            // nothing to run against, and the whole drive's remaining results were
+            // lost to a timeout that only delayed one verdict.
+            runCatching { mountReq.mount(mount.password, mount.pim, mount.cipher, mount.hash) }
+            why("the drive did not unmount within ${MOUNT_TIMEOUT_MS / 1000}s, " +
+                "so nothing was discarded")
             return false
         }
         Thread.sleep(1500)
