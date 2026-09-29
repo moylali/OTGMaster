@@ -53,7 +53,7 @@ APK sha256 `ee9188b0…`, clean tree, awake and unthrottled at both ends, over W
 | unaligned | **A + B PASS** |
 | correctness | **ALL PASSED** (A–G) |
 | fixtures | **ALL 16 MATCHED the host-computed hashes** |
-| fsck | pending |
+| fsck | **CLEAN** — `fsck.exfat`: 19 directories, 20096 files |
 
 **The cell this fleet most needed.** This is the device whose 0.43 MB/s writes
 exceeded the ten-second `FinalizerWatchdogDaemon` budget and killed the process,

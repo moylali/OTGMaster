@@ -37,15 +37,23 @@ device's result.
 | **D1** Pixel 10 Pro XL | ✅ full | ✅ full | ✅ full | ✅ partial | ❌ | ✅ partial |
 | **D2** OnePlus 7 | ❌ | ❌ | ❌ | ✅ partial | ✅ partial | ❌ |
 | **D3** Samsung M30 | ❌ | ❌ | ❌ | ✅ full | ✅ full | ❌ |
-| **D4** Huawei P20 Lite | ⚠️ see note | ✅ partial | ❌ | ❌ | ❌ | ❌ |
+| **D4** Huawei P20 Lite | ⚠️ see note | ✅ full | ❌ | ❌ | ❌ | ❌ |
 
 ✅ full — every section run and passed, including `fixtures`, on the current
 build, with a host-side filesystem check afterwards.
+
+**"Full" is not "proven uncorrupted."** The host checker validates structure, not
+file contents — no filesystem here carries data checksums. `fixtures` covers
+contents for the manifest's entries only: on the exFAT drive that is 14 files of
+20,096, plus names and sizes for the 20,000 in the two dense directories. The
+FAT32 damage sat precisely in that gap — in a `FILL/` file no manifest entry
+covers — which is why it passed `fixtures: ALL 16 MATCHED` while wrecked. A full
+cell means sampled-clean, not audited-clean.
 ✅ partial — passed, but missing at least one of: fixture hashes, a host `fsck`,
 or the full read section set. Detail in the run log.
 🔄 running · ❌ not attempted.
 
-**Coverage: 12 of 24 cells, 5 full, 2 awaiting only a host fsck.**
+**Coverage: 12 of 24 cells, 6 full, 1 awaiting only a host fsck.**
 
 ⚠️ **D4·C1 is withdrawn.** Every on-device section passed, but the host
 `fsck.fat` afterwards found FAT entry 0 zeroed and ~514 MB of an unrelated
@@ -67,7 +75,7 @@ prepared drive before it counts.
 | D4·C1 | `98fae8f` | write verify 3/3, unaligned A+B, correctness A–G, fixtures ALL 16; **fsck pending** |
 | D3·C5 | `98fae8f` | write verify 3/3, unaligned A+B, correctness A–G, fixtures ALL 5, `e2fsck` clean; **throughput unusable (started throttled)** |
 | D3·C4 | `98fae8f` | write verify 3/3, unaligned A+B, correctness A–G, fixtures ALL 5, `e2fsck` clean |
-| D4·C2 | `98fae8f` | write verify 3/3, unaligned A+B, correctness A–G, fixtures ALL 16; **fsck pending** — the finalizer-watchdog device, no process kill |
+| D4·C2 | `98fae8f` | write verify 3/3, unaligned A+B, correctness A–G, fixtures ALL 16, `fsck.exfat` clean — the finalizer-watchdog device, no process kill |
 
 ## Known gaps, and which matter
 
