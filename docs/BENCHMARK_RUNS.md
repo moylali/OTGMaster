@@ -126,13 +126,12 @@ run measured — each of the four should carry this run's report.
 
 | Partition | fsck | Compare against the pre-run baseline |
 |---|---|---|
-| P1 LUKS1 + FAT32 | **CLEAN** — 20025 files, 86191/4185352 clusters | **lost** — `volume_baseline.sh` was edited while the compare ran and bash read the new bytes mid-execution (`line 283: and: command not found`). To be re-run. |
+| P1 LUKS1 + FAT32 | **CLEAN** — 20025 files, 86191/4185352 clusters | report added, `INDEX.txt` modified; FAT[0] and FAT[1] **each 13 bytes at byte 558,685, identical** (V9); FSInfo 3 bytes. First attempt was lost to a script edited mid-run; re-run afterwards. |
 | P2 LUKS1 + exFAT | **CLEAN** — 17 dirs, 20006 files | report added, `INDEX.txt` modified; boot region and FAT identical. The script printed `NO CHANGE` despite listing the two — the verdict bug fixed in `f8b8042`. |
 | P3 LUKS2 + FAT32 | **CLEAN** — 20022 files, 86184/4182026 clusters | report + `INDEX.txt` added; FAT[0] and FAT[1] **each 17 bytes at byte 394,473, identical** (V9); FSInfo 3 bytes |
 | P4 LUKS2 + exFAT | **CLEAN** — 17 dirs, 20006 files | report added, `INDEX.txt` modified; boot region identical; FAT ~4,081 entries changed |
 
-The report landed on every partition the run measured (P2–P4 confirmed, P1
-shows it via the file count), so each partition's `fixtures` pass is now
+The report landed on every partition the run measured (all four confirmed), so each partition's `fixtures` pass is now
 attributable to it.
 
 P4's FAT churn is consistent with the run, not with damage: the 16 MiB write

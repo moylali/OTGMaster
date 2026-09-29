@@ -85,8 +85,8 @@ baseline compare shows FAT[0] and FAT[1] changing by the same single entry.
 
 **Drive A (LUKS1/2 + FAT32/exFAT, outside the grid):** OnePlus 7 on `4ea6a49`,
 all four partitions pass every section including fixtures; host `fsck` clean on
-all four. P3's FAT[0] and FAT[1] change identically (V9). P1's compare was lost
-and needs re-running.
+all four, and every compare shows only the run's report. Both FAT32 partitions
+(P1, P3) change FAT[0] and FAT[1] identically (V9).
 
 ## Known gaps, and which matter
 
