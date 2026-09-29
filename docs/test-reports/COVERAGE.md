@@ -34,7 +34,7 @@ device's result.
 
 | | C1 VC+FAT32 | C2 VC+exFAT | C3 VC+ext4 | C4 LUKS1+ext4 | C5 LUKS2+ext4 | C6 plain+NTFS |
 |---|---|---|---|---|---|---|
-| **D1** Pixel 10 Pro XL | ✅ full | ✅ full | ✅ full | ✅ partial | ❌ | ✅ partial |
+| **D1** Pixel 10 Pro XL | ✅ full | ✅ full | ✅ full | ✅ partial | ✅ partial | ✅ partial |
 | **D2** OnePlus 7 | ❌ | ❌ | ❌ | ✅ partial | ✅ partial | ❌ |
 | **D3** Samsung M30 | ❌ | ❌ | ❌ | ✅ full | ✅ full | ❌ |
 | **D4** Huawei P20 Lite | ⚠️ see note | ✅ full | ❌ | ❌ | ✅ partial | ❌ |
@@ -53,7 +53,8 @@ cell means sampled-clean, not audited-clean.
 or the full read section set. Detail in the run log.
 🔄 running · ❌ not attempted.
 
-**Coverage: 13 of 24 cells, 6 full, 1 awaiting only a host fsck.**
+**Coverage: 14 of 24 cells, 6 full. The Pixel's row is complete — all six
+cases measured on one device.**
 
 ⚠️ **D4·C1 is withdrawn.** Every on-device section passed, but the host
 `fsck.fat` afterwards found FAT entry 0 zeroed and ~514 MB of an unrelated

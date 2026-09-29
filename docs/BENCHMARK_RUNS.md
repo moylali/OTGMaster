@@ -35,6 +35,32 @@ to a row here.
 
 ## 2026-09-28
 
+### Pixel 10 Pro XL · Android 17 (SDK 37) · build 0.3.13 (46) commit d216ed8 — LUKS2 + ext4
+
+APK sha256 `02312fe0…`, clean tree, awake and unthrottled at both ends.
+
+| Field | Value |
+|---|---|
+| Drive | PNY 59136 MiB — LUKS2 (Argon2id) + ext4, `LUKS2EXT4` |
+| Report | `otgbench-Pixel_10_Pro_XL-20260928-211430.txt` |
+| Sections | free, block, dir, path, seq, random, opens, write, unaligned, correct, fixtures |
+| block read | 2.36 / 11.38 / 19.28 / 23.32 MB/s |
+| seq read | 16.47 / 16.64 / 16.48 MB/s |
+| random read | 4.2 ms each, 240.1 IOPS |
+| write | 16 MiB → 0.64 MB/s |
+| write verify | **ALL PASSED** (cached, cache-dropped, remounted) |
+| unaligned | **A + B PASS** |
+| correctness | **ALL PASSED** (A–G) |
+| fixtures | **ALL 5 MATCHED the host-computed hashes** |
+| fsck | pending |
+
+Completes the Pixel's row: all six cases now measured on that device. It is also
+the first run on `d216ed8`, and it passed the sections that fail on the Huawei —
+which is consistent with the diagnosis there being a timeout tuned on fast
+hardware rather than anything wrong with the code path itself.
+
+---
+
 ### Huawei P20 Lite (ANE-LX1) · Android 9 (SDK 28) · build 0.3.13 (46) commit 98fae8f — LUKS2 + ext4
 
 APK sha256 `ee9188b0…`, clean tree, awake and unthrottled at both ends.
