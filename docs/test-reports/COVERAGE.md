@@ -8,7 +8,8 @@ Every ✅ here traces to a row in [`../BENCHMARK_RUNS.md`](../BENCHMARK_RUNS.md)
 Nothing is marked done on the strength of a build, a unit test, or another
 device's result.
 
-**Last updated:** 2026-09-28, against build `98fae8f` (0.3.13 / 46).
+**Target release:** v0.4.0 (versionCode 46). Tagging report will be `docs/test-reports/v0.4.0.md`.
+**Last updated:** 2026-09-29. Rows recorded as 0.3.13 (46) are the same unreleased line, before the versionName changed.
 
 ## Devices
 
