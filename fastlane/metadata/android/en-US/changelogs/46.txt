@@ -8,6 +8,7 @@
 • New: The volume picker lists only partitions you can actually unlock, and says so, instead of offering ones that could never be mounted
 • Fixed: Unencrypted partitions were labelled "VERACRYPT" in the volume picker, and selecting one produced a misleading "failed to unlock" instead of saying it is not encrypted
 • Fixed: On a drive holding both encrypted and unencrypted partitions, the encrypted partition could become unreachable after dismissing the Auto mount prompt
+• Fixed: On a drive holding both encrypted and unencrypted partitions, unmounting and remounting could fail to unlock until the drive was unplugged and plugged back in
 • Fixed: An unencrypted drive's card offered to clear cached credentials it does not have
 • Fixed: SD cards in a USB card reader could fail to open the first time they were plugged in, until Scan USB Devices was tapped
 • Fixed: FAT32 drives written by the app were reported as damaged by disk checkers on Windows, macOS and Linux, because only one of the drive's two allocation tables was being updated

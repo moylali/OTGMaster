@@ -552,6 +552,17 @@ class MainActivity : AppCompatActivity() {
         }
     }
 
+    /**
+     * True while any partition of [key] is still being unmounted.
+     *
+     * Each unmount calls refreshDevices when it finishes, including the first of
+     * several on one device. Re-opening the device then gave it a second connection
+     * while the remaining partitions were still flushing through the first, and the
+     * new connection claiming the interface is what kills the old one. Waiting for
+     * the last unmount to finish costs nothing: that one refreshes too.
+     */
+    private fun isUnmounting(key: String): Boolean = (pendingUnmounts[key] ?: 0) > 0
+
     /** Identity of a connection object, for tracing which one a code path holds. */
     private fun objId(o: Any?): String =
         if (o == null) "null" else Integer.toHexString(System.identityHashCode(o))
@@ -611,7 +622,8 @@ class MainActivity : AppCompatActivity() {
         // that actually expose a mass-storage interface (skips USB hubs/keyboards/etc.).
         val candidateDevices = devices.filter {
             val key = UsbDeviceDescriber.stableKey(it, usbDeviceProvider.hasPermission(it))
-            key !in mountedDeviceKeys && key !in openedDevices && UsbDeviceDescriber.isMassStorageDevice(it)
+            key !in mountedDeviceKeys && key !in openedDevices && !isUnmounting(key) &&
+                UsbDeviceDescriber.isMassStorageDevice(it)
         }
         if (candidateDevices.isEmpty()) return
 
@@ -687,7 +699,8 @@ class MainActivity : AppCompatActivity() {
         isProbingDevices = true
         lifecycleScope.launch(Dispatchers.IO) {
             try {
-                val excludeKeys = OtgMasterState.mountedDrives.mapNotNull { it.sourceDeviceName }.toSet() + openedDevices.keys
+                val excludeKeys = OtgMasterState.mountedDrives.mapNotNull { it.sourceDeviceName }.toSet() +
+                    openedDevices.keys + pendingUnmounts.filterValues { it > 0 }.keys
                 val openedList = try {
                     LibaumsRawBlockDeviceOpener(this@MainActivity).openAllAvailable(excludeKeys)
                 } catch (e: Exception) {
@@ -1086,18 +1099,34 @@ class MainActivity : AppCompatActivity() {
                         " otherMounted=$otherMounted candidatesInForm=$candidatesInForm" +
                         " raw=${objId(rawDevice)} opened=${objId(openedDevices[sourceKey])}")
 
-                    if (!stillUnmounting && !otherMounted && !candidatesInForm) {
-                        // Last partition from this USB — safe to release the USB connection.
-                        // Only close if we actually removed it; detach handler may have beaten us.
-                        val removed = openedDevices.remove(sourceKey)
-                        if (removed != null) rawDevice.close()
+                    // close() is idempotent, so a connection the detach handler already
+                    // closed is safe to close again. What is not safe is closing one a
+                    // mounted partition still reads through.
+                    val rawInUse = OtgMasterState.mountedDrives.any { it.rawBlockDevice === rawDevice }
+                    val current = openedDevices[sourceKey]
+                    if (current != null && current !== rawDevice) {
+                        // A newer connection to this device already exists. Restoring
+                        // this one over it put a dead connection back in openedDevices,
+                        // and every unlock through it failed with result == -1.
+                        if (!rawInUse) rawDevice.close()
+                    } else if (!stillUnmounting && !otherMounted && !candidatesInForm) {
+                        // Last partition from this USB — release the connection.
+                        //
+                        // This used to close only if openedDevices still held it, but a
+                        // successful mount of the last encrypted partition removes the
+                        // entry, so the connection was never closed: every remount leaked
+                        // one, still holding the interface, while the next probe opened
+                        // another to the same device.
+                        openedDevices.remove(sourceKey)
+                        if (!rawInUse) rawDevice.close()
                     } else if (!drive.isPlain && volCandidate != null) {
                         // Other partitions still alive; restore this candidate so the user can remount.
                         openedDevices[sourceKey] = rawDevice
                         val existing = _deviceCandidates.value.find { it.deviceName == sourceKey }
                         if (existing != null) {
                             _deviceCandidates.value = _deviceCandidates.value.map {
-                                if (it.deviceName == sourceKey)
+                                if (it.deviceName == sourceKey &&
+                                        it.candidates.none { c -> c.startBlock == volCandidate.startBlock })
                                     it.copy(candidates = (it.candidates + volCandidate).sortedBy { c -> c.startBlock })
                                 else it
                             }
