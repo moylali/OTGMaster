@@ -31,6 +31,7 @@ import me.jahnen.libaums.core.driver.scsi.commands.ScsiTestUnitReady
 import me.jahnen.libaums.core.driver.scsi.commands.ScsiWrite10
 import me.jahnen.libaums.core.driver.scsi.commands.sense.InitRequired
 import me.jahnen.libaums.core.driver.scsi.commands.sense.NotReadyTryAgain
+import me.jahnen.libaums.core.driver.scsi.commands.sense.UnitAttention
 import me.jahnen.libaums.core.driver.scsi.commands.sense.ScsiRequestSense
 import me.jahnen.libaums.core.driver.scsi.commands.sense.ScsiRequestSenseResponse
 import me.jahnen.libaums.core.driver.scsi.commands.sense.SenseException
@@ -99,6 +100,22 @@ class ScsiBlockDevice(private val usbCommunication: UsbCommunication, private va
                 lastException = e
             } catch (e: NotReadyTryAgain) {
                 Log.i(TAG, e.message ?: "Reinitializing device")
+                lastException = e
+            } catch (e: UnitAttention) {
+                // LOCAL PATCH (docs/VENDOR_FIXES.md V10): a card reader reports "not
+                // ready to ready change, medium may have changed" (ASC 0x28) on the
+                // first command after a card goes in. SCSI reports a unit attention
+                // once and then clears it, so the right response is to try again —
+                // upstream threw instead, and every first plug-in of an SD card in a
+                // USB reader failed with "Could not open RawBlockDevice via libaums".
+                //
+                // Retried here and nowhere else. During init nothing has been read,
+                // so a changed medium is exactly what is expected. Mid-transfer the
+                // same condition means the card really was swapped, and retrying
+                // there would silently continue on a different card — so
+                // checkResponseForError still throws it for every other caller.
+                if ((e.additionalSenseCode as Number).toInt() and 0xFF != MEDIUM_MAY_HAVE_CHANGED) throw e
+                Log.i(TAG, "medium changed (unit attention 0x28) during init, retrying")
                 lastException = e
             }
             Thread.sleep(100)
@@ -377,6 +394,8 @@ class ScsiBlockDevice(private val usbCommunication: UsbCommunication, private va
 
     companion object {
         private const val MAX_RECOVERY_ATTEMPTS = 5
+        /** LOCAL PATCH (docs/VENDOR_FIXES.md V10): ASC for "medium may have changed". */
+        private const val MEDIUM_MAY_HAVE_CHANGED = 0x28
         private val TAG = ScsiBlockDevice::class.java.simpleName
     }
 }

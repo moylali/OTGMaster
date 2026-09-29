@@ -51,6 +51,44 @@ Vendored fork of [magnusja/libaums](https://github.com/magnusja/libaums).
 | `FatDirectory` | V7 — refuse an implausible directory size instead of OOM | see below |
 | `FAT` | V8 — stop a corrupt chain instead of following it out of the FAT | see below |
 | `FAT` | V9 — write every FAT copy, clamped to the FAT's own length | see below |
+| `ScsiBlockDevice` | V10 — retry a medium-changed unit attention during init | see below |
+
+## V10 — a USB card reader failed its first open
+
+**What upstream does wrong.** `ScsiBlockDevice.init()` retries `InitRequired` and
+`NotReadyTryAgain`, and `checkResponseForError` already maps two unit-attention
+codes — reset occurred (0x29) and commands cleared (0x2F) — onto the retryable
+`NotReadyTryAgain`. It does not map 0x28, *not ready to ready change, medium may
+have changed*, which is what a card reader reports on the first command after a
+card goes in. That surfaced as `UnitAttention` and `init()` let it out.
+
+**Why it mattered.** Observed on a Huawei P20 Lite with an SD card in a Realtek
+USB reader: `Could not open RawBlockDevice via libaums` with
+`UnitAttention (ASC: 40, ASCQ: 0)` — 40 decimal is 0x28 — on every first plug-in,
+twice in a row as the reader re-enumerated. SCSI reports a unit attention once
+and then clears it, so tapping Scan USB Devices got through; the first open never
+did. USB sticks have no removable medium and never raise it, which is why a fleet
+of stick-based drives never showed it.
+
+**The patch.** `init()` catches `UnitAttention` and retries it when, and only
+when, the code is 0x28. It is deliberately **not** added to
+`checkResponseForError`: that function serves every command, and mid-transfer a
+changed medium means the card really was swapped — retrying there would carry on
+reading a different card as though it were the same one. During init nothing has
+been read yet, so a changed medium is the expected state.
+
+**Test.** `CardReaderUnitAttentionTest` drives the real `ScsiBlockDevice` against a
+fake bulk-only reader whose first TEST UNIT READY fails and whose REQUEST SENSE
+then reports unit attention 0x28, once.
+
+| Case | Upstream | V10 |
+|---|---|---|
+| medium-changed reported once | FAIL — `Unit attention (ASC: 40, ASCQ: 0)`, the device's own error | pass |
+| medium-changed never clears | FAIL — throws on the first attempt | pass — gives up at `MAX_RECOVERY_ATTEMPTS` |
+| unrelated unit attention (0x3F) | pass | pass — still thrown |
+
+The third row passes on both by design: it fails if the retry is ever widened
+past the one code a card insertion produces.
 
 ## V9 — the second FAT was never written
 

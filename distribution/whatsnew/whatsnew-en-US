@@ -1,7 +1,8 @@
 • New: LUKS1 and LUKS2 volumes alongside VeraCrypt
 • New: ext4 read/write support
 • New: On ext4: create, write, modify, delete, rename
-• New: Volume picker lists only unlockable partitions
+• New: Picker lists only unlockable partitions
+• Fixed: SD card readers failing on first plug-in
 • Fixed: FAT32 drives flagged as damaged by disk checkers
 • Fixed: Deleting on a damaged FAT32 drive could wipe other files
 • Fixed: Unencrypted partitions mislabelled as VeraCrypt
