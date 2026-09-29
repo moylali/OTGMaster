@@ -121,6 +121,23 @@ report ends in `-dirty` cannot be traced to a tree, so commit first, build, inst
 then run. If a dirty run happens anyway, the row states what the APK actually
 contained rather than repeating the label.
 
+**Install the current build on the device before every run.** Not "if it looks
+out of date" — before every run, and confirm it from the report's own `commit`
+line rather than from memory of having installed it.
+
+A device left on an older APK still produces a complete, plausible-looking row.
+Nothing in the output says "this measured code you replaced an hour ago"; the
+only tell is the commit, and by then the run has cost its full wall-clock. Two
+separate hours were lost to this in one session: a fix was committed as
+`d7c8fcd` but never rebuilt, so the APK installed to "verify" it was the build
+from before it, and the run faithfully reproduced the bug it was meant to prove
+fixed. Later, four devices sat on three different commits at once, which makes
+their rows uncomparable with each other for any figure at all.
+
+The sequence is: commit, build, install, check the reported commit, run. It costs
+a minute; skipping it costs a run and, worse, produces a row that has to be
+withdrawn later rather than one that obviously failed.
+
 **A run that did not complete can be dropped; a run that completed must be recorded.**
 If the drive stopped responding, the USB handle died, the app crashed or the run was
 interrupted, there is no result and nothing to log — delete it and start again. The

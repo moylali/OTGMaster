@@ -84,6 +84,14 @@ correctness and fixtures verdicts, so a set of runs can be read without opening 
 These are the checks that turn output into evidence. Each exists because its absence
 produced a false result.
 
+**Install the current build before every run, and confirm it from the report.**
+Every report carries `build: <version> commit <sha>`. Read that line at the start
+of each run rather than trusting that you installed it — a device on an older APK
+produces a complete, plausible row with nothing in it to say so. Devices also
+drift apart from each other: four on three different commits makes every
+cross-device figure meaningless, and that state is invisible until you compare
+the commit lines.
+
 **Confirm the build.** Every report carries `build: <version> commit <sha>`, and
 marks a dirty tree. An A/B was once invalidated by an un-rebuilt APK — the two files
 were byte-identical. **Compare APK hashes before trusting a pre/post comparison.**
