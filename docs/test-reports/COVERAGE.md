@@ -36,8 +36,8 @@ device's result.
 |---|---|---|---|---|---|---|
 | **D1** Pixel 10 Pro XL | ✅ full | ✅ full | ✅ full | ✅ partial | ❌ | ✅ partial |
 | **D2** OnePlus 7 | ❌ | ❌ | ❌ | ✅ partial | ✅ partial | ❌ |
-| **D3** Samsung M30 | ❌ | ❌ | ❌ | ❌ | 🔄 running | ❌ |
-| **D4** Huawei P20 Lite | ✅ partial | ❌ | ❌ | ❌ | ❌ | ❌ |
+| **D3** Samsung M30 | ❌ | ❌ | ❌ | ❌ | ✅ partial | ❌ |
+| **D4** Huawei P20 Lite | ✅ partial | 🔄 running | ❌ | ❌ | ❌ | ❌ |
 
 ✅ full — every section run and passed, including `fixtures`, on the current
 build, with a host-side filesystem check afterwards.
@@ -45,7 +45,7 @@ build, with a host-side filesystem check afterwards.
 or the full read section set. Detail in the run log.
 🔄 running · ❌ not attempted.
 
-**Coverage: 9 of 24 cells, 3 full, 1 awaiting only a host fsck.**
+**Coverage: 10 of 24 cells, 3 full, 2 awaiting only a host fsck.**
 
 ## What each ✅ actually covers
 
@@ -59,6 +59,7 @@ or the full read section set. Detail in the run log.
 | D2·C4 | earlier | write ALL PASSED 0.76 MB/s, correctness ALL PASSED, fixtures ALL 5, `e2fsck` clean |
 | D2·C5 | earlier | write ALL PASSED 0.73 MB/s, correctness ALL PASSED, fixtures ALL 5, `e2fsck` clean |
 | D4·C1 | `98fae8f` | write verify 3/3, unaligned A+B, correctness A–G, fixtures ALL 16; **fsck pending** |
+| D3·C5 | `98fae8f` | write verify 3/3, unaligned A+B, correctness A–G, fixtures ALL 5; **throughput unusable (started throttled)**, fsck pending |
 
 ## Known gaps, and which matter
 

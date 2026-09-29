@@ -82,9 +82,22 @@ So for any filesystem write change:
 - keep a host-side test that drives the real write code against a loopback image
   and asserts the checker is clean — `Ext4WriteFsckTest` does this with
   `mkfs.ext4` + `e2fsck -fn`, and it reproduced in seconds what cost a drive;
-- after a device run, re-check the volume from the host (`e2fsck -fn` on the
-  mapped LUKS device). Hash-clean is not fsck-clean, and the device path goes
-  through the crypto layer that host tests cannot cover;
+- **after every device run, re-check that volume from the host** — not just after
+  a run that looked wrong, and not just for ext4.
+  `scripts/verify_veracrypt_volume.sh /dev/sdX1` opens whatever container is
+  there (LUKS, VeraCrypt or plain), asks `blkid` what is inside, and runs that
+  filesystem's own checker read-only. Hash-clean is not fsck-clean, and the
+  device path goes through the crypto layer that host tests cannot cover.
+
+  This is not optional diligence, it is the only check that can see the failure.
+  **The app never verifies a checksum it reads** — `Ext4Crc` appears throughout
+  the ext4 code and every use computes a value to *write*; there is no
+  comparison anywhere. So a volume whose every superblock, inode, bitmap, group
+  descriptor and directory checksum is invalid reads back perfectly through the
+  app, passes `write verify` on all three passes, and passes `fixtures` against
+  host-computed hashes. That is exactly the state the drive was in when it was
+  destroyed. No amount of on-device checking can substitute, and the run log
+  records for each run whether this was done;
 - assert both: the content matches *and* the filesystem still validates.
 
 Keep a second prepared drive untouched by the change. Drive C staying clean is what

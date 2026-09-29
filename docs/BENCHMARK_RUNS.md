@@ -35,6 +35,42 @@ to a row here.
 
 ## 2026-09-28
 
+### Samsung Galaxy M30 (SM-M305F) · Android 10 (SDK 29) · build 0.3.13 (46) commit 98fae8f
+
+APK sha256 `ee9188b0…`, clean tree, on battery at 33%.
+
+| Field | Value |
+|---|---|
+| Drive | PNY 59136 MiB — LUKS2 (Argon2id) + ext4, `LUKS2EXT4` |
+| Report | `otgbench-SM-M305F-20260928-192923.txt` |
+| Sections | free, block, dir, path, seq, random, opens, write, unaligned, correct, fixtures |
+| block read | 1.89 / 5.33 / 11.93 / 10.88 MB/s |
+| seq read | 9.99 / 9.82 / 10.01 MB/s |
+| random read | 6.9 ms each, 144.0 IOPS |
+| dir listing | dense_short cold 470.0 / warm 152.3 ms; dense_lfn cold 494.0 / warm 161.3 |
+| opens | short 143.1 ms each, lfn 152.8 ms each |
+| write | 16 MiB → 0.56 MB/s |
+| write verify | **ALL PASSED** (cached, cache-dropped, remounted) |
+| unaligned | **A + B PASS** |
+| correctness | **ALL PASSED** (A–G) |
+| fixtures | **ALL 5 MATCHED the host-computed hashes** |
+| fsck | not yet run — drive still on the phone |
+
+**Throughput from this run is not usable.** It began with the screen off:
+
+```
+power : interactive=false deviceIdle=false powerSave=false
+*** DEVICE IS IDLE OR THROTTLED — throughput here is not comparable
+```
+
+The screen was woken about a minute in and the end-of-run block reads
+`interactive=true`, so it recovered — but it did not start clean, and a run that
+spent its first minute throttled cannot have its figures compared with anything.
+The verdicts are unaffected: every one of them is a hash or structural
+comparison rather than a measurement.
+
+---
+
 ### Huawei P20 Lite (ANE-LX1) · Android 9 (SDK 28) · build 0.3.13 (46) commit 98fae8f
 
 APK sha256 `ee9188b0…`, clean tree, awake and unthrottled at both ends, on
