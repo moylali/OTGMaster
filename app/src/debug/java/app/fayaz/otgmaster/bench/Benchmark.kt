@@ -320,8 +320,11 @@ object Benchmark {
                 .onFailure { emit("saf           : FAILED ${it}") }
             // Opt-in: hashing a 2 GiB fixture takes minutes.
             phase("fixture hashes")
+            // The trace, not just the message: this handler printed
+            // "FAILED java.io.IOException: File is closed" and dropped the one
+            // piece of information that identified the throwing line.
             if (only.contains("fixtures")) runCatching { benchFixtures(drive, ::emit) }
-                .onFailure { emit("fixtures      : FAILED ${it}") }
+                .onFailure { emit("fixtures      : FAILED ${it.stackTraceToString()}") }
             emit("")
         }
 
@@ -1362,7 +1365,6 @@ object Benchmark {
                     off += buf.position()
                 }
             }
-            runCatching { file.close() }
             checked++
             val got = digest.digest().joinToString("") { "%02x".format(it) }
             if (got == expected && off == file.length) {
@@ -1372,6 +1374,17 @@ object Benchmark {
                      "expected ${expected.take(16)}…, got ${got.take(16)}… ***")
                 failed++
             }
+            // Closed last, after every read of `file`. Closing before the two
+            // `file.length` reads above threw IOException("File is closed") out of
+            // the whole section, because ExFatFile.length calls checkNotClosed() —
+            // so the exFAT run reported `fixtures: FAILED` having successfully
+            // hashed the file. It looked like a mid-read failure only because the
+            // read it had just completed took 30-60s.
+            //
+            // ext4 and FAT32 hid it: Ext4File has no closed state at all, so
+            // length-after-close simply works there. ExFatFile is the only
+            // implementation that enforces the contract this was breaking.
+            runCatching { file.close() }
         }
 
         if (errors > 0) emit("fixtures      : $errors manifest line(s) could not be read")
