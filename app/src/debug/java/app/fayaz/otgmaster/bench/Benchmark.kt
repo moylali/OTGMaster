@@ -264,7 +264,26 @@ object Benchmark {
             return out.toString().also { save(context, it) }
         }
 
-        for (drive in drives) {
+        // Identity now, object later. A MountedDrive is invalidated by any remount,
+        // and the write, unaligned and correct sections all remount — so holding the
+        // objects captured before the loop meant every drive after the first ran
+        // against a closed block device. On the four-partition LUKS drive that
+        // produced "block device is closed (volume was unmounted)" for every section
+        // of partitions 2, 3 and 4, and only the first partition yielded a result.
+        //
+        // driveTag reads plain fields, so it is safe to compute from a stale object;
+        // the tag survives a remount because it is a property of the medium.
+        val plan = drives.map { driveTag(it) }
+
+        for (tag in plan) {
+            val drive = driveForTag(tag)
+            if (drive == null) {
+                emit("--- drive: $tag ---")
+                emit("*** not mounted at the start of its turn — skipped rather than")
+                emit("    measured through a closed device ***")
+                emit("")
+                continue
+            }
             emit("--- drive: ${drive.name} ---")
             val fs = drive.fileSystem
             emit("volumeLabel   : ${runCatching { fs.volumeLabel }.getOrDefault("?")}")
@@ -730,8 +749,13 @@ object Benchmark {
         emit: (String) -> Unit,
         mount: MountCredentials? = null,
     ) {
-        val root = OtgMasterState.mountedDrives.firstOrNull()?.fileSystem?.rootDirectory
-            ?: drive.fileSystem.rootDirectory
+        // Resolve by tag, not by position. firstOrNull() returns whichever volume
+        // happens to be first in the mount list, so on a multi-partition drive every
+        // partition's fixtures section hashed the *same* partition — which is why
+        // partitions 1 and 2 of the four-partition drive reported byte-identical
+        // "LISTING DIFFERS" hashes, a result that looked like corruption and was the
+        // wrong volume being read.
+        val root = rootForTag(driveTag(drive)) ?: drive.fileSystem.rootDirectory
         val dir = freshDir(root, "BENCH_UNALIGNED")
         val dirName = dir.name
 
@@ -1563,6 +1587,12 @@ object Benchmark {
             append(runCatching { d.fileSystem.capacity }.getOrDefault(-1L))
         }
     }
+
+    /** The live [MountedDrive] matching [tag], or null if it is not mounted. */
+    private fun driveForTag(tag: String): MountedDrive? = OtgMasterState.mountedDrives
+        .firstOrNull {
+            driveTag(it) == tag && (it.fileSystem as? ExFatFileSystem)?.isUnmounted != true
+        }
 
     /** The live root of the drive matching [tag], or null if it is not mounted. */
     private fun rootForTag(tag: String): UsbFile? = OtgMasterState.mountedDrives
