@@ -64,7 +64,7 @@ before (exFAT after the OnePlus run, FAT32 after the Samsung run).
 | unaligned | **A + B PASS** | **A + B PASS** |
 | correctness | **ALL PASSED** (A–G) | **ALL PASSED** (A–G) |
 | fixtures | **ALL 16 MATCHED** | **ALL 16 MATCHED** |
-| fsck / compare | pending | **CLEAN** — `fsck.fat` 20090 files, no "FATs differ"; only this run's report added since the last check; FAT[0] and FAT[1] each 31 bytes from baseline, identical |
+| fsck / compare | **CLEAN** — `fsck.exfat` 19 dirs, 20101 files; only this run's report added since the last check. FAT differs by ~3,072 entries (≈1 before): a fragmented 16 MiB write leaves its stale chain after deletion, as on drive A's exFAT partitions; bitmap not captured, so consistent rather than proven | **CLEAN** — `fsck.fat` 20090 files, no "FATs differ"; only this run's report added since the last check; FAT[0] and FAT[1] each 31 bytes from baseline, identical |
 
 Report `otgbench-Pixel_10_Pro_XL-20260929-200239.txt`, on both drives. No USB
 errors or retries.
