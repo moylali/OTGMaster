@@ -35,6 +35,34 @@ to a row here.
 
 ## 2026-09-29
 
+### OnePlus 7 (GM1901) · Android 16 (SDK 36) · build 0.4.0 (46) commit 5bc20eb — drive D p1, VeraCrypt + ext4
+
+Clean tree, installed immediately before the run, awake and unthrottled at both
+ends, **on battery at 57%**. The release candidate's code: connection fix, V11–V13,
+read-only mode (off for this partition), the ext4 journal guard. Run with
+`--es drive VCEXT4`: p2 is mounted read-only on this phone because Android had
+mounted it and been cut off (`needs_recovery`), so its write sections could only
+fail; it needs a host `e2fsck` first.
+
+| Field | Value |
+|---|---|
+| Report | `otgbench-GM1901-20260929-190728.txt`, on the drive |
+| block read | 1.33 / 14.80 / 17.89 / 16.84 MB/s |
+| seq read | 11.48 / 11.79 / 11.72 MB/s |
+| random read | 5.8 ms each, 171.9 IOPS |
+| write | 16 MiB → 1.09 MB/s |
+| write verify | **ALL PASSED** (cached, cache-dropped, remounted) |
+| unaligned | **A + B PASS** |
+| correctness | **ALL PASSED** (A–G) |
+| fixtures | **ALL 5 MATCHED the host-computed hashes** |
+| e2fsck / compare | pending |
+
+**Throughput is about half the `dae0ebf` run on the same card and phone** (seq
+21.1 → 11.7 MB/s, write 3.17 → 1.09 MB/s). That run was also awake and
+unthrottled; this one was on battery at 57%. The builds differ only in error
+paths and an unused read-only wrapper, so a code cause is unlikely, but not
+shown. Not comparable figures until re-run under matching conditions.
+
 ### Samsung Galaxy M30 (SM-M305F) · Android 10 (SDK 29) — VeraCrypt + exFAT, read-only mode checks
 
 Three `--es tests write` runs to check read-only mode on exFAT, the one
