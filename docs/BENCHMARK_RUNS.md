@@ -54,7 +54,8 @@ clean after its Huawei run and not used since.
 | unaligned | **A + B PASS** |
 | correctness | **ALL PASSED** (A–G) |
 | fixtures | **ALL 5 MATCHED the host-computed hashes** |
-| e2fsck / compare | pending |
+| e2fsck | **CLEAN** — `LUKS1EXT4: 20041/3792896 files, 927645/15142400 blocks` |
+| baseline compare | since the check after the Huawei run, one addition: this run's report (`INDEX.txt` modified). Free blocks and inodes each down by one more; checksums changed with them. Nothing else. |
 
 ### Samsung M30, drive D — stopped: p2 mounted twice (no result, not a run)
 
