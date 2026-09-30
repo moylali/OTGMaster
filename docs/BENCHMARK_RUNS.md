@@ -95,7 +95,7 @@ them together.
 | unaligned | **A + B PASS** |
 | correctness | **ALL PASSED** (A–G) |
 | fixtures | **ALL 16 MATCHED the host-computed hashes** |
-| fsck / compare | pending |
+| fsck / compare | **CLEAN** (host check after the OnePlus `3f535b7` run, covering the Samsung `7beefe8` run and the read-only checks too): `fsck.exfat` clean, 19 dirs, 20100 files. Compare vs the post-repair baseline: only the Samsung 09:32 read-write report and the OnePlus 19:33 report added, `INDEX.txt` modified; FAT ~1 entry; boot region identical. **Nothing from the two read-only runs reached the drive.** |
 
 ### Samsung Galaxy M30 (SM-M305F) · Android 10 (SDK 29) · build 0.4.0 (46) commit 3f535b7 — VeraCrypt + FAT32
 
@@ -212,9 +212,9 @@ Settings drawer; the unlock form's switch followed it.
 | 09:31 | `640d05c` | on | `write verify` **FAILED** as intended, now with `exFAT volume is mounted read-only` from the exFAT layer; no write reached the device layer. Report not written to the drive, as intended. |
 | 09:31 | `640d05c` | off | mounted read-write; 16 MiB → 0.36 MB/s; `write verify` **ALL PASSED** (remounted); report written to the drive. |
 
-`volume_baseline.sh compare` of this drive afterwards should show only the
-09:31 read-write run's report and `INDEX.txt` — anything from the read-only runs
-would be a finding.
+Host compare afterwards (after the OnePlus `3f535b7` run): only the 09:32
+read-write run's report and the OnePlus report were added — **nothing from the
+read-only runs**, confirmed through the kernel's exFAT driver rather than ours.
 
 ### Samsung Galaxy M30 (SM-M305F) · Android 10 (SDK 29) · build 0.4.0 (46) commit 7beefe8 — VeraCrypt + exFAT
 
@@ -234,7 +234,7 @@ multiport adapter the drive also hangs off. The V12 validation run.
 | unaligned | **A + B PASS** |
 | correctness | **ALL PASSED** (A–G) |
 | fixtures | **FAILED** — `exFAT read failed at offset 615776256 (262144 bytes): -5` |
-| fsck / compare | pending |
+| fsck / compare | **CLEAN** (host check after the OnePlus `3f535b7` run, covering the Samsung `7beefe8` run and the read-only checks too): `fsck.exfat` clean, 19 dirs, 20100 files. Compare vs the post-repair baseline: only the Samsung 09:32 read-write report and the OnePlus 19:33 report added, `INDEX.txt` modified; FAT ~1 entry; boot region identical. **Nothing from the two read-only runs reached the drive.** |
 
 **The adapter disconnected, not the app.** At 08:56:51.5 `UsbHostManager` logged
 the removal of every device on the multiport adapter at once — its gigabit LAN
