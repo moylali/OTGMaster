@@ -1212,7 +1212,26 @@ class MainActivity : AppCompatActivity() {
         }
     }
 
+    /**
+     * Plain partitions being mounted right now, as "deviceKey@startBlock".
+     *
+     * A mount is asynchronous and only lands in mountedDrives at the end, so "is it
+     * mounted?" alone let two callers mount the same partition. Samsung M30, drive D:
+     * the auto-mount on launch was still in flight when the benchmark's mount
+     * request asked for p2, and p2 ended up mounted twice — two independent ext4
+     * instances over one filesystem, one of which then took the write test.
+     */
+    private val plainMountsInFlight = java.util.concurrent.ConcurrentHashMap.newKeySet<String>()
+
     private fun mountPlainDevice(candidate: UsbDeviceCandidate, plain: PlainPartition) {
+        val mountKey = "${candidate.deviceName}@${plain.startBlock}"
+        val alreadyMounted = OtgMasterState.mountedDrives.any {
+            it.isPlain && it.sourceDeviceName == candidate.deviceName && it.partitionLabel == plain.label
+        }
+        if (alreadyMounted || !plainMountsInFlight.add(mountKey)) {
+            android.util.Log.i("OTGMaster", "mountPlainDevice: ${plain.label} already mounted or mounting, skipped")
+            return
+        }
         val rawDevice = candidate.blockDevice
         val sliced: RawBlockDevice = if (plain.startBlock == 0L) rawDevice
             else app.fayaz.otgmaster.block.SlicedBlockDevice(rawDevice, plain.startBlock, plain.blockCount)
@@ -1269,6 +1288,9 @@ class MainActivity : AppCompatActivity() {
                     toastState.value = Pair("Mount failed: ${e.message ?: "Unknown error"}", false)
                     appendLog("Failed to mount ${candidate.displayName}: ${e.message}")
                 }
+            } finally {
+                // Only after addDrive (or the failure): from then on mountedDrives answers.
+                plainMountsInFlight.remove(mountKey)
             }
         }
     }
