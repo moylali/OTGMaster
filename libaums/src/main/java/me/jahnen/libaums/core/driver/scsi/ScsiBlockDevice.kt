@@ -229,6 +229,10 @@ class ScsiBlockDevice(private val usbCommunication: UsbCommunication, private va
                     bulkOnlyMassStorageReset()
                 } catch (r: Exception) {
                     Log.w(TAG, "reset recovery failed: ${r.message}")
+                } catch (r: LinkageError) {
+                    // LOCAL PATCH (docs/VENDOR_FIXES.md V13): a missing native method is
+                    // an Error, not an Exception; it must fail the reset, not the app.
+                    Log.e(TAG, "reset recovery unavailable: ${r.message}")
                 }
                 lastException = e
             }

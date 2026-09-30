@@ -54,6 +54,46 @@ Vendored fork of [magnusja/libaums](https://github.com/magnusja/libaums).
 | `ScsiBlockDevice` | V10 — retry a medium-changed unit attention during init | see below |
 | `ScsiBlockDevice` | V11 — restart every retry from the caller's buffer window | see below |
 | `ScsiBlockDevice` | V12 — Reset Recovery before retrying a failed transfer | see below |
+| `usb.c`, `ScsiBlockDevice` | V13 — native clear-halt and reset resolve; a missing native cannot crash | see below |
+
+## V13 — the native USB helpers never resolved
+
+**What upstream does wrong.** `src/c/usb.c` names its JNI functions
+`Java_me_jahnen_libaums_usb_AndroidUsbCommunication_*`, for a package
+`me.jahnen.libaums.usb`. The class is `me.jahnen.libaums.core.usb.AndroidUsbCommunication`
+— the `core` segment was added upstream without renaming the C side. `libusb-lib.so`
+loads, but neither `clearHaltNative` nor `resetUsbDeviceNative` ever resolves, so
+`clearFeatureHalt()` and `resetDevice()` throw `UnsatisfiedLinkError`.
+
+**Why it mattered.** Upstream only reached `clearFeatureHalt()` from its pipe-error
+and phase-error paths, so it lay dormant. V12 made Reset Recovery run after any
+failed transfer, and a card reader's first command fails routinely (V10). OnePlus 7,
+SD card in a Realtek reader, build `a25bdc0`: the app crashed on every plug-in —
+
+```
+UnsatisfiedLinkError: No implementation found for ... AndroidUsbCommunication.clearHaltNative(int, int)
+  at AndroidUsbCommunication.clearFeatureHalt
+  at ScsiBlockDevice.bulkOnlyMassStorageReset
+  at ScsiBlockDevice.transferCommand
+  at ScsiBlockDevice.init
+```
+
+V12 caught `Exception`; `UnsatisfiedLinkError` is an `Error`, so it went through.
+On the Samsung the reset had failed one step earlier, with an ordinary
+`IOException` from the control transfer, which is why V12's validation run did
+not show it. V12 was pushed but never tagged; no release carried it.
+
+**The patch.** The two C functions are renamed to the `core.usb` path — verified
+in the built APK with `nm -D`. And V12's catch also takes `LinkageError`, so a
+native method that fails to resolve can fail a reset but never the app.
+
+`src/c/errno.c` has the same stale naming (`com_github_mjdev_libaums_ErrNo_*`)
+and is **not** changed here: `ErrNo` is read on every failed transfer and has
+never thrown on-device, reporting `errno 0 null` instead, which is not explained
+yet. Left alone until it is.
+
+**Test.** None on the host: the defect is JNI resolution on Android. Verified on
+the device that crashed.
 
 ## V12 — one failed transfer left the drive out of step for good
 
