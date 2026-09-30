@@ -18,3 +18,4 @@
 • Fixed: On drives with several encrypted partitions, some partitions could fail to mount, and unmounting one could disconnect the others
 • Fixed: A brief USB error during a read or write could make it fail, leave the drive unresponsive until it was unplugged, or in some cases read or write the wrong data without reporting an error
 • Fixed: A temporary USB read error no longer discards the credentials you asked the app to remember for a partition
+• Known issue: unplugging an exFAT drive while files are being written to it can damage it. Unmount before unplugging, and check the drive on a computer if it drops mid-write

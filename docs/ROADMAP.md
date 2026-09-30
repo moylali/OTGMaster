@@ -20,6 +20,7 @@ This document outlines the planned features and enhancements for OTG Master, bro
 - [ ] **FAT16 Support**: Add read support for legacy FAT16 volumes (common on smaller/older USB drives). Currently detected but rejected.
 - [ ] **FAT12 Support**: Add read support for FAT12 volumes (legacy, very small media). Currently detected but rejected.
 - [x] **ext2/ext3/ext4 Support**: Read support for Linux native filesystems via a pure-Kotlin ext4 driver. Validated on LUKS1/LUKS2 volumes.
+- [ ] **exFAT crash-safe allocation**: write the allocation bitmap before the directory entries and FAT links that reference new clusters, so a drive unplugged mid-write leaks space rather than leaving referenced clusters marked free. libexfat defers the bitmap to flush time. Needs a host build of libexfat with a write-discarding test device. Known limitation in 0.4.0 (README). Found 2026-09-29 on a Samsung M30.
 - [ ] **F2FS Support**: Add read support for the Flash-Friendly File System, common on Android and some Linux devices. Currently detected but rejected.
 - [ ] **HFS+ Support**: Add read support for Apple's HFS+ (macOS Extended) filesystem. Currently detected but rejected.
 - [ ] **APFS Support**: Add read support for Apple's APFS container format used on newer macOS drives. Currently detected but rejected.

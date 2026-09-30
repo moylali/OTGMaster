@@ -19,6 +19,19 @@ The app cannot perform a kernel mount on non-rooted Android. Instead it:
 
 See [ROADMAP.md](docs/ROADMAP.md) for planned filesystem and encryption-algorithm support.
 
+## Known limitations
+
+- **Unplugging an exFAT drive while files are being written to it can damage
+  it.** libexfat marks newly used space in its allocation bitmap only when a file
+  is closed or the drive is unmounted, but writes the directory entries and
+  cluster links that point at that space straight away. A drive pulled in
+  between can have a file or folder pointing at space still marked free, which a
+  later write can then reuse. Unmount before unplugging. If a drive does drop
+  mid-write, check it on a computer (`fsck.exfat`) before writing to it again.
+  FAT32 and ext4 are not affected in this way. Fix planned: write the bitmap
+  before anything that references it
+  ([ROADMAP](docs/ROADMAP.md), Phase 3).
+
 ## Build
 
 ```bash
