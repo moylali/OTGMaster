@@ -51,7 +51,8 @@ laptop mount had already replayed a stale journal (08:30:49).
 So the interrupted Android mounts and the journal replay damaged nothing beyond
 the one summary count. p1, written by the same app code and invisible to
 Android, was clean throughout — the count came from the OS side. Re-baselined
-after the repair; the old baseline is kept as `PLAINEXT4.pre-repair-20260929`.
+after the repair (commands given; the old baseline is to be kept as
+`PLAINEXT4.pre-repair-20260929`).
 
 ### LUKS2 + ext4 (Drive C) — host check before the Huawei release-candidate run
 
