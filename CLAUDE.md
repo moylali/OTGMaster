@@ -40,6 +40,36 @@ These apply to every commit, without being asked.
    `<tag>.md`, and each must name the device, Android version, filesystem, and the
    measurements or checks that were run.
 
+4. **A commit that changes visible UI updates the store screenshots.** They live
+   in `fastlane/metadata/android/en-US/images/phoneScreenshots/` and are what
+   F-Droid and Play show; a screenshot of a screen that no longer looks like that
+   is a false listing. Retake every shot the change affects, in the same commit
+   or the one straight after it, before the next tag. The 0.4.0 set shipped 0.3.x
+   shots for a release that added partition tags, a read-only switch and a new
+   setting, and was only caught while preparing the tag.
+
+   The current set, 1080×2340 (a OnePlus 7 matches that size):
+   `1_light` the unlock form in light theme · `2_dark` the unlock form in dark
+   theme · `3_settings` the Settings drawer · `4_mounted` mounted drive cards.
+   Keep the names and the size; add a shot rather than overloading one.
+
+   How to take them without clutter:
+   - Status bar in demo mode — `adb shell settings put global
+     sysui_demo_allowed 1`, then `am broadcast -a com.android.systemui.demo -e
+     command enter`, `… clock -e hhmm 1200`, `… battery -e level 100 -e plugged
+     false`, `… notifications -e visible false`; `-e command exit` afterwards.
+   - Theme and per-partition choices can be set in `shared_prefs/
+     otgmaster_prefs.xml` via `run-as` (force-stop first). Save the file before
+     and write it back after, so the device is left as it was.
+   - The fingerprint prompt (auto mount, quick unlock) is a secure window and
+     screenshots come out black while it is up — dismiss it with Back.
+   - Check both themes whenever colours are involved: the dark-on-dark status bar
+     fixed in `d19f5b7` was visible only in the dark shots.
+
+   The 7″ and 10″ tablet sets (`sevenInchScreenshots/`, `tenInchScreenshots/`)
+   need a tablet or an emulator at those sizes; if they cannot be retaken, say so
+   in the commit rather than leaving them silently stale.
+
 ## Benchmarking and verification
 
 **To run a benchmark, follow "Standard procedure" at the top of
