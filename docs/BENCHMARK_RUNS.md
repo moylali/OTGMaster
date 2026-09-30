@@ -120,7 +120,8 @@ battery at 46%**. The drive was checked clean on the host just before.
 | unaligned | **A + B PASS** |
 | correctness | **ALL PASSED** (A–G) |
 | fixtures | **ALL 5 MATCHED the host-computed hashes** |
-| e2fsck / compare | pending |
+| e2fsck | **CLEAN** — `LUKS2EXT4: 20039/3784704 files, 927124/15138816 blocks` |
+| baseline compare | against the check taken just before this run, one addition: this run's report (`INDEX.txt` modified). Free blocks and inodes each down by one more; superblock, group 0 and bitmap checksums changed with them. Nothing else. |
 
 In line with this device's LUKS1+ext4 run this morning (seq 6.2–6.7, write 0.57).
 
