@@ -35,6 +35,28 @@ to a row here.
 
 ## 2026-09-29
 
+### Huawei P20 Lite (ANE-LX1) · Android 9 (SDK 28) · build 0.4.0 (46) commit 9b91328 — LUKS2 + ext4
+
+Release-candidate code (`9b91328` is docs-only on top of `59805ed`). Clean tree,
+installed immediately before the run, awake and unthrottled at both ends, **on
+battery at 46%**. The drive was checked clean on the host just before.
+
+| Field | Value |
+|---|---|
+| Drive | PNY USB 3.2.1 FD — LUKS2 (Argon2id) + ext4, `LUKS2EXT4` |
+| Report | `otgbench-ANE-LX1-20260929-192628.txt`, on the drive |
+| block read | 2.34 / 5.99 / 8.10 / 8.27 MB/s |
+| seq read | 6.52 / 6.75 / 6.66 MB/s |
+| random read | 8.9 ms each, 112.5 IOPS |
+| write | 16 MiB → 0.55 MB/s |
+| write verify | **ALL PASSED** (cached, cache-dropped, remounted) |
+| unaligned | **A + B PASS** |
+| correctness | **ALL PASSED** (A–G) |
+| fixtures | **ALL 5 MATCHED the host-computed hashes** |
+| e2fsck / compare | pending |
+
+In line with this device's LUKS1+ext4 run this morning (seq 6.2–6.7, write 0.57).
+
 ### Drive D p2 (plain ext4) — host repair after Android's interrupted mounts
 
 p2 had been mounted by the OnePlus's own Android at every plug-in and cut off
