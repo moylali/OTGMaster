@@ -55,7 +55,8 @@ fail; it needs a host `e2fsck` first.
 | unaligned | **A + B PASS** |
 | correctness | **ALL PASSED** (A–G) |
 | fixtures | **ALL 5 MATCHED the host-computed hashes** |
-| e2fsck / compare | pending |
+| e2fsck | **CLEAN** — `VCEXT4: 20038/764032 files, 685287/3053504 blocks` |
+| baseline compare | 3 reports added since the baseline — 06:33 Huawei, 08:02 OnePlus (`dae0ebf`), and this run's — and `INDEX.txt` modified. Free inodes 743997 → 743994 (one per report), free blocks 2368221 → 2368217 (the reports and `INDEX.txt` growing); superblock, group 0 and bitmap checksums changed with them. Nothing else. This covers the `dae0ebf` run's p1 too. |
 
 **Throughput is about half the `dae0ebf` run on the same card and phone** (seq
 21.1 → 11.7 MB/s, write 3.17 → 1.09 MB/s). That run was also awake and
