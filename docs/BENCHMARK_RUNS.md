@@ -35,6 +35,30 @@ to a row here.
 
 ## 2026-09-29
 
+### Samsung Galaxy M30 (SM-M305F) · Android 10 (SDK 29) · build 0.4.0 (46) commit 3f535b7 — VeraCrypt + FAT32
+
+Release-candidate code. Clean tree, installed immediately before the run, awake
+and unthrottled at both ends, on battery at 63%, **drive plugged in directly — no
+multiport adapter**. The phone's Read-only mode setting is on; this partition was
+set read-write for the run (its per-partition choice, as the form switch sets it).
+
+| Field | Value |
+|---|---|
+| Drive | PNY 59151 MiB — VeraCrypt (AES/SHA-512, PIM 1) + FAT32, `VCFAT` |
+| Report | `otgbench-SM-M305F-20260929-193313.txt`, on the drive |
+| block read | 1.90 / 4.57 / 12.20 / 10.76 MB/s |
+| seq read | 2.63 / 7.22 / 7.00 MB/s |
+| random read | 6.7 ms each, 148.2 IOPS |
+| write | 16 MiB → 0.99 MB/s |
+| write verify | **ALL PASSED** (cached, cache-dropped, remounted) |
+| unaligned | **A + B PASS** |
+| correctness | **ALL PASSED** (A–G) |
+| fixtures | **ALL 16 MATCHED the host-computed hashes** |
+| fsck / compare | pending |
+
+No USB errors or retries in the whole run — the first Samsung run of the day
+without the adapter, and the first to complete `fixtures`.
+
 ### Huawei P20 Lite (ANE-LX1) · Android 9 (SDK 28) · build 0.4.0 (46) commit 9b91328 — LUKS2 + ext4
 
 Release-candidate code (`9b91328` is docs-only on top of `59805ed`). Clean tree,
