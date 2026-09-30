@@ -53,7 +53,7 @@ startup unmount), p1 read-write by its per-partition choice.
 | unaligned | **A + B PASS** | **A + B PASS** |
 | correctness | **ALL PASSED** (A–G) | **ALL PASSED** (A–G) |
 | fixtures | **ALL 5 MATCHED** | **ALL 5 MATCHED** |
-| e2fsck / compare | pending | pending |
+| e2fsck / compare | **CLEAN**; vs the post-repair baseline only the Huawei 19:54 and this run's reports (+`INDEX.txt`), free inodes −2 / blocks −4 — the stopped run's `BENCH_WRITE/verify.bin` is gone, replaced and cleaned up by this run's `write verify` | **CLEAN**; the only change since the last check is this run's report |
 
 Report `otgbench-SM-M305F-20260929-202520.txt`, on both partitions. The Samsung's
 first VeraCrypt + ext4 and plain ext4 results — its last two empty cells.
