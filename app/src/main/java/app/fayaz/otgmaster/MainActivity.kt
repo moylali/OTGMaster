@@ -1346,6 +1346,19 @@ class MainActivity : AppCompatActivity() {
             android.util.Log.i("OTGMaster",
                 "Mount request: ${device.deviceName} holds ${objId(device.blockDevice)}," +
                 " candidates @${device.candidates.map { it.startBlock }}")
+            // Plain partitions too. The programmatic request means "mount this drive",
+            // and after an unmount a plain partition only came back through a
+            // re-probe — which does not happen while an encrypted candidate on the
+            // same device holds its connection. Huawei P20 Lite, drive D: the
+            // benchmark's startup unmount took down the auto-mounted p2 and the run
+            // measured p1 alone.
+            val mountedPlain = OtgMasterState.mountedDrives
+                .filter { it.isPlain && it.sourceDeviceName == device.deviceName }
+                .map { it.partitionLabel }.toSet()
+            device.plainPartitions.filter { it.label !in mountedPlain }.forEach { plain ->
+                android.util.Log.i("OTGMaster", "Mount request: remounting plain ${plain.label}")
+                mountPlainDevice(device, plain)
+            }
             device.candidates.forEach { candidate ->
                 attemptUnlock(
                     device.deviceName, candidate, password, pim,
