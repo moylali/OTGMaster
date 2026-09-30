@@ -35,6 +35,26 @@ to a row here.
 
 ## 2026-09-29
 
+### Huawei P20 Lite (ANE-LX1) · Android 9 (SDK 28) · build 0.4.0 (46) commit f51131f — drive D p1, VeraCrypt + ext4
+
+Release-candidate code. Clean tree, installed immediately before the run, awake
+and unthrottled at both ends, on battery at 40%. Meant to cover p1 and p2; **p2
+was not measured** — the runner's startup unmount took down the auto-mounted p2
+and the mount request brought back p1 only. Fixed in `7b5e3bb`.
+
+| Field | Value |
+|---|---|
+| Report | `otgbench-ANE-LX1-20260929-194018.txt`, on the drive |
+| block read | 1.25 / 6.72 / 7.80 / 8.36 MB/s |
+| seq read | 6.42 / 6.62 / 6.67 MB/s |
+| random read | 11.5 ms each, 86.9 IOPS |
+| write | 16 MiB → 1.43 MB/s |
+| write verify | **ALL PASSED** (cached, cache-dropped, remounted) |
+| unaligned | **A + B PASS** |
+| correctness | **ALL PASSED** (A–G) |
+| fixtures | **ALL 5 MATCHED the host-computed hashes** |
+| e2fsck / compare | pending |
+
 ### OnePlus 7 (GM1901) · Android 16 (SDK 36) · build 0.4.0 (46) commit 3f535b7 — VeraCrypt + exFAT
 
 Release-candidate code. Clean tree, installed immediately before the run, awake
