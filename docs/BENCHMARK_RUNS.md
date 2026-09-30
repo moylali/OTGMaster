@@ -116,7 +116,8 @@ set read-write for the run (its per-partition choice, as the form switch sets it
 | unaligned | **A + B PASS** |
 | correctness | **ALL PASSED** (A–G) |
 | fixtures | **ALL 16 MATCHED the host-computed hashes** |
-| fsck / compare | pending |
+| fsck | **CLEAN** — `fsck.fat`: 20089 files, 14241975/15113321 clusters, no "FATs differ" |
+| baseline compare | only this run's report added since the last check (plus the two earlier reports already seen), `INDEX.txt` modified; **FAT[0] and FAT[1] each 21 bytes at byte 57,000,901, identical** (14 before this run); FSInfo 3 bytes |
 
 No USB errors or retries in the whole run — the first Samsung run of the day
 without the adapter, and the first to complete `fixtures`.
