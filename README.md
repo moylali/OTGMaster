@@ -28,9 +28,7 @@ See [ROADMAP.md](docs/ROADMAP.md) for planned filesystem and encryption-algorith
   between can have a file or folder pointing at space still marked free, which a
   later write can then reuse. Unmount before unplugging. If a drive does drop
   mid-write, check it on a computer (`fsck.exfat`) before writing to it again.
-  FAT32 and ext4 are not affected in this way. Fix planned: write the bitmap
-  before anything that references it
-  ([ROADMAP](docs/ROADMAP.md), Phase 3).
+  FAT32 and ext4 are not affected in this way. A fix is planned.
 
 ## Build
 
