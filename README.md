@@ -9,15 +9,17 @@ Android app to open encrypted USB mass-storage devices for read/write without ro
   <a href="https://f-droid.org/packages/app.fayaz.otgmaster/">
     <img src="https://fdroid.gitlab.io/artwork/badge/get-it-on.png" alt="Get it on F-Droid" height="80">
   </a>
-  <a href="https://f-droid.org/packages/app.fayaz.otgmaster/">
-    <img src="https://api.qrserver.com/v1/create-qr-code/?size=80x80&data=https://f-droid.org/packages/app.fayaz.otgmaster/" alt="F-Droid QR Code" height="80">
-  </a>
-  &nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;
+  &emsp;&emsp;
   <a href="https://play.google.com/store/apps/details?id=app.fayaz.otgmaster">
     <img src="https://play.google.com/intl/en_us/badges/static/images/badges/en_badge_web_generic.png" alt="Get it on Google Play" height="80">
   </a>
+  <br>
+  <a href="https://f-droid.org/packages/app.fayaz.otgmaster/">
+    <img src="https://api.qrserver.com/v1/create-qr-code/?size=130x130&data=https://f-droid.org/packages/app.fayaz.otgmaster/" alt="F-Droid QR Code">
+  </a>
+  &emsp;&emsp;&emsp;&emsp;&emsp;&emsp;&emsp;&emsp;&emsp;
   <a href="https://play.google.com/store/apps/details?id=app.fayaz.otgmaster">
-    <img src="https://api.qrserver.com/v1/create-qr-code/?size=80x80&data=https://play.google.com/store/apps/details?id=app.fayaz.otgmaster" alt="Google Play QR Code" height="80">
+    <img src="https://api.qrserver.com/v1/create-qr-code/?size=130x130&data=https://play.google.com/store/apps/details?id=app.fayaz.otgmaster" alt="Google Play QR Code">
   </a>
 </p>
 
