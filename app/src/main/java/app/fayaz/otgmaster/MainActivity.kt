@@ -393,6 +393,7 @@ class MainActivity : AppCompatActivity() {
             // Hold the display on while a benchmark runs. The bench screen does this
             // for itself, but the mount pre-flight can bring this activity forward, and
             // the flag belongs to whichever window is actually in front.
+            androidx.compose.runtime.LaunchedEffect(isDarkTheme) { applySystemBarAppearance(isDarkTheme) }
             val benchRunning = OtgMasterState.benchmarkRunning.value
             androidx.compose.runtime.LaunchedEffect(benchRunning) {
                 if (benchRunning) {
