@@ -5,7 +5,7 @@
 
 Android app to open encrypted USB mass-storage devices for read/write without root. Supports **VeraCrypt**, **LUKS1**, and **LUKS2** encrypted volumes with **FAT32**, **exFAT**, and **ext4** filesystems.
 
-<p>
+<p align="center">
   <a href="https://f-droid.org/packages/app.fayaz.otgmaster/">
     <img src="https://fdroid.gitlab.io/artwork/badge/get-it-on.png" alt="Get it on F-Droid" height="80">
   </a>
