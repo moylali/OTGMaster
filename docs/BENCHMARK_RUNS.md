@@ -35,6 +35,29 @@ to a row here.
 
 ## 2026-09-29
 
+### OnePlus 7 (GM1901) · Android 16 (SDK 36) · build 0.4.0 (46) commit 3f535b7 — VeraCrypt + exFAT
+
+Release-candidate code. Clean tree, installed immediately before the run, awake
+and unthrottled at both ends, on battery at 54%. Read-only mode is on for this
+phone; this partition was set read-write for the run. **The drive was not
+host-checked before the run** — its last runs (Samsung `7beefe8`, and the three
+read-only checks) are still unchecked, so the next host compare covers all of
+them together.
+
+| Field | Value |
+|---|---|
+| Drive | PNY 59151 MiB — VeraCrypt (AES/SHA-512, PIM 1) + exFAT, `exFAT` |
+| Report | `otgbench-GM1901-20260929-193341.txt`, on the drive |
+| block read | 5.24 / 19.29 / 17.52 / 19.40 MB/s |
+| seq read | 12.88 / 12.76 / 12.82 MB/s |
+| random read | 3.8 ms each, 265.7 IOPS |
+| write | 16 MiB → 0.46 MB/s |
+| write verify | **ALL PASSED** (cached, cache-dropped, remounted) |
+| unaligned | **A + B PASS** |
+| correctness | **ALL PASSED** (A–G) |
+| fixtures | **ALL 16 MATCHED the host-computed hashes** |
+| fsck / compare | pending |
+
 ### Samsung Galaxy M30 (SM-M305F) · Android 10 (SDK 29) · build 0.4.0 (46) commit 3f535b7 — VeraCrypt + FAT32
 
 Release-candidate code. Clean tree, installed immediately before the run, awake
