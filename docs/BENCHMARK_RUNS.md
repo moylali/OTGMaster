@@ -35,6 +35,27 @@ to a row here.
 
 ## 2026-09-29
 
+### OnePlus 7 (GM1901) · Android 16 (SDK 36) · build 0.4.0 (46) commit 232887a — LUKS1 + ext4
+
+Release-candidate code (single-partition drive, so not affected by the plain
+double-mount fixed in `8b70e79`). Clean tree, installed immediately before,
+awake and unthrottled at both ends, on battery at 60%. The partition was set
+read-write (Read-only mode is on for this phone). The drive was host-checked
+clean after its Huawei run and not used since.
+
+| Field | Value |
+|---|---|
+| Report | `otgbench-GM1901-20260929-201229.txt`, on the drive |
+| block read | 2.22 / 11.53 / 19.54 / 18.77 MB/s |
+| seq read | 13.28 / 13.33 / 13.42 MB/s |
+| random read | 3.0 ms each, 330.3 IOPS |
+| write | 16 MiB → 0.60 MB/s |
+| write verify | **ALL PASSED** (cached, cache-dropped, remounted) |
+| unaligned | **A + B PASS** |
+| correctness | **ALL PASSED** (A–G) |
+| fixtures | **ALL 5 MATCHED the host-computed hashes** |
+| e2fsck / compare | pending |
+
 ### Samsung M30, drive D — stopped: p2 mounted twice (no result, not a run)
 
 Build `232887a`, started 20:08. The run's mount list showed **two** `ext4 Drive`
