@@ -74,7 +74,14 @@ before the run; last checked clean after the OnePlus `4ea6a49` run.
 | P4 LUKS2 + exFAT | 32.45 MB/s | 0.65 MB/s | **ALL PASSED** | **A + B PASS** | **ALL PASSED** | **ALL 4 MATCHED** |
 
 Report `otgbench-Pixel_10_Pro_XL-20260929-195058.txt`, written to all four
-partitions. Host fsck and compare pending. (The partitions are listed by what
+partitions.
+
+**Host check:** all four **CLEAN** (`fsck.fat` P1 20026 files, P3 20023; `fsck.exfat`
+P2 and P4 17 dirs, 20007 files). Each compare shows only the OnePlus 06:25 report
+and this run's, plus `INDEX.txt`. FAT32: FAT[0] and FAT[1] change identically on P1
+(26 bytes) and P3 (30 bytes). exFAT FAT churn ~4,099 entries on P2 (one 16 MiB
+write since its baseline = 4,096 clusters) and ~8,161 on P4 (two runs) — the stale
+entries a freed fragmented file leaves, not damage. (The partitions are listed by what
 the runner measured, `[0] exFAT @33554432 … [3] LUKS1FAT @2048`, mapped to P1–P4
 by start block.)
 
