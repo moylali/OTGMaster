@@ -35,6 +35,30 @@ to a row here.
 
 ## 2026-09-29
 
+### Huawei P20 Lite (ANE-LX1) · Android 9 (SDK 28) · build 0.4.0 (46) commit 4a88c83 — drive D, p2 plain ext4 + p1 VeraCrypt + ext4
+
+Release-candidate code plus the runner fix `7b5e3bb`, whose first run this is:
+after the startup unmount the log shows `Mount request: remounting plain
+Partition 2`, and both partitions were measured. Clean tree, installed
+immediately before, awake and unthrottled at both ends, **on battery at 35% →
+30%**. p2 had been repaired and re-baselined on the host just before.
+
+| Field | p2 plain ext4, `PLAINEXT4` | p1 VeraCrypt + ext4, `VCEXT4` |
+|---|---|---|
+| block read | 1.45 / 20.70 / 26.71 / 29.03 MB/s | 1.46 / 6.65 / 7.71 / 8.48 MB/s |
+| seq read | 17.14 / 18.94 / 20.12 MB/s | 6.42 / 6.54 / 6.37 MB/s |
+| random read | 4.9 ms each, 203.7 IOPS | 11.9 ms each, 83.8 IOPS |
+| write | 16 MiB → 2.34 MB/s | 16 MiB → 1.91 MB/s |
+| write verify | **ALL PASSED** (cached, cache-dropped, remounted) | **ALL PASSED** |
+| unaligned | **A + B PASS** | **A + B PASS** |
+| correctness | **ALL PASSED** (A–G) | **ALL PASSED** (A–G) |
+| fixtures | **ALL 5 MATCHED** | **ALL 5 MATCHED** |
+| e2fsck / compare | pending | pending |
+
+Report `otgbench-ANE-LX1-20260929-195401.txt`, on both partitions. The Huawei's
+first plain-ext4 result, and its remount pass completed — EMUI does not mount
+ext4 itself, so p2 came up writable.
+
 ### Pixel 10 Pro XL · Android 17 (SDK 37) · build 0.4.0 (46) commit 3e3d051 — drive A, all four partitions
 
 Release-candidate code. Clean tree, installed immediately before the run, awake
