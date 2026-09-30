@@ -64,8 +64,11 @@ flight when the benchmark's mount request (`7b5e3bb`) asked for plain partitions
 saw none mounted, and mounted p2 again. The write section had already run on one
 of the two — `verify (cached)` and `verify (cache dropped)` matched — before the
 run was force-stopped at the remount step. The other mount was idle; ext4 writes
-nothing at unmount. No result, so no row; **drive D is to be host-checked before
-any further run**. Fixed in the commit after this one (`mountPlainDevice` refuses
+nothing at unmount. No result, so no row. **Host check afterwards: both partitions
+CLEAN.** p1: only reports since its baseline. p2: the Huawei 19:54 report and
+`BENCH_WRITE/verify.bin` — the stopped run's 16 MiB test file, never cleaned up —
+with free blocks −4,099 (4,096 for the file plus metadata) and free inodes −3
+(report, directory, file). The double mount did no damage. Fixed in the commit after this one (`mountPlainDevice` refuses
 a partition already mounted or being mounted).
 
 
@@ -108,7 +111,7 @@ immediately before, awake and unthrottled at both ends, **on battery at 35% →
 | unaligned | **A + B PASS** | **A + B PASS** |
 | correctness | **ALL PASSED** (A–G) | **ALL PASSED** (A–G) |
 | fixtures | **ALL 5 MATCHED** | **ALL 5 MATCHED** |
-| e2fsck / compare | pending | pending |
+| e2fsck / compare | **CLEAN**, see the Samsung note above | **CLEAN**, see the Samsung note above |
 
 Report `otgbench-ANE-LX1-20260929-195401.txt`, on both partitions. The Huawei's
 first plain-ext4 result, and its remount pass completed — EMUI does not mount
@@ -158,7 +161,7 @@ and the mount request brought back p1 only. Fixed in `7b5e3bb`.
 | unaligned | **A + B PASS** |
 | correctness | **ALL PASSED** (A–G) |
 | fixtures | **ALL 5 MATCHED the host-computed hashes** |
-| e2fsck / compare | pending |
+| e2fsck / compare | **CLEAN** — covered by the host check after the stopped Samsung run: p1 shows only reports |
 
 ### OnePlus 7 (GM1901) · Android 16 (SDK 36) · build 0.4.0 (46) commit 3f535b7 — VeraCrypt + exFAT
 
