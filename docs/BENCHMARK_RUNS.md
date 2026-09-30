@@ -64,7 +64,7 @@ before (exFAT after the OnePlus run, FAT32 after the Samsung run).
 | unaligned | **A + B PASS** | **A + B PASS** |
 | correctness | **ALL PASSED** (A–G) | **ALL PASSED** (A–G) |
 | fixtures | **ALL 16 MATCHED** | **ALL 16 MATCHED** |
-| fsck / compare | pending | pending |
+| fsck / compare | pending | **CLEAN** — `fsck.fat` 20090 files, no "FATs differ"; only this run's report added since the last check; FAT[0] and FAT[1] each 31 bytes from baseline, identical |
 
 Report `otgbench-Pixel_10_Pro_XL-20260929-200239.txt`, on both drives. No USB
 errors or retries.
