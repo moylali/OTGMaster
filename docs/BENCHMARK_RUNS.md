@@ -35,6 +35,29 @@ to a row here.
 
 ## 2026-09-29
 
+### Samsung Galaxy M30 (SM-M305F) · Android 10 (SDK 29) · build 0.4.0 (46) commit 50c62ac — drive D, p2 plain ext4 + p1 VeraCrypt + ext4
+
+The double-mount fix `8b70e79` in place (`50c62ac` is docs on top). Clean tree,
+installed immediately before, awake and unthrottled at both ends, on battery at
+56%, drive plugged in directly. Drive D had been host-checked clean just before.
+p2 mounted **once** (`Mount request: remounting plain Partition 2` after the
+startup unmount), p1 read-write by its per-partition choice.
+
+| Field | p2 plain ext4, `PLAINEXT4` | p1 VeraCrypt + ext4, `VCEXT4` |
+|---|---|---|
+| block read | 1.10 / 19.12 / 19.92 / 23.67 MB/s | 4.02 / 12.62 / 12.09 / 10.47 MB/s |
+| seq read | 20.23 / 20.08 / 14.77 MB/s | 10.52 / 10.61 / 10.62 MB/s |
+| random read | 5.3 ms each, 188.0 IOPS | 10.0 ms each, 99.7 IOPS |
+| write | 16 MiB → 2.87 MB/s | 16 MiB → 2.70 MB/s |
+| write verify | **ALL PASSED** (cached, cache-dropped, remounted) | **ALL PASSED** |
+| unaligned | **A + B PASS** | **A + B PASS** |
+| correctness | **ALL PASSED** (A–G) | **ALL PASSED** (A–G) |
+| fixtures | **ALL 5 MATCHED** | **ALL 5 MATCHED** |
+| e2fsck / compare | pending | pending |
+
+Report `otgbench-SM-M305F-20260929-202520.txt`, on both partitions. The Samsung's
+first VeraCrypt + ext4 and plain ext4 results — its last two empty cells.
+
 ### OnePlus 7 (GM1901) · Android 16 (SDK 36) · build 0.4.0 (46) commit 232887a — LUKS1 + ext4
 
 Release-candidate code (single-partition drive, so not affected by the plain

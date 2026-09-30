@@ -36,8 +36,8 @@ device's result.
 | | C1 VC+FAT32 | C2 VC+exFAT | C3 VC+ext4 | C4 LUKS1+ext4 | C5 LUKS2+ext4 | C6 plain+NTFS |
 |---|---|---|---|---|---|---|
 | **D1** Pixel 10 Pro XL | ✅ full (RC) | ✅ full (RC) | ✅ full | ✅ full | ✅ full | ✅ partial |
-| **D2** OnePlus 7 | ✅ full | ✅ full (RC) | ✅ full (RC) | ✅ partial | ✅ full | ✅ full |
-| **D3** Samsung M30 | ✅ full (RC) | ✅ partial | ❌ | ✅ full | ✅ full | ❌ |
+| **D2** OnePlus 7 | ✅ full | ✅ full (RC) | ✅ full (RC) | ✅ full (RC) | ✅ full | ✅ full |
+| **D3** Samsung M30 | ✅ full (RC) | ✅ partial | ✅ full (RC) | ✅ full | ✅ full | ✅ full (RC) |
 | **D4** Huawei P20 Lite | ✅ full | ✅ full | ✅ full (RC) | ✅ full | ✅ full (RC) | ✅ full (RC) |
 
 ✅ full — every section run and passed, including `fixtures`, on the current
@@ -54,7 +54,7 @@ cell means sampled-clean, not audited-clean.
 or the full read section set. Detail in the run log.
 🔄 running · ❌ not attempted.
 
-**Coverage: 22 of 24 cells, 19 full.** Missing: Samsung VC+ext4 and plain ext4.
+**Coverage: 24 of 24 cells, 22 full.** Partial: Pixel plain ext4 (its only run predates the plain-partition remount fixes), and Samsung VC+exFAT (every run's `fixtures` lost to the multiport adapter dropping the drive; never run on the release candidate with the drive plugged in directly).
 
 **D4·C3 is resolved.** Four attempts; the fourth, on `dc29660`, passes every
 section including the remount. The cause was the benchmark's unmount check racing
