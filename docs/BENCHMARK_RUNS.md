@@ -35,6 +35,31 @@ to a row here.
 
 ## 2026-09-29
 
+### Drive D p2 (plain ext4) — host repair after Android's interrupted mounts
+
+p2 had been mounted by the OnePlus's own Android at every plug-in and cut off
+each time OTG Master claimed the reader, leaving `needs_recovery` set; one
+laptop mount had already replayed a stale journal (08:30:49).
+
+| Step | Result |
+|---|---|
+| `e2fsck -fn` before | `needs_recovery` set (last kernel mount 09:01:49, mount count 6); group 0 free blocks off by one (22985 vs 22986) — the same numbers as before the 08:30 replay |
+| `e2fsck -fy` | journal recovered; the free-block count fixed; `FILE SYSTEM WAS MODIFIED` |
+| `e2fsck -fn` after | **CLEAN**; `needs_recovery` gone, state clean |
+| compare vs the 2026-09-28 baseline | 4 OnePlus reports added (07:44, 07:47, 07:55, 08:02), `INDEX.txt` modified; 8 scratch files removed from `BENCH_CORRECT/` and `BENCH_UNALIGNED/` (left by the Pixel run before the baseline, cleaned up by today's runs) with their two directories; free inodes +6 = 8 + 2 − 4. No other file changed. |
+
+So the interrupted Android mounts and the journal replay damaged nothing beyond
+the one summary count. p1, written by the same app code and invisible to
+Android, was clean throughout — the count came from the OS side. Re-baselined
+after the repair; the old baseline is kept as `PLAINEXT4.pre-repair-20260929`.
+
+### LUKS2 + ext4 (Drive C) — host check before the Huawei release-candidate run
+
+`e2fsck` **CLEAN**. The compare shows only the 2026-09-28 Pixel (21:14) and OnePlus
+(21:28) reports and `INDEX.txt`; free blocks and inodes are down by exactly 2.
+This closes the host check for both of those runs.
+
+
 ### OnePlus 7 (GM1901) · Android 16 (SDK 36) · build 0.4.0 (46) commit 5bc20eb — drive D p1, VeraCrypt + ext4
 
 Clean tree, installed immediately before the run, awake and unthrottled at both
@@ -822,7 +847,7 @@ APK sha256 `02312fe0…`, clean tree, awake and unthrottled at both ends.
 | unaligned | **A + B PASS** |
 | correctness | **ALL PASSED** (A–G) |
 | fixtures | **ALL 5 MATCHED the host-computed hashes** |
-| fsck | pending |
+| fsck | **CLEAN** (host check 2026-09-29, after the drive's later runs): `e2fsck` clean; compare against the baseline shows only this run's report, the 2026-09-28 21:14 Pixel / 21:28 OnePlus pair, and `INDEX.txt`; free blocks and inodes down by exactly 2. |
 
 Completes the Pixel's row: all six cases now measured on that device. It is also
 the first run on `d216ed8`, and it passed the sections that fail on the Huawei —
