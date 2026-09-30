@@ -35,6 +35,25 @@ to a row here.
 
 ## 2026-09-29
 
+### Pixel 10 Pro XL · Android 17 (SDK 37) · build 0.4.0 (46) commit 3e3d051 — drive A, all four partitions
+
+Release-candidate code. Clean tree, installed immediately before the run, awake
+and unthrottled at both ends, on battery at 80%. Read-only mode is on for this
+phone; the four partitions were set read-write for the run. Not host-checked
+before the run; last checked clean after the OnePlus `4ea6a49` run.
+
+| Partition | seq read (512 KiB) | write | write verify | unaligned | correctness | fixtures |
+|---|---|---|---|---|---|---|
+| P1 LUKS1 + FAT32 | 34.08 MB/s | 1.93 MB/s | **ALL PASSED** | **A + B PASS** | **ALL PASSED** | **ALL 4 MATCHED** |
+| P2 LUKS1 + exFAT | 32.37 MB/s | 0.56 MB/s | **ALL PASSED** | **A + B PASS** | **ALL PASSED** | **ALL 4 MATCHED** |
+| P3 LUKS2 + FAT32 | 34.96 MB/s | 2.26 MB/s | **ALL PASSED** | **A + B PASS** | **ALL PASSED** | **ALL 4 MATCHED** |
+| P4 LUKS2 + exFAT | 32.45 MB/s | 0.65 MB/s | **ALL PASSED** | **A + B PASS** | **ALL PASSED** | **ALL 4 MATCHED** |
+
+Report `otgbench-Pixel_10_Pro_XL-20260929-195058.txt`, written to all four
+partitions. Host fsck and compare pending. (The partitions are listed by what
+the runner measured, `[0] exFAT @33554432 … [3] LUKS1FAT @2048`, mapped to P1–P4
+by start block.)
+
 ### Huawei P20 Lite (ANE-LX1) · Android 9 (SDK 28) · build 0.4.0 (46) commit f51131f — drive D p1, VeraCrypt + ext4
 
 Release-candidate code. Clean tree, installed immediately before the run, awake
