@@ -9,7 +9,7 @@ Nothing is marked done on the strength of a build, a unit test, or another
 device's result.
 
 **Target release:** v0.4.0 (versionCode 46). Tagging report will be `docs/test-reports/v0.4.0.md`.
-**Last updated:** 2026-09-29. Rows recorded as 0.3.13 (46) are the same unreleased line, before the versionName changed.
+**Last updated:** 2026-09-29, evening. (RC) = passed on the release-candidate build; the tag report `v0.4.0.md` has the detail. Rows recorded as 0.3.13 (46) are the same unreleased line, before the versionName changed.
 
 ## Devices
 
@@ -35,10 +35,10 @@ device's result.
 
 | | C1 VC+FAT32 | C2 VC+exFAT | C3 VC+ext4 | C4 LUKS1+ext4 | C5 LUKS2+ext4 | C6 plain+NTFS |
 |---|---|---|---|---|---|---|
-| **D1** Pixel 10 Pro XL | ✅ full | ✅ full | ✅ full | ✅ full | ✅ full | ✅ partial |
-| **D2** OnePlus 7 | ✅ full | ✅ partial | ❌ | ✅ partial | ✅ full | ❌ |
-| **D3** Samsung M30 | ❌ | ✅ partial | ❌ | ✅ full | ✅ full | ❌ |
-| **D4** Huawei P20 Lite | ✅ full | ✅ full | ✅ full | ❌ | ✅ partial | ❌ |
+| **D1** Pixel 10 Pro XL | ✅ full (RC) | ✅ full (RC) | ✅ full | ✅ full | ✅ full | ✅ partial |
+| **D2** OnePlus 7 | ✅ full | ✅ full (RC) | ✅ full (RC) | ✅ partial | ✅ full | ✅ full |
+| **D3** Samsung M30 | ✅ full (RC) | ✅ partial | ❌ | ✅ full | ✅ full | ❌ |
+| **D4** Huawei P20 Lite | ✅ full | ✅ full | ✅ full (RC) | ✅ full | ✅ full (RC) | ✅ full (RC) |
 
 ✅ full — every section run and passed, including `fixtures`, on the current
 build, with a host-side filesystem check afterwards.
@@ -54,8 +54,7 @@ cell means sampled-clean, not audited-clean.
 or the full read section set. Detail in the run log.
 🔄 running · ❌ not attempted.
 
-**Coverage: 17 of 24 cells, 12 full. The Pixel's row is complete — all six
-cases measured on one device.**
+**Coverage: 22 of 24 cells, 19 full.** Missing: Samsung VC+ext4 and plain ext4.
 
 **D4·C3 is resolved.** Four attempts; the fourth, on `dc29660`, passes every
 section including the remount. The cause was the benchmark's unmount check racing

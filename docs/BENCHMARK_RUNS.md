@@ -35,6 +35,27 @@ to a row here.
 
 ## 2026-09-29
 
+### Pixel 10 Pro XL · Android 17 (SDK 37) · build 0.4.0 (46) commit eb4ff66 — VeraCrypt + exFAT and VeraCrypt + FAT32
+
+Release-candidate code. Clean tree, installed immediately before, awake and
+unthrottled at both ends, AC powered at 79%. Both partitions set read-write
+(Read-only mode is on for this phone). Both drives were host-checked clean just
+before (exFAT after the OnePlus run, FAT32 after the Samsung run).
+
+| Field | VC + exFAT, `exFAT` | VC + FAT32, `VCFAT` |
+|---|---|---|
+| seq read (512 KiB) | 32.25 MB/s | 21.16 MB/s |
+| random read | 2.9 ms each, 346.5 IOPS | 5.9 ms each, 169.9 IOPS |
+| write | 16 MiB → 0.62 MB/s | 16 MiB → 2.57 MB/s |
+| write verify | **ALL PASSED** | **ALL PASSED** |
+| unaligned | **A + B PASS** | **A + B PASS** |
+| correctness | **ALL PASSED** (A–G) | **ALL PASSED** (A–G) |
+| fixtures | **ALL 16 MATCHED** | **ALL 16 MATCHED** |
+| fsck / compare | pending | pending |
+
+Report `otgbench-Pixel_10_Pro_XL-20260929-200239.txt`, on both drives. No USB
+errors or retries.
+
 ### Huawei P20 Lite (ANE-LX1) · Android 9 (SDK 28) · build 0.4.0 (46) commit 4a88c83 — drive D, p2 plain ext4 + p1 VeraCrypt + ext4
 
 Release-candidate code plus the runner fix `7b5e3bb`, whose first run this is:
