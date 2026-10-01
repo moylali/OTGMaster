@@ -30,15 +30,16 @@ device's result.
 | C4 | LUKS1 + ext4 | Drive B, `LUKS1EXT4` |
 | C5 | LUKS2 + ext4 | Drive C, `LUKS2EXT4` |
 | C6 | Unencrypted ext4 + NTFS refusal | Drive D p2 `PLAINEXT4`, p3 `NTFSPLAIN` |
+| C7 | Unencrypted NTFS (read/write, from 0.4.1) | Drive D p3 `NTFSPLAIN` |
 
 ## The grid
 
-| | C1 VC+FAT32 | C2 VC+exFAT | C3 VC+ext4 | C4 LUKS1+ext4 | C5 LUKS2+ext4 | C6 plain+NTFS |
-|---|---|---|---|---|---|---|
-| **D1** Pixel 10 Pro XL | ✅ full (RC) | ✅ full (RC) | ✅ full | ✅ full | ✅ full | ✅ partial |
-| **D2** OnePlus 7 | ✅ full | ✅ full (RC) | ✅ full (RC) | ✅ full (RC) | ✅ full | ✅ full |
-| **D3** Samsung M30 | ✅ full (RC) | ✅ partial | ✅ full (RC) | ✅ full | ✅ full | ✅ full (RC) |
-| **D4** Huawei P20 Lite | ✅ full | ✅ full | ✅ full (RC) | ✅ full | ✅ full (RC) | ✅ full (RC) |
+| | C1 VC+FAT32 | C2 VC+exFAT | C3 VC+ext4 | C4 LUKS1+ext4 | C5 LUKS2+ext4 | C6 plain+NTFS | C7 NTFS r/w |
+|---|---|---|---|---|---|---|---|
+| **D1** Pixel 10 Pro XL | ✅ full (RC) | ✅ full (RC) | ✅ full | ✅ full | ✅ full | ✅ partial | ❌ |
+| **D2** OnePlus 7 | ✅ full | ✅ full (RC) | ✅ full (RC) | ✅ full (RC) | ✅ full | ✅ full | ✅ partial |
+| **D3** Samsung M30 | ✅ full (RC) | ✅ partial | ✅ full (RC) | ✅ full | ✅ full | ✅ full (RC) | ❌ |
+| **D4** Huawei P20 Lite | ✅ full | ✅ full | ✅ full (RC) | ✅ full | ✅ full (RC) | ✅ full (RC) | ❌ |
 
 ✅ full — every section run and passed, including `fixtures`, on the current
 build, with a host-side filesystem check afterwards.
@@ -54,7 +55,11 @@ cell means sampled-clean, not audited-clean.
 or the full read section set. Detail in the run log.
 🔄 running · ❌ not attempted.
 
-**Coverage: 24 of 24 cells, 22 full.** Partial: Pixel plain ext4 (its only run predates the plain-partition remount fixes), and Samsung VC+exFAT (every run's `fixtures` lost to the multiport adapter dropping the drive; never run on the release candidate with the drive plugged in directly).
+**Coverage: 25 of 28 cells, 22 full.** C7 (NTFS read/write) is new in 0.4.1 and has
+one cell, D2, partial: its remount-dependent verdicts were judged on the host from an
+adb volume dump rather than on the device, and there is no pre-run baseline. C6's
+"NTFS refusal" half no longer applies from 0.4.1 — NTFS now mounts. The 0.4.0 grid
+was 24 of 24, 22 full. Partial: Pixel plain ext4 (its only run predates the plain-partition remount fixes), and Samsung VC+exFAT (every run's `fixtures` lost to the multiport adapter dropping the drive; never run on the release candidate with the drive plugged in directly).
 
 **D4·C3 is resolved.** Four attempts; the fourth, on `dc29660`, passes every
 section including the remount. The cause was the benchmark's unmount check racing
@@ -71,6 +76,7 @@ baseline compare shows FAT[0] and FAT[1] changing by the same single entry.
 | D1·C2 | `e78cf0a` | write verify 3/3, unaligned A+B, correctness A–G, fixtures ALL 16, `fsck.exfat` clean |
 | D1·C3 | `cdd87b5` | write verify 3/3, unaligned A+B, correctness A–G, fixtures ALL 5, `e2fsck` clean |
 | D1·C4 | earlier | write ALL PASSED 0.82 MB/s, correctness ALL PASSED, fixtures ALL 5, `e2fsck` clean |
+| D2·C7 | `8ef3062`, `b9d6b9e` | write verify **PARTIAL 2/3**; unaligned + correctness judged on host 8/8; saf; fixtures **ALL 511** (written by Android's ntfs-3g); `ntfs_check` + `ntfsfix -n` clean after each run, from adb dumps |
 | D1·C6 | `cdd87b5` | write verify **PARTIAL 2/3**, fixtures ALL 5, `e2fsck` clean; NTFS correctly refused |
 | D2·C1 | `eb26e3e` | write verify 3/3, unaligned A+B, correctness A–G, fixtures ALL 16, `fsck.fat` clean; FAT[0]/FAT[1] change identically (V9) |
 | D2·C4 | earlier | write ALL PASSED 0.76 MB/s, correctness ALL PASSED, fixtures ALL 5, `e2fsck` clean |

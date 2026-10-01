@@ -33,6 +33,73 @@ to a row here.
 
 ---
 
+## 2026-10-01
+
+### OnePlus 7 (GM1901) · LineageOS 23.2 (Android 16, SDK 36) · build 0.4.1 (47) — drive D p3, plain NTFS `NTFSPLAIN`
+
+First NTFS runs, on the libntfs-3g driver. Drive D in its Realtek card reader,
+plugged in directly, on battery at 37–38% (below the procedure's ~40%; no
+drop-out occurred). Screen on, unthrottled at both ends. The partition was
+empty when the work started.
+
+**Host checks were done over adb, not by moving the card.** `VolumeDumpReceiver`
+copies every cluster `$Bitmap` marks in use (plus both boot sectors) under the
+filesystem lock and past the block cache; `scripts/undump_volume.py` rebuilds a
+sparse image, which `ntfs_check.py`, `ntfsfix -n` and the reference ntfs-3g FUSE
+driver then read. `verify_volume.sh` / `volume_baseline.sh` were **not** run —
+there is no pre-run baseline for this partition.
+
+**Android mounts this partition itself.** The phone runs LineageOS 23.2
+(`23.2-20260920-NIGHTLY-guacamoleb`), not OxygenOS. LineageOS's vold adds NTFS (its
+own ntfs-3g 2022.10.3, `/system/bin/mount.ntfs`) and ext4 for public volumes, which
+stock AOSP does not, so this behaviour is specific to that ROM. vold
+mounted p3 read-write (hidden, `mountFlags=0`) every time the reader was
+released; each time the app claimed the reader, that mount was cut off with
+`Failed to sync device: I/O error`. Every host check below was taken after at
+least one such cut-off and found the volume clean — but it is the same race that
+leaves ext4 needing recovery, and a cut-off during an Android-side write would not
+be.
+
+Three broadcasts before run 1 produced no result and are not rows: two because
+`--es cache …` forces an unmount (any `cache` extra sets `remount`, whatever
+`--es remount` says) and a plain partition cannot be remounted without
+credentials — `NO DRIVES MOUNTED`; one because the drive was still unmounted from
+that.
+
+**Run 1 — commit `8ef3062`, clean tree.** Sections `free,block,dir,path,seq,random,opens,write,unaligned,correct,saf`.
+Report `otgbench-GM1901-20261001-123609.txt`, on the drive.
+
+| Field | Value |
+|---|---|
+| block read | 1.45 / 28.45 / 40.80 / 31.78 MB/s |
+| dir, seq, random | not measured — no fixture tree on the partition yet |
+| write | 16 MiB → 2.72 MB/s |
+| write verify | **PARTIAL 2/3** (cached, cache-dropped; no remount — plain partition, no credentials) |
+| unaligned | **NOT VERIFIED** on device — judged on the host instead, below |
+| correctness | **NOT VERIFIED** on device — judged on the host instead, below |
+| saf | provider 12.90 MB/s, direct 17.56 MB/s (1.36×), 2 streams 14.43 MB/s |
+| host, after | dump 60 MiB: `ntfs_check` **clean** (42 records, 11,925 clusters), `ntfsfix -n` **OK**. Through the reference ntfs-3g driver, every file the unaligned and correctness cases left matches its expected bytes — `tail.bin`, `trunc.bin`, `neighbour.bin`, `victim.bin`, `offsets.bin`, `appends.bin`, `fresh.bin`, `tiny.bin` — and `gone.bin` / `slackfill.bin` are deleted: **8 of 8 + 2 deletions** |
+
+**Fixture tree written by a different implementation.** 509 files + `MANIFEST.txt`
+(511 entries: 508 file hashes, 3 directory listings — empty, 600-byte resident,
+4097-byte, 24 MiB, Unicode and 190-character names, a 10-deep path, a 500-entry
+directory) were pushed through **Android's own ntfs-3g** (vold), with
+`sm set-force-adoptable on` to expose the volume at `/storage` and `default`
+restored afterwards. Hashes computed on the laptop. Android's MediaProvider also
+created its standard folders (DCIM, Music, …) on the volume.
+
+**Run 2 — APK labelled `863bfbf-dirty`; it contained exactly `b9d6b9e`** (built
+seconds before that commit, no edit in between; the delta is the dump's
+allocated-cluster filter, outside every code path this run measures). Sections
+`free,dir,path,fixtures`.
+
+| Field | Value |
+|---|---|
+| fixtures | **ALL 511 MATCHED** the host-computed hashes, including the 500-entry listing; 24 MiB file read at 22.22 MB/s |
+| host, after | dump 88 MiB: `ntfs_check` **clean** (585 records, 18,128 clusters), `ntfsfix -n` **OK**; all 508 fixture files match through the reference driver |
+
+---
+
 ## 2026-09-29
 
 ### Samsung Galaxy M30 (SM-M305F) · Android 10 (SDK 29) · build 0.4.0 (46) commit 50c62ac — drive D, p2 plain ext4 + p1 VeraCrypt + ext4
