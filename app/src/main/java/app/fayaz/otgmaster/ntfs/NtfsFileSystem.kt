@@ -75,6 +75,11 @@ class NtfsFileSystem private constructor(
             .also { dirCache[mref] = it }
     }
 
+    /** Cluster size and $Bitmap, read under the lock. For diagnostics (the debug volume dump). */
+    fun allocationBitmap(): Pair<Int, ByteArray> = withNative { h ->
+        NtfsNative.clusterSize(h) to (NtfsNative.clusterBitmap(h) ?: error("cannot read \$Bitmap"))
+    }
+
     internal fun invalidateListings() = lock.withLock { dirCache.clear() }
 
     private val rootNode: NtfsNode by lazy {
