@@ -28,6 +28,8 @@ object NtfsNative {
     @JvmStatic external fun capacity(handle: Long): Long
     @JvmStatic external fun freeSpace(handle: Long): Long
     @JvmStatic external fun clusterSize(handle: Long): Int
+    /** $Bitmap: bit n set when cluster n is in use. For diagnostics. */
+    @JvmStatic external fun clusterBitmap(handle: Long): ByteArray?
 
     @JvmStatic external fun root(handle: Long): NtfsNode?
     @JvmStatic external fun stat(handle: Long, mref: Long, name: String): NtfsNode?

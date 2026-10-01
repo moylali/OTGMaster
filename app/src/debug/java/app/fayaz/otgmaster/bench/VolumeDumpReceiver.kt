@@ -31,7 +31,12 @@ import java.nio.ByteOrder
  * half-way through; every NTFS write is already on the device when its call
  * returns, so nothing needs flushing first.
  *
- * All-zero megabytes are left out, so a mostly empty partition dumps small. Format,
+ * What is copied: for NTFS, every cluster $Bitmap marks in use, plus the first and
+ * last megabyte (the boot sector and its backup, which lies past the last
+ * cluster). Taking the driver's bitmap cannot hide damage: a cluster in use but
+ * marked free is left out, reads back as zeros, and fails the host checks. For
+ * other filesystems, every megabyte that is not all zeros — a partition that was
+ * never zeroed then dumps whole. Format,
  * little-endian: "OTGDUMP1", u64 partition size, then (u64 offset, u32 length,
  * bytes) records.
  */
@@ -58,7 +63,8 @@ class VolumeDumpReceiver : BroadcastReceiver() {
             .ifEmpty { "volume" }.replace(Regex("[^A-Za-z0-9_.-]"), "_")
         val out = File(context.getExternalFilesDir(null), "$label.otgdump")
 
-        val body = { copy(device, out) }
+        val ntfs = drive.fileSystem as? NtfsFileSystem
+        val body = { copy(device, out, ntfs?.allocationBitmap()) }
         val t0 = System.currentTimeMillis()
         val (kept, total) = when (val fs = drive.fileSystem) {
             is NtfsFileSystem -> fs.withNative { body() }
@@ -68,7 +74,8 @@ class VolumeDumpReceiver : BroadcastReceiver() {
             "${(System.currentTimeMillis() - t0) / 1000}s")
     }
 
-    private fun copy(device: RawBlockDevice, out: File): Pair<Long, Long> {
+    /** @param allocation cluster size and in-use bitmap; null copies every non-zero megabyte. */
+    private fun copy(device: RawBlockDevice, out: File, allocation: Pair<Int, ByteArray>?): Pair<Long, Long> {
         (device as? CachedBlockDevice)?.invalidate()
         val total = device.blockCount * device.blockSize
         val chunkBlocks = (CHUNK / device.blockSize)
@@ -80,8 +87,12 @@ class VolumeDumpReceiver : BroadcastReceiver() {
             var lastLog = System.currentTimeMillis()
             while (block < device.blockCount) {
                 val n = minOf(chunkBlocks.toLong(), device.blockCount - block).toInt()
+                if (allocation != null && !needed(block, n, device, total, allocation)) {
+                    block += n
+                    continue
+                }
                 val data = device.readBlocks(block, n)
-                if (data.any { it != 0.toByte() }) {
+                if (allocation != null || data.any { it != 0.toByte() }) {
                     os.write(le64(block * device.blockSize))
                     os.write(ByteBuffer.allocate(4).order(ByteOrder.LITTLE_ENDIAN).putInt(data.size).array())
                     os.write(data)
@@ -95,6 +106,24 @@ class VolumeDumpReceiver : BroadcastReceiver() {
             }
         }
         return kept to total
+    }
+
+    /** Whether [n] blocks at [block] hold any allocated cluster or a boot sector. */
+    private fun needed(block: Long, n: Int, device: RawBlockDevice, total: Long,
+                       allocation: Pair<Int, ByteArray>): Boolean {
+        val start = block * device.blockSize
+        val end = start + n.toLong() * device.blockSize
+        if (start < CHUNK || end > total - CHUNK) return true
+        val (clusterSize, bitmap) = allocation
+        var c = start / clusterSize
+        val last = (end - 1) / clusterSize
+        while (c <= last) {
+            val byte = (c / 8).toInt()
+            if (byte >= bitmap.size) return true  // past the bitmap: keep, never guess
+            if (bitmap[byte].toInt() and (1 shl (c % 8).toInt()) != 0) return true
+            c++
+        }
+        return false
     }
 
     private fun le64(v: Long) = ByteBuffer.allocate(8).order(ByteOrder.LITTLE_ENDIAN).putLong(v).array()

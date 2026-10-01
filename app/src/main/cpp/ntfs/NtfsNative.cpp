@@ -819,3 +819,18 @@ Java_app_fayaz_otgmaster_ntfs_NtfsNative_sync(JNIEnv *, jclass, jlong hp) {
      * anything ntfs-3g holds open on its own (the MFT and bitmap attributes). */
     return ntfs_device_sync(h->vol->dev) ? fail(errno) : 0;
 }
+
+/* The volume cluster bitmap ($Bitmap), one bit per cluster, set when in use.
+ * Used by the debug volume dump to copy only allocated clusters. */
+extern "C" JNIEXPORT jbyteArray JNICALL
+Java_app_fayaz_otgmaster_ntfs_NtfsNative_clusterBitmap(JNIEnv *env, jclass, jlong hp) {
+    struct otg_ntfs *h = H(hp);
+    s64 len = (h->vol->nr_clusters + 7) / 8;
+    jbyteArray arr = env->NewByteArray((jsize) len);
+    if (!arr) return nullptr;
+    jbyte *buf = env->GetByteArrayElements(arr, nullptr);
+    s64 n = ntfs_attr_pread(h->vol->lcnbmp_na, 0, len, buf);
+    env->ReleaseByteArrayElements(arr, buf, 0);
+    if (n != len) { fail(n < 0 ? errno : EIO); return nullptr; }
+    return arr;
+}
