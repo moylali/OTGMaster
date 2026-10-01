@@ -230,9 +230,9 @@ object Benchmark {
 
         // Skip drives whose filesystem has already been unmounted. A remount leaves
         // the old entry in the list briefly, and calling into a torn-down
-        // ExFatFileSystem is what the withNative guard exists to stop.
+        // ExFatFileSystem or NtfsFileSystem is what withNative exists to stop.
         val allDrives = OtgMasterState.mountedDrives.filter {
-            (it.fileSystem as? ExFatFileSystem)?.isUnmounted != true
+            !isTornDown(it)
         }
 
         // Every mounted drive runs, in sequence, unless narrowed. The filter is a
@@ -1669,16 +1669,23 @@ object Benchmark {
         }
     }
 
+    /** True once the drive's native filesystem has been unmounted (exFAT and NTFS). */
+    private fun isTornDown(d: MountedDrive): Boolean = when (val fs = d.fileSystem) {
+        is ExFatFileSystem -> fs.isUnmounted
+        is app.fayaz.otgmaster.ntfs.NtfsFileSystem -> fs.isUnmounted
+        else -> false
+    }
+
     /** The live [MountedDrive] matching [tag], or null if it is not mounted. */
     private fun driveForTag(tag: String): MountedDrive? = OtgMasterState.mountedDrives
         .firstOrNull {
-            driveTag(it) == tag && (it.fileSystem as? ExFatFileSystem)?.isUnmounted != true
+            driveTag(it) == tag && !isTornDown(it)
         }
 
     /** The live root of the drive matching [tag], or null if it is not mounted. */
     private fun rootForTag(tag: String): UsbFile? = OtgMasterState.mountedDrives
         .firstOrNull {
-            driveTag(it) == tag && (it.fileSystem as? ExFatFileSystem)?.isUnmounted != true
+            driveTag(it) == tag && !isTornDown(it)
         }?.fileSystem?.rootDirectory
 
     /** Depth-first delete; a non-empty directory cannot be removed directly. */
