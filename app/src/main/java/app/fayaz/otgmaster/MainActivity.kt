@@ -1883,6 +1883,7 @@ fun OtgMasterApp(
                                     drive.filesystemName.startsWith("ext", ignoreCase = true) -> Color(0xFF1565C0)
                                     drive.filesystemName.equals("exFAT", ignoreCase = true)   -> Color(0xFF00796B)
                                     drive.filesystemName.equals("FAT32", ignoreCase = true)   -> Color(0xFF2E7D32)
+                                    drive.filesystemName.equals("NTFS", ignoreCase = true)    -> Color(0xFF6A1B9A)
                                     else -> Color(0xFF37474F)
                                 }
                                 DriveTag(label = drive.filesystemName.uppercase(), color = fsColor)
