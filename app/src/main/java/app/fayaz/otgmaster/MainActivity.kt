@@ -321,6 +321,7 @@ class MainActivity : AppCompatActivity() {
         
         FileSystemFactory.registerFileSystem(ExFatFileSystemCreator(), 1)
         FileSystemFactory.registerFileSystem(app.fayaz.otgmaster.ext4.Ext4FileSystemCreator(), 2)
+        FileSystemFactory.registerFileSystem(app.fayaz.otgmaster.ntfs.NtfsFileSystemCreator(), 2)
         
         val usbMgr = getSystemService(Context.USB_SERVICE) as UsbManager
         usbDeviceProvider = RealUsbDeviceProvider(usbMgr, permissionIntent)
@@ -1120,8 +1121,9 @@ class MainActivity : AppCompatActivity() {
             // the device themselves, so holding the lock across it deadlocks every
             // later mount and unmount.
             deviceMutex.withLock {
-                if (drive.fileSystem is app.fayaz.otgmaster.exfat.ExFatFileSystem) {
-                    drive.fileSystem.unmount()
+                when (val fs = drive.fileSystem) {
+                    is app.fayaz.otgmaster.exfat.ExFatFileSystem -> fs.unmount()
+                    is app.fayaz.otgmaster.ntfs.NtfsFileSystem -> fs.unmount()
                 }
                 // drive.blockDevice is either NativeDecryptedBlockDevice (close zeros the key but
                 // does NOT close the underlying USB connection) or RawBlockDeviceAdapter (noop close).

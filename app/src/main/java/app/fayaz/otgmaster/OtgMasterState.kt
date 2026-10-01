@@ -32,11 +32,12 @@ data class MountedDrive(
     val mountedReadOnly: Boolean = false,
 ) {
     /**
-     * Why the volume refuses writes, or null if it is writable. ext4 can refuse on
-     * its own (a journal needing recovery), and its reason takes precedence.
+     * Why the volume refuses writes, or null if it is writable. ext4 and NTFS can
+     * refuse on their own (a journal needing recovery), and their reason takes precedence.
      */
     val readOnlyReason: String?
         get() = (fileSystem as? app.fayaz.otgmaster.ext4.Ext4FileSystem)?.readOnlyReason
+            ?: (fileSystem as? app.fayaz.otgmaster.ntfs.NtfsFileSystem)?.readOnlyReason
             ?: if (mountedReadOnly) app.fayaz.otgmaster.ext4.Ext4FileSystem.MOUNTED_READ_ONLY else null
 
     val isReadOnly: Boolean get() = readOnlyReason != null

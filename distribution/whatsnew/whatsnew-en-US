@@ -1,9 +1,3 @@
-• New: LUKS1 and LUKS2 volumes alongside VeraCrypt
-• New: ext4 read/write support
-• New: Read-only mode for encrypted partitions
-• Fixed: SD card readers failing on first plug-in
-• Fixed: Unclean ext4 drives now open read-only
-• Fixed: FAT32 drives flagged as damaged by disk checkers
-• Fixed: Deleting on a damaged FAT32 drive could wipe other files
-• Fixed: Brief USB errors could misplace data
-• Fixed: Encrypted partition unreachable beside unencrypted ones
+• New: NTFS drives (the Windows format) can be read and written, plain or inside VeraCrypt/LUKS
+• New: An NTFS drive Windows did not shut down cleanly opens read-only, so pending Windows changes are not overwritten
+• Known limitation: Windows-compressed NTFS files are read-only; EFS-encrypted files cannot be opened

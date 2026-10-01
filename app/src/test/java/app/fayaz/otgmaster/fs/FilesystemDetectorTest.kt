@@ -37,10 +37,9 @@ class FilesystemDetectorTest {
         assertTrue(r is DetectedFilesystem.Unsupported && r.displayName == "FAT12")
     }
 
-    @Test fun ntfsIsUnsupported() {
+    @Test fun ntfsIsSupported() {
         val r = FilesystemDetector.detectFromBytes(buf().withAscii(3, "NTFS    "))
-        assertTrue(r is DetectedFilesystem.Unsupported && r.displayName == "NTFS")
-        assertTrue((r as DetectedFilesystem.Unsupported).reason.contains("not yet supported"))
+        assertTrue(r is DetectedFilesystem.Supported && r.displayName == "NTFS")
     }
 
     @Test fun apfsIsUnsupported() {

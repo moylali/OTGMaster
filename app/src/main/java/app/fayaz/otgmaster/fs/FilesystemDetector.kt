@@ -29,9 +29,8 @@ object FilesystemDetector {
         }
 
         // NTFS: OEM name "NTFS    " at bytes 3-10
-        if (data.size >= 7 && data.ascii(3, 4) == "NTFS") {
-            return DetectedFilesystem.Unsupported("NTFS",
-                "NTFS is not yet supported. Please reformat the volume as FAT32 or exFAT.")
+        if (data.size >= 11 && data.ascii(3, 8) == "NTFS    ") {
+            return DetectedFilesystem.Supported("NTFS")
         }
 
         // APFS container superblock: magic "NXSB" at bytes 32-35
