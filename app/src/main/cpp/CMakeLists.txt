@@ -39,6 +39,16 @@ if(OTG_IO_STATS)
     target_compile_definitions(exfat PRIVATE OTG_IO_STATS=1)
 endif()
 
+# libntfs-3g (vendored, see docs/VENDOR_FIXES.md). Only the library is built:
+# no FUSE driver, no ntfsprogs, and no unix device I/O — the device is supplied
+# through ntfs_device_operations in ntfs/NtfsNative.cpp. ntfs/config.h stands in
+# for the autoconf-generated one.
+file(GLOB NTFS3G_SRCS "ntfs-3g/libntfs-3g/*.c")
+add_library(ntfs3g STATIC ${NTFS3G_SRCS})
+target_compile_definitions(ntfs3g PRIVATE HAVE_CONFIG_H _FILE_OFFSET_BITS=64)
+target_include_directories(ntfs3g PUBLIC ntfs ntfs-3g/include/ntfs-3g)
+target_compile_options(ntfs3g PRIVATE -Wno-address-of-packed-member -Wno-unused-but-set-variable)
+
 # serpent (vendored public-domain reference implementation, see serpent/PROVENANCE.md)
 add_library(serpent STATIC
         serpent/serpent-reference.c
@@ -48,7 +58,7 @@ add_library(serpent STATIC
 target_include_directories(serpent PUBLIC serpent)
 
 # veracrypt-native
-add_library(veracrypt-native SHARED VeraCryptNative.cpp exfat/ExFatNative.cpp)
+add_library(veracrypt-native SHARED VeraCryptNative.cpp exfat/ExFatNative.cpp ntfs/NtfsNative.cpp)
 target_compile_definitions(veracrypt-native PRIVATE _FILE_OFFSET_BITS=64)
 if(OTG_IO_STATS)
     target_compile_definitions(veracrypt-native PRIVATE OTG_IO_STATS=1)
@@ -57,5 +67,6 @@ target_link_options(veracrypt-native PRIVATE "-Wl,-z,max-page-size=16384")
 target_link_libraries(veracrypt-native
         mbedcrypto
         exfat
+        ntfs3g
         serpent
         log)

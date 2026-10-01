@@ -1,0 +1,4 @@
+• New: NTFS drives — the format Windows uses — can now be opened, both unencrypted and inside VeraCrypt or LUKS volumes. You can browse, open, create, write, rename, move and delete files on them
+• New: An NTFS drive that Windows did not shut down cleanly — left hibernated, saved by Fast Startup, or unplugged without ejecting — opens read-only and says why, so the app cannot overwrite changes Windows has not finished applying
+• New: On NTFS, names Windows cannot open (such as CON, or names containing : ? | or a trailing dot) and names differing from an existing file only in upper/lower case are refused, so everything you create stays reachable from Windows
+• Known limitation: NTFS files that Windows has compressed can be read but not changed, and files encrypted with Windows EFS cannot be opened

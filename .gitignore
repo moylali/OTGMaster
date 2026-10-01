@@ -47,3 +47,4 @@ baselines/
 # the build stamp itself -dirty (gitDirty counts them), so a stray report would
 # mislabel every APK built after it.
 /otgbench-*.txt
+__pycache__/
