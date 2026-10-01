@@ -380,6 +380,27 @@ class NtfsWriteCheckTest {
     }
 
     /**
+     * Browsing a volume mounted read-write must not write to it: no atime
+     * updates, no flag changes at mount or unmount. A user who only looks at a
+     * drive should be able to hand it back to Windows untouched.
+     */
+    @Test
+    fun browsingWritesNothing() {
+        withFs { fs ->
+            fs.rootDirectory.createDirectory("d").createFile("f.txt")
+                .write(0, ByteBuffer.wrap("content".toByteArray()))
+        }
+        val before = imageSha()
+        withFs { fs ->
+            val f = fs.rootDirectory.child("d/f.txt")
+            assertArrayEquals("content".toByteArray(), f.readAll())
+            fs.rootDirectory.listFiles(); fs.freeSpace; fs.volumeLabel
+            f.close()
+        }
+        assertEquals("a read-write mount used only for reading modified the image", before, imageSha())
+    }
+
+    /**
      * A volume Windows left hibernated (or with Fast Startup metadata cached)
      * must come up read-only, untouched. Writing it would be overwritten when
      * Windows resumes, along with anything it had cached.

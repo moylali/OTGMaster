@@ -82,11 +82,19 @@ case "$FS" in
     ext2|ext3|ext4) e2fsck -fn "$VC_DEV"; rc=$? ;;
     exfat)          fsck.exfat  "$VC_DEV"; rc=$? ;;
     vfat)           fsck.vfat -n "$VC_DEV"; rc=$? ;;
+    ntfs)
+        # No Linux tool checks NTFS the way chkdsk does: ntfsfix -n covers $MFTMirr
+        # and the volume flags, ntfs_check.py the bitmaps, indexes and names (see
+        # its header). Both must pass.
+        ntfsfix -n "$VC_DEV"; rc=$?
+        python3 "$(dirname "$0")/ntfs_check.py" "$VC_DEV"; rc2=$?
+        (( rc == 0 )) && rc=$rc2 ;;
     *)              echo "No checker for '${FS:-unrecognised}'."; exit 1 ;;
 esac
 
 echo
 # e2fsck: 0 clean, 4 errors left uncorrected. fsck.exfat/fsck.vfat: 0 clean, 1 errors.
+# ntfsfix -n / ntfs_check.py: 0 clean, nonzero errors.
 if (( rc == 0 )); then
     echo ">>> CLEAN — $FS on $PART is structurally valid after the run"
 else
