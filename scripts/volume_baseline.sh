@@ -212,6 +212,18 @@ dump_metadata() {
         dd if="$DEV" of="$out/superblock.bin" bs=1 skip=1024 count=1024 status=none
         dumpe2fs "$DEV" 2>/dev/null > "$out/dumpe2fs.txt" || true
         ;;
+    ntfs)
+        # Boot sector, the cluster bitmap ($Bitmap, inode 6) and the MFT itself
+        # (inode 0) — the allocation state and every file record. Extracted by
+        # ntfscat rather than by offset, because both are files that can fragment.
+        local bps spc
+        bps=$(od -An -tu2 -j11 -N2 "$DEV" | tr -d ' ')
+        spc=$(od -An -tu1 -j13 -N1 "$DEV" | tr -d ' ')
+        echo "bytes_per_sector=$bps sectors_per_cluster=$spc" > "$out/geometry.txt"
+        dd if="$DEV" of="$out/bootsector.bin" bs=512 count=1 status=none
+        ntfscat -i 6 "$DEV" > "$out/bitmap.bin"
+        ntfscat -i 0 "$DEV" > "$out/mft.bin"
+        ;;
     *)
         echo "no metadata capture for '${FS:-unrecognised}'" > "$out/geometry.txt"
         ;;
