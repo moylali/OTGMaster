@@ -145,6 +145,27 @@ a handful of entries. Anything under **"MODIFIED AND NOT EXPLAINED BY THE RUN"**
 or allocation churn far out of proportion to the ~20 MB a run writes, is a
 finding — stop and investigate before re-running on that drive.
 
+### 7a. Verify over adb instead (NTFS, or when the drive cannot move)
+
+The structural checks can run on the drive's own bytes without unplugging it:
+
+```sh
+$ADB -s $A shell am broadcast -a app.fayaz.otgmaster.DUMP_VOLUME \
+    -n app.fayaz.otgmaster/.bench.VolumeDumpReceiver --es drive NTFSPLAIN
+$ADB -s $A logcat -d | grep 'OTGDump.*done'
+$ADB -s $A pull /storage/emulated/0/Android/data/app.fayaz.otgmaster/files/NTFSPLAIN.otgdump
+python3 scripts/undump_volume.py NTFSPLAIN.otgdump ntfs.img
+python3 scripts/ntfs_check.py ntfs.img && ntfsfix -n ntfs.img
+```
+
+The dump holds the filesystem lock and reads past the block cache. For NTFS it
+copies only clusters `$Bitmap` marks in use; for other filesystems it copies every
+non-zero megabyte, which on a never-zeroed partition is all of it. Files left by
+the `unaligned` and `correct` sections can then be judged through the reference
+driver (`ntfs-3g -o ro ntfs.img mnt`) — the only way to get those verdicts for a
+plain partition, which the runner cannot remount. It does not replace step 1's
+baseline; say in the row which checks were done this way.
+
 ### 8. Record it
 
 Add a row to `BENCHMARK_RUNS.md` in the same commit as the work it validates:
@@ -186,6 +207,11 @@ looks complete while proving nothing about the write path. Name them explicitly:
 ```sh
 --es tests "free,block,dir,path,seq,random,opens,write,unaligned,correct,fixtures"
 ```
+
+**Any `--es cache` or `--es readahead` extra forces an unmount**, whatever `--es
+remount` says, because the cache is chosen at mount time. On a plain partition with no
+credentials nothing remounts afterwards and the run ends `NO DRIVES MOUNTED`. Leave
+both out to run against the mount as it is.
 
 **`write`, `unaligned` and `correct` need credentials even on an unencrypted volume.**
 Their verdicts are judged after a remount, and the only remount path the runner has is
