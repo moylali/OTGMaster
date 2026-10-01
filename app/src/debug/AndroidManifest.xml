@@ -22,6 +22,19 @@
         </receiver>
 
         <!--
+          Debug-only: copies a mounted partition's raw sectors to a file adb can
+          pull, so the host can run filesystem checkers against exactly what is on
+          the drive without moving it. See VolumeDumpReceiver.
+        -->
+        <receiver
+            android:name=".bench.VolumeDumpReceiver"
+            android:exported="true">
+            <intent-filter>
+                <action android:name="app.fayaz.otgmaster.DUMP_VOLUME" />
+            </intent-filter>
+        </receiver>
+
+        <!--
           Debug-only spike: does a FUSE-backed ParcelFileDescriptor created in one
           process still work after being relayed through another? Runs in its own
           process to stand in for a per-drive mount process. See FdRelayService.
