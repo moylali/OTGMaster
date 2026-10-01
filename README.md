@@ -114,7 +114,7 @@ and the reference figures in [docs/BENCHMARK_RESULTS.md](docs/BENCHMARK_RESULTS.
 ### License
 
 GPL-2.0-or-later — see [LICENSE](LICENSE). This is required by the vendored `libexfat`
-component (GPL-2.0-or-later), which is statically linked into the app; the whole
+and `libntfs-3g` components (GPL-2.0-or-later), which are statically linked into the app; the whole
 distributed binary therefore must be licensed under terms compatible with the GPL.
 
 ### Third-party components
@@ -124,6 +124,7 @@ distributed binary therefore must be licensed under terms compatible with the GP
 | [libaums](libaums/) | Apache-2.0 | USB mass-storage + FAT32 filesystem driver |
 | [mbedTLS](app/src/main/cpp/mbedtls/) | Apache-2.0 OR GPL-2.0-or-later | AES, PBKDF2, SHA-512 primitives |
 | `libexfat` (`app/src/main/cpp/exfat/`) | GPL-2.0-or-later | exFAT filesystem driver |
+| [libntfs-3g](https://github.com/tuxera/ntfs-3g) (`app/src/main/cpp/ntfs-3g/`) | GPL-2.0-or-later | NTFS filesystem driver; pinned in [VENDOR_FIXES.md](docs/VENDOR_FIXES.md) |
 | Serpent reference implementation (`app/src/main/cpp/serpent/`) | Public domain | See [PROVENANCE.md](app/src/main/cpp/serpent/PROVENANCE.md) for the exact source and the one portability fix applied |
 | [argon2kt](https://github.com/lambdapioneer/argon2kt) (`com.lambdapioneer.argon2kt:argon2kt:1.6.0`) | Apache-2.0 | Argon2id KDF for LUKS2 key derivation; ships native `.so` in the APK |
 

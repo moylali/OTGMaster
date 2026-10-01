@@ -12,6 +12,7 @@ See `CLAUDE.md` for what a new entry must contain and how to record an upstream 
 |---|---|---|---|
 | `libaums/` | [magnusja/libaums](https://github.com/magnusja/libaums) | `57fa482` | `b03705d` (last pull) |
 | `app/src/main/cpp/exfat/` | [relan/exfat](https://github.com/relan/exfat) | see note below | pre-dates this registry |
+| `app/src/main/cpp/ntfs-3g/` | [tuxera/ntfs-3g](https://github.com/tuxera/ntfs-3g) | `7f0f841` (2026.9.28) | see the section below |
 | `app/src/main/cpp/` (VeraCrypt primitives, mbedtls, Serpent) | VeraCrypt / Mbed-TLS | see note below | pre-dates this registry |
 
 **Licences** are listed in the table in `README.md`, which is authoritative — this
@@ -23,6 +24,43 @@ next time either is touched; until then an upstream pull cannot be done safely,
 because there is no baseline to diff against. This is precisely the gap the registry
 exists to prevent, and it is the reason the rule in `CLAUDE.md` requires a full SHA
 before a vendoring commit lands.
+
+---
+
+# `app/src/main/cpp/ntfs-3g/`
+
+The library half of [tuxera/ntfs-3g](https://github.com/tuxera/ntfs-3g): NTFS read
+and write, used by `app/src/main/cpp/ntfs/NtfsNative.cpp`.
+
+- **Pinned upstream:** `7f0f841fc52cf719106c5c93bafe465004e36816`, tagged
+  `2026.9.28` (upstream's version number), pinned 2026-10-01.
+- **What was taken:** `libntfs-3g/*.c` and `include/ntfs-3g/*.h`, byte for byte, plus
+  `COPYING`, `COPYING.LIB`, `AUTHORS`, `CREDITS` and `README`. Left out: the FUSE
+  driver (`src/`), `libfuse-lite/`, `ntfsprogs/`, the build system, and two library
+  files — `unix_io.c` (device I/O on a path, which Android apps cannot open; the app
+  supplies `ntfs_device_operations` instead) and `win32_io.c`.
+- **Why vendored rather than a dependency:** there is no Android build of libntfs-3g
+  to depend on — upstream ships autotools sources only, and its `configure` cannot run
+  against the NDK. It is compiled by `app/src/main/cpp/CMakeLists.txt` against the
+  hand-written `app/src/main/cpp/ntfs/config.h`. Why ntfs-3g at all rather than a
+  driver written here: NTFS writes (index B+trees, `$Bitmap`, `$MFT` allocation,
+  update-sequence fixups, attribute lists) are where a filesystem driver destroys
+  volumes, and ntfs-3g's write path has had fifteen years of use on Linux. The ext4
+  driver written in this project is the counter-example: it passed every content hash
+  while invalidating every checksum on a drive.
+- **Licence:** GPL-2.0-or-later, per-file headers (see the table in `README.md`).
+  `realpath.c`/`realpath.h` carry no header and fall under the package `COPYING`
+  (GPL-2.0). `COPYING.LIB` ships upstream but no vendored file is under it.
+- **Portability without patches:** bionic does not declare `ffs()` outside
+  `<strings.h>` and lacks the `S_IEXEC`/`S_IWRITE` aliases. Both are supplied in
+  `ntfs/config.h`, which is not a vendored file, so the tree stays identical to
+  upstream and a pull is a plain copy.
+
+## Patches
+
+| Area | Patch | Commit |
+|---|---|---|
+| — | none | — |
 
 ---
 
