@@ -1,0 +1,1 @@
+Support matrix: NTFS inside BitLocker (xts128). Unlock, flower.jpg byte for byte, create/write/mkdir, remount, delete, remount (second mount with the recovery key).

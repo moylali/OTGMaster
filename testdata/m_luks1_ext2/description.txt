@@ -1,0 +1,1 @@
+Support matrix: ext2 inside LUKS1 aes-xts-plain64 (PBKDF2). Unlock, flower.jpg byte for byte, create/write/mkdir, remount, delete, remount.

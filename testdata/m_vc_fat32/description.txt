@@ -1,0 +1,1 @@
+Support matrix: FAT32 inside VeraCrypt AES/SHA-512. Unlock, flower.jpg byte for byte, create/write/mkdir, remount, delete, remount.
