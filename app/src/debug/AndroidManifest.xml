@@ -26,6 +26,16 @@
           pull, so the host can run filesystem checkers against exactly what is on
           the drive without moving it. See VolumeDumpReceiver.
         -->
+        <!-- Debug-only: mount/unmount with no UI, for companion-app E2E. See E2eMountReceiver. -->
+        <receiver
+            android:name=".bench.E2eMountReceiver"
+            android:exported="true">
+            <intent-filter>
+                <action android:name="app.fayaz.otgmaster.E2E_MOUNT" />
+                <action android:name="app.fayaz.otgmaster.E2E_UNMOUNT_ALL" />
+            </intent-filter>
+        </receiver>
+
         <receiver
             android:name=".bench.VolumeDumpReceiver"
             android:exported="true">
