@@ -49,8 +49,13 @@ implementation"; AES is 0 and Serpent is 1, matching `CIPHER_SERPENT` in
 **Hashes** — only `SHA512` has `isSupported = true`. SHA-256, Whirlpool and Streebog
 are listed so the picker can reject them by name rather than mis-deriving a key.
 
-**Filesystems** — FAT32 (via the vendored libaums) and exFAT (via vendored libexfat).
-FAT16, NTFS and ext4 exist as test cases *specifically to prove they are refused*.
+**Filesystems** — FAT32 (via the vendored libaums), exFAT (via vendored libexfat), ext4
+(written here) and, from 0.4.1, NTFS (via vendored libntfs-3g). FAT16 exists as a test
+case *specifically to prove it is refused*; the `ntfs` case, which used to, now mounts.
+
+**Containers** — VeraCrypt, LUKS1, LUKS2 and, from 0.4.1, BitLocker (version 2 —
+Windows 7 and later; password, recovery key or suspended protection). §6a builds the
+BitLocker fixtures.
 
 **PIM** matters more than it looks. `VeraCryptUnlocker` derives iterations as
 `15000 + pim * 1000` when a PIM is set, against `500000` when it is not. Every fixture
@@ -177,6 +182,45 @@ PBKDF2 vs Argon2id, master-key digest verification.
 `docs/LUKS_SUPPORT.md` is the design evaluation — it records seven gaps in the original
 proposal and the recommended scope for a first version. **The preparation commands live
 here**, in §8–§12, so there is one copy to keep correct.
+
+## 6a. NTFS in VeraCrypt and in BitLocker (E2E, no root)
+
+`scripts/generate_ntfs_testdata.sh` builds four E2E cases without sudo, unlike
+`generate_testdata.sh`:
+
+| Case | Container | Checks |
+|---|---|---|
+| `ntfs` | VeraCrypt AES/SHA-512, PIM 1 | mount, flower.jpg through SAF |
+| `ntfs_write` | VeraCrypt AES/SHA-512, PIM 1 | create/write/mkdir/delete, persisted over remounts |
+| `bitlocker_ntfs` | BitLocker AES-CBC-128 | BITLOCKER tag, mount, flower.jpg |
+| `bitlocker_ntfs_write` | BitLocker XTS-AES-128 | as `ntfs_write`; remount #2 uses the recovery key |
+
+```sh
+bash scripts/generate_ntfs_testdata.sh
+```
+
+How each piece is made, and what vouches for it:
+
+- **NTFS**: `mkntfs`, populated through a user-mode `ntfs-3g` FUSE mount with the same
+  files the other mount cases carry.
+- **VeraCrypt**: `veracrypt --create --filesystem=none` (no root), then
+  `scripts/fill_veracrypt_volume.py` opens the header (PBKDF2-SHA512, AES-XTS) and
+  XTS-encrypts the NTFS into the data area. Decrypting it back independently gives a
+  clean NTFS with flower.jpg byte-identical.
+- **BitLocker**: only Windows creates BitLocker volumes, and cryptsetup's sample
+  images (vendored as test data, `app/src/test/resources/bitlk/`) have their unused
+  ciphertext zeroed, so the NTFS inside them is mostly noise. So
+  `scripts/make_bitlocker_image.py` builds one around a real NTFS, and `--verify`
+  makes cryptsetup the judge: it must parse the metadata, release the same volume
+  key for the password and the recovery key, and — through `scripts/bitlk_decrypt.py`,
+  which uses cryptsetup's key and layout with Python's AES — decrypt to exactly the
+  input. The generator keeps BitLocker's metadata in a tail after the NTFS (Windows
+  keeps it inside, as reserved files); `ntfsfix` then looks for the backup boot sector
+  in that zero tail, so cut a decrypted image to the NTFS size before running it.
+
+Password `password123`; BitLocker recovery key
+`111111-222222-333333-444444-555555-666666-111111-222222` (each group a multiple of
+11, and group/11 below 65536 — a random 48-digit string is not a valid key).
 
 ## 7. The VeraCrypt benchmark drive (macOS, scripted)
 
