@@ -76,7 +76,7 @@ baseline compare shows FAT[0] and FAT[1] changing by the same single entry.
 | D1·C2 | `e78cf0a` | write verify 3/3, unaligned A+B, correctness A–G, fixtures ALL 16, `fsck.exfat` clean |
 | D1·C3 | `cdd87b5` | write verify 3/3, unaligned A+B, correctness A–G, fixtures ALL 5, `e2fsck` clean |
 | D1·C4 | earlier | write ALL PASSED 0.82 MB/s, correctness ALL PASSED, fixtures ALL 5, `e2fsck` clean |
-| D2·C7 | `42111e3`, `32884cc` (built as `8ef3062`, `b9d6b9e` — see BENCHMARK_RUNS.md) | write verify **PARTIAL 2/3**; unaligned + correctness judged on host 8/8; saf; fixtures **ALL 511** (written by Android's ntfs-3g); `ntfs_check` + `ntfsfix -n` clean after each run, from adb dumps |
+| D2·C7 | `55cc5eb`, `54adc2e` on main (built as `8ef3062`, `b9d6b9e` — see BENCHMARK_RUNS.md) | write verify **PARTIAL 2/3**; unaligned + correctness judged on host 8/8; saf; fixtures **ALL 511** (written by Android's ntfs-3g); `ntfs_check` + `ntfsfix -n` clean after each run, from adb dumps |
 | D1·C6 | `cdd87b5` | write verify **PARTIAL 2/3**, fixtures ALL 5, `e2fsck` clean; NTFS correctly refused |
 | D2·C1 | `eb26e3e` | write verify 3/3, unaligned A+B, correctness A–G, fixtures ALL 16, `fsck.fat` clean; FAT[0]/FAT[1] change identically (V9) |
 | D2·C4 | earlier | write ALL PASSED 0.76 MB/s, correctness ALL PASSED, fixtures ALL 5, `e2fsck` clean |
