@@ -60,13 +60,20 @@ least one such cut-off and found the volume clean — but it is the same race th
 leaves ext4 needing recovery, and a cut-off during an Android-side write would not
 be.
 
+**Commit hashes in these two rows were rewritten after the runs.** Before the branch
+was first pushed, its commits' author email was changed to the GitHub noreply address
+(`git filter-branch --env-filter`), which changes every hash but no tree. The reports
+on the drive carry the labels the APKs were built with; they map to the published
+commits as `8ef3062` → `42111e3`, `863bfbf` → `bda3777`, `b9d6b9e` → `32884cc`, each
+pair with an identical tree (checked with `git rev-parse <sha>^{tree}`).
+
 Three broadcasts before run 1 produced no result and are not rows: two because
 `--es cache …` forces an unmount (any `cache` extra sets `remount`, whatever
 `--es remount` says) and a plain partition cannot be remounted without
 credentials — `NO DRIVES MOUNTED`; one because the drive was still unmounted from
 that.
 
-**Run 1 — commit `8ef3062`, clean tree.** Sections `free,block,dir,path,seq,random,opens,write,unaligned,correct,saf`.
+**Run 1 — commit `8ef3062` (now `42111e3`, see below), clean tree.** Sections `free,block,dir,path,seq,random,opens,write,unaligned,correct,saf`.
 Report `otgbench-GM1901-20261001-123609.txt`, on the drive.
 
 | Field | Value |
@@ -88,7 +95,7 @@ directory) were pushed through **Android's own ntfs-3g** (vold), with
 restored afterwards. Hashes computed on the laptop. Android's MediaProvider also
 created its standard folders (DCIM, Music, …) on the volume.
 
-**Run 2 — APK labelled `863bfbf-dirty`; it contained exactly `b9d6b9e`** (built
+**Run 2 — APK labelled `863bfbf-dirty`; it contained exactly `b9d6b9e`** (now `bda3777` / `32884cc`) (built
 seconds before that commit, no edit in between; the delta is the dump's
 allocated-cluster filter, outside every code path this run measures). Sections
 `free,dir,path,fixtures`.
