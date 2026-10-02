@@ -28,6 +28,22 @@ class E2EAutomatedTest {
     companion object {
         private const val AUTHORITY = "app.fayaz.otgmaster.documents"
         private const val UNMOUNT_WAIT_MS = 15_000L
+
+        /**
+         * The large write-case file: block i is SHA-256("otg-e2e-big-<i>"), 32 bytes,
+         * for 3 MiB. scripts/verify_e2e_volume.py generates the same bytes.
+         */
+        const val BIG_FILE_NAME = "big_write.bin"
+        const val BIG_FILE_BLOCKS = 3 * 1024 * 1024 / 32
+
+        fun bigFileBlock(i: Int): ByteArray =
+            java.security.MessageDigest.getInstance("SHA-256").digest("otg-e2e-big-$i".toByteArray())
+
+        fun expectedBigFileSha(): String {
+            val md = java.security.MessageDigest.getInstance("SHA-256")
+            for (i in 0 until BIG_FILE_BLOCKS) md.update(bigFileBlock(i))
+            return md.digest().joinToString("") { "%02x".format(it) }
+        }
     }
 
     private lateinit var device: UiDevice
@@ -383,6 +399,24 @@ class E2EAutomatedTest {
         context.contentResolver.openOutputStream(nestedUri!!)?.use { it.write(nestedContent.toByteArray()) }
             ?: fail("openOutputStream for nested.txt returned null")
 
+        // A multi-megabyte file as well: 28 bytes fit inside an NTFS file record
+        // (or one cluster anywhere), so the small files never exercised cluster
+        // allocation, growth across clusters or a fragmented write. Its content is
+        // deterministic so scripts/verify_e2e_volume.py can regenerate it and check
+        // it on the host without trusting the app.
+        val bigUri = DocumentsContract.createDocument(
+            context.contentResolver, newDirUri, "application/octet-stream", BIG_FILE_NAME
+        )
+        assertNotNull("createDocument($BIG_FILE_NAME) returned null", bigUri)
+        context.contentResolver.openOutputStream(bigUri!!)?.use { out ->
+            var block = 0
+            while (block < BIG_FILE_BLOCKS) {
+                val chunk = java.io.ByteArrayOutputStream()
+                repeat(minOf(2048, BIG_FILE_BLOCKS - block)) { chunk.write(bigFileBlock(block++)) }
+                out.write(chunk.toByteArray())
+            }
+        } ?: fail("openOutputStream for $BIG_FILE_NAME returned null")
+
         doUnmount()
 
         // ── REMOUNT #2 — verify write persistence ─────────────────────────────
@@ -430,6 +464,29 @@ class E2EAutomatedTest {
         val readBack = context.contentResolver.openInputStream(writeTxtUri2)
             ?.use { it.readBytes().toString(Charsets.UTF_8) }
         assertEquals("write_test.txt content changed after remount #2", fileContent, readBack)
+        val nestedBack = context.contentResolver.openInputStream(
+            DocumentsContract.buildDocumentUri(AUTHORITY, nestedId!!))?.use { it.readBytes().toString(Charsets.UTF_8) }
+        assertEquals("nested.txt content changed after remount #2", nestedContent, nestedBack)
+
+        var bigId: String? = null
+        context.contentResolver.query(
+            DocumentsContract.buildChildDocumentsUri(AUTHORITY, writeDirId!!), null, null, null, null
+        )?.use { cur ->
+            while (cur.moveToNext()) {
+                val id = cur.getString(cur.getColumnIndex(DocumentsContract.Document.COLUMN_DOCUMENT_ID)) ?: continue
+                if (id.endsWith(BIG_FILE_NAME)) bigId = id
+            }
+        }
+        assertNotNull("$BIG_FILE_NAME missing inside write_dir after remount #2", bigId)
+        val bigDigest = java.security.MessageDigest.getInstance("SHA-256")
+        var bigLen = 0L
+        context.contentResolver.openInputStream(DocumentsContract.buildDocumentUri(AUTHORITY, bigId!!))?.use { input ->
+            val buf = ByteArray(65536)
+            while (true) { val n = input.read(buf); if (n < 0) break; bigDigest.update(buf, 0, n); bigLen += n }
+        } ?: fail("$BIG_FILE_NAME could not be opened after remount #2")
+        assertEquals("$BIG_FILE_NAME length after remount #2", BIG_FILE_BLOCKS * 32L, bigLen)
+        assertEquals("$BIG_FILE_NAME content changed after remount #2", expectedBigFileSha(),
+            bigDigest.digest().joinToString("") { "%02x".format(it) })
 
         // ── DELETE write_test.txt ──────────────────────────────────────────────
         DocumentsContract.deleteDocument(context.contentResolver, writeTxtUri2)

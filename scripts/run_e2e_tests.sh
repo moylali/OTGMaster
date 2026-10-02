@@ -374,6 +374,23 @@ for test_dir in "$TESTDATA_DIR"/*/; do
             TEST_EXIT_CODE=0
         fi
 
+        # Write cases: judge what is on the drive without the app. The QEMU slot is
+        # a file on this host; scripts/verify_e2e_volume.py decrypts it with
+        # independent tools, runs the filesystem's own checker, mounts it read-only
+        # with the kernel's driver and checks every file the case left behind. The
+        # in-app checks above only read the writes back through the same code.
+        HOST_CHECK=""
+        if [ $TEST_EXIT_CODE -eq 0 ] && [ -f "$test_dir/write_test.txt" ]; then
+            HOST_OUT=$(python3 scripts/verify_e2e_volume.py "$SLOT_FILE" "$test_dir" 2>&1)
+            echo "$HOST_OUT"
+            if echo "$HOST_OUT" | grep -q "^HOST CHECK OK"; then
+                HOST_CHECK="host-verified"
+            else
+                TEST_EXIT_CODE=1
+                HOST_CHECK="host check failed"
+            fi
+        fi
+
 
         if [ $TEST_EXIT_CODE -ne 0 ] && [ $ATTEMPT -eq 1 ]; then
             echo "Attempt 1 of $TEST_NAME failed; retrying once."
@@ -397,7 +414,7 @@ for test_dir in "$TESTDATA_DIR"/*/; do
         echo "TEST FAILED: $TEST_NAME"
         OVERALL_EXIT=1
         FAILED_COUNT=$((FAILED_COUNT + 1))
-        echo "| $TEST_NUM | \`$TEST_NAME\` | $DESCRIPTION | ❌ FAILED | ${DURATION}s |" >> "$REPORT_FILE"
+        echo "| $TEST_NUM | \`$TEST_NAME\` | $DESCRIPTION | ❌ FAILED${HOST_CHECK:+ ($HOST_CHECK)} | ${DURATION}s |" >> "$REPORT_FILE"
         [ "$KEEP_GOING" = true ] || break
     else
         PASSED_COUNT=$((PASSED_COUNT + 1))
@@ -407,7 +424,7 @@ for test_dir in "$TESTDATA_DIR"/*/; do
             echo "| $TEST_NUM | \`$TEST_NAME\` | $DESCRIPTION | ⚠️ FLAKY — failed, passed on retry (logcat_${TEST_NAME}_attempt1.txt) | ${DURATION}s |" >> "$REPORT_FILE"
         else
             echo "TEST PASSED: $TEST_NAME"
-            echo "| $TEST_NUM | \`$TEST_NAME\` | $DESCRIPTION | ✅ PASSED | ${DURATION}s |" >> "$REPORT_FILE"
+            echo "| $TEST_NUM | \`$TEST_NAME\` | $DESCRIPTION | ✅ PASSED${HOST_CHECK:+ ($HOST_CHECK)} | ${DURATION}s |" >> "$REPORT_FILE"
         fi
     fi
 done
