@@ -82,7 +82,6 @@ import me.jahnen.libaums.core.fs.fat32.Fat32FileSystemCreator
 import me.jahnen.libaums.core.fs.FileSystemFactory
 import me.jahnen.libaums.core.partition.PartitionTableEntry
 import app.fayaz.otgmaster.exfat.ExFatFileSystemCreator
-import java.util.UUID
 
 /**
  * One attached, not-yet-mounted USB mass-storage device that's been opened and probed for
@@ -1027,7 +1026,10 @@ class MainActivity : AppCompatActivity() {
                     }
                     return@launch
                 }
-                val driveId = UUID.randomUUID().toString().substring(0, 8)
+                // Stable across mounts, so a companion app's persisted folder grant
+                // still resolves next time (see ExtensionContract).
+                val driveId = app.fayaz.otgmaster.extension.ExtensionContract.stableDriveId(
+                    deviceName, candidate.startBlock, OtgMasterState.mountedDrives.map { it.id })
                 val mountedDrive = MountedDrive(
                     id = driveId,
                     name = getString(R.string.mounted_drive_name, deviceDisplayName, driveId),
@@ -1040,6 +1042,8 @@ class MainActivity : AppCompatActivity() {
                     partitionLabel = candidate.label,
                     filesystemName = detected.displayName,
                     mountedReadOnly = readOnly,
+                    partitionStartBlock = candidate.startBlock,
+                    partitionBlockCount = candidate.blockCount,
                 )
 
                 OtgMasterState.addDrive(mountedDrive)
@@ -1049,6 +1053,8 @@ class MainActivity : AppCompatActivity() {
                 contentResolver.notifyChange(
                     android.provider.DocumentsContract.buildRootsUri("app.fayaz.otgmaster.documents"), null
                 )
+                app.fayaz.otgmaster.extension.ExtensionContract.notifyCompanions(
+                    applicationContext, app.fayaz.otgmaster.extension.ExtensionContract.ACTION_VOLUME_MOUNTED, mountedDrive)
 
                 withContext(Dispatchers.Main) {
                     onComplete()
@@ -1159,6 +1165,8 @@ class MainActivity : AppCompatActivity() {
         contentResolver.notifyChange(
             android.provider.DocumentsContract.buildRootsUri("app.fayaz.otgmaster.documents"), null
         )
+        app.fayaz.otgmaster.extension.ExtensionContract.notifyCompanions(
+            applicationContext, app.fayaz.otgmaster.extension.ExtensionContract.ACTION_VOLUME_UNMOUNTED, drive)
         val tNotified = System.currentTimeMillis()
         updateMountedDrives()
         val tUpdated = System.currentTimeMillis()
@@ -1317,7 +1325,8 @@ class MainActivity : AppCompatActivity() {
                     cachedDevice as me.jahnen.libaums.core.driver.BlockDeviceDriver
                 )
                 val fileSystem = FileSystemFactory.createFileSystem(dummyEntry, byteDevice)
-                val driveId = UUID.randomUUID().toString().substring(0, 8)
+                val driveId = app.fayaz.otgmaster.extension.ExtensionContract.stableDriveId(
+                    candidate.deviceName, plain.startBlock, OtgMasterState.mountedDrives.map { it.id })
                 val mountedDrive = MountedDrive(
                     id = driveId,
                     name = getString(R.string.mounted_drive_name_plain, deviceDisplayName, plain.filesystemName, driveId),
@@ -1328,7 +1337,9 @@ class MainActivity : AppCompatActivity() {
                     isPlain = true,
                     rawBlockDevice = rawDevice,
                     partitionLabel = plain.label,
-                    filesystemName = plain.filesystemName
+                    filesystemName = plain.filesystemName,
+                    partitionStartBlock = plain.startBlock,
+                    partitionBlockCount = plain.blockCount,
                 )
                 OtgMasterState.addDrive(mountedDrive)
                 mountedDrive.readOnlyReason?.let { reason ->
@@ -1337,6 +1348,8 @@ class MainActivity : AppCompatActivity() {
                 contentResolver.notifyChange(
                     android.provider.DocumentsContract.buildRootsUri("app.fayaz.otgmaster.documents"), null
                 )
+                app.fayaz.otgmaster.extension.ExtensionContract.notifyCompanions(
+                    applicationContext, app.fayaz.otgmaster.extension.ExtensionContract.ACTION_VOLUME_MOUNTED, mountedDrive)
                 withContext(Dispatchers.Main) {
                     newlyMountedDriveIds.value = newlyMountedDriveIds.value + driveId
                     pendingToastMountNames.add(deviceDisplayName)

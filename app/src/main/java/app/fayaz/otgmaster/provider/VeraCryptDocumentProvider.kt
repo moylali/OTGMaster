@@ -8,6 +8,7 @@ import android.provider.DocumentsContract
 import android.provider.DocumentsProvider
 import android.webkit.MimeTypeMap
 import app.fayaz.otgmaster.OtgMasterState
+import app.fayaz.otgmaster.extension.ExtensionContract
 import me.jahnen.libaums.core.fs.UsbFile
 import java.io.FileNotFoundException
 import java.nio.ByteBuffer
@@ -189,7 +190,7 @@ class VeraCryptDocumentProvider : DocumentsProvider() {
         val result = MatrixCursor(projection ?: DEFAULT_DOCUMENT_PROJECTION)
         val file = getFileForDocId(documentId)
         if (file != null) {
-            includeFile(result, documentId, file)
+            includeFile(result, documentId, file, projection)
         }
         return result
     }
@@ -213,7 +214,7 @@ class VeraCryptDocumentProvider : DocumentsProvider() {
         if (parent != null && parent.isDirectory) {
             for (child in parent.listFiles()) {
                 val childId = getDocIdForChild(parentDocumentId, child)
-                includeFile(result, childId, child)
+                includeFile(result, childId, child, projection)
             }
         }
         return result
@@ -305,8 +306,53 @@ class VeraCryptDocumentProvider : DocumentsProvider() {
         return child.path == parent.path || child.path.startsWith(parent.path.ensureTrailingSlash())
     }
 
-    private fun includeFile(result: MatrixCursor, docId: String?, file: UsbFile) {
+    /**
+     * The chain of documents from a drive's root (or from [parentDocumentId]) down to
+     * [childDocumentId].
+     *
+     * The system folder picker calls this to open at a given place
+     * (DocumentsContract.EXTRA_INITIAL_URI) and to show breadcrumbs for a granted
+     * tree. Without it the picker ignored the initial location for these drives and
+     * opened internal storage, so an app could not send the user back to the folder
+     * they picked last time. Document ids here are paths, so this is string work and
+     * touches no filesystem.
+     */
+    override fun findDocumentPath(parentDocumentId: String?, childDocumentId: String): DocumentsContract.Path {
+        val child = parseDocId(childDocumentId) ?: throw FileNotFoundException("Invalid document ID")
+        if (OtgMasterState.getDrive(child.driveId) == null) throw FileNotFoundException("Drive not mounted")
+        val parts = child.path.split('/').filter { it.isNotEmpty() }
+        val chain = ArrayList<String>(parts.size + 1)
+        chain += rootDocIdForDrive(child.driveId)
+        var path = ""
+        for (part in parts) {
+            path += "/$part"
+            chain += "${child.driveId}:$path"
+        }
+        if (parentDocumentId != null) {
+            val parent = parseDocId(parentDocumentId) ?: throw FileNotFoundException("Invalid parent ID")
+            val start = chain.indexOfFirst { parseDocId(it)?.path == parent.path }
+            if (parent.driveId != child.driveId || start < 0) throw FileNotFoundException("$childDocumentId is not under $parentDocumentId")
+            return DocumentsContract.Path(null, chain.subList(start, chain.size))
+        }
+        return DocumentsContract.Path(rootIdForDrive(child.driveId), chain)
+    }
+
+    private fun includeFile(
+        result: MatrixCursor,
+        docId: String?,
+        file: UsbFile,
+        projection: Array<out String>? = null,
+    ) {
         val row = result.newRow()
+        // Companion-app columns (ExtensionContract). Only computed when asked for,
+        // which a caller can only do through a grant covering this drive.
+        if (projection != null && projection.any { it in ExtensionContract.VOLUME_COLUMNS }) {
+            parseDocId(docId)?.let { OtgMasterState.getDrive(it.driveId) }?.let { drive ->
+                val values = ExtensionContract.volumeValues(
+                    drive, wantFree = ExtensionContract.COLUMN_FREE_BYTES in projection)
+                for ((column, value) in values) row.add(column, value)
+            }
+        }
         row.add(DocumentsContract.Document.COLUMN_DOCUMENT_ID, docId)
         row.add(DocumentsContract.Document.COLUMN_DISPLAY_NAME, if (file.isRoot) "VeraCrypt Drive" else file.name)
         // libaums throws for several metadata accessors on directories and/or the root
