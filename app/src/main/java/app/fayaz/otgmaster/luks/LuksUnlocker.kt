@@ -165,10 +165,12 @@ class LuksUnlocker {
 
         verifyCipher(hdr.cipherName, hdr.cipherMode)
 
-        if (hdr.sectorSize != 512) {
-            throw UnsupportedFormatException(
-                "LUKS2 sector size ${hdr.sectorSize} is not yet supported (only 512-byte sectors)."
-            )
+        // cryptsetup has defaulted to 4096-byte sectors since 2.4 wherever the device
+        // allows it, so a LUKS2 drive formatted on current Linux usually has them.
+        // Refusing them made such a drive impossible to open; they now go through
+        // LargeSectorXtsDevice.
+        if (hdr.sectorSize !in setOf(512, 1024, 2048, 4096)) {
+            throw UnsupportedFormatException("LUKS2 sector size ${hdr.sectorSize} is not supported.")
         }
 
         if (hdr.keyslots.isEmpty()) throw UnsupportedFormatException("No LUKS2 keyslots found")
@@ -187,6 +189,12 @@ class LuksUnlocker {
             }
 
             Log.i(TAG, "Keyslot ${slot.index}: digest verified, payload at sector ${hdr.payloadOffsetSectors}")
+            if (hdr.sectorSize != 512) {
+                val payloadBlocks = hdr.payloadOffsetSectors * 512L / device.blockSize
+                val total = blockCount ?: (device.blockCount - startBlock)
+                return LargeSectorXtsDevice(device, startBlock + payloadBlocks, total - payloadBlocks,
+                    masterKey, hdr.sectorSize, hdr.ivTweak)
+            }
             return makeCryptoDevice(device, startBlock, blockCount, masterKey, hdr.payloadOffsetSectors)
         }
 

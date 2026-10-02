@@ -27,6 +27,7 @@ class E2EAutomatedTest {
 
     companion object {
         private const val AUTHORITY = "app.fayaz.otgmaster.documents"
+        private const val UNMOUNT_WAIT_MS = 15_000L
     }
 
     private lateinit var device: UiDevice
@@ -304,7 +305,9 @@ class E2EAutomatedTest {
         assertTrue("Unmount button not found", unmountButton != null)
         unmountButton?.click()
 
-        val unmountGone = device.wait(Until.gone(By.descContains("unmount_button")), timeout)
+        // 15 s, not 5: on a loaded emulator the card can outlive the unmount by more
+        // than 5 s (the fat32 case failed once with the unmount already logged as done).
+        val unmountGone = device.wait(Until.gone(By.descContains("unmount_button")), UNMOUNT_WAIT_MS)
         assertTrue("Drive was not successfully unmounted!", unmountGone)
         }
     }
@@ -330,9 +333,33 @@ class E2EAutomatedTest {
         assertContainerTag(arguments.getString("expected_container", ""))
         assertTrue("Mount #1 failed", doMount(password, pim, testCase, clearFields = false))
 
-        // ── WRITE: create file + directory + nested file ───────────────────────
         val rootDocId1 = getRootDocId(context)
         assertNotNull("No root after mount #1", rootDocId1)
+
+        // ── READ: flower.jpg must arrive byte for byte (support-matrix cases) ──
+        val flowerSha = arguments.getString("flower_sha256", "")
+        if (flowerSha.isNotEmpty()) {
+            var flowerId: String? = null
+            context.contentResolver.query(
+                DocumentsContract.buildChildDocumentsUri(AUTHORITY, rootDocId1!!), null, null, null, null
+            )?.use { cur ->
+                while (cur.moveToNext()) {
+                    val id = cur.getString(cur.getColumnIndex(DocumentsContract.Document.COLUMN_DOCUMENT_ID)) ?: continue
+                    if (id.endsWith("flower.jpg")) flowerId = id
+                }
+            }
+            assertNotNull("flower.jpg not listed in the root", flowerId)
+            val md = java.security.MessageDigest.getInstance("SHA-256")
+            context.contentResolver.openInputStream(DocumentsContract.buildDocumentUri(AUTHORITY, flowerId!!))
+                ?.use { input ->
+                    val buf = ByteArray(65536)
+                    while (true) { val n = input.read(buf); if (n < 0) break; md.update(buf, 0, n) }
+                } ?: fail("flower.jpg could not be opened")
+            assertEquals("flower.jpg read through the provider differs from the original",
+                flowerSha, md.digest().joinToString("") { "%02x".format(it) })
+        }
+
+        // ── WRITE: create file + directory + nested file ───────────────────────
         val rootUri1 = DocumentsContract.buildDocumentUri(AUTHORITY, rootDocId1!!)
 
         val fileContent = "OTGMaster write-test content"
@@ -520,7 +547,7 @@ class E2EAutomatedTest {
         val unmountButton = device.wait(Until.findObject(By.descContains("unmount_button")), timeout)
         assertTrue("Unmount button not found", unmountButton != null)
         unmountButton?.click()
-        val gone = device.wait(Until.gone(By.descContains("unmount_button")), timeout)
+        val gone = device.wait(Until.gone(By.descContains("unmount_button")), UNMOUNT_WAIT_MS)
         assertTrue("Drive was not successfully unmounted!", gone)
     }
 
