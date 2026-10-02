@@ -51,7 +51,8 @@ are listed so the picker can reject them by name rather than mis-deriving a key.
 
 **Filesystems** — FAT32 (via the vendored libaums), exFAT (via vendored libexfat), ext4
 (written here) and, from 0.4.1, NTFS (via vendored libntfs-3g). FAT16 exists as a test
-case *specifically to prove it is refused*; the `ntfs` case, which used to, now mounts.
+case *specifically to prove it is refused*; the `ext4` and `ntfs` cases, which used to,
+now mount.
 
 **Containers** — VeraCrypt, LUKS1, LUKS2 and, from 0.4.1, BitLocker (version 2 —
 Windows 7 and later; password, recovery key or suspended protection). §6a builds the
@@ -183,20 +184,21 @@ PBKDF2 vs Argon2id, master-key digest verification.
 proposal and the recommended scope for a first version. **The preparation commands live
 here**, in §8–§12, so there is one copy to keep correct.
 
-## 6a. NTFS in VeraCrypt and in BitLocker (E2E, no root)
+## 6a. NTFS in VeraCrypt and in BitLocker, ext4 in VeraCrypt (E2E, no root)
 
-`scripts/generate_ntfs_testdata.sh` builds four E2E cases without sudo, unlike
+`scripts/generate_noroot_testdata.sh` builds five E2E cases without sudo, unlike
 `generate_testdata.sh`:
 
 | Case | Container | Checks |
 |---|---|---|
+| `ext4` | VeraCrypt AES/SHA-512, PIM 1 | mount, flower.jpg through SAF (filled by `mkfs.ext4 -d`) |
 | `ntfs` | VeraCrypt AES/SHA-512, PIM 1 | mount, flower.jpg through SAF |
 | `ntfs_write` | VeraCrypt AES/SHA-512, PIM 1 | create/write/mkdir/delete, persisted over remounts |
 | `bitlocker_ntfs` | BitLocker AES-CBC-128 | BITLOCKER tag, mount, flower.jpg |
 | `bitlocker_ntfs_write` | BitLocker XTS-AES-128 | as `ntfs_write`; remount #2 uses the recovery key |
 
 ```sh
-bash scripts/generate_ntfs_testdata.sh
+bash scripts/generate_noroot_testdata.sh
 ```
 
 How each piece is made, and what vouches for it:

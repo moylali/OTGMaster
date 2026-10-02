@@ -1,7 +1,8 @@
 #!/usr/bin/env bash
-# Builds the NTFS E2E fixtures — NTFS inside VeraCrypt and NTFS inside BitLocker —
-# without root:
+# Builds the E2E fixtures that need no root — NTFS inside VeraCrypt and inside
+# BitLocker, and ext4 inside VeraCrypt:
 #
+#   testdata/ext4                  VeraCrypt AES/SHA-512 + ext4, mount and read
 #   testdata/ntfs                  VeraCrypt AES/SHA-512 + NTFS, mount and read
 #   testdata/ntfs_write            VeraCrypt AES/SHA-512 + NTFS, write and remount
 #   testdata/bitlocker_ntfs        BitLocker AES-CBC-128 + NTFS, mount and read
@@ -12,7 +13,9 @@
 # filled by scripts/fill_veracrypt_volume.py; BitLocker volumes are built by
 # scripts/make_bitlocker_image.py and must pass its cryptsetup --verify.
 #
-# Needs: veracrypt, mkntfs, ntfs-3g (FUSE usable by this user), fusermount,
+# ext4 is filled by `mkfs.ext4 -d`, which populates from a directory without a mount.
+#
+# Needs: veracrypt, mkntfs, mkfs.ext4, ntfs-3g (FUSE usable by this user), fusermount,
 # cryptsetup, python3 with `cryptography`.
 set -euo pipefail
 cd "$(dirname "$0")/.."
@@ -57,6 +60,30 @@ veracrypt_ntfs() {
     rm -f "$work/plain.img"
 }
 
+veracrypt_ext4() {
+    local dir=$1 desc=$2
+    mkdir -p "$dir"
+    rm -f "$dir/test.img" "$dir"/*.txt
+    veracrypt -t -c --volume-type=normal "$dir/test.img" --size=16M --password="$PASSWORD" \
+        --encryption=AES --hash=SHA-512 --filesystem=none --pim=$PIM \
+        --random-source=/dev/urandom --non-interactive >/dev/null
+    python3 scripts/fill_veracrypt_volume.py "$dir/test.img" "$PASSWORD" $PIM --make-plain "$work/plain.img"
+    local tree="$work/tree"
+    rm -rf "$tree"; mkdir -p "$tree/nested/very/deep/folder"
+    cp testdata/flower.jpg "$tree/flower.jpg"
+    touch "$tree/nested/very/deep/folder/empty_file.txt"
+    echo "Hello World" > "$tree/file with spaces.txt"
+    echo "Unicode" > "$tree/unicöde_fîle.txt"
+    dd if=/dev/urandom of="$tree/large_file.bin" bs=1024 count=10 status=none
+    mkfs.ext4 -q -F -m 0 -E lazy_itable_init=0,lazy_journal_init=0 -d "$tree" "$work/plain.img"
+    python3 scripts/fill_veracrypt_volume.py "$dir/test.img" "$PASSWORD" $PIM --fill "$work/plain.img"
+    chmod 644 "$dir/test.img"
+    echo "$PASSWORD" > "$dir/password.txt"
+    echo "$PIM" > "$dir/pim.txt"
+    echo "$desc" > "$dir/description.txt"
+    rm -rf "$tree" "$work/plain.img"
+}
+
 bitlocker_ntfs() {
     local dir=$1 cipher=$2 desc=$3 write=$4
     mkdir -p "$dir"
@@ -74,6 +101,8 @@ bitlocker_ntfs() {
     rm -f "$work/plain.img"
 }
 
+veracrypt_ext4 testdata/ext4 \
+    "AES-encrypted VeraCrypt volume formatted as ext4 (supported since 0.4.0; this case used to expect a refusal). Verifies the app unlocks it, mounts the ext4, and reads flower.jpg through the DocumentsProvider."
 veracrypt_ntfs testdata/ntfs \
     "AES-encrypted VeraCrypt volume formatted as NTFS. Verifies the app unlocks it, mounts the NTFS, and reads flower.jpg through the DocumentsProvider." false
 veracrypt_ntfs testdata/ntfs_write \
@@ -82,4 +111,4 @@ bitlocker_ntfs testdata/bitlocker_ntfs cbc128 \
     "BitLocker AES-CBC-128 volume (Windows' default for removable drives) holding NTFS. Verifies the app recognises BitLocker, unlocks it with the password, mounts the NTFS and reads flower.jpg." false
 bitlocker_ntfs testdata/bitlocker_ntfs_write xts128 \
     "BitLocker XTS-AES-128 volume holding NTFS. Verifies create, write, nested directory, delete and their persistence across remounts through BitLocker." true
-echo "NTFS fixtures ready."
+echo "No-root fixtures ready."
