@@ -58,7 +58,13 @@ add_library(serpent STATIC
 target_include_directories(serpent PUBLIC serpent)
 
 # veracrypt-native
-add_library(veracrypt-native SHARED VeraCryptNative.cpp exfat/ExFatNative.cpp ntfs/NtfsNative.cpp)
+# BitLocker sector crypto, key stretch and AES-CCM unwrap over mbedtls (see bitlocker/).
+add_library(bitlocker STATIC bitlocker/bitlocker_crypto.c)
+target_include_directories(bitlocker PUBLIC bitlocker)
+target_link_libraries(bitlocker mbedcrypto)
+
+add_library(veracrypt-native SHARED VeraCryptNative.cpp exfat/ExFatNative.cpp ntfs/NtfsNative.cpp
+        bitlocker/BitLockerNative.cpp)
 target_compile_definitions(veracrypt-native PRIVATE _FILE_OFFSET_BITS=64)
 if(OTG_IO_STATS)
     target_compile_definitions(veracrypt-native PRIVATE OTG_IO_STATS=1)
@@ -68,5 +74,6 @@ target_link_libraries(veracrypt-native
         mbedcrypto
         exfat
         ntfs3g
+        bitlocker
         serpent
         log)

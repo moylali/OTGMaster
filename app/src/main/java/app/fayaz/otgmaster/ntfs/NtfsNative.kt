@@ -14,7 +14,7 @@ object NtfsNative {
 
     init {
         // Host unit tests load a desktop build of the same sources instead.
-        val hostLib = System.getProperty("otg.ntfs.hostlib")
+        val hostLib = System.getProperty("otg.native.hostlib")
         if (hostLib != null) System.load(hostLib) else System.loadLibrary("veracrypt-native")
     }
 

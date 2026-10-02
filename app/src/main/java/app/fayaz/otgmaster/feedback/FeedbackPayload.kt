@@ -78,6 +78,7 @@ object FeedbackPayload {
                 ContainerType.LUKS1    -> "luks1"
                 ContainerType.LUKS2    -> "luks2"
                 ContainerType.VERACRYPT -> "veracrypt"
+                ContainerType.BITLOCKER -> "bitlocker"
                 else -> if (d.isPlain) "none" else "veracrypt"
             }
             Partition(
@@ -223,6 +224,7 @@ object FeedbackPayload {
                         "luks1"     -> "LUKS1"
                         "luks2"     -> "LUKS2"
                         "veracrypt" -> "VeraCrypt"
+                        "bitlocker" -> "BitLocker"
                         else        -> "not encrypted"
                     }
                     appendLine("  ${i + 1}. ${p.sizeGb} GB, ${p.fileSystem}, $encLabel")

@@ -13,6 +13,7 @@ See `CLAUDE.md` for what a new entry must contain and how to record an upstream 
 | `libaums/` | [magnusja/libaums](https://github.com/magnusja/libaums) | `57fa482` | `b03705d` (last pull) |
 | `app/src/main/cpp/exfat/` | [relan/exfat](https://github.com/relan/exfat) | see note below | pre-dates this registry |
 | `app/src/main/cpp/ntfs-3g/` | [tuxera/ntfs-3g](https://github.com/tuxera/ntfs-3g) | `7f0f841` (2026.9.28) | see the section below |
+| `app/src/test/resources/bitlk/bitlk-images.tar.xz` (test data) | [cryptsetup](https://gitlab.com/cryptsetup/cryptsetup) | `ca4cc7a` | see the section below |
 | `app/src/main/cpp/` (VeraCrypt primitives, mbedtls, Serpent) | VeraCrypt / Mbed-TLS | see note below | pre-dates this registry |
 
 **Licences** are listed in the table in `README.md`, which is authoritative — this
@@ -55,6 +56,32 @@ and write, used by `app/src/main/cpp/ntfs/NtfsNative.cpp`.
   `<strings.h>` and lacks the `S_IEXEC`/`S_IWRITE` aliases. Both are supplied in
   `ntfs/config.h`, which is not a vendored file, so the tree stays identical to
   upstream and a pull is a plain copy.
+
+## Patches
+
+| Area | Patch | Commit |
+|---|---|---|
+| — | none | — |
+
+---
+
+# `app/src/test/resources/bitlk/bitlk-images.tar.xz`
+
+BitLocker volumes made on Windows, from cryptsetup's `tests/` directory: the
+known-answer set `BitLockerCompatTest` decrypts and compares against.
+
+- **Pinned upstream:** cryptsetup `ca4cc7a44e5794d8ad412f6d4f8463a81fe16d4a`
+  (2026-09-22); archive SHA-256
+  `68bf5669f777668112d497234ebe2166b5feaf0e33b206b095b917f82937bd30`.
+- **Why vendored:** BitLocker volumes can only be created by Windows. These are the
+  only independent ones available, and each comes with cryptsetup's SHA-256 of the
+  whole decrypted volume, so they test the app's decryption byte for byte. Test
+  data only; not in the APK. Their unused ciphertext is zeroed upstream to keep the
+  archive small, so the NTFS inside mostly decrypts to noise — they cannot carry
+  filesystem tests, which use volumes built by `scripts/make_bitlocker_image.py`
+  instead.
+- **Licence:** GPL-2.0-or-later (cryptsetup's default per its `README.licensing`).
+  See `app/src/test/resources/bitlk/PROVENANCE.md`.
 
 ## Patches
 

@@ -1,0 +1,1 @@
+AES-encrypted VeraCrypt volume formatted as NTFS. Verifies create, write, nested directory, delete and their persistence across remounts.
