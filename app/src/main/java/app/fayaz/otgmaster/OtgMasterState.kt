@@ -30,6 +30,9 @@ data class MountedDrive(
     val filesystemName: String = "",
     /** The user chose read-only for this partition; see ReadOnlyBlockDeviceDriver. */
     val mountedReadOnly: Boolean = false,
+    /** First block of the partition on the raw device, and its length; null when unknown. */
+    val partitionStartBlock: Long? = null,
+    val partitionBlockCount: Long? = null,
 ) {
     /**
      * Why the volume refuses writes, or null if it is writable. ext4 and NTFS can
