@@ -212,11 +212,10 @@ class E2EAutomatedTest {
             }
 
             // Click Mount
-            val mountButton = findMountButton()
-            if (mountButton == null) captureScreen("no_mount_button")
-            assertTrue("Mount button not found", mountButton != null)
-            assertTrue("Mount button is not enabled", mountButton!!.isEnabled)
-            mountButton.click()
+            val clicked = clickMountButton()
+            if (clicked != MountClick.CLICKED) captureScreen("mount_button_$clicked")
+            assertTrue("Mount button not found", clicked != MountClick.NOT_FOUND)
+            assertTrue("Mount button is not enabled", clicked != MountClick.DISABLED)
 
             if (!expectMount) {
                 assertCannotMountError(expectedFs)
@@ -525,10 +524,8 @@ class E2EAutomatedTest {
         device.pressEnter()
         android.os.SystemClock.sleep(500)
 
-        val mountButton = findMountButton()
-        if (mountButton == null) captureScreen("no_mount_button")
-        if (mountButton == null || !mountButton.isEnabled) return false.also { captureScreen("mount_button_disabled") }
-        mountButton.click()
+        val clicked = clickMountButton()
+        if (clicked != MountClick.CLICKED) return false.also { captureScreen("mount_button_$clicked") }
 
         return waitForMounted(300000L) != null
     }
@@ -622,6 +619,28 @@ class E2EAutomatedTest {
         scrollToTop()
         return device.wait(Until.findObject(By.textContains("Scan").clickable(true)), timeout)
             ?: device.wait(Until.findObject(By.descContains("scan_button")), timeout)
+    }
+
+    private enum class MountClick { CLICKED, NOT_FOUND, DISABLED }
+
+    /**
+     * Finds and clicks Unlock & Mount, finding it again if it goes stale. Compose
+     * can redraw the form between the find and the click — partitioned_mbr once
+     * failed with StaleObjectException on `isEnabled` while the form was being
+     * re-offered — and a stale handle says nothing about the app.
+     */
+    private fun clickMountButton(): MountClick {
+        repeat(3) {
+            val button = findMountButton() ?: return MountClick.NOT_FOUND
+            try {
+                if (!button.isEnabled) return MountClick.DISABLED
+                button.click()
+                return MountClick.CLICKED
+            } catch (e: androidx.test.uiautomator.StaleObjectException) {
+                android.os.SystemClock.sleep(500)
+            }
+        }
+        return MountClick.NOT_FOUND
     }
 
     private fun findMountButton(): androidx.test.uiautomator.UiObject2? =

@@ -17,6 +17,13 @@ PACKAGE_NAME="app.fayaz.otgmaster"
 # QEMU opens this once at startup and keeps the file descriptor; we overwrite
 # its contents between tests so the new image is read on reconnect.
 SLOT_FILE="/tmp/otg_usb_slot.img"
+PORT=5554             # emulator console port; the adb serial is emulator-$PORT
+OWN_PORT=false        # --port given: never touch other emulators (parallel shards)
+NO_BUILD=false        # --no-build: APKs and fixtures prepared already (run_e2e_parallel.sh)
+PREPARE_ONLY=false    # --prepare-only: generate fixtures and build, then exit
+READ_ONLY_AVD=false   # --read-only-avd: -read-only, so several instances share the AVD
+KEEP_GOING=false      # --keep-going: run every case instead of stopping at the first failure
+REPORT_OVERRIDE=""
 
 # Parse optional flags
 SHOW_EMULATOR=1   # 1 = show UI (default), 0 = headless
@@ -26,10 +33,19 @@ while [[ "$#" -gt 0 ]]; do
     --show) SHOW_EMULATOR=1 ;;
     --headless) SHOW_EMULATOR=0 ;;
     --only) ONLY_TESTS="$ONLY_TESTS $2"; shift ;;
+    --port) PORT=$2; OWN_PORT=true; shift ;;
+    --slot) SLOT_FILE=$2; shift ;;
+    --no-build) NO_BUILD=true ;;
+    --prepare-only) PREPARE_ONLY=true ;;
+    --read-only-avd) READ_ONLY_AVD=true ;;
+    --keep-going) KEEP_GOING=true ;;
+    --report) REPORT_OVERRIDE=$2; shift ;;
     *) echo "Unknown option: $1" ; exit 1 ;;
   esac
   shift
 done
+
+SERIAL="emulator-$PORT"
 
 if [ ! -d "$TESTDATA_DIR" ]; then
     echo "Error: $TESTDATA_DIR directory not found."
@@ -82,13 +98,20 @@ ensure_testdata() {
     fi
 }
 
-ensure_testdata
+if [ "$NO_BUILD" = false ]; then
+    ensure_testdata
+    echo "Building Android Test APKs..."
+    ./gradlew assembleDebug assembleDebugAndroidTest || { echo "Build failed!"; exit 1; }
+fi
+[ "$PREPARE_ONLY" = true ] && { echo "Prepared."; exit 0; }
 
-echo "Building Android Test APKs..."
-./gradlew assembleDebug assembleDebugAndroidTest || { echo "Build failed!"; exit 1; }
-
-# Kill any leftover emulators from a previous run
-$CMD_ADB devices | grep emulator | cut -f1 | while read line; do $CMD_ADB -s "$line" emu kill 2>/dev/null; done
+# Kill leftover emulators from a previous run — only our own when sharded, so a
+# shard never takes down its siblings.
+if [ "$OWN_PORT" = true ]; then
+    $CMD_ADB -s "$SERIAL" emu kill 2>/dev/null
+else
+    $CMD_ADB devices | grep emulator | cut -f1 | while read line; do $CMD_ADB -s "$line" emu kill 2>/dev/null; done
+fi
 sleep 2
 
 
@@ -124,35 +147,45 @@ QEMU_USB_FLAGS="-qemu -usb -device qemu-xhci,id=xhci \
   -blockdev driver=raw,node-name=slot_dev,file=slot_file \
   -device usb-storage,bus=xhci.0,drive=slot_dev,id=usbdev0,removable=on"
 
-if [ $SHOW_EMULATOR -eq 1 ]; then
-  $CMD_EMULATOR -avd $AVD_NAME -wipe-data -no-audio -no-boot-anim \
+# -read-only gives each instance its own throwaway overlay, which is what lets
+# several shards boot the same AVD; -wipe-data would write to the shared one.
+DATA_FLAG="-wipe-data"
+[ "$READ_ONLY_AVD" = true ] && DATA_FLAG="-read-only -no-snapshot"
+WINDOW_FLAG=""
+[ $SHOW_EMULATOR -eq 1 ] || WINDOW_FLAG="-no-window"
+$CMD_EMULATOR -avd $AVD_NAME -port $PORT $DATA_FLAG $WINDOW_FLAG -no-audio -no-boot-anim \
     $QEMU_USB_FLAGS &
-else
-  $CMD_EMULATOR -avd $AVD_NAME -wipe-data -no-window -no-audio -no-boot-anim \
-    $QEMU_USB_FLAGS &
-fi
 EMU_PID=$!
 
 echo "Waiting for emulator to boot..."
-$CMD_ADB -s emulator-5554 wait-for-device
-while [ "$($CMD_ADB -s emulator-5554 shell getprop sys.boot_completed | tr -d '\r')" != "1" ]; do
+$CMD_ADB -s $SERIAL wait-for-device
+while [ "$($CMD_ADB -s $SERIAL shell getprop sys.boot_completed | tr -d '\r')" != "1" ]; do
     sleep 2
 done
 echo "Emulator booted!"
 
 # One-time permissions setup
-$CMD_ADB -s emulator-5554 shell "su 0 setenforce 0"
-$CMD_ADB -s emulator-5554 shell "su 0 chmod a+rx /dev/block"
-$CMD_ADB -s emulator-5554 shell "su 0 chmod 666 /dev/block/sda"
+$CMD_ADB -s $SERIAL shell "su 0 setenforce 0"
+$CMD_ADB -s $SERIAL shell "su 0 chmod a+rx /dev/block"
+$CMD_ADB -s $SERIAL shell "su 0 chmod 666 /dev/block/sda"
 
 echo "Pushing testdata to device for inside-Android swapping..."
-$CMD_ADB -s emulator-5554 shell "rm -rf /data/local/tmp/testdata"
-$CMD_ADB -s emulator-5554 push "$TESTDATA_DIR" /data/local/tmp/
+$CMD_ADB -s $SERIAL shell "rm -rf /data/local/tmp/testdata"
+if [ -n "$ONLY_TESTS" ]; then
+    # Only this run's cases: the whole set is ~1.3 GB and took ~25 minutes to push.
+    $CMD_ADB -s $SERIAL shell "mkdir -p /data/local/tmp/testdata"
+    $CMD_ADB -s $SERIAL push "$TESTDATA_DIR/flower.jpg" /data/local/tmp/testdata/ >/dev/null
+    for _t in $ONLY_TESTS; do
+        [ -d "$TESTDATA_DIR/$_t" ] && $CMD_ADB -s $SERIAL push "$TESTDATA_DIR/$_t" /data/local/tmp/testdata/ >/dev/null
+    done
+else
+    $CMD_ADB -s $SERIAL push "$TESTDATA_DIR" /data/local/tmp/
+fi
 
 # Install APKs once
 echo "Installing App and Test APK..."
-$CMD_ADB -s emulator-5554 install -t app/build/outputs/apk/debug/app-debug.apk
-$CMD_ADB -s emulator-5554 install -t app/build/outputs/apk/androidTest/debug/app-debug-androidTest.apk
+$CMD_ADB -s $SERIAL install -t app/build/outputs/apk/debug/app-debug.apk
+$CMD_ADB -s $SERIAL install -t app/build/outputs/apk/androidTest/debug/app-debug-androidTest.apk
 
 echo "Starting E2E Tests..."
 
@@ -160,7 +193,7 @@ echo "Starting E2E Tests..."
 APP_VERSION=$(grep 'versionName' app/build.gradle.kts 2>/dev/null | head -1 | grep -o '"[^"]*"' | tr -d '"' || echo "unknown")
 GIT_COMMIT=$(git rev-parse --short HEAD 2>/dev/null || echo "unknown")
 RUN_DATE=$(date '+%Y-%m-%d %H:%M:%S')
-REPORT_FILE="e2e_report_v${APP_VERSION}_${GIT_COMMIT}_$(date +%Y%m%d_%H%M%S).md"
+REPORT_FILE="${REPORT_OVERRIDE:-e2e_report_v${APP_VERSION}_${GIT_COMMIT}_$(date +%Y%m%d_%H%M%S).md}"
 
 # Write report header
 cat > "$REPORT_FILE" << REPORT_HEADER
@@ -279,17 +312,17 @@ for test_dir in "$TESTDATA_DIR"/*/; do
     # QEMU hotplug is no longer used; Android E2EAutomatedTest directly overwrites /dev/block/sda using dd.
 
     # Clear any leftover keyfile; push the current test's keyfile if needed
-    $CMD_ADB -s emulator-5554 shell "rm -f /sdcard/Download/*.key"
+    $CMD_ADB -s $SERIAL shell "rm -f /sdcard/Download/*.key"
     if [ -n "$KEYFILE" ]; then
         echo "Pushing keyfile to device..."
-        $CMD_ADB -s emulator-5554 push "$KEYFILE" /sdcard/Download/
-        $CMD_ADB -s emulator-5554 shell am broadcast \
+        $CMD_ADB -s $SERIAL push "$KEYFILE" /sdcard/Download/
+        $CMD_ADB -s $SERIAL shell am broadcast \
             -a android.intent.action.MEDIA_SCANNER_SCAN_FILE \
             -d "file:///sdcard/Download/$KEYFILE_NAME"
     fi
 
     # Clear logcat so each test's dump is isolated
-    $CMD_ADB -s emulator-5554 logcat -c
+    $CMD_ADB -s $SERIAL logcat -c
 
     # Run test — once, and once more if it fails. A pass on the second attempt is
     # reported as FLAKY, never as a plain pass, and the first attempt's logcat and
@@ -302,13 +335,13 @@ for test_dir in "$TESTDATA_DIR"/*/; do
     while true; do
         # Overwrite the slot device with the specific test image
         echo "Writing test image: ./testdata/${TEST_NAME}/test.img to /dev/block/sda"
-        $CMD_ADB -s emulator-5554 shell "su 0 dd if=/data/local/tmp/testdata/${TEST_NAME}/test.img of=/dev/block/sda bs=1M conv=fsync"
-        $CMD_ADB -s emulator-5554 shell "su 0 sync"
-        $CMD_ADB -s emulator-5554 shell "su 0 sync"
+        $CMD_ADB -s $SERIAL shell "su 0 dd if=/data/local/tmp/testdata/${TEST_NAME}/test.img of=/dev/block/sda bs=1M conv=fsync"
+        $CMD_ADB -s $SERIAL shell "su 0 sync"
+        $CMD_ADB -s $SERIAL shell "su 0 sync"
         sleep 2
 
         echo "Running UI Automator Test..."
-        TEST_OUT=$($CMD_ADB -s emulator-5554 shell am instrument -w \
+        TEST_OUT=$($CMD_ADB -s $SERIAL shell am instrument -w \
             -e password "$PASSWORD" \
             -e testCase "$TEST_NAME" \
             $KEYFILE_ARG \
@@ -327,12 +360,12 @@ for test_dir in "$TESTDATA_DIR"/*/; do
         echo "$TEST_OUT"
 
         echo "Dumping logcat for analysis:"
-        $CMD_ADB -s emulator-5554 logcat -d > "logcat_${TEST_NAME}.txt"
+        $CMD_ADB -s $SERIAL logcat -d > "logcat_${TEST_NAME}.txt"
         echo "Logcat saved to logcat_${TEST_NAME}.txt"
         # Diagnostics the test saves when a wait fails (screenshot + UI hierarchy).
-        for f in $($CMD_ADB -s emulator-5554 shell "ls /sdcard/Download/e2e_* 2>/dev/null" | tr -d '\r'); do
-            $CMD_ADB -s emulator-5554 pull "$f" "e2e_${TEST_NAME}_$(basename "$f")" >/dev/null 2>&1
-            $CMD_ADB -s emulator-5554 shell rm -f "$f"
+        for f in $($CMD_ADB -s $SERIAL shell "ls /sdcard/Download/e2e_* 2>/dev/null" | tr -d '\r'); do
+            $CMD_ADB -s $SERIAL pull "$f" "e2e_${TEST_NAME}_$(basename "$f")" >/dev/null 2>&1
+            $CMD_ADB -s $SERIAL shell rm -f "$f"
         done
 
         if echo "$TEST_OUT" | grep -q "FAILURES!!!" || echo "$TEST_OUT" | grep -q "Process crashed"; then
@@ -346,7 +379,7 @@ for test_dir in "$TESTDATA_DIR"/*/; do
             echo "Attempt 1 of $TEST_NAME failed; retrying once."
             mv "logcat_${TEST_NAME}.txt" "logcat_${TEST_NAME}_attempt1.txt"
             for f in e2e_${TEST_NAME}_e2e_*; do [ -e "$f" ] && mv "$f" "attempt1_$f"; done
-            $CMD_ADB -s emulator-5554 shell am force-stop "$PACKAGE_NAME"
+            $CMD_ADB -s $SERIAL shell am force-stop "$PACKAGE_NAME"
             ATTEMPT=2
             continue
         fi
@@ -355,7 +388,7 @@ for test_dir in "$TESTDATA_DIR"/*/; do
     done
 
     # Force-stop app to reset state; USB stays connected until the next test's usb_swap
-    $CMD_ADB -s emulator-5554 shell am force-stop "$PACKAGE_NAME"
+    $CMD_ADB -s $SERIAL shell am force-stop "$PACKAGE_NAME"
 
     TEST_END=$(date +%s)
     DURATION=$((TEST_END - TEST_START))
@@ -365,7 +398,7 @@ for test_dir in "$TESTDATA_DIR"/*/; do
         OVERALL_EXIT=1
         FAILED_COUNT=$((FAILED_COUNT + 1))
         echo "| $TEST_NUM | \`$TEST_NAME\` | $DESCRIPTION | ❌ FAILED | ${DURATION}s |" >> "$REPORT_FILE"
-        break
+        [ "$KEEP_GOING" = true ] || break
     else
         PASSED_COUNT=$((PASSED_COUNT + 1))
         if [ "$FLAKY" = true ]; then
@@ -380,7 +413,7 @@ for test_dir in "$TESTDATA_DIR"/*/; do
 done
 
 echo "Killing emulator..."
-$CMD_ADB -s emulator-5554 emu kill
+$CMD_ADB -s $SERIAL emu kill
 wait $EMU_PID 2>/dev/null
 
 TOTAL_COUNT=$((PASSED_COUNT + FAILED_COUNT))
