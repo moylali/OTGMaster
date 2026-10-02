@@ -302,6 +302,8 @@ class Ext4FileSystem private constructor(
         private const val EXT4_SUPER_MAGIC = 0xEF53
         /** s_feature_incompat bit for a journal that needs replaying (`needs_recovery`). */
         private const val INCOMPAT_RECOVER = 0x4
+        /** s_feature_incompat bit for extent trees; ext2/ext3 volumes do not have it. */
+        private const val INCOMPAT_EXTENTS = 0x40
         const val MOUNTED_READ_ONLY = "it was mounted read-only"
 
         /** @param readOnly the user chose to mount this partition read-only. */
@@ -396,6 +398,17 @@ class Ext4FileSystem private constructor(
                     (featIncompat and INCOMPAT_RECOVER) != 0 ->
                         "its journal needs recovery — it was not unmounted cleanly. " +
                             "Check it on a computer (e2fsck) before writing to it."
+                    // Every inode this driver creates uses an extent tree, and it
+                    // cannot allocate the indirect block maps ext2/ext3 use instead.
+                    // Writing such a volume made files that e2fsck reports as
+                    // corrupt ("in extent format, but superblock is missing
+                    // EXTENTS feature") and that a real ext2/ext3 driver cannot
+                    // read — while this driver, which reads extents everywhere,
+                    // read them back perfectly. Found by the E2E host check
+                    // (scripts/verify_e2e_volume.py) on m_*_ext2 and m_*_ext3.
+                    (featIncompat and INCOMPAT_EXTENTS) == 0 ->
+                        "it is ext2/ext3 (no extents), which this app reads but cannot " +
+                            "yet write without creating files Linux would report as damaged."
                     readOnly -> MOUNTED_READ_ONLY
                     else -> null
                 },

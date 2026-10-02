@@ -277,6 +277,8 @@ for test_dir in "$TESTDATA_DIR"/*/; do
     if [ -f "$test_dir/recovery.txt" ]; then
         RECOVERY_ARG="-e recovery $(cat "$test_dir/recovery.txt")"
     fi
+    READ_ONLY_ARG=""
+    [ -f "$test_dir/read_only.txt" ] && READ_ONLY_ARG="-e expect_read_only true"
     FLOWER_ARG=""
     if [ -f "$test_dir/verify_flower.txt" ]; then
         FLOWER_ARG="-e flower_sha256 $(sha256sum "$TESTDATA_DIR/flower.jpg" | cut -d' ' -f1)"
@@ -354,6 +356,7 @@ for test_dir in "$TESTDATA_DIR"/*/; do
             $RECOVERY_ARG \
             $CONTAINER_ARG \
             $FLOWER_ARG \
+        $READ_ONLY_ARG \
             -e class app.fayaz.otgmaster.E2EAutomatedTest \
             $PACKAGE_NAME.test/androidx.test.runner.AndroidJUnitRunner)
 

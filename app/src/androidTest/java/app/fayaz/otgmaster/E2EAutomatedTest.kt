@@ -285,6 +285,19 @@ class E2EAutomatedTest {
             fail("Failed to copy flower.jpg via SAF: ${e.message}")
         }
         assertTrue("Copied flower image should exist at /sdcard/Download/flower.jpg", outFile.exists())
+
+        // Volumes the app must not write (ext2/ext3: no extents) are mounted
+        // read-only: the card says so, and a create through the provider fails.
+        if (arguments.getString("expect_read_only", "false") == "true") {
+            assertNotNull("READ-ONLY tag not shown on the drive card",
+                device.wait(Until.findObject(By.text("READ-ONLY")), timeout))
+            val created = runCatching {
+                DocumentsContract.createDocument(context.contentResolver,
+                    DocumentsContract.buildDocumentUri(AUTHORITY, allRootDocIds(context).first()),
+                    "text/plain", "must_not_exist.txt")
+            }.getOrNull()
+            assertNull("a file was created on a volume that must be read-only", created)
+        }
         assertTrue("Copied flower image should have non-zero size", outFile.length() > 0)
 
         // Open the image via the DocumentsProvider content:// URI (drive is still mounted here).
