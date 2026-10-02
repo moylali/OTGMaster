@@ -45,7 +45,7 @@ ensure_testdata() {
         exit 1
     fi
 
-    for case_name in fat32 fat32_keyfile fat32_keyfile_pim exfat exfat_keyfile exfat_write fat16 ntfs ext4 serpent unsupported_cipher partitioned_mbr fat32_write; do
+    for case_name in fat32 fat32_keyfile fat32_keyfile_pim exfat exfat_keyfile exfat_write fat16 serpent unsupported_cipher partitioned_mbr fat32_write; do
         local dir="$TESTDATA_DIR/$case_name"
         if [ ! -f "$dir/test.img" ] || [ ! -f "$dir/password.txt" ] || [ ! -f "$dir/pim.txt" ]; then
             echo "Missing artifacts for test case: $case_name (test.img / password.txt / pim.txt)"
@@ -64,12 +64,13 @@ ensure_testdata() {
         sudo bash scripts/generate_testdata.sh || { echo "Test data generation failed!"; exit 1; }
     fi
 
-    # NTFS inside VeraCrypt and inside BitLocker. Built without root, after the
-    # sudo generator above, which still writes the older refusal-style ntfs case.
-    for case_name in ntfs ntfs_write bitlocker_ntfs bitlocker_ntfs_write; do
+    # NTFS inside VeraCrypt and inside BitLocker, and ext4 inside VeraCrypt. Built
+    # without root; a leftover expects_error.txt marks the old refusal-style cases
+    # these replaced, from before ext4 (0.4.0) and NTFS (0.4.1) were supported.
+    for case_name in ext4 ntfs ntfs_write bitlocker_ntfs bitlocker_ntfs_write; do
         if [ ! -f "$TESTDATA_DIR/$case_name/test.img" ] || [ -f "$TESTDATA_DIR/$case_name/expects_error.txt" ]; then
-            echo "Generating NTFS fixtures (VeraCrypt + BitLocker)..."
-            bash scripts/generate_ntfs_testdata.sh || { echo "NTFS fixture generation failed!"; exit 1; }
+            echo "Generating no-root fixtures (ext4, NTFS in VeraCrypt and BitLocker)..."
+            bash scripts/generate_noroot_testdata.sh || { echo "No-root fixture generation failed!"; exit 1; }
             break
         fi
     done

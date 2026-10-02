@@ -1,1 +1,1 @@
-AES-encrypted VeraCrypt volume formatted as ext4 (not supported by the app). Verifies the app detects the filesystem type and shows 'Cannot mount' without mounting.
+AES-encrypted VeraCrypt volume formatted as ext4 (supported since 0.4.0; this case used to expect a refusal). Verifies the app unlocks it, mounts the ext4, and reads flower.jpg through the DocumentsProvider.

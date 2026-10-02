@@ -7,8 +7,6 @@ mkdir -p testdata/fat32_keyfile
 mkdir -p testdata/exfat
 mkdir -p testdata/exfat_keyfile
 mkdir -p testdata/fat16
-mkdir -p testdata/ntfs
-mkdir -p testdata/ext4
 mkdir -p testdata/serpent
 
 
@@ -241,8 +239,8 @@ create_exfat_volume "testdata/exfat_write" "false"
 touch "testdata/exfat_write/write_test.txt"
 echo "exFAT write support test: same lifecycle as fat32_write (create, persist across remount, delete, verify deletion persists) but using an exFAT-formatted VeraCrypt volume." > "testdata/exfat_write/description.txt"
 create_unsupported_volume "testdata/fat16" "FAT16" "fat"
-create_unsupported_volume "testdata/ntfs" "NTFS" "ntfs"
-create_unsupported_volume "testdata/ext4" "ext4" "ext4"
+# ntfs and ext4 are supported now and their cases mount; they are built without
+# root by scripts/generate_noroot_testdata.sh.
 
 # Create a dummy image to act as a second simultaneous USB drive (for multi-drive testing)
 dd if=/dev/zero of="testdata/dummy.img" bs=1M count=2 2>/dev/null
