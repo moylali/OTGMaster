@@ -66,7 +66,12 @@ class VeraCryptUnlocker {
             val available = device.blockCount - startBlock
             val sectors = if (available <= 0) 1 else minOf(4L, available).toInt()
             val sector = device.readBlocks(startBlock, sectors)
-            if (LuksParser.hasLuksMagic(sector)) {
+            // BitLocker first: a BitLocker To Go volume begins with a genuine FAT32
+            // boot sector (its discovery volume), which the filesystem check below
+            // would take for an unencrypted partition.
+            if (app.fayaz.otgmaster.bitlocker.BitLockerHeader.hasSignature(sector)) {
+                ContainerType.BITLOCKER
+            } else if (LuksParser.hasLuksMagic(sector)) {
                 when (LuksParser.getVersion(sector)) {
                     1    -> ContainerType.LUKS1
                     2    -> ContainerType.LUKS2

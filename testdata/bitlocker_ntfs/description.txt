@@ -1,0 +1,1 @@
+BitLocker AES-CBC-128 volume (Windows' default for removable drives) holding NTFS. Verifies the app recognises BitLocker, unlocks it with the password, mounts the NTFS and reads flower.jpg.

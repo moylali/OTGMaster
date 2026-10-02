@@ -1,1 +1,1 @@
-AES-encrypted VeraCrypt volume formatted as NTFS (not supported by the app). Verifies the app detects the filesystem type and shows 'Cannot mount' without mounting.
+AES-encrypted VeraCrypt volume formatted as NTFS. Verifies the app unlocks it, mounts the NTFS, and reads flower.jpg through the DocumentsProvider.

@@ -911,6 +911,10 @@ class MainActivity : AppCompatActivity() {
                             passwordBytes.fill(0)
                         }
                     }
+                    app.fayaz.otgmaster.veracrypt.ContainerType.BITLOCKER ->
+                        app.fayaz.otgmaster.bitlocker.BitLockerUnlocker().unlock(
+                            device, candidate.startBlock, candidate.blockCount, password.toCharArray()
+                        )
                     else -> VeraCryptUnlocker().unlock(
                         device, candidate, password.toCharArray(), pim, keyfiles, contentResolver,
                         cipher, hash
@@ -1728,6 +1732,7 @@ fun encryptionTag(type: app.fayaz.otgmaster.veracrypt.ContainerType?): Pair<Stri
         app.fayaz.otgmaster.veracrypt.ContainerType.VERACRYPT -> Pair("VERACRYPT", Color(0xFF3949AB))
         app.fayaz.otgmaster.veracrypt.ContainerType.LUKS1     -> Pair("LUKS1",     Color(0xFFE65100))
         app.fayaz.otgmaster.veracrypt.ContainerType.LUKS2     -> Pair("LUKS2",     Color(0xFF6A1B9A))
+        app.fayaz.otgmaster.veracrypt.ContainerType.BITLOCKER -> Pair("BITLOCKER", Color(0xFF00838F))
         // "could not tell" is not the same claim as "it is not encrypted", and the
         // old catch-all else asserted the latter for both.
         app.fayaz.otgmaster.veracrypt.ContainerType.UNKNOWN   -> Pair("UNKNOWN",   Color(0xFF757575))
@@ -2094,8 +2099,12 @@ fun VeraCryptMountSection(
         sessionCreds?.let { sc -> selectedDevice?.candidates?.find { it.startBlock == sc.candidateStartBlock } }
             ?: selectedDevice?.candidates?.firstOrNull()
     ) }
+    val isBitLocker = selectedCandidate?.containerType == app.fayaz.otgmaster.veracrypt.ContainerType.BITLOCKER
+    // "isLuks" gates the VeraCrypt-only fields (PIM, keyfiles, cipher, hash), which
+    // BitLocker has no use for either: its cipher is read from the volume.
     val isLuks = selectedCandidate?.containerType == app.fayaz.otgmaster.veracrypt.ContainerType.LUKS1 ||
-                 selectedCandidate?.containerType == app.fayaz.otgmaster.veracrypt.ContainerType.LUKS2
+                 selectedCandidate?.containerType == app.fayaz.otgmaster.veracrypt.ContainerType.LUKS2 ||
+                 isBitLocker
     var expanded by remember { mutableStateOf(false) }
 
     var password by remember(selectedDevice) { mutableStateOf(sessionCreds?.password ?: "") }
@@ -2305,7 +2314,11 @@ fun VeraCryptMountSection(
             OutlinedTextField(
                 value = password,
                 onValueChange = { if (!isPreFilled) password = it },
-                label = { Text(stringResource(if (isLuks) R.string.label_password else R.string.label_veracrypt_password)) },
+                label = { Text(stringResource(when {
+                    isBitLocker -> R.string.label_bitlocker_password
+                    isLuks -> R.string.label_password
+                    else -> R.string.label_veracrypt_password
+                })) },
                 singleLine = true,
                 readOnly = isPreFilled,
                 keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Password, autoCorrect = false, imeAction = androidx.compose.ui.text.input.ImeAction.Done),
@@ -2467,7 +2480,7 @@ fun VeraCryptMountSection(
                 },
                 modifier = Modifier.fillMaxWidth().semantics { contentDescription = "mount_button" },
                 enabled = selectedDevice != null && selectedCandidate != null &&
-                    (password.isNotEmpty() || (!isLuks && keyfiles.isNotEmpty())) && !isUnlocking
+                    (password.isNotEmpty() || isBitLocker || (!isLuks && keyfiles.isNotEmpty())) && !isUnlocking
             ) {
                 if (isUnlocking) {
                     androidx.compose.material3.CircularProgressIndicator(modifier = Modifier.size(24.dp), color = MaterialTheme.colorScheme.onPrimary)

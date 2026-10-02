@@ -1,0 +1,1 @@
+BitLocker XTS-AES-128 volume holding NTFS. Verifies create, write, nested directory, delete and their persistence across remounts through BitLocker.

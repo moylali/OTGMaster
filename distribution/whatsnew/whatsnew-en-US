@@ -1,3 +1,4 @@
 • New: NTFS drives (the Windows format) can be read and written, plain or inside VeraCrypt/LUKS
+• New: BitLocker drives unlock with their password or recovery key, read and write
 • New: An NTFS drive Windows did not shut down cleanly opens read-only, so pending Windows changes are not overwritten
 • Known limitation: Windows-compressed NTFS files are read-only; EFS-encrypted files cannot be opened

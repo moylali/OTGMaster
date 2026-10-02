@@ -63,6 +63,16 @@ ensure_testdata() {
         echo "Generating test data (requires sudo for VeraCrypt mount and mkfs operations)..."
         sudo bash scripts/generate_testdata.sh || { echo "Test data generation failed!"; exit 1; }
     fi
+
+    # NTFS inside VeraCrypt and inside BitLocker. Built without root, after the
+    # sudo generator above, which still writes the older refusal-style ntfs case.
+    for case_name in ntfs ntfs_write bitlocker_ntfs bitlocker_ntfs_write; do
+        if [ ! -f "$TESTDATA_DIR/$case_name/test.img" ] || [ -f "$TESTDATA_DIR/$case_name/expects_error.txt" ]; then
+            echo "Generating NTFS fixtures (VeraCrypt + BitLocker)..."
+            bash scripts/generate_ntfs_testdata.sh || { echo "NTFS fixture generation failed!"; exit 1; }
+            break
+        fi
+    done
 }
 
 ensure_testdata
@@ -220,6 +230,15 @@ for test_dir in "$TESTDATA_DIR"/*/; do
         REMOUNT_ARG="-e remount_test true"
     fi
 
+    RECOVERY_ARG=""
+    if [ -f "$test_dir/recovery.txt" ]; then
+        RECOVERY_ARG="-e recovery $(cat "$test_dir/recovery.txt")"
+    fi
+    CONTAINER_ARG=""
+    if [ -f "$test_dir/container.txt" ]; then
+        CONTAINER_ARG="-e expected_container $(cat "$test_dir/container.txt")"
+    fi
+
     WRITE_TEST_ARG=""
     if [ -f "$test_dir/write_test.txt" ]; then
         WRITE_TEST_ARG="-e write_test true"
@@ -277,6 +296,8 @@ for test_dir in "$TESTDATA_DIR"/*/; do
         $CIPHER_ARG \
         $REMOUNT_ARG \
         $WRITE_TEST_ARG \
+        $RECOVERY_ARG \
+        $CONTAINER_ARG \
         -e class app.fayaz.otgmaster.E2EAutomatedTest \
         $PACKAGE_NAME.test/androidx.test.runner.AndroidJUnitRunner)
 

@@ -23,7 +23,7 @@ import kotlin.random.Random
 
 /**
  * Drives the NTFS driver — NtfsFileSystem/NtfsFile over the same libntfs-3g and
- * JNI bridge the app ships, built for the host by scripts/build_host_ntfs.sh —
+ * JNI bridge the app ships, built for the host by scripts/build_host_native.sh —
  * against `mkntfs` images, and then checks every image with tools that do not go
  * through that bridge:
  *
@@ -62,7 +62,7 @@ class NtfsWriteCheckTest {
 
     companion object {
         private val repo: File = generateSequence(File("").absoluteFile) { it.parentFile }
-            .first { File(it, "scripts/build_host_ntfs.sh").exists() }
+            .first { File(it, "scripts/build_host_native.sh").exists() }
 
         private fun run(vararg cmd: String): Pair<Int, String> {
             val p = ProcessBuilder(*cmd).redirectErrorStream(true).start()
@@ -78,10 +78,10 @@ class NtfsWriteCheckTest {
         @JvmStatic
         fun buildHostLibrary() {
             if (toolMissing("gcc") || toolMissing("g++")) return
-            val lib = File(repo, "app/build/host-ntfs/libntfs-host.so")
-            val (rc, out) = run(File(repo, "scripts/build_host_ntfs.sh").path, lib.path)
+            val lib = File(repo, "app/build/host-native/libotg-host.so")
+            val (rc, out) = run(File(repo, "scripts/build_host_native.sh").path, lib.path)
             if (rc != 0) throw AssertionError("host build of libntfs-3g failed:\n$out")
-            System.setProperty("otg.ntfs.hostlib", lib.absolutePath)
+            System.setProperty("otg.native.hostlib", lib.absolutePath)
             hostLib = lib
         }
     }

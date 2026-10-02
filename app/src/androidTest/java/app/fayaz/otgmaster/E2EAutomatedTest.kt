@@ -123,6 +123,7 @@ class E2EAutomatedTest {
             }
 
             assertTrue("USB device not detected — password input not shown within 30s", passwordField != null)
+            assertContainerTag(arguments.getString("expected_container", ""))
 
             // For partitioned disks, the VeraCrypt volume is on a specific partition.
             // Select it from the candidate picker before unlocking.
@@ -322,6 +323,7 @@ class E2EAutomatedTest {
         scanBtn1?.click()
         device.wait(Until.findObject(By.text(java.util.regex.Pattern.compile("(?i)Allow|OK"))), 5000L)?.click()
 
+        assertContainerTag(arguments.getString("expected_container", ""))
         assertTrue("Mount #1 failed", doMount(password, pim, testCase, clearFields = false))
 
         // ── WRITE: create file + directory + nested file ───────────────────────
@@ -358,7 +360,10 @@ class E2EAutomatedTest {
         scanBtn2?.click()
         android.os.SystemClock.sleep(2000)
 
-        assertTrue("Mount #2 failed", doMount(password, pim, testCase, clearFields = true))
+        // Where the volume has a second secret (a BitLocker recovery key), remount
+        // with it: both protectors must open the same volume and see the same files.
+        val secondSecret = arguments.getString("recovery", "").ifEmpty { password }
+        assertTrue("Mount #2 failed", doMount(secondSecret, pim, testCase, clearFields = true))
 
         val rootDocId2 = getRootDocId(context)
         assertNotNull("No root after mount #2", rootDocId2)
@@ -513,6 +518,13 @@ class E2EAutomatedTest {
         unmountButton?.click()
         val gone = device.wait(Until.gone(By.descContains("unmount_button")), timeout)
         assertTrue("Drive was not successfully unmounted!", gone)
+    }
+
+    /** The volume picker must tag the candidate with its container type, e.g. BITLOCKER. */
+    private fun assertContainerTag(expected: String) {
+        if (expected.isEmpty()) return
+        assertTrue("Volume picker does not tag the volume as $expected",
+            device.wait(Until.findObject(By.text(expected)), timeout) != null)
     }
 
     private fun getRootDocId(context: Context): String? {
