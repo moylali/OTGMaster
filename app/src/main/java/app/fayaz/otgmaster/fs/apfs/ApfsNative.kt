@@ -1,39 +1,20 @@
 package app.fayaz.otgmaster.fs.apfs
 
 import androidx.annotation.Keep
-import app.fayaz.otgmaster.fs.BlockDevice
+import app.fayaz.otgmaster.block.RawBlockDevice
+import java.nio.ByteBuffer
 
-/**
- * JNI bindings for the native APFS parser (e.g., apfs-fuse or libfsapfs).
- * This bridges the pure Kotlin [BlockDevice] interface to the native C/C++ parser.
- */
 @Keep
 object ApfsNative {
     init {
-        System.loadLibrary("apfs")
+        System.loadLibrary("apfs-native")
     }
 
-    /**
-     * Initializes a native APFS context for the given block device.
-     * @param device The block device to read from.
-     * @param password Optional password if the volume is encrypted (null if unencrypted).
-     * @return A native pointer to the APFS context, or 0 on failure.
-     */
-    @JvmStatic
-    external fun mount(device: BlockDevice, password: String?): Long
-
-    /**
-     * Reads a directory's contents from the APFS volume.
-     * @param contextPtr The native pointer returned by [mount].
-     * @param path The absolute path to the directory (e.g., "/").
-     * @return An array of file names, or null on error.
-     */
-    @JvmStatic
-    external fun listDirectory(contextPtr: Long, path: String): Array<String>?
-
-    /**
-     * Frees the native APFS context.
-     */
-    @JvmStatic
-    external fun unmount(contextPtr: Long)
+    @JvmStatic external fun mount(device: RawBlockDevice, password: String?): Long
+    @JvmStatic external fun listDirectory(contextPtr: Long, path: String): Array<String>?
+    @JvmStatic external fun unmount(contextPtr: Long)
+    @JvmStatic external fun getFileSize(contextPtr: Long, path: String): Long
+    @JvmStatic external fun isDirectory(contextPtr: Long, path: String): Boolean
+    @JvmStatic external fun readFile(contextPtr: Long, path: String, offset: Long, byteBuffer: ByteBuffer, size: Int): Int
+    @JvmStatic external fun getVolumeName(contextPtr: Long): String
 }

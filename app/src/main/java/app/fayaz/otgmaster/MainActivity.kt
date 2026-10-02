@@ -321,6 +321,7 @@ class MainActivity : AppCompatActivity() {
         
         FileSystemFactory.registerFileSystem(ExFatFileSystemCreator(), 1)
         FileSystemFactory.registerFileSystem(app.fayaz.otgmaster.ext4.Ext4FileSystemCreator(), 2)
+        FileSystemFactory.registerFileSystem(app.fayaz.otgmaster.fs.apfs.ApfsFileSystemCreator(), 3)
         
         val usbMgr = getSystemService(Context.USB_SERVICE) as UsbManager
         usbDeviceProvider = RealUsbDeviceProvider(usbMgr, permissionIntent)
