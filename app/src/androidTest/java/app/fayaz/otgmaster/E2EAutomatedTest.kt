@@ -45,8 +45,11 @@ class E2EAutomatedTest {
 
         // Launch the app
         val context = ApplicationProvider.getApplicationContext<Context>()
-        val intent = context.packageManager.getLaunchIntentForPackage("app.fayaz.otgmaster")?.apply {
-            addFlags(Intent.FLAG_ACTIVITY_CLEAR_TASK)
+        // Named explicitly: the debug build has a second launcher entry (OTG Bench),
+        // and getLaunchIntentForPackage returned that one, so every case ran against
+        // the bench screen and failed with "password input not shown".
+        val intent = mainActivityIntent().apply {
+            addFlags(Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_CLEAR_TASK)
         }
         context.startActivity(intent)
 
@@ -287,8 +290,9 @@ class E2EAutomatedTest {
         android.os.SystemClock.sleep(2500)
 
         // Return to OTGMaster reliably instead of using pressBack() which might get caught in Gallery overlays
-        val otgIntent = context.packageManager.getLaunchIntentForPackage("app.fayaz.otgmaster")?.apply {
-            addFlags(Intent.FLAG_ACTIVITY_REORDER_TO_FRONT or Intent.FLAG_ACTIVITY_SINGLE_TOP or Intent.FLAG_ACTIVITY_CLEAR_TOP)
+        val otgIntent = mainActivityIntent().apply {
+            addFlags(Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_REORDER_TO_FRONT or
+                Intent.FLAG_ACTIVITY_SINGLE_TOP or Intent.FLAG_ACTIVITY_CLEAR_TOP)
         }
         context.startActivity(otgIntent)
         device.wait(Until.hasObject(By.pkg("app.fayaz.otgmaster").depth(0)), timeout * 2)
@@ -519,6 +523,9 @@ class E2EAutomatedTest {
         val gone = device.wait(Until.gone(By.descContains("unmount_button")), timeout)
         assertTrue("Drive was not successfully unmounted!", gone)
     }
+
+    private fun mainActivityIntent() =
+        Intent().setClassName("app.fayaz.otgmaster", "app.fayaz.otgmaster.MainActivity")
 
     /** The volume picker must tag the candidate with its container type, e.g. BITLOCKER. */
     private fun assertContainerTag(expected: String) {
