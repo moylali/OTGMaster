@@ -48,3 +48,4 @@ baselines/
 # mislabel every APK built after it.
 /otgbench-*.txt
 __pycache__/
+e2e_parallel_*/

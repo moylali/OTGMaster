@@ -87,9 +87,13 @@ JVM unit tests (e.g. `FilesystemDetector`) run without a device:
 
 #### UI testing
 
-The full device end-to-end suite (VeraCrypt/LUKS unlock + mount against generated test volumes,
-run on a QEMU Android emulator) is documented in `scripts/run_e2e_tests.sh` and is not part of CI,
-since it needs real USB-device emulation that isn't available on hosted runners.
+The full device end-to-end suite (VeraCrypt/LUKS/BitLocker unlock + mount against generated test
+volumes, run on a QEMU Android emulator) is documented in `scripts/run_e2e_tests.sh` and is not part
+of CI, since it needs real USB-device emulation that isn't available on hosted runners. It covers
+every filesystem in every container the app supports (`scripts/make_e2e_matrix.py`) plus the
+older single-feature cases — 43 in all. `scripts/run_e2e_parallel.sh` runs them across three
+emulators (about 30 minutes instead of 85) and merges one report; fixtures are built without root
+(see `docs/TEST_DATA.md` §6a).
 
 **Generating test data** — including how to add a fixture for a new cipher, hash,
 filesystem or container format, the per-case file contract, and the traps in the three
