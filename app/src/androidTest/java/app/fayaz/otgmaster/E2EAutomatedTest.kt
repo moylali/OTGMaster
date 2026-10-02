@@ -83,7 +83,7 @@ class E2EAutomatedTest {
 
         // Click "Scan USB Devices"
         val scanButton = device.wait(Until.findObject(By.desc("scan_button").clickable(true)), timeout)
-            ?: device.wait(Until.findObject(By.textContains("Scan").clickable(true)), timeout)
+            ?: findScanButton()
         scanButton?.click()
 
         // Wait for USB permission dialog (optional – may not appear if no device)
@@ -103,9 +103,10 @@ class E2EAutomatedTest {
         for (i in 1..iterations) {
             if (i > 1) {
                 // Click Scan again for remount
-                val scanButton = device.wait(Until.findObject(By.textContains("Scan")), timeout)
+                val scanButton = findScanButton()
                     ?: device.wait(Until.findObject(By.descContains("Scan")), timeout)
-                scanButton?.click()
+                assertNotNull("Scan button not found for the remount", scanButton)
+                scanButton!!.click()
                 android.os.SystemClock.sleep(2000)
             }
 
@@ -324,9 +325,10 @@ class E2EAutomatedTest {
         android.os.SystemClock.sleep(1000)
 
         // ── MOUNT #1 ──────────────────────────────────────────────────────────
-        val scanBtn1 = device.wait(Until.findObject(By.textContains("Scan").clickable(true)), timeout)
+        val scanBtn1 = findScanButton()
             ?: device.wait(Until.findObject(By.descContains("Scan").clickable(true)), timeout)
-        scanBtn1?.click()
+        assertNotNull("Scan button not found", scanBtn1)
+        scanBtn1!!.click()
         device.wait(Until.findObject(By.text(java.util.regex.Pattern.compile("(?i)Allow|OK"))), 5000L)?.click()
 
         assertContainerTag(arguments.getString("expected_container", ""))
@@ -385,9 +387,10 @@ class E2EAutomatedTest {
         doUnmount()
 
         // ── REMOUNT #2 — verify write persistence ─────────────────────────────
-        val scanBtn2 = device.wait(Until.findObject(By.textContains("Scan").clickable(true)), timeout)
+        val scanBtn2 = findScanButton()
             ?: device.wait(Until.findObject(By.descContains("Scan").clickable(true)), timeout)
-        scanBtn2?.click()
+        assertNotNull("Scan button not found", scanBtn2)
+        scanBtn2!!.click()
         android.os.SystemClock.sleep(2000)
 
         // Where the volume has a second secret (a BitLocker recovery key), remount
@@ -444,9 +447,10 @@ class E2EAutomatedTest {
         doUnmount()
 
         // ── REMOUNT #3 — verify deletion persisted ────────────────────────────
-        val scanBtn3 = device.wait(Until.findObject(By.textContains("Scan").clickable(true)), timeout)
+        val scanBtn3 = findScanButton()
             ?: device.wait(Until.findObject(By.descContains("Scan").clickable(true)), timeout)
-        scanBtn3?.click()
+        assertNotNull("Scan button not found", scanBtn3)
+        scanBtn3!!.click()
         android.os.SystemClock.sleep(2000)
 
         assertTrue("Mount #3 failed", doMount(password, pim, testCase, clearFields = true))
@@ -582,6 +586,7 @@ class E2EAutomatedTest {
             device.waitForIdle()
             device.wait(Until.findObject(selector), 5000L)?.let { return it }
         }
+        // Not found: the loop has left the page at the top again.
         captureScreen("not_found_after_scrolling")
         return null
     }
@@ -596,6 +601,27 @@ class E2EAutomatedTest {
             device.pressBack()
             android.os.SystemClock.sleep(500)
         }
+    }
+
+    /** Scrolls the app's page back to the top. */
+    private fun scrollToTop() {
+        runCatching {
+            androidx.test.uiautomator.UiScrollable(androidx.test.uiautomator.UiSelector()
+                .scrollable(true).packageName("app.fayaz.otgmaster")).scrollToBeginning(10)
+        }
+        device.waitForIdle()
+    }
+
+    /**
+     * The Scan USB Devices button, which sits at the top of the page. An earlier
+     * lookup lower down (PIM, Unlock & Mount) can leave the page scrolled, and the
+     * click on a missing button was skipped silently — the remount then found no
+     * candidate and failed as "Mount #2 failed" (m_luks1_exfat).
+     */
+    private fun findScanButton(): androidx.test.uiautomator.UiObject2? {
+        scrollToTop()
+        return device.wait(Until.findObject(By.textContains("Scan").clickable(true)), timeout)
+            ?: device.wait(Until.findObject(By.descContains("scan_button")), timeout)
     }
 
     private fun findMountButton(): androidx.test.uiautomator.UiObject2? =
