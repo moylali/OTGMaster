@@ -163,6 +163,34 @@ class Ext4WriteFsckTest {
         withFs { f -> assertTrue("reported read-only, for the READ-ONLY tag", f.isReadOnly) }
     }
 
+    /**
+     * ext2 and ext3 have no extents, and every inode this driver creates is an
+     * extent inode. Writing such a volume produced files e2fsck reports as corrupt
+     * and a real ext2/ext3 driver cannot read, while this driver read them back
+     * fine — found by the E2E host check. Such volumes must mount read-only.
+     */
+    @Test
+    fun ext2AndExt3VolumesAreReadOnly() {
+        for (type in listOf("ext2", "ext3")) {
+            val (rc, out) = run("mkfs.$type", "-q", "-F", "-m", "0", img.absolutePath)
+            assertEquals("mkfs.$type failed: $out", 0, rc)
+            val before = imageSha256()
+            withFs { f ->
+                assertTrue("$type volume mounted writable", f.isReadOnly)
+                assertTrue(f.readOnlyReason!!, f.readOnlyReason!!.contains("ext2/ext3"))
+                f.rootDirectory.listFiles()   // reads still work
+                try {
+                    f.rootDirectory.createFile("must-not-exist.txt").writeAll("x".toByteArray())
+                    org.junit.Assert.fail("a write succeeded on $type")
+                } catch (e: java.io.IOException) {
+                    assertTrue(e.message!!, e.message!!.contains("read-only"))
+                }
+            }
+            assertEquals("$type: not one byte of the image changed", before, imageSha256())
+            assertFsckClean("refused write on $type")
+        }
+    }
+
     @Test
     fun aCleanVolumeIsWritable() {
         withFs { f -> assertTrue("a freshly formatted volume is writable", !f.isReadOnly) }

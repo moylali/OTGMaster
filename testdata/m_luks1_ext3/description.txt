@@ -1,1 +1,1 @@
-Support matrix: ext3 inside LUKS1 aes-xts-plain64 (PBKDF2). Unlock, flower.jpg byte for byte, create/write/mkdir, remount, delete, remount.
+Support matrix: ext3 inside LUKS1 aes-xts-plain64 (PBKDF2). Unlock, read flower.jpg; the volume must mount READ-ONLY and refuse a create (the app cannot yet write ext2/ext3 without damaging it).

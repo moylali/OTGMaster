@@ -42,6 +42,8 @@ PASSWORD = "password123"
 PIM = 1
 RECOVERY = "111111-222222-333333-444444-555555-666666-111111-222222"
 FS_BYTES = 40 << 20           # FAT32 needs >= 65525 clusters; 40 MiB at 512 B gives that
+# Mounted read-only by the app: no extents, and the driver writes only extent inodes.
+READ_ONLY_FS = ("ext2", "ext3")
 BITLOCKER_CIPHER = {"fat32": "cbc128", "exfat": "xts256", "ntfs": "xts128"}
 TAG = {"vc": "VERACRYPT", "luks1": "LUKS1", "luks2": "LUKS2", "luks2_4k": "LUKS2", "bitlocker": "BITLOCKER"}
 NAMES = {"vc": "VeraCrypt AES/SHA-512", "luks1": "LUKS1 aes-xts-plain64 (PBKDF2)",
@@ -176,13 +178,22 @@ def build(container, fs, work):
     if container == "bitlocker":
         put("recovery.txt", RECOVERY)
     put("container.txt", TAG[container])
-    put("write_test.txt", "true")
-    put("verify_flower.txt", "true")
+    if fs in READ_ONLY_FS:
+        put("read_only.txt", "true")
+    else:
+        put("write_test.txt", "true")
+        put("verify_flower.txt", "true")
     extra = f" ({BITLOCKER_CIPHER[fs]})" if container == "bitlocker" else ""
-    put("description.txt",
-        f"Support matrix: {NAMES[fs]} inside {NAMES.get(container, 'BitLocker')}{extra}. Unlock, "
-        f"flower.jpg byte for byte, create/write/mkdir, remount, delete, remount"
-        + (" (second mount with the recovery key)" if container == "bitlocker" else "") + ".")
+    if fs in READ_ONLY_FS:
+        put("description.txt",
+            f"Support matrix: {NAMES[fs]} inside {NAMES.get(container, 'BitLocker')}. Unlock, read "
+            f"flower.jpg; the volume must mount READ-ONLY and refuse a create (the app cannot yet "
+            f"write ext2/ext3 without damaging it).")
+    else:
+        put("description.txt",
+            f"Support matrix: {NAMES[fs]} inside {NAMES.get(container, 'BitLocker')}{extra}. Unlock, "
+            f"flower.jpg byte for byte, create/write/mkdir, remount, delete, remount"
+            + (" (second mount with the recovery key)" if container == "bitlocker" else "") + ".")
     print(f"{d}: {os.path.getsize(img) >> 20} MiB")
 
 
