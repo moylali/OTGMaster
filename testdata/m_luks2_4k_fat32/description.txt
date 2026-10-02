@@ -1,0 +1,1 @@
+Support matrix: FAT32 inside LUKS2 aes-xts-plain64 (Argon2id, 4096-byte sectors). Unlock, flower.jpg byte for byte, create/write/mkdir, remount, delete, remount.
