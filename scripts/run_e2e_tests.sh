@@ -320,6 +320,11 @@ for test_dir in "$TESTDATA_DIR"/*/; do
     echo "Dumping logcat for analysis:"
     $CMD_ADB -s emulator-5554 logcat -d > "logcat_${TEST_NAME}.txt"
     echo "Logcat saved to logcat_${TEST_NAME}.txt"
+    # Diagnostics the test saves when a wait fails (screenshot + UI hierarchy).
+    for f in $($CMD_ADB -s emulator-5554 shell "ls /sdcard/Download/e2e_* 2>/dev/null" | tr -d '\r'); do
+        $CMD_ADB -s emulator-5554 pull "$f" "e2e_${TEST_NAME}_$(basename "$f")" >/dev/null 2>&1
+        $CMD_ADB -s emulator-5554 shell rm -f "$f"
+    done
 
     if echo "$TEST_OUT" | grep -q "FAILURES!!!" || echo "$TEST_OUT" | grep -q "Process crashed"; then
         TEST_EXIT_CODE=1
