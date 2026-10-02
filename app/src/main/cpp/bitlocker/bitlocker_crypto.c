@@ -59,7 +59,8 @@ struct bitlk_ctx {
 
 struct bitlk_ctx *bitlk_ctx_new(int mode, const uint8_t *key, size_t key_len, uint32_t sector_size)
 {
-    if (sector_size != 512 && sector_size != 4096) return NULL;
+    /* BitLocker uses 512 or 4096; LUKS2 (which shares the XTS path) any power of two between. */
+    if (sector_size < 512 || sector_size > 4096 || (sector_size & (sector_size - 1))) return NULL;
     struct bitlk_ctx *c = calloc(1, sizeof(*c));
     if (!c) return NULL;
     c->mode = mode;

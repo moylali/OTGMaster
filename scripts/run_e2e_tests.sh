@@ -74,6 +74,12 @@ ensure_testdata() {
             break
         fi
     done
+
+    # The support matrix: every filesystem in every container (scripts/make_e2e_matrix.py).
+    if [ ! -f "$TESTDATA_DIR/m_bitlocker_ntfs/test.img" ] || [ ! -f "$TESTDATA_DIR/m_luks2_ext2/test.img" ]; then
+        echo "Generating the support-matrix fixtures..."
+        python3 scripts/make_e2e_matrix.py || { echo "Matrix fixture generation failed!"; exit 1; }
+    fi
 }
 
 ensure_testdata
@@ -105,8 +111,10 @@ if [ -z "$FIRST_IMG" ]; then
     echo "Error: no test image found in $TESTDATA_DIR"
     exit 1
 fi
-dd if=/dev/zero of="$SLOT_FILE" bs=1M count=25
-echo "Slot file initialised to 25MB"
+# 64 MiB: the support-matrix LUKS2 images are 56 MiB (16 MiB of LUKS2 metadata
+# plus a 40 MiB filesystem, the smallest that FAT32 accepts at 512-byte clusters).
+dd if=/dev/zero of="$SLOT_FILE" bs=1M count=64
+echo "Slot file initialised to 64MB"
 
 # Launch the emulator once with the slot file as a persistent USB drive backend.
 # The drive backend (slot_dev) stays alive for the full run; we overwrite it inside Android.
@@ -235,6 +243,10 @@ for test_dir in "$TESTDATA_DIR"/*/; do
     if [ -f "$test_dir/recovery.txt" ]; then
         RECOVERY_ARG="-e recovery $(cat "$test_dir/recovery.txt")"
     fi
+    FLOWER_ARG=""
+    if [ -f "$test_dir/verify_flower.txt" ]; then
+        FLOWER_ARG="-e flower_sha256 $(sha256sum "$TESTDATA_DIR/flower.jpg" | cut -d' ' -f1)"
+    fi
     CONTAINER_ARG=""
     if [ -f "$test_dir/container.txt" ]; then
         CONTAINER_ARG="-e expected_container $(cat "$test_dir/container.txt")"
@@ -299,6 +311,7 @@ for test_dir in "$TESTDATA_DIR"/*/; do
         $WRITE_TEST_ARG \
         $RECOVERY_ARG \
         $CONTAINER_ARG \
+        $FLOWER_ARG \
         -e class app.fayaz.otgmaster.E2EAutomatedTest \
         $PACKAGE_NAME.test/androidx.test.runner.AndroidJUnitRunner)
 

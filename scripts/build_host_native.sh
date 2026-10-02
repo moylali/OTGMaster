@@ -1,6 +1,7 @@
 #!/usr/bin/env bash
-# Builds the app's filesystem and BitLocker native code — libntfs-3g with its JNI
-# bridge, and bitlocker_crypto over mbedtls with its JNI bridge — for the host JVM,
+# Builds the app's native code — libntfs-3g, bitlocker_crypto and the VeraCrypt/LUKS
+# sector crypto (VeraCryptNative, Serpent) over mbedtls, each with its JNI bridge —
+# for the host JVM,
 # so the unit tests drive the same native code the app ships against loopback
 # images. Output: $1 (default app/build/host-native/libotg-host.so).
 #
@@ -10,7 +11,8 @@ cd "$(dirname "$0")/.."
 out="${1:-app/build/host-native/libotg-host.so}"
 cpp=app/src/main/cpp
 srcs=("$cpp"/ntfs-3g/libntfs-3g/*.c "$cpp"/ntfs/NtfsNative.cpp
-      "$cpp"/bitlocker/*.c "$cpp"/bitlocker/*.cpp "$cpp"/mbedtls/library/*.c)
+      "$cpp"/bitlocker/*.c "$cpp"/bitlocker/*.cpp "$cpp"/mbedtls/library/*.c
+      "$cpp"/VeraCryptNative.cpp "$cpp"/serpent/*.c)
 
 if [[ -f "$out" ]] && [[ -z "$(find "${srcs[@]}" "$cpp"/ntfs/config.h "$cpp"/ntfs-3g/include "$cpp"/bitlocker app/src/test/cpp -newer "$out" -print -quit)" ]]; then
     echo "$out is up to date"
@@ -27,20 +29,21 @@ flags=(-fPIC -O1 -g -DHAVE_CONFIG_H -D_FILE_OFFSET_BITS=64
        -I"$java_home/include" -I"$java_home/include/linux" -w)
 objs=()
 pids=()
-mbed=(-I"$cpp/mbedtls/include" -I"$cpp/bitlocker")
+mbed=(-I"$cpp/mbedtls/include" -I"$cpp/bitlocker" -I"$cpp/serpent")
 for f in "$cpp"/ntfs-3g/libntfs-3g/*.c; do
     o="$obj/ntfs_$(basename "$f" .c).o"
     gcc -c "${flags[@]}" "$f" -o "$o" & pids+=($!)
     objs+=("$o")
 done
-for f in "$cpp"/mbedtls/library/*.c "$cpp"/bitlocker/*.c; do
+for f in "$cpp"/mbedtls/library/*.c "$cpp"/bitlocker/*.c "$cpp"/serpent/*.c; do
     o="$obj/mbed_$(basename "$f" .c).o"
     gcc -c -fPIC -O2 -w "${mbed[@]}" "$f" -o "$o" & pids+=($!)
     objs+=("$o")
 done
 g++ -c -std=c++17 "${flags[@]}" "$cpp/ntfs/NtfsNative.cpp" -o "$obj/NtfsNative.o" & pids+=($!)
 g++ -c -std=c++17 "${flags[@]}" "${mbed[@]}" "$cpp/bitlocker/BitLockerNative.cpp" -o "$obj/BitLockerNative.o" & pids+=($!)
-objs+=("$obj/NtfsNative.o" "$obj/BitLockerNative.o")
+g++ -c -std=c++17 "${flags[@]}" "${mbed[@]}" "$cpp/VeraCryptNative.cpp" -o "$obj/VeraCryptNative.o" & pids+=($!)
+objs+=("$obj/NtfsNative.o" "$obj/BitLockerNative.o" "$obj/VeraCryptNative.o")
 for p in "${pids[@]}"; do wait "$p"; done
 g++ -shared -o "$out" "${objs[@]}"
 echo "built $out"
