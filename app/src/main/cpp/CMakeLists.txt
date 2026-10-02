@@ -59,3 +59,36 @@ target_link_libraries(veracrypt-native
         exfat
         serpent
         log)
+
+# apfs-native
+set(LIBFSAPFS_DIR ${CMAKE_SOURCE_DIR}/../../../../vendor/libfsapfs)
+
+add_library(apfs-native SHARED ApfsNative.cpp)
+target_include_directories(apfs-native PRIVATE
+    ${LIBFSAPFS_DIR}/include
+    ${LIBFSAPFS_DIR}/common
+    ${LIBFSAPFS_DIR}/libcerror
+    ${LIBFSAPFS_DIR}/libbfio
+    ${LIBFSAPFS_DIR}/libfsapfs
+)
+
+target_link_libraries(apfs-native
+    ${LIBFSAPFS_DIR}/libfsapfs/.libs/libfsapfs.a
+    ${LIBFSAPFS_DIR}/libbfio/.libs/libbfio.a
+    ${LIBFSAPFS_DIR}/libfguid/.libs/libfguid.a
+    ${LIBFSAPFS_DIR}/libfmos/.libs/libfmos.a
+    ${LIBFSAPFS_DIR}/libcsplit/.libs/libcsplit.a
+    ${LIBFSAPFS_DIR}/libfdata/.libs/libfdata.a
+    ${LIBFSAPFS_DIR}/libcdata/.libs/libcdata.a
+    ${LIBFSAPFS_DIR}/libfdatetime/.libs/libfdatetime.a
+    ${LIBFSAPFS_DIR}/libcfile/.libs/libcfile.a
+    ${LIBFSAPFS_DIR}/libcerror/.libs/libcerror.a
+    ${LIBFSAPFS_DIR}/libfcache/.libs/libfcache.a
+    ${LIBFSAPFS_DIR}/libclocale/.libs/libclocale.a
+    ${LIBFSAPFS_DIR}/libcpath/.libs/libcpath.a
+    ${LIBFSAPFS_DIR}/libuna/.libs/libuna.a
+    ${LIBFSAPFS_DIR}/libhmac/.libs/libhmac.a
+    ${LIBFSAPFS_DIR}/libcnotify/.libs/libcnotify.a
+    ${LIBFSAPFS_DIR}/libcaes/.libs/libcaes.a
+    log
+)

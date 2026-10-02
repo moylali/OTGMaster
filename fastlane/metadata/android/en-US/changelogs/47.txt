@@ -1,0 +1,2 @@
+• New: Support for APFS (Apple File System) volumes (Read-Only)
+• New: Open encrypted APFS volumes
