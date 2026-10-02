@@ -548,7 +548,14 @@ class E2EAutomatedTest {
         assertTrue("Unmount button not found", unmountButton != null)
         unmountButton?.click()
         val gone = device.wait(Until.gone(By.descContains("unmount_button")), UNMOUNT_WAIT_MS)
+        if (!gone) captureScreen("unmount_not_gone")
         assertTrue("Drive was not successfully unmounted!", gone)
+    }
+
+    /** Screenshot and UI hierarchy to /sdcard/Download, for diagnosing a failed wait. */
+    private fun captureScreen(tag: String) {
+        runCatching { device.takeScreenshot(java.io.File("/sdcard/Download/e2e_$tag.png")) }
+        runCatching { device.dumpWindowHierarchy(java.io.File("/sdcard/Download/e2e_$tag.xml")) }
     }
 
     private fun mainActivityIntent() =
