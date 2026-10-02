@@ -183,6 +183,7 @@ IS_FIRST_TEST=true
 TEST_NUM=0
 PASSED_COUNT=0
 FAILED_COUNT=0
+FLAKY_COUNT=0
 
 for test_dir in "$TESTDATA_DIR"/*/; do
     if [ ! -d "$test_dir" ]; then continue; fi
@@ -290,47 +291,68 @@ for test_dir in "$TESTDATA_DIR"/*/; do
     # Clear logcat so each test's dump is isolated
     $CMD_ADB -s emulator-5554 logcat -c
 
-    # Run test
-    # Overwrite the slot device with the specific test image
-    echo "Writing test image: ./testdata/${TEST_NAME}/test.img to /dev/block/sda"
-    $CMD_ADB -s emulator-5554 shell "su 0 dd if=/data/local/tmp/testdata/${TEST_NAME}/test.img of=/dev/block/sda bs=1M conv=fsync"
-    $CMD_ADB -s emulator-5554 shell "su 0 sync"
-    $CMD_ADB -s emulator-5554 shell "su 0 sync"
-    sleep 2
+    # Run test — once, and once more if it fails. A pass on the second attempt is
+    # reported as FLAKY, never as a plain pass, and the first attempt's logcat and
+    # screenshots are kept (logcat_<case>_attempt1.txt) so the flake can be traced.
+    # UI Automator on the emulator does fail intermittently (a remount once found
+    # no password field with every app log normal); one such miss used to abort a
+    # two-hour run, while a real defect fails both attempts.
+    ATTEMPT=1
+    FLAKY=false
+    while true; do
+        # Overwrite the slot device with the specific test image
+        echo "Writing test image: ./testdata/${TEST_NAME}/test.img to /dev/block/sda"
+        $CMD_ADB -s emulator-5554 shell "su 0 dd if=/data/local/tmp/testdata/${TEST_NAME}/test.img of=/dev/block/sda bs=1M conv=fsync"
+        $CMD_ADB -s emulator-5554 shell "su 0 sync"
+        $CMD_ADB -s emulator-5554 shell "su 0 sync"
+        sleep 2
 
-    echo "Running UI Automator Test..."
-    TEST_OUT=$($CMD_ADB -s emulator-5554 shell am instrument -w \
-        -e password "$PASSWORD" \
-        -e testCase "$TEST_NAME" \
-        $KEYFILE_ARG \
-        $PIM_ARG \
-        $EXPECT_MOUNT_ARG \
-        $EXPECTED_FS_ARG \
-        $CIPHER_ARG \
-        $REMOUNT_ARG \
-        $WRITE_TEST_ARG \
-        $RECOVERY_ARG \
-        $CONTAINER_ARG \
-        $FLOWER_ARG \
-        -e class app.fayaz.otgmaster.E2EAutomatedTest \
-        $PACKAGE_NAME.test/androidx.test.runner.AndroidJUnitRunner)
+        echo "Running UI Automator Test..."
+        TEST_OUT=$($CMD_ADB -s emulator-5554 shell am instrument -w \
+            -e password "$PASSWORD" \
+            -e testCase "$TEST_NAME" \
+            $KEYFILE_ARG \
+            $PIM_ARG \
+            $EXPECT_MOUNT_ARG \
+            $EXPECTED_FS_ARG \
+            $CIPHER_ARG \
+            $REMOUNT_ARG \
+            $WRITE_TEST_ARG \
+            $RECOVERY_ARG \
+            $CONTAINER_ARG \
+            $FLOWER_ARG \
+            -e class app.fayaz.otgmaster.E2EAutomatedTest \
+            $PACKAGE_NAME.test/androidx.test.runner.AndroidJUnitRunner)
 
-    echo "$TEST_OUT"
+        echo "$TEST_OUT"
 
-    echo "Dumping logcat for analysis:"
-    $CMD_ADB -s emulator-5554 logcat -d > "logcat_${TEST_NAME}.txt"
-    echo "Logcat saved to logcat_${TEST_NAME}.txt"
-    # Diagnostics the test saves when a wait fails (screenshot + UI hierarchy).
-    for f in $($CMD_ADB -s emulator-5554 shell "ls /sdcard/Download/e2e_* 2>/dev/null" | tr -d '\r'); do
-        $CMD_ADB -s emulator-5554 pull "$f" "e2e_${TEST_NAME}_$(basename "$f")" >/dev/null 2>&1
-        $CMD_ADB -s emulator-5554 shell rm -f "$f"
+        echo "Dumping logcat for analysis:"
+        $CMD_ADB -s emulator-5554 logcat -d > "logcat_${TEST_NAME}.txt"
+        echo "Logcat saved to logcat_${TEST_NAME}.txt"
+        # Diagnostics the test saves when a wait fails (screenshot + UI hierarchy).
+        for f in $($CMD_ADB -s emulator-5554 shell "ls /sdcard/Download/e2e_* 2>/dev/null" | tr -d '\r'); do
+            $CMD_ADB -s emulator-5554 pull "$f" "e2e_${TEST_NAME}_$(basename "$f")" >/dev/null 2>&1
+            $CMD_ADB -s emulator-5554 shell rm -f "$f"
+        done
+
+        if echo "$TEST_OUT" | grep -q "FAILURES!!!" || echo "$TEST_OUT" | grep -q "Process crashed"; then
+            TEST_EXIT_CODE=1
+        else
+            TEST_EXIT_CODE=0
+        fi
+
+
+        if [ $TEST_EXIT_CODE -ne 0 ] && [ $ATTEMPT -eq 1 ]; then
+            echo "Attempt 1 of $TEST_NAME failed; retrying once."
+            mv "logcat_${TEST_NAME}.txt" "logcat_${TEST_NAME}_attempt1.txt"
+            for f in e2e_${TEST_NAME}_e2e_*; do [ -e "$f" ] && mv "$f" "attempt1_$f"; done
+            $CMD_ADB -s emulator-5554 shell am force-stop "$PACKAGE_NAME"
+            ATTEMPT=2
+            continue
+        fi
+        [ $TEST_EXIT_CODE -eq 0 ] && [ $ATTEMPT -eq 2 ] && FLAKY=true
+        break
     done
-
-    if echo "$TEST_OUT" | grep -q "FAILURES!!!" || echo "$TEST_OUT" | grep -q "Process crashed"; then
-        TEST_EXIT_CODE=1
-    else
-        TEST_EXIT_CODE=0
-    fi
 
     # Force-stop app to reset state; USB stays connected until the next test's usb_swap
     $CMD_ADB -s emulator-5554 shell am force-stop "$PACKAGE_NAME"
@@ -345,9 +367,15 @@ for test_dir in "$TESTDATA_DIR"/*/; do
         echo "| $TEST_NUM | \`$TEST_NAME\` | $DESCRIPTION | ❌ FAILED | ${DURATION}s |" >> "$REPORT_FILE"
         break
     else
-        echo "TEST PASSED: $TEST_NAME"
         PASSED_COUNT=$((PASSED_COUNT + 1))
-        echo "| $TEST_NUM | \`$TEST_NAME\` | $DESCRIPTION | ✅ PASSED | ${DURATION}s |" >> "$REPORT_FILE"
+        if [ "$FLAKY" = true ]; then
+            echo "TEST PASSED ON RETRY (FLAKY): $TEST_NAME"
+            FLAKY_COUNT=$((FLAKY_COUNT + 1))
+            echo "| $TEST_NUM | \`$TEST_NAME\` | $DESCRIPTION | ⚠️ FLAKY — failed, passed on retry (logcat_${TEST_NAME}_attempt1.txt) | ${DURATION}s |" >> "$REPORT_FILE"
+        else
+            echo "TEST PASSED: $TEST_NAME"
+            echo "| $TEST_NUM | \`$TEST_NAME\` | $DESCRIPTION | ✅ PASSED | ${DURATION}s |" >> "$REPORT_FILE"
+        fi
     fi
 done
 
@@ -367,6 +395,7 @@ cat >> "$REPORT_FILE" << REPORT_FOOTER
 | Total run | $TOTAL_COUNT |
 | Passed | $PASSED_COUNT |
 | Failed | $FAILED_COUNT |
+| Flaky (passed on retry, counted in Passed) | $FLAKY_COUNT |
 | Overall | $OVERALL_STATUS |
 REPORT_FOOTER
 
