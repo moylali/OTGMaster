@@ -102,6 +102,7 @@
     <string name="log_usb_device_attached">USB device attached.</string>
     <string name="log_usb_device_detached">USB device detached.</string>
     <string name="log_found_usb_devices">Found %1$d USB devices.</string>
+    <string name="log_reoffered_locked_partitions">%1$d locked partition(s) on %2$s, beside one already mounted.</string>
     <string name="log_found_candidates_qemu">Found %1$d VeraCrypt volume candidates on QEMU disk.</string>
     <string name="log_error_probing_qemu_candidates">Error probing QEMU candidates: %1$s</string>
     <string name="log_no_usb_devices">No USB devices found.</string>

@@ -126,6 +126,7 @@ class E2EAutomatedTest {
                 passwordField = device.wait(Until.findObject(By.descContains("password_input")), 15000L)
             }
 
+            if (passwordField == null) captureScreen("no_password_field")
             assertTrue("USB device not detected — password input not shown within 30s", passwordField != null)
             assertContainerTag(arguments.getString("expected_container", ""))
 
@@ -154,7 +155,9 @@ class E2EAutomatedTest {
             android.os.SystemClock.sleep(500)
 
             if (pim.isNotEmpty()) {
-                val pimField = device.wait(Until.findObject(By.descContains("pim_input")), timeout)
+                val pimField = findScrolling(By.descContains("pim_input"), desc = "pim_input")
+                if (pimField == null) captureScreen("no_pim_field")
+                assertNotNull("PIM field not found", pimField)
                 pimField?.click()
                 android.os.SystemClock.sleep(500)
                 if (i > 1) {
@@ -208,8 +211,8 @@ class E2EAutomatedTest {
             }
 
             // Click Mount
-            val mountButton = device.wait(Until.findObject(By.descContains("mount_button")), timeout)
-                ?: device.wait(Until.findObject(By.textContains("Unlock & Mount")), timeout)
+            val mountButton = findMountButton()
+            if (mountButton == null) captureScreen("no_mount_button")
             assertTrue("Mount button not found", mountButton != null)
             assertTrue("Mount button is not enabled", mountButton!!.isEnabled)
             mountButton.click()
@@ -220,7 +223,7 @@ class E2EAutomatedTest {
             }
 
             // Wait for "Mounted" state. Increase timeout to 300s due to slow emulator crypto performance.
-            val mountedText = device.wait(Until.findObject(By.textContains("Used")), 300000L)
+            val mountedText = waitForMounted(300000L)
             assertTrue("Drive was not successfully mounted!", mountedText != null)
 
             // Verify capacity is populated
@@ -231,29 +234,25 @@ class E2EAutomatedTest {
 
             val context = ApplicationProvider.getApplicationContext<Context>()
             
-            // Dynamically find the docId for flower.jpg since it is now prepended with a dynamic drive ID
-            val rootsUri = android.provider.DocumentsContract.buildRootsUri("app.fayaz.otgmaster.documents")
-            var rootDocId: String? = null
-            context.contentResolver.query(rootsUri, null, null, null, null)?.use { cursor ->
-                if (cursor.moveToFirst()) {
-                    val index = cursor.getColumnIndex(android.provider.DocumentsContract.Root.COLUMN_DOCUMENT_ID)
-                    if (index != -1) rootDocId = cursor.getString(index)
-                }
-            }
-            assertTrue("No roots found from DocumentsProvider", rootDocId != null)
-
-            val childrenUri = android.provider.DocumentsContract.buildChildDocumentsUri("app.fayaz.otgmaster.documents", rootDocId)
+            // Every mounted drive is a root, and with a plain partition auto-mounted
+            // beside the encrypted one (partitioned_mbr) the first root is the plain
+            // one. Look for the fixture files in each root, not just the first.
+            val rootIds = allRootDocIds(context)
+            assertTrue("No roots found from DocumentsProvider", rootIds.isNotEmpty())
             var flowerDocId: String? = null
             var spaceFileDocId: String? = null
-            context.contentResolver.query(childrenUri, null, null, null, null)?.use { cursor ->
-                while (cursor.moveToNext()) {
-                    val docIdIndex = cursor.getColumnIndex(android.provider.DocumentsContract.Document.COLUMN_DOCUMENT_ID)
-                    val docId = cursor.getString(docIdIndex)
-                    if (docId != null) {
+            for (rootDocId in rootIds) {
+                context.contentResolver.query(
+                    android.provider.DocumentsContract.buildChildDocumentsUri(AUTHORITY, rootDocId), null, null, null, null
+                )?.use { cursor ->
+                    while (cursor.moveToNext()) {
+                        val docId = cursor.getString(cursor.getColumnIndex(
+                            android.provider.DocumentsContract.Document.COLUMN_DOCUMENT_ID)) ?: continue
                         if (docId.endsWith("flower.jpg")) flowerDocId = docId
                         if (docId.endsWith("file with spaces.txt")) spaceFileDocId = docId
                     }
                 }
+                if (flowerDocId != null) break
             }
             assertTrue("flower.jpg not found in the root directory", flowerDocId != null)
             assertTrue("file with spaces.txt not found in the root directory", spaceFileDocId != null)
@@ -507,8 +506,9 @@ class E2EAutomatedTest {
         android.os.SystemClock.sleep(500)
 
         if (pim.isNotEmpty()) {
-            val pimField = device.wait(Until.findObject(By.descContains("pim_input")), timeout)
-            pimField?.click()
+            val pimField = findScrolling(By.descContains("pim_input"), desc = "pim_input")
+                ?: return false.also { captureScreen("no_pim_field") }
+            pimField.click()
             android.os.SystemClock.sleep(500)
             if (clearFields) {
                 repeat(20) { device.executeShellCommand("input keyevent KEYCODE_DEL") }
@@ -521,12 +521,12 @@ class E2EAutomatedTest {
         device.pressEnter()
         android.os.SystemClock.sleep(500)
 
-        val mountButton = device.wait(Until.findObject(By.descContains("mount_button")), timeout)
-            ?: device.wait(Until.findObject(By.textContains("Unlock & Mount")), timeout)
+        val mountButton = findMountButton()
+        if (mountButton == null) captureScreen("no_mount_button")
         if (mountButton == null || !mountButton.isEnabled) return false
         mountButton.click()
 
-        return device.wait(Until.findObject(By.textContains("Used")), 300000L) != null
+        return waitForMounted(300000L) != null
     }
 
     private fun clickByDesc(desc: String, waitMs: Long = timeout, retries: Int = 3): Boolean {
@@ -552,6 +552,67 @@ class E2EAutomatedTest {
         assertTrue("Drive was not successfully unmounted!", gone)
     }
 
+    /**
+     * Finds [selector], scrolling the screen to it. With a mounted drive's card
+     * above the unlock form (a plain partition beside the encrypted one) the PIM
+     * field and Unlock & Mount sit below the fold, and UI Automator only sees what
+     * is on screen; the PIM field being missed silently made partitioned_mbr unlock
+     * with no PIM — 500,000 iterations instead of 16,000, a wrong key, and a
+     * "not mounted" failure that looked like a mount bug. Scrolls down first, then
+     * back up, so it finds things on either side.
+     */
+    private fun findScrolling(selector: androidx.test.uiautomator.BySelector, desc: String? = null,
+                              text: String? = null, firstWaitMs: Long = 2000L): androidx.test.uiautomator.UiObject2? {
+        device.wait(Until.findObject(selector), firstWaitMs)?.let { return it }
+        // The keyboard opened by the password field covers the lower half, and a swipe
+        // starting on it types rather than scrolls. Close it first — with Back, and
+        // only while it is up, since Back with no keyboard would leave the app.
+        hideKeyboard()
+        device.findObject(selector)?.let { return it }
+        // Scroll the app's own container (a ScrollView covering the screen) rather
+        // than swiping — a swipe near the top pulled down the notification shade.
+        // Then *wait* for the element: after a programmatic scroll the accessibility
+        // tree lags the screen, and a dump taken right after scrolling showed the
+        // form only down to "Select Keyfiles" while the screenshot showed Unlock &
+        // Mount on screen.
+        val scrollable = androidx.test.uiautomator.UiScrollable(
+            androidx.test.uiautomator.UiSelector().scrollable(true).packageName("app.fayaz.otgmaster"))
+        for (toEnd in listOf(true, false)) {
+            runCatching { if (toEnd) scrollable.scrollToEnd(10) else scrollable.scrollToBeginning(10) }
+            device.waitForIdle()
+            device.wait(Until.findObject(selector), 5000L)?.let { return it }
+        }
+        captureScreen("not_found_after_scrolling")
+        return null
+    }
+
+    private fun hideKeyboard() {
+        // The accessibility window list has an input-method window only while the
+        // keyboard is on screen. The dumpsys flag and Gboard's view tree both
+        // outlive it, and a Back pressed on either false positive left the app.
+        val imeUp = InstrumentationRegistry.getInstrumentation().uiAutomation.windows
+            .any { it.type == android.view.accessibility.AccessibilityWindowInfo.TYPE_INPUT_METHOD }
+        if (imeUp) {
+            device.pressBack()
+            android.os.SystemClock.sleep(500)
+        }
+    }
+
+    private fun findMountButton(): androidx.test.uiautomator.UiObject2? =
+        findScrolling(By.descContains("mount_button"), desc = "mount_button")
+            ?: findScrolling(By.textContains("Unlock & Mount"), text = "Unlock & Mount", firstWaitMs = 0L)
+
+    /** Waits up to [timeoutMs] for a mounted card ("Used:"), scrolling up to it. */
+    private fun waitForMounted(timeoutMs: Long): androidx.test.uiautomator.UiObject2? {
+        val deadline = android.os.SystemClock.uptimeMillis() + timeoutMs
+        while (android.os.SystemClock.uptimeMillis() < deadline) {
+            device.wait(Until.findObject(By.textContains("Used")), 5000L)?.let { return it }
+            device.findObject(By.scrollable(true).pkg("app.fayaz.otgmaster"))
+                ?.scroll(androidx.test.uiautomator.Direction.UP, 1.0f)
+        }
+        return null
+    }
+
     /** Screenshot and UI hierarchy to /sdcard/Download, for diagnosing a failed wait. */
     private fun captureScreen(tag: String) {
         runCatching { device.takeScreenshot(java.io.File("/sdcard/Download/e2e_$tag.png")) }
@@ -566,6 +627,15 @@ class E2EAutomatedTest {
         if (expected.isEmpty()) return
         assertTrue("Volume picker does not tag the volume as $expected",
             device.wait(Until.findObject(By.text(expected)), timeout) != null)
+    }
+
+    private fun allRootDocIds(context: Context): List<String> {
+        val ids = mutableListOf<String>()
+        context.contentResolver.query(DocumentsContract.buildRootsUri(AUTHORITY), null, null, null, null)?.use { c ->
+            val i = c.getColumnIndex(DocumentsContract.Root.COLUMN_DOCUMENT_ID)
+            while (i != -1 && c.moveToNext()) c.getString(i)?.let { ids += it }
+        }
+        return ids
     }
 
     private fun getRootDocId(context: Context): String? {

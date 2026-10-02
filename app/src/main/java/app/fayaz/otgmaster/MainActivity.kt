@@ -640,6 +640,8 @@ class MainActivity : AppCompatActivity() {
             _deviceCandidates.value = _deviceCandidates.value.filterNot { it.deviceName in staleKeys }
         }
 
+        reofferPartlyMountedDevices(mountedDeviceKeys)
+
         if (devices.isEmpty()) {
             val qemuAlreadyHandled = QEMU_DEVICE_KEY in mountedDeviceKeys ||
                 QEMU_DEVICE_KEY in openedDevices ||
@@ -671,6 +673,65 @@ class MainActivity : AppCompatActivity() {
             appendLog(getString(R.string.log_requested_usb_permission))
         } else {
             openAndProbeUsb()
+        }
+    }
+
+    /** Devices being re-probed by [reofferPartlyMountedDevices], so it runs once per device. */
+    private val reofferInFlight = java.util.concurrent.ConcurrentHashMap.newKeySet<String>()
+
+    /**
+     * Offers the still-locked partitions of a device that already has a partition
+     * mounted, when this activity has no form entry for it.
+     *
+     * Mounts outlive the activity (they live in OtgMasterState), the form does not.
+     * refreshDevices skips any device with a mounted partition — rightly, since
+     * opening it again would claim the USB interface and kill the live mount — so a
+     * recreated activity (rotation, memory pressure, leaving and coming back) never
+     * re-offered the other partitions: on a drive with a plain partition beside an
+     * encrypted one, the encrypted one showed "No USB drives available to mount"
+     * until the drive was replugged. Found by the partitioned_mbr E2E case, whose
+     * test relaunches the activity between its two test methods.
+     *
+     * The probe reads through the mounted drive's own connection, under deviceMutex,
+     * and never opens a new one.
+     */
+    private fun reofferPartlyMountedDevices(mountedDeviceKeys: Set<String>) {
+        val offered = _deviceCandidates.value.map { it.deviceName }.toSet()
+        for (key in mountedDeviceKeys) {
+            if (key in offered || isUnmounting(key) || !reofferInFlight.add(key)) continue
+            val drives = OtgMasterState.mountedDrives.filter { it.sourceDeviceName == key }
+            val raw = drives.firstNotNullOfOrNull { it.rawBlockDevice }
+            if (raw == null) { reofferInFlight.remove(key); continue }
+            val display = drives.firstNotNullOfOrNull { it.sourceDeviceDisplayName } ?: key
+            lifecycleScope.launch(Dispatchers.IO) {
+                try {
+                    val probed = deviceMutex.withLock {
+                        app.fayaz.otgmaster.veracrypt.VeraCryptUnlocker().probeCandidates(raw)
+                    }
+                    val mountedLabels = OtgMasterState.mountedDrives
+                        .filter { it.sourceDeviceName == key }.map { it.partitionLabel }.toSet()
+                    val mountedStarts = OtgMasterState.mountedDrives
+                        .filter { it.sourceDeviceName == key }
+                        .mapNotNull { it.sourceVolumeCandidate?.startBlock }.toSet()
+                    val locked = probed.filter {
+                        it.containerType != app.fayaz.otgmaster.veracrypt.ContainerType.UNKNOWN &&
+                            it.containerType != app.fayaz.otgmaster.veracrypt.ContainerType.UNENCRYPTED &&
+                            it.label !in mountedLabels && it.startBlock !in mountedStarts
+                    }
+                    withContext(Dispatchers.Main) {
+                        if (locked.isNotEmpty() && _deviceCandidates.value.none { it.deviceName == key }) {
+                            openedDevices.putIfAbsent(key, raw)
+                            _deviceCandidates.value = _deviceCandidates.value +
+                                UsbDeviceCandidate(key, display, raw, locked, emptyList(), probed.size - locked.size)
+                            appendLog(getString(R.string.log_reoffered_locked_partitions, locked.size, display))
+                        }
+                    }
+                } catch (e: Exception) {
+                    android.util.Log.w(TAG, "re-probe of partly mounted $key failed", e)
+                } finally {
+                    reofferInFlight.remove(key)
+                }
+            }
         }
     }
 
