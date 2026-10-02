@@ -500,7 +500,7 @@ class E2EAutomatedTest {
 
         // Re-find and click the password field with retry: a UiObject2 can go stale
         // between findObject() and click() if Compose recomposes in that window.
-        if (!clickByDesc("password_input", waitMs = 10000L)) return false
+        if (!clickByDesc("password_input", waitMs = 10000L)) return false.also { captureScreen("no_password_field") }
         android.os.SystemClock.sleep(500)
         if (clearFields) {
             repeat(50) { device.executeShellCommand("input keyevent KEYCODE_DEL") }
@@ -527,7 +527,7 @@ class E2EAutomatedTest {
 
         val mountButton = findMountButton()
         if (mountButton == null) captureScreen("no_mount_button")
-        if (mountButton == null || !mountButton.isEnabled) return false
+        if (mountButton == null || !mountButton.isEnabled) return false.also { captureScreen("mount_button_disabled") }
         mountButton.click()
 
         return waitForMounted(300000L) != null
