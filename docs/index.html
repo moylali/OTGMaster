@@ -43,6 +43,14 @@
     .lede { font-size: 1.1rem; }
     .stores { display: flex; justify-content: center; gap: 48px; flex-wrap: wrap; margin: 2rem 0 0.5rem; text-align: center; }
     .store img.badge { height: 80px; display: block; margin: 0 auto; }
+    /* Sized to the visible black badge inside the 80px store PNGs, which carry padding.
+       The bottom margin includes the QR's 8px, which collapses into it. */
+    .gh-badge { display: flex; align-items: center; gap: 10px; height: 54px; margin: 13px auto 21px; padding: 0 18px 0 14px;
+      background: #000; color: #fff; border: 1px solid #a6a6a6; border-radius: 9px; width: max-content; }
+    .gh-badge svg { width: 34px; height: 34px; }
+    .gh-text { display: flex; flex-direction: column; font-size: 1.6rem; font-weight: 600; line-height: 1.05; text-align: left; letter-spacing: 0.01em; }
+    .gh-text small { font-size: 0.62rem; font-weight: 500; letter-spacing: 0.04em; }
+    .store a:hover { text-decoration: none; }
     .store img.qr { width: 130px; height: 130px; display: block; margin: 8px auto 0; background: #fff; padding: 6px; border-radius: 8px; }
     ol li, ul li { margin: 0.35rem 0; }
     ol ul { margin-top: 0.35rem; }
@@ -53,6 +61,9 @@
       h1 { font-size: 1.85rem; }
       .stores { gap: 24px; }
       .store img.badge { height: 64px; }
+      .gh-badge { height: 44px; margin: 10px auto 18px; padding: 0 14px 0 11px; gap: 8px; border-radius: 7px; }
+      .gh-badge svg { width: 27px; height: 27px; }
+      .gh-text { font-size: 1.28rem; }
     }
   </style>
 </head>
@@ -77,6 +88,17 @@
         <a href="https://play.google.com/store/apps/details?id=app.fayaz.otgmaster">
           <img class="badge" src="https://play.google.com/intl/en_us/badges/static/images/badges/en_badge_web_generic.png" alt="Get it on Google Play">
           <img class="qr" src="https://api.qrserver.com/v1/create-qr-code/?size=130x130&amp;data=https://play.google.com/store/apps/details?id=app.fayaz.otgmaster" alt="Google Play QR Code">
+        </a>
+      </div>
+      <div class="store">
+        <!-- GitHub has no official "Get it on" badge, so this one is drawn in the store
+             badges' style. /releases/latest redirects to the newest tag, which carries the APK. -->
+        <a href="https://github.com/moylali/OTGMaster/releases/latest">
+          <span class="badge gh-badge" role="img" aria-label="Get it on GitHub">
+            <svg viewBox="0 0 16 16" aria-hidden="true"><path fill="currentColor" d="M8 0c4.42 0 8 3.58 8 8a8.013 8.013 0 0 1-5.45 7.59c-.4.08-.55-.17-.55-.38 0-.27.01-1.13.01-2.2 0-.75-.25-1.23-.54-1.48 1.78-.2 3.65-.88 3.65-3.95 0-.88-.31-1.59-.82-2.15.08-.2.36-1.02-.08-2.12 0 0-.67-.22-2.2.82-.64-.18-1.32-.27-2-.27-.68 0-1.36.09-2 .27-1.53-1.03-2.2-.82-2.2-.82-.44 1.1-.16 1.92-.08 2.12-.51.56-.82 1.28-.82 2.15 0 3.06 1.86 3.75 3.64 3.95-.23.2-.44.55-.51 1.07-.46.21-1.61.55-2.33-.66-.15-.24-.6-.83-1.23-.82-.67.01-.27.38.01.53.34.19.73.9.82 1.13.16.45.68 1.31 2.69.94 0 .67.01 1.3.01 1.49 0 .21-.15.45-.55.38A7.995 7.995 0 0 1 0 8c0-4.42 3.58-8 8-8Z"/></svg>
+            <span class="gh-text"><small>GET IT ON</small>GitHub</span>
+          </span>
+          <img class="qr" src="https://api.qrserver.com/v1/create-qr-code/?size=130x130&amp;data=https://github.com/moylali/OTGMaster/releases/latest" alt="GitHub Releases QR Code">
         </a>
       </div>
     </div>
