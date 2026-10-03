@@ -15,8 +15,9 @@
 # rather than converted afterwards, so there is no background encryption to wait
 # for and no half-encrypted state to capture.
 #
-# Run on a Mac from the repo root, then copy testdata/apfs/ to the Linux host and
-# verify there with scripts/verify_apfs_images.py (apfsck + apfs-fuse, which
+# Run on a Mac from the repo root. It also writes testdata/apfs/apfs-images.tar.xz,
+# which is committed (Linux cannot rebuild the images); on Linux,
+# scripts/verify_apfs_images.py unpacks and checks it (apfsck + apfs-fuse, which
 # decrypts with the password — an implementation independent of Apple's).
 #
 #   bash scripts/make_apfs_images_macos.sh
@@ -107,4 +108,12 @@ build apfs_ci  "APFS"                ""
 build apfs_cs  "Case-sensitive APFS" ""
 build apfs_enc_ci "APFS"             yes
 build apfs_enc_cs "Case-sensitive APFS" yes
-echo "Done. Copy testdata/apfs/ to the Linux host and run scripts/verify_apfs_images.py."
+
+# The images cannot be rebuilt off a Mac, so they are committed — compressed, since
+# 64 MiB of mostly empty APFS packs to under 1 MB each. Update the SHA-256 in
+# testdata/apfs/PROVENANCE.md when committing a new archive.
+# COPYFILE_DISABLE/--no-mac-metadata keep macOS xattrs and ._ files out of it.
+COPYFILE_DISABLE=1 tar --no-mac-metadata --uid 0 --gid 0 -C testdata/apfs \
+    -cJf testdata/apfs/apfs-images.tar.xz apfs_ci apfs_cs apfs_enc_ci apfs_enc_cs
+shasum -a 256 testdata/apfs/apfs-images.tar.xz
+echo "Done. Commit testdata/apfs/apfs-images.tar.xz; on Linux, scripts/verify_apfs_images.py unpacks and checks it."

@@ -243,9 +243,21 @@ bash scripts/make_apfs_images_macos.sh     # on a Mac, from the repo root
 
 macOS only: no other OS creates natively encrypted APFS, and filling APFS on Linux
 needs the out-of-tree `linux-apfs-rw` module, which Secure Boot will not load unsigned.
-No root needed. Images land in `testdata/apfs/<case>/`, 64 MiB each, ignored by git
-like every other `test.img`. They sit one level below `testdata/` on purpose, so
-`run_e2e_tests.sh` does not pick them up until the app mounts APFS.
+No root needed. Images land in `testdata/apfs/<case>/`, 64 MiB each. They sit one
+level below `testdata/` on purpose, so `run_e2e_tests.sh` does not pick them up until
+the app mounts APFS.
+
+**Unlike every other case, these are committed**, because Linux cannot rebuild them.
+The script also packs all four cases into `testdata/apfs/apfs-images.tar.xz` (about
+3 MB; the loose `test.img` files stay gitignored). `testdata/apfs/PROVENANCE.md`
+records where it came from and its hashes. A Linux checkout needs no Mac:
+
+```sh
+tar -xJf testdata/apfs/apfs-images.tar.xz -C testdata/apfs   # or let the verifier do it
+```
+
+After rebuilding on a Mac, commit the new archive and update the hashes in
+`PROVENANCE.md` in the same commit.
 
 The encrypted volumes are created encrypted (`diskutil apfs addVolume -passphrase`),
 not converted, so there is no background encryption to capture half-done. The script
@@ -254,8 +266,9 @@ checks each volume's case behaviour before saving it. Password `password123`.
 **The images are not byte-reproducible.** Volume UUIDs, timestamps, the encryption keys
 and the random `large_file.bin` change on every run, so compare contents, not image hashes.
 
-**Verify on Linux, with code independent of Apple's and the app's:** copy
-`testdata/apfs/` to the Linux host and run `scripts/verify_apfs_images.py`. It runs
+**Verify on Linux, with code independent of Apple's and the app's:** run
+`scripts/verify_apfs_images.py`. It unpacks the archive if the cases are not already
+there, then runs
 `apfsck` on the container, then mounts through `apfs-fuse` (decrypting with the
 password) and checks flower.jpg byte for byte, the other files, and case sensitivity.
 
