@@ -51,7 +51,7 @@ class BenchmarkReceiver : BroadcastReceiver() {
                 // A run that writes mounts read-write whatever the phone's "read-only
                 // by default" says; --es readonly true|false overrides either way.
                 readOnly = intent.getStringExtra("readonly")?.toBooleanStrictOrNull()
-                    ?: if (only.any { it in setOf("write", "unaligned", "correct", "saf") }) false else null,
+                    ?: if (only.any { it in setOf("write", "unaligned", "correct", "saf", "bigwrite") }) false else null,
             )
         }
 

@@ -145,6 +145,60 @@ def file_sha(path):
     return h.hexdigest()
 
 
+def keystream_matches(path, label, rel):
+    """Whether `path` holds the benchmark bigwrite's content for `rel`: the AES-128-CTR
+    keystream (zero IV) under SHA-256("otg-matrix:<label>/<rel>")[:16] (Benchmark.Keystream)."""
+    key = hashlib.sha256(f"otg-matrix:{label}/{rel}".encode()).digest()[:16]
+    enc = Cipher(algorithms.AES(key), modes.CTR(bytes(16))).encryptor()
+    with open(path, "rb") as f:
+        while chunk := f.read(4 * MiB):
+            if enc.update(bytes(len(chunk))) != chunk:
+                return False
+    return True
+
+
+def check_bigwrite(root, label):
+    """The benchmark's bigwrite output, checked against what was meant, not read back:
+    BENCH_BIG/big.bin against its keystream, and every BENCH_TREE file against the
+    EXPECTED.txt the run wrote from its intended content. Returns (summary, problems)."""
+    problems, parts = [], []
+    big = os.path.join(root, "BENCH_BIG", "big.bin")
+    if os.path.exists(big):
+        ok = keystream_matches(big, label, "BENCH_BIG/big.bin")
+        parts.append(f"big.bin {os.path.getsize(big)} B {'OK' if ok else 'DIFFERS'}")
+        if not ok:
+            problems.append("BENCH_BIG/big.bin differs from the bytes the run wrote")
+    tree = os.path.join(root, "BENCH_TREE")
+    exp_path = os.path.join(tree, "EXPECTED.txt")
+    if os.path.isdir(tree):
+        if not os.path.exists(exp_path):
+            problems.append("BENCH_TREE has no EXPECTED.txt (the run did not finish its tree)")
+        else:
+            expected = {}
+            for line in open(exp_path, encoding="utf-8"):
+                if line.startswith("#") or not line.strip():
+                    continue
+                rel, size, sha = line.rstrip("\n").split("\t")
+                expected[rel] = (int(size), sha)
+            found = set()
+            for dirpath, _, files in os.walk(tree):
+                for n in files:
+                    rel = os.path.relpath(os.path.join(dirpath, n), tree)
+                    if rel != "EXPECTED.txt":
+                        found.add(rel)
+            bad = 0
+            for rel, (size, sha) in expected.items():
+                f = os.path.join(tree, rel)
+                if not os.path.exists(f):
+                    problems.append(f"BENCH_TREE/{rel} missing"); bad += 1
+                elif os.path.getsize(f) != size or file_sha(f) != sha:
+                    problems.append(f"BENCH_TREE/{rel} differs"); bad += 1
+            for rel in sorted(found - set(expected)):
+                problems.append(f"BENCH_TREE/{rel} exists but the run deleted or never made it"); bad += 1
+            parts.append(f"tree {len(expected) - min(bad, len(expected))}/{len(expected)} OK")
+    return ", ".join(parts), problems
+
+
 class FileCheck:
     def __init__(self):
         self.checked = 0
@@ -318,8 +372,13 @@ def verify_part(p, build, images, meta, accept, work_root):
                 manifest = open(on_drive, encoding="utf-8").read()
                 row["notes"].append("manifest read from the drive (Mac-built)")
             res = check_files(root, manifest, fs)
+            big_summary, big_problems = check_bigwrite(root, label)
         row["files"] = f"{res.checked - len(res.bad)}/{res.checked}"
         row["run_output"] = f"{res.run_files} files, {res.run_bytes / MiB:.0f} MiB; {res.reports} reports"
+        if big_summary:
+            row["run_output"] += f"; bigwrite: {big_summary}"
+        for b in big_problems[:10]:
+            fail(b)
         for b in res.bad[:10]:
             fail(b)
         if len(res.bad) > 10:
