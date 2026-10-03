@@ -49,3 +49,7 @@ baselines/
 /otgbench-*.txt
 __pycache__/
 e2e_parallel_*/
+# Device-matrix drive builds and read-backs (scripts/build_matrix_drive.py): tens of GB
+matrix/
+# Manifests prepare_matrix_drive_macos.sh copies off the Mac-built volumes
+matrix-mac/

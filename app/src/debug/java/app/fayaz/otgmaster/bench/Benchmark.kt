@@ -1355,10 +1355,21 @@ object Benchmark {
         val manifest = bench.search("MANIFEST.txt")
             ?: return emit("fixtures      : MANIFEST.txt missing — re-run prepare_test_usb.sh")
 
+        // Whole, however long: the device-matrix manifests (make_fixture_tree.py) list
+        // all ~21,000 files, about 2 MB. A single 256 KiB read used to cap it there,
+        // which silently dropped every entry past the cut.
         val text = runCatching {
-            val bb = ByteBuffer.allocate(manifest.length.toInt().coerceAtMost(256 * 1024))
-            manifest.read(0, bb)
-            String(bb.array(), 0, bb.position())
+            val out = java.io.ByteArrayOutputStream(manifest.length.toInt())
+            val bb = ByteBuffer.allocate(256 * 1024)
+            var off = 0L
+            while (off < manifest.length) {
+                bb.clear()
+                manifest.read(off, bb)
+                if (bb.position() <= 0) break
+                out.write(bb.array(), 0, bb.position())
+                off += bb.position()
+            }
+            out.toString(Charsets.UTF_8.name())
         }.getOrNull()
         if (text == null) return emit("fixtures      : could not read MANIFEST.txt")
 
@@ -1367,6 +1378,18 @@ object Benchmark {
         var skipped = 0
 
         var errors = 0
+        // Each directory listed once. search() re-lists every directory on the path, so
+        // the 20,000 entries of the two 10,000-file directories would otherwise cost
+        // about 10^8 directory-entry reads.
+        val listings = HashMap<String, Map<String, UsbFile>?>()
+        fun lookup(path: String): UsbFile? {
+            val parent = path.substringBeforeLast('/', "")
+            val dir = listings.getOrPut(parent) {
+                val d = if (parent.isEmpty()) bench else bench.search(parent)
+                runCatching { d?.listFiles()?.associateBy { it.name } }.getOrNull()
+            }
+            return dir?.get(path.substringAfterLast('/'))
+        }
         for (raw in text.lines()) {
             val line = raw.trim()
             if (line.isEmpty() || line.startsWith("#")) continue
@@ -1421,7 +1444,7 @@ object Benchmark {
                 continue
             }
 
-            val file = bench.search(path)
+            val file = lookup(path)
             if (file == null) { emit("fixtures      : *** $path missing ***"); failed++; continue }
             val wantBytes = sizeField.toLongOrNull()
             if (wantBytes != null && file.length != wantBytes) {
@@ -1444,7 +1467,13 @@ object Benchmark {
             checked++
             val got = digest.digest().joinToString("") { "%02x".format(it) }
             if (got == expected && off == file.length) {
-                emit("fixtures      : $path matches the host hash (${mbps(off, ns)})")
+                // One line per large file (with its throughput); the thousands of
+                // small ones only count, or the report would be 21,000 lines long.
+                if (file.length >= 16L * 1024 * 1024) {
+                    emit("fixtures      : $path matches the host hash (${mbps(off, ns)})")
+                } else if (checked % 2000 == 0) {
+                    emit("fixtures      : $checked entries matched so far")
+                }
             } else {
                 emit("fixtures      : *** $path DIFFERS — read $off of ${file.length} bytes, " +
                      "expected ${expected.take(16)}…, got ${got.take(16)}… ***")
