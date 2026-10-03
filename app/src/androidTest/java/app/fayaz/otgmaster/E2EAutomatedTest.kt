@@ -96,6 +96,8 @@ class E2EAutomatedTest {
         val expectMount = arguments.getString("expect_mount", "true") == "true"
         val expectedFs = arguments.getString("expected_fs", "")
         val cipher = arguments.getString("cipher", "")
+        // A plain volume (no container) is auto-mounted on scan: there is no form.
+        val plainMount = arguments.getString("plain_mount", "false") == "true"
 
         // Click "Scan USB Devices"
         val scanButton = device.wait(Until.findObject(By.desc("scan_button").clickable(true)), timeout)
@@ -126,6 +128,7 @@ class E2EAutomatedTest {
                 android.os.SystemClock.sleep(2000)
             }
 
+            if (!plainMount) {
             // The app might default to the dummy drive which has no candidates.
             // Wait up to 15s to see if password input appears. If not, and there's a device picker, pick the other one.
             var passwordField = device.wait(Until.findObject(By.descContains("password_input")), 15000L)
@@ -237,6 +240,7 @@ class E2EAutomatedTest {
                 assertCannotMountError(expectedFs)
                 return
             }
+            }
 
             // Wait for "Mounted" state. Increase timeout to 300s due to slow emulator crypto performance.
             val mountedText = waitForMounted(300000L)
@@ -285,6 +289,29 @@ class E2EAutomatedTest {
             fail("Failed to copy flower.jpg via SAF: ${e.message}")
         }
         assertTrue("Copied flower image should exist at /sdcard/Download/flower.jpg", outFile.exists())
+        // Byte for byte, where the case asks (support-matrix and APFS cases).
+        val flowerSha = arguments.getString("flower_sha256", "")
+        if (flowerSha.isNotEmpty()) {
+            val got = java.security.MessageDigest.getInstance("SHA-256").digest(outFile.readBytes())
+                .joinToString("") { "%02x".format(it) }
+            assertEquals("flower.jpg read through the provider differs from testdata/flower.jpg", flowerSha, got)
+        }
+        // case.txt and CASE.txt were both written on the Mac: two files on a
+        // case-sensitive volume, one on an insensitive one.
+        arguments.getString("expect_case_sensitive", "").takeIf { it.isNotEmpty() }?.let { cs ->
+            val names = mutableSetOf<String>()
+            for (rootDocId in allRootDocIds(context)) {
+                context.contentResolver.query(
+                    DocumentsContract.buildChildDocumentsUri(AUTHORITY, rootDocId), null, null, null, null
+                )?.use { cur ->
+                    while (cur.moveToNext()) names += cur.getString(cur.getColumnIndex(
+                        DocumentsContract.Document.COLUMN_DISPLAY_NAME))
+                }
+            }
+            assertTrue("case.txt missing from the root: ${names.sorted()}", "case.txt" in names)
+            assertEquals("case sensitivity of the volume (names: ${names.sorted()})",
+                cs == "true", "CASE.txt" in names)
+        }
 
         // Volumes the app must not write (ext2/ext3: no extents) are mounted
         // read-only: the card says so, and a create through the provider fails.

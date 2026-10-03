@@ -79,6 +79,7 @@ object FeedbackPayload {
                 ContainerType.LUKS2    -> "luks2"
                 ContainerType.VERACRYPT -> "veracrypt"
                 ContainerType.BITLOCKER -> "bitlocker"
+                ContainerType.APFS -> "apfs"
                 else -> if (d.isPlain) "none" else "veracrypt"
             }
             Partition(

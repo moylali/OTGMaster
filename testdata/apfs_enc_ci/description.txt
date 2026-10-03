@@ -1,0 +1,1 @@
+APFS (Encrypted), case-insensitive, built on macOS. Offered in the unlock form tagged APFS; unlocks with the password; flower.jpg byte for byte; case.txt and CASE.txt are one file; the volume is read-only.

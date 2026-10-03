@@ -41,6 +41,7 @@ data class MountedDrive(
     val readOnlyReason: String?
         get() = (fileSystem as? app.fayaz.otgmaster.ext4.Ext4FileSystem)?.readOnlyReason
             ?: (fileSystem as? app.fayaz.otgmaster.ntfs.NtfsFileSystem)?.readOnlyReason
+            ?: (fileSystem as? app.fayaz.otgmaster.apfs.ApfsFileSystem)?.readOnlyReason
             ?: if (mountedReadOnly) app.fayaz.otgmaster.ext4.Ext4FileSystem.MOUNTED_READ_ONLY else null
 
     val isReadOnly: Boolean get() = readOnlyReason != null

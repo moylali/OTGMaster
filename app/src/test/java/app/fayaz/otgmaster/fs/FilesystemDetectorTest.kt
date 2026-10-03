@@ -46,7 +46,7 @@ class FilesystemDetectorTest {
         val data = buf()
         data[32] = 0x4E; data[33] = 0x58; data[34] = 0x53; data[35] = 0x42
         val r = FilesystemDetector.detectFromBytes(data)
-        assertTrue(r is DetectedFilesystem.Unsupported && r.displayName == "APFS")
+        assertTrue(r is DetectedFilesystem.Supported && r.displayName == "APFS")
     }
 
     @Test fun hfsPlusIsUnsupported() {

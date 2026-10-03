@@ -351,6 +351,11 @@ int libfsapfs_volume_superblock_read_data(
 	 ( (fsapfs_volume_superblock_t *) data )->compatible_features_flags,
 	 volume_superblock->compatible_features_flags );
 
+	/* LOCAL PATCH (docs/VENDOR_FIXES.md V-APFS1): kept for libfsapfs_volume_get_size. */
+	byte_stream_copy_to_uint64_little_endian(
+	 ( (fsapfs_volume_superblock_t *) data )->number_of_allocated_blocks,
+	 volume_superblock->number_of_allocated_blocks );
+
 	byte_stream_copy_to_uint64_little_endian(
 	 ( (fsapfs_volume_superblock_t *) data )->read_only_compatible_features_flags,
 	 volume_superblock->read_only_compatible_features_flags );

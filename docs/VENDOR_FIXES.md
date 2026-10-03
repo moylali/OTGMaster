@@ -129,7 +129,7 @@ natively encrypted, used by `app/src/main/cpp/apfs/ApfsNative.cpp`.
 
 | Area | Patch | Commit |
 |---|---|---|
-| — | none | — |
+| `libfsapfs_volume.c`, `libfsapfs_volume_superblock.[ch]` | V-APFS1 — `libfsapfs_volume_get_size` is an unimplemented stub that always fails; it now returns the volume's allocated blocks × block size, parsed from the superblock | the commit after `d7d3fe4` (APFS read support) |
 
 ---
 
