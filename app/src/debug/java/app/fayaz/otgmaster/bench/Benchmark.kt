@@ -1609,7 +1609,11 @@ object Benchmark {
         private var produced = 0L
 
         /** The next [n] bytes of the stream. */
-        fun next(n: Int): ByteArray { produced += n; return cipher.update(ByteArray(n)) }
+        fun next(n: Int): ByteArray {
+            if (n == 0) return ByteArray(0)   // Cipher.update returns null for no input
+            produced += n
+            return cipher.update(ByteArray(n))
+        }
 
         /** Bytes [from, from + n) of the stream; [from] must not be behind what was produced. */
         fun at(from: Long, n: Int): ByteArray {
@@ -1638,10 +1642,18 @@ object Benchmark {
         val tag = driveTag(drive)
         val root = drive.fileSystem.rootDirectory
         // The previous run's files go first: they were for the host check after that run.
-        for (d in listOf(BIG_DIR, TREE_DIR)) runCatching { root.search(d)?.let { deleteRecursively(it) } }
+        // Their size is added back below: libexfat's free count right after deleting a
+        // 2.2 GB file still included it (727 MB "free" on a volume with 2.7 GB free, on
+        // the emulator), so the big file would be skipped every second run.
+        val previousBig = runCatching { root.search(BIG_DIR)?.search("big.bin")?.length }.getOrNull() ?: 0L
+        for (d in listOf(BIG_DIR, TREE_DIR)) {
+            runCatching { root.search(d)?.let { deleteRecursively(it) } }
+                .onFailure { emit("bigwrite      : could not delete the previous $d: $it") }
+        }
 
         // --- the big file ---------------------------------------------------------
-        val free = runCatching { drive.fileSystem.freeSpace }.getOrDefault(0L)
+        val reported = runCatching { drive.fileSystem.freeSpace }.getOrDefault(0L)
+        val free = maxOf(reported, minOf(reported + previousBig, drive.fileSystem.capacity))
         val bigPath = "big.bin"
         var bigOk: Boolean? = null
         if (free < BIG_BYTES + 256L * 1024 * 1024) {
@@ -1667,7 +1679,22 @@ object Benchmark {
         }
 
         // --- the tree -------------------------------------------------------------
-        val expected = sortedMapOf<String, ByteArray>()   // path under TREE_DIR -> content
+        // Each file's expected content is a recipe, not bytes: the keystream of the
+        // path it was created at (renames and moves keep it), cut to its length, with
+        // overwrite patches on top. Holding the bytes of 300 files ran the emulator's
+        // heap out (OutOfMemoryError mid-write).
+        class Patch(val at: Int, val key: String, val len: Int)
+        class Expect(val key: String, var size: Int, val patches: MutableList<Patch> = mutableListOf()) {
+            fun content(label: String): ByteArray {
+                val b = Keystream(label, key).next(size)
+                for (p in patches) {
+                    if (p.at >= size) continue
+                    Keystream(label, p.key).next(p.len).copyInto(b, p.at, 0, minOf(p.len, size - p.at))
+                }
+                return b
+            }
+        }
+        val expected = sortedMapOf<String, Expect>()   // path under TREE_DIR -> recipe
         val rng = java.util.Random(label.hashCode().toLong())
         val tree = root.createDirectory(TREE_DIR)
         val dirs = mutableListOf<String>()
@@ -1678,72 +1705,72 @@ object Benchmark {
             }
         }
         fun dirOf(p: String): UsbFile = tree.search(p) ?: throw java.io.IOException("$TREE_DIR/$p missing")
-        val edgeSizes = longArrayOf(0, 1, 511, 512, 513, 4095, 4096, 4097, 65536, 65537, 1L shl 20)
+        fun file(p: String) = tree.search(p) ?: throw java.io.IOException("$TREE_DIR/$p missing")
+        fun anyPath(): String = expected.keys.elementAt(rng.nextInt(expected.size))
+        val edgeSizes = intArrayOf(0, 1, 511, 512, 513, 4095, 4096, 4097, 65536, 65537, 1 shl 20)
         val treeNs = measureNanoTime {
             for (n in 0 until 300) {
                 val dir = dirs[rng.nextInt(dirs.size)]
-                val size = if (n < edgeSizes.size) edgeSizes[n] else rng.nextInt(2 shl 20).toLong()
+                val size = if (n < edgeSizes.size) edgeSizes[n] else rng.nextInt(2 shl 20)
                 val path = "$dir/f$n.bin"
-                val content = Keystream.content(label, "$TREE_DIR/$path", size)
-                dirOf(dir).createFile("f$n.bin").apply { if (size > 0) write(0, ByteBuffer.wrap(content)); close() }
-                expected[path] = content
+                val e = Expect("$TREE_DIR/$path", size)
+                dirOf(dir).createFile("f$n.bin").apply { if (size > 0) write(0, ByteBuffer.wrap(e.content(label))); close() }
+                expected[path] = e
             }
-            val names = expected.keys.toList()
-            fun pick() = names[rng.nextInt(names.size)]
-            fun file(p: String) = tree.search(p) ?: throw java.io.IOException("$TREE_DIR/$p missing")
-            // Overwrite a range in the middle.
+            // Overwrite 1000 bytes in the middle.
             repeat(40) {
-                val p = pick(); val c = expected[p] ?: return@repeat
-                if (c.size < 3000) return@repeat
-                val at = rng.nextInt(c.size - 2000); val patch = Keystream.content(label, "ow:$p", 1000)
-                file(p).apply { write(at.toLong(), ByteBuffer.wrap(patch)); close() }
-                expected[p] = c.copyOf().also { patch.copyInto(it, at) }
+                val p = anyPath(); val e = expected.getValue(p)
+                if (e.size < 3000) return@repeat
+                val patch = Patch(rng.nextInt(e.size - 2000), "ow:$p:$it", 1000)
+                file(p).apply { write(patch.at.toLong(), ByteBuffer.wrap(Keystream(label, patch.key).next(patch.len))); close() }
+                e.patches += patch
             }
             // Append, continuing the file's own keystream.
             repeat(30) {
-                val p = pick(); val c = expected[p] ?: return@repeat
+                val p = anyPath(); val e = expected.getValue(p)
                 val add = 1 + rng.nextInt(70_000)
-                val more = Keystream(label, "$TREE_DIR/$p").at(c.size.toLong(), add)
-                file(p).apply { write(c.size.toLong(), ByteBuffer.wrap(more)); close() }
-                expected[p] = c + more
+                val more = Keystream(label, e.key).at(e.size.toLong(), add)
+                file(p).apply { write(e.size.toLong(), ByteBuffer.wrap(more)); close() }
+                e.size += add
             }
             // Truncate.
             repeat(30) {
-                val p = pick(); val c = expected[p] ?: return@repeat
-                val len = if (c.isEmpty()) 0 else rng.nextInt(c.size)
+                val p = anyPath(); val e = expected.getValue(p)
+                val len = if (e.size == 0) 0 else rng.nextInt(e.size)
                 file(p).apply { length = len.toLong(); close() }
-                expected[p] = c.copyOf(len)
+                e.size = len
+                // Bytes past the cut are gone: a later append must not bring a patch back.
+                val kept = e.patches.filter { it.at < len }.map { Patch(it.at, it.key, minOf(it.len, len - it.at)) }
+                e.patches.clear(); e.patches += kept
             }
             // Rename within the directory.
             repeat(30) {
-                val p = pick(); val c = expected.remove(p) ?: return@repeat
+                val p = anyPath()
                 val np = p.substringBeforeLast('/') + "/renamed_" + p.substringAfterLast('/')
+                if (np in expected) return@repeat
                 file(p).name = np.substringAfterLast('/')
-                expected[np] = c
+                expected[np] = expected.remove(p)!!
             }
             // Move to another directory.
             repeat(20) {
-                val p = expected.keys.elementAt(rng.nextInt(expected.size))
+                val p = anyPath()
                 val to = dirs[rng.nextInt(dirs.size)]
-                if (p.substringBeforeLast('/') == to) return@repeat
                 val np = "$to/" + p.substringAfterLast('/')
-                if (np in expected) return@repeat
+                if (p.substringBeforeLast('/') == to || np in expected) return@repeat
                 file(p).moveTo(dirOf(to))
                 expected[np] = expected.remove(p)!!
             }
             // Delete files, then one whole directory.
-            repeat(40) {
-                val p = expected.keys.elementAt(rng.nextInt(expected.size))
-                file(p).delete(); expected.remove(p)
-            }
+            repeat(40) { val p = anyPath(); file(p).delete(); expected.remove(p) }
             val gone = "d4/e2"
-            dirOf(gone).let { deleteRecursively(it) }
+            deleteRecursively(dirOf(gone))
             expected.keys.filter { it.startsWith("$gone/") }.forEach { expected.remove(it) }
         }
-        // The expected state, for the host: computed from what was meant, never read back.
-        val listing = expected.entries.joinToString("") { (p, c) -> "$p\t${c.size}\t${sha256Hex(c)}\n" }
+        // The expected state, for the host: from the recipes, never read back.
+        val listing = StringBuilder()
+        for ((p, e) in expected) listing.append("$p\t${e.size}\t${sha256Hex(e.content(label))}\n")
         tree.createFile("EXPECTED.txt").apply {
-            write(0, ByteBuffer.wrap(("# bigwrite tree, label $label: path<TAB>bytes<TAB>sha256\n" + listing).toByteArray()))
+            write(0, ByteBuffer.wrap(("# bigwrite tree, label $label: path<TAB>bytes<TAB>sha256\n$listing").toByteArray()))
             close()
         }
         emit("bigwrite      : $TREE_DIR ${expected.size} files after create/overwrite/append/" +
@@ -1795,7 +1822,8 @@ object Benchmark {
         if (liveTree == null) { emit("bigwrite      : *** $TREE_DIR missing after remount ***"); treeBad++ }
         else {
             walk(liveTree, "")
-            for ((p, c) in expected) {
+            for ((p, e) in expected) {
+                val c = e.content(label)
                 val f = liveTree.search(p)
                 if (f == null) { if (treeBad++ < 5) emit("bigwrite      : *** $p missing ***"); continue }
                 val bb = ByteBuffer.allocate(maxOf(c.size, 1))
@@ -1874,6 +1902,13 @@ object Benchmark {
         }
     }
 
+    /** Waits (up to MOUNT_TIMEOUT_MS) until no unlock started by a mount request is running. */
+    private fun awaitUnlocks() {
+        val deadline = System.currentTimeMillis() + MOUNT_TIMEOUT_MS
+        while (OtgMasterState.unlocksInFlight.get() > 0 && System.currentTimeMillis() < deadline) Thread.sleep(300)
+        Thread.sleep(500)   // the unlocks' completion posts land on the main thread
+    }
+
     private fun remountHeld(
         mount: MountCredentials,
         mountReq: OtgMasterState.MountRequest,
@@ -1882,6 +1917,13 @@ object Benchmark {
         tagOf: () -> String?,
         why: (String) -> Unit,
     ): Boolean {
+        // Settle first: unlocks still running from the previous mount request hold
+        // deviceMutex, and an unmount's bookkeeping (putting the partition back on the
+        // candidate list) waits on it. Unmounting into that left candidates missing
+        // from the next request, and drives that "did not come back" (OnePlus 7,
+        // Drives 1 + 2: the remount after write verify returned as soon as this drive
+        // was back, with ten unlocks still queued).
+        awaitUnlocks()
         unmountAll.invoke()
         // Was a flat 30s. On a Huawei P20 Lite unmounting ext4-in-VeraCrypt from an
         // SD card, that expired before the unmount landed — and the unmount then
@@ -1924,6 +1966,8 @@ object Benchmark {
         mountReq.mount(mount.password, mount.pim, mount.cipher, mount.hash, mount.readOnly)
         deadline = System.currentTimeMillis() + MOUNT_TIMEOUT_MS
         while (tagOf() == null && System.currentTimeMillis() < deadline) Thread.sleep(500)
+        // And every other partition back too, before the next section unmounts again.
+        awaitUnlocks()
         val after = OtgMasterState.mountedDrives.map { it.id }.toSet()
         if (tagOf() == null) {
             why("the drive did not come back after unmounting")

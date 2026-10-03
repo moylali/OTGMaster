@@ -1455,7 +1455,7 @@ class MainActivity : AppCompatActivity() {
     private suspend fun reprobeHeldDevices() {
         val listed = _deviceCandidates.value.map { it.deviceName }.toSet()
         val mounted = OtgMasterState.mountedDrives.mapNotNull { it.sourceDeviceName }.toSet()
-        val held = openedDevices.filterKeys { it !in listed && it !in mounted && it != QEMU_DEVICE_KEY }
+        val held = openedDevices.filterKeys { it !in listed && it !in mounted }
         for ((key, raw) in held) {
             val probed = withContext(Dispatchers.IO) {
                 runCatching {

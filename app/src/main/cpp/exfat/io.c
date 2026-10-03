@@ -132,8 +132,20 @@ ssize_t exfat_pread(struct exfat_dev* dev, void* buffer, size_t size, off_t offs
     
     OTG_IO_COUNT(size, 0);
 
+    // LOCAL PATCH (docs/VENDOR_FIXES.md E1): a failed allocation or a throwing callback
+    // left an exception pending, and the next JNI call aborted the whole app.
     jbyteArray jBuffer = (*env)->NewByteArray(env, size);
+    if (jBuffer == NULL || (*env)->ExceptionCheck(env)) {
+        (*env)->ExceptionClear(env);
+        (*env)->DeleteLocalRef(env, clazz);
+        errno = ENOMEM;
+        return -1;
+    }
     jint result = (*env)->CallStaticIntMethod(env, clazz, preadMethod, (jobject)dev->block_device, (jlong)offset, (jint)size, jBuffer);
+    if ((*env)->ExceptionCheck(env)) {
+        (*env)->ExceptionClear(env);
+        result = -1;
+    }
     
     if (result > 0) {
         (*env)->GetByteArrayRegion(env, jBuffer, 0, result, (jbyte*)buffer);
@@ -150,10 +162,21 @@ ssize_t exfat_pwrite(struct exfat_dev* dev, const void* buffer, size_t size, off
     
     OTG_IO_COUNT(size, 1);
 
+    // LOCAL PATCH (docs/VENDOR_FIXES.md E1): as in exfat_pread.
     jbyteArray jBuffer = (*env)->NewByteArray(env, size);
+    if (jBuffer == NULL || (*env)->ExceptionCheck(env)) {
+        (*env)->ExceptionClear(env);
+        (*env)->DeleteLocalRef(env, clazz);
+        errno = ENOMEM;
+        return -1;
+    }
     (*env)->SetByteArrayRegion(env, jBuffer, 0, size, (const jbyte*)buffer);
     
     jint result = (*env)->CallStaticIntMethod(env, clazz, pwriteMethod, (jobject)dev->block_device, (jlong)offset, (jint)size, jBuffer);
+    if ((*env)->ExceptionCheck(env)) {
+        (*env)->ExceptionClear(env);
+        result = -1;
+    }
     
     (*env)->DeleteLocalRef(env, jBuffer);
     (*env)->DeleteLocalRef(env, clazz);
