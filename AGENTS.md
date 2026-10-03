@@ -309,7 +309,7 @@ vendored without an entry there.
 - **why** it is vendored rather than consumed as a dependency — this is the part
   that gets lost, and without it a later maintainer cannot judge whether the reason
   still holds;
-- the licence, and whether it is compatible with this project's GPL-2.0-or-later
+- the licence, and whether it is compatible with this project's GPL-3.0-or-later
   grant (the licence table in `README.md` is the authoritative list — add the new
   entry there, and reference it from the registry rather than restating it);
 - an empty patch table, ready for the first local change.

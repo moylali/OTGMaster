@@ -122,8 +122,8 @@ natively encrypted, used by `app/src/main/cpp/apfs/ApfsNative.cpp`.
   and APFS has no public on-disk specification beyond Apple's reference, which leaves
   out what macOS actually writes (see the keybag layout in `docs/TEST_DATA.md` §6b).
 - **Licence:** LGPL-3.0-or-later (every vendored file's header, and `COPYING.LESSER`).
-  Combining it makes the distributed APK GPL-3.0-or-later; see the table in
-  `README.md`.
+  It is why the project moved from GPL-2.0-or-later to GPL-3.0-or-later: LGPL-3.0 code
+  cannot be combined into a binary distributed under GPL-2.0. See `README.md`.
 
 ## Patches
 
