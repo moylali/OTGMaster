@@ -35,6 +35,43 @@ to a row here.
 
 ## 2026-10-03
 
+### OnePlus 7 (GM1901) · LineageOS 23.2 (Android 16, SDK 36) · build 0.4.1 (47) commit 904e1da — device-matrix Drives 1 + 2, run 2
+
+Same drives, hub and sections as run 1; started 14:40:46, all 21 partitions attached
+(the read-only, lost-remount and wait-for-unlocks fixes in). Screen interactive
+throughout.
+
+| Partition | Container / FS | Verdict |
+|---|---|---|
+| D1APFSCI | plain APFS | write sections SKIPPED (read-only); fixtures ALL 22129 MATCHED |
+| D1APFSCS | plain APFS | write sections SKIPPED (read-only); fixtures ALL 22024 MATCHED |
+| D1FAT32 | plain FAT32 | write verify PARTIAL (remount pass not performed — drive did not come back); unaligned FAILED (no working directory); correctness: no live mount; fixtures FAILED (USB block device is closed) |
+| D1EXFAT, D1NTFS, D1EXT4, D1APFSECI, D1APFSECS, D1BLNTFS, D1BLEXFAT | | not mounted at the start of their turn — skipped |
+| D2VCFAT32 | VeraCrypt FAT32 | write verify ALL PASSED; unaligned NOT VERIFIED; correctness: no live mount; fixtures FAILED (closed) |
+| D2VCEXFAT, D2VCNTFS, D2VCEXT4 | VeraCrypt | not mounted at the start of their turn — skipped |
+| D2L1FAT32 | LUKS1 FAT32 | write verify ALL PASSED (16 MiB at 0.46 MB/s); unaligned NOT VERIFIED; correctness: no live mount; fixtures FAILED (closed) |
+| D2L1EXT4 | LUKS1 ext4 | write verify ALL PASSED; unaligned A, B PASS; correctness NOT VERIFIED; fixtures FAILED (closed) |
+| D2L2EXFAT | LUKS2 exFAT | write verify ALL PASSED; unaligned NOT VERIFIED; correctness: no live mount; fixtures FAILED (unmounted) |
+| D2L4EXT4 | LUKS2 4K ext4 | write verify ALL PASSED; unaligned A, B PASS; correctness NOT VERIFIED; fixtures FAILED (closed) |
+| D2L4NTFS | LUKS2 4K NTFS | write verify ALL PASSED; unaligned A, B PASS; correctness ALL PASSED (A–G, incl. the 2100 MiB file); fixtures ALL 20927 MATCHED |
+| D2BLFAT32 | BitLocker FAT32 | write verify PARTIAL; unaligned and correctness NOT VERIFIED ("mount identity did not change"); fixtures ALL 20974 MATCHED |
+
+Two causes, both outside the drives:
+
+- **Drive 1 dropped off the USB bus at 15:06:41** and re-enumerated (kernel
+  `usb-storage 2-1.2: USB Mass Storage device detected`). Android bound it first and
+  mounted D1FAT32, D1EXFAT, D1NTFS and D1EXT4 read-write from 15:06:42 (after
+  `fsck_msdos` and `fsck.exfat`), and they stayed mounted until `sm unmount` at about
+  15:50. Why the stick dropped is not known: logcat had rotated past it. **Anything the
+  host check finds on those four not explained by the runs is Android's.**
+- **The remount wait raced the unlocks.** A remount returned as soon as its own drive
+  was back, with other unlocks still queued; the next section's unmount then waited on
+  deviceMutex for its bookkeeping, candidates were missing from the next mount request,
+  and drives "did not come back". Fixed in `2f4dd2c` (`awaitUnlocks`). "Mount identity
+  did not change" on D2BLFAT32 is the same race seen from the other side.
+
+Host verification: after run 3 — the drives were not moved.
+
 ### OnePlus 7 (GM1901) · LineageOS 23.2 (Android 16, SDK 36) · build 0.4.1 (47) commit d9594a9 — device-matrix Drives 1 + 2, run 1
 
 The first run on the device-matrix drives (`docs/TEST_DATA.md` §16): Drives 1 and 2,
