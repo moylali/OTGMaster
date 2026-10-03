@@ -375,18 +375,25 @@ object Benchmark {
                 return d ?: drive
             }
 
+            // A volume the app mounts read-only (APFS, ext2/ext3, or one the user chose)
+            // is reported as SKIPPED with its reason rather than failing three times:
+            // refusing the write is the correct behaviour there, not a fault. A run
+            // over the device-matrix drives otherwise printed FAILED for every APFS one.
+            val readOnly = drive.readOnlyReason
+            fun writeSection(name: String, label: String, body: () -> Unit) {
+                if (!only.contains(name)) return
+                if (readOnly != null) { emit("$label: SKIPPED — read-only: $readOnly"); return }
+                runCatching { body() }.onFailure { emit("$label: FAILED ${it}") }
+            }
             // Opt-in only: this one writes to the drive, so a default run stays
             // read-only.
             phase("write verification")
-            if (only.contains("write")) runCatching { benchWriteVerify(live(), ::emit, mount) }
-                .onFailure { emit("write verify  : FAILED ${it}") }
+            writeSection("write", "write verify  ") { benchWriteVerify(live(), ::emit, mount) }
             // Opt-in: writes, and deliberately unaligned.
             phase("unaligned writes")
-            if (only.contains("unaligned")) runCatching { benchUnaligned(live(), ::emit, mount) }
-                .onFailure { emit("unaligned     : FAILED ${it}") }
+            writeSection("unaligned", "unaligned     ") { benchUnaligned(live(), ::emit, mount) }
             phase("correctness")
-            if (only.contains("correct")) runCatching { benchCorrectness(live(), ::emit, mount) }
-                .onFailure { emit("correctness   : FAILED ${it}") }
+            writeSection("correct", "correctness   ") { benchCorrectness(live(), ::emit, mount) }
             phase("SAF path")
             if (only.contains("saf")) runCatching { benchSaf(context, ::emit) }
                 .onFailure { emit("saf           : FAILED ${it}") }
