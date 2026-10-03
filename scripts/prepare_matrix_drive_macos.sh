@@ -20,7 +20,7 @@
 #   diskutil list                                     # find the USB disk, e.g. disk4
 #   bash scripts/prepare_matrix_drive_macos.sh --disk disk4
 #
-# Takes 15-40 minutes: 14 GB of files, 80,000 of them small, onto a USB stick. The
+# Takes about 45 minutes on a USB 3 stick: 14 GB of files, 80,000 of them small, onto a USB stick. The
 # manifests are also copied to matrix-mac/, for reference.
 set -euo pipefail
 cd "$(dirname "$0")/.."
@@ -107,7 +107,14 @@ for v in "${VOLUMES[@]}"; do
         [ -e "$mnt/BENCH/EDGE/FILE WITH SPACES.TXT" ] || { echo "$name is not case-insensitive"; exit 1; }
     fi
     sync
-    diskutil unmount "$name" >/dev/null
+    # Spotlight's mds can hold a freshly written volume for a while and refuse the
+    # unmount ("dissented by PID ... mds"); it lets go on its own. Seen on the first
+    # real run, on the last volume only.
+    for try in 1 2 3 4 5 6 7 8 9 10 11 12; do
+        diskutil unmount "$name" >/dev/null 2>&1 && break
+        [ "$try" = 12 ] && { echo "$name would not unmount; retry: diskutil unmount $name"; exit 1; }
+        sleep 10
+    done
 done
 
 diskutil eject "$DISK"

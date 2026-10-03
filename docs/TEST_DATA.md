@@ -277,8 +277,9 @@ A quick check is possible on the Mac, but it has a gap. Attach the saved raw ima
 read-only (`hdiutil attach -readonly -nomount -imagekey diskimage-class=CRawDiskImage`),
 run `fsck_apfs -n` on the `Apple_APFS` partition, unlock with `diskutil apfs
 unlockVolume … -nomount` and mount with `mount_apfs -o rdonly`. `fsck_apfs` will not
-check an **encrypted** container on an attached image — *"failed to enable crypto I/O
-mode … Invalid argument"*, on read-only and writable attaches alike. The encrypted
+check an **encrypted** container — *"failed to enable crypto I/O mode … Invalid
+argument"*. This happens on read-only and writable image attaches alike, and on a
+physical USB disk under `sudo` (§16.2). The encrypted
 images therefore get no structural check on macOS; only `apfsck` on Linux covers them.
 
 First run, 2026-10-02, macOS 26.6.2 (arm64), script unchanged from `9f996ca`:
@@ -901,8 +902,20 @@ bash scripts/prepare_matrix_drive_macos.sh --disk disk4
 It makes the GPT (macOS adds a 200 MiB EFI partition first), the four APFS partitions
 in this order — D1APFSCI, D1APFSCS, D1APFSECI, D1APFSECS — and leaves the rest free;
 fills each with the read set (3.5 GB, plus case.txt/CASE.txt on the case-sensitive
-two); checks each volume's case behaviour; and ejects. 15–40 minutes. Then move the
+two); checks each volume's case behaviour; and ejects. About 45 minutes on a USB 3 stick. Then move the
 drive to Linux and do not plug it into a Mac again.
+
+Each volume also carries macOS's own `.fseventsd/` and `.Spotlight-V100/` at its root.
+Spotlight creates its folder the moment the volume mounts, before the script can drop
+`.metadata_never_index`. They are written on the Mac, before the Linux baseline is
+taken, so the first read-back accepts them like any other content. They are not files
+a phone run created.
+
+`sudo fsck_apfs -n /dev/diskNsK` on each finished partition checks the two plain
+volumes. It cannot check the encrypted two: it fails with *"failed to enable crypto I/O
+mode … Invalid argument"*, as it does on disk images (§6b). On 2026-10-03 it reported
+D1APFSCI and D1APFSCS OK, and refused D1APFSECI and D1APFSECS. So Linux `apfsck`,
+during the read-back, is the only structural check of the encrypted pair.
 
 ### 16.3 Building and writing (Linux)
 
@@ -956,7 +969,15 @@ Injected damage, each on a copy of a built partition:
 | One bit flipped in a file on read-only ext2 | "1 MiB changed on a partition the app must never write" |
 | A stray file at the root, beside a run's own output | "unexplained file", while the run's files were counted, not flagged |
 
-Not yet run: the two root scripts on a real drive, the Mac script on a Mac, and the
-APFS rows end to end (the verifier's APFS path was exercised on the 64 MiB Mac images,
+The Mac script first ran on a real drive on 2026-10-03: macOS 26.6.2 (arm64), a 62.0 GB
+"USB 3.2.1 FD" stick. It was rehearsed beforehand on a 59 GB sparse image, with the
+virtual-disk refusal removed and a small fixture size. All four volumes filled and passed
+their case checks. Fill times: 8.4, 7.1, 11.2 and 15.9 minutes (CI, CS, ECI, ECS), so
+about 45 minutes in total. The two encrypted volumes were slower, and the stick slowed as
+it filled. The run then stopped before ejecting: Spotlight's `mds` refused the unmount
+of the last volume. A retry ten minutes later succeeded, and the script now retries for
+two minutes.
+
+Not yet run: the two root scripts on a real drive, and the APFS rows end to end (the verifier's APFS path was exercised on the 64 MiB Mac images,
 which mount and decrypt but carry no BENCH tree).
 
