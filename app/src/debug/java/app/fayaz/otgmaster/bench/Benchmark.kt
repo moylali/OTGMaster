@@ -34,6 +34,8 @@ object Benchmark {
         val pim: Int? = null,
         val cipher: String = "AES",
         val hash: String = "SHA-512",
+        /** Overrides the user's read-only default for encrypted partitions; null keeps it. */
+        val readOnly: Boolean? = null,
     )
 
     // A backstop only: the wait ends when every unlock has finished. Two 10-partition
@@ -172,6 +174,9 @@ object Benchmark {
         // comparison would be meaningless.
         if (remount && OtgMasterState.mountedDrives.isNotEmpty()) {
             emit("unmounting ${OtgMasterState.mountedDrives.size} drive(s) to apply cache config")
+            // Held, not released: see OtgMasterState.holdConnections. Cleared once the
+            // run's mount below has completed.
+            OtgMasterState.holdConnections = true
             OtgMasterState.unmountAllRequest?.invoke()
             val deadline = System.currentTimeMillis() + 30_000
             while (OtgMasterState.mountedDrives.isNotEmpty() &&
@@ -194,7 +199,7 @@ object Benchmark {
             if (handler == null) {
                 emit("*** no mount handler installed — is MainActivity running? ***")
             } else {
-                handler.mount(mount.password, mount.pim, mount.cipher, mount.hash)
+                handler.mount(mount.password, mount.pim, mount.cipher, mount.hash, mount.readOnly)
                 // attemptUnlock is asynchronous and unlocks are serialised across
                 // partitions, so they appear one at a time. Waiting only for the
                 // list to become non-empty snapshotted it mid-sequence and ran the
@@ -229,6 +234,7 @@ object Benchmark {
                     emit("*** $stillUnlocking unlock(s) still running after ${MOUNT_TIMEOUT_MS / 1000}s; " +
                          "running against what is mounted ***")
                 }
+                OtgMasterState.holdConnections = false
                 if (OtgMasterState.mountedDrives.isEmpty()) {
                     emit("*** mount did not complete within ${MOUNT_TIMEOUT_MS / 1000}s ***")
                 } else {
@@ -237,6 +243,8 @@ object Benchmark {
                 }
             }
         }
+
+        OtgMasterState.holdConnections = false   // whether or not a mount was requested
 
         // Skip drives whose filesystem has already been unmounted. A remount leaves
         // the old entry in the list briefly, and calling into a torn-down
@@ -1624,6 +1632,24 @@ object Benchmark {
         }
         val before = OtgMasterState.mountedDrives.map { it.id }.toSet()
 
+        // Keep every stick's connection through the unmount (OtgMasterState.holdConnections):
+        // released, Android's storage stack takes the drive and mounts it itself.
+        OtgMasterState.holdConnections = true
+        try {
+            return remountHeld(mount, mountReq, unmountAll, before, tagOf, why)
+        } finally {
+            OtgMasterState.holdConnections = false
+        }
+    }
+
+    private fun remountHeld(
+        mount: MountCredentials,
+        mountReq: OtgMasterState.MountRequest,
+        unmountAll: () -> Unit,
+        before: Set<String>,
+        tagOf: () -> String?,
+        why: (String) -> Unit,
+    ): Boolean {
         unmountAll.invoke()
         // Was a flat 30s. On a Huawei P20 Lite unmounting ext4-in-VeraCrypt from an
         // SD card, that expired before the unmount landed — and the unmount then
@@ -1656,14 +1682,14 @@ object Benchmark {
             // this function had unmounted it, so the sections after this one had
             // nothing to run against, and the whole drive's remaining results were
             // lost to a timeout that only delayed one verdict.
-            runCatching { mountReq.mount(mount.password, mount.pim, mount.cipher, mount.hash) }
+            runCatching { mountReq.mount(mount.password, mount.pim, mount.cipher, mount.hash, mount.readOnly) }
             why("the drive did not unmount within ${MOUNT_TIMEOUT_MS / 1000}s, " +
                 "so nothing was discarded")
             return false
         }
         Thread.sleep(1500)
 
-        mountReq.mount(mount.password, mount.pim, mount.cipher, mount.hash)
+        mountReq.mount(mount.password, mount.pim, mount.cipher, mount.hash, mount.readOnly)
         deadline = System.currentTimeMillis() + MOUNT_TIMEOUT_MS
         while (tagOf() == null && System.currentTimeMillis() < deadline) Thread.sleep(500)
         val after = OtgMasterState.mountedDrives.map { it.id }.toSet()

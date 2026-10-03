@@ -104,7 +104,13 @@ object OtgMasterState {
      * backup service, which has to mount with no user present.
      */
     fun interface MountRequest {
-        fun mount(password: String, pim: Int?, cipherName: String, hashName: String)
+        /**
+         * @param readOnly overrides the user's "read-only by default" choice for the
+         *   encrypted partitions this mounts; null keeps it. The benchmark passes false
+         *   when it means to write: on a phone set to read-only by default, a run's
+         *   write sections otherwise all failed against read-only mounts.
+         */
+        fun mount(password: String, pim: Int?, cipherName: String, hashName: String, readOnly: Boolean?)
     }
 
     @Volatile
@@ -116,6 +122,17 @@ object OtgMasterState {
      * number of mounted drives going quiet for a while does not mean they are done.
      */
     val unlocksInFlight = java.util.concurrent.atomic.AtomicInteger(0)
+
+    /**
+     * While true, unmounting a drive's last partition keeps its USB connection open
+     * instead of releasing it. Set by the debug benchmark around its own unmount and
+     * remount: a released stick is taken by Android's own storage stack within about a
+     * second, which runs fsck on it and mounts its partitions read-write, and the app
+     * then pulls it back out from under those mounts. Seen on the OnePlus 7, where
+     * vold mounted four partitions of a device-matrix drive mid-run.
+     */
+    @Volatile
+    var holdConnections = false
 
     /** Unmounts every drive. Installed by MainActivity while it is alive. */
     @Volatile
