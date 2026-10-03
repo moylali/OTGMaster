@@ -59,8 +59,9 @@ READ_ONLY = ("apfs", "ext2", "ext3")
 # Entries a filesystem or the OS that filled it keeps outside BENCH/, which no run made.
 SYSTEM = {
     "ext2": {"lost+found"}, "ext3": {"lost+found"}, "ext4": {"lost+found"},
+    # .metadata_never_index is prepare_matrix_drive_macos.sh's own; the rest are macOS's.
     "apfs": {".fseventsd", ".Spotlight-V100", ".Trashes", ".TemporaryItems", ".DS_Store", ".VolumeIcon.icns",
-             "private-dir"},
+             "private-dir", ".metadata_never_index"},
 }
 
 
