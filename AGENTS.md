@@ -26,13 +26,12 @@ These apply to every commit, without being asked.
    for an end user. Internal work (CI, refactors, benchmarks, docs) does not
    appear there.
 
-   **Two files, two audiences.** F-Droid reads the Fastlane changelog above and has
-   no length limit. Google Play caps release notes at **500 characters per
-   language**, so it gets a separate condensed file at
-   `distribution/whatsnew/whatsnew-en-US`, wired into `release.yml` via
-   `whatsNewDirectory`. Update both, and check the Play one's length —
-   `wc -c distribution/whatsnew/whatsnew-en-US` must be ≤ 500, or the upload is
-   rejected. Additionally, if the commit adds major user-facing features (e.g. new 
+   **Length Limits:** Both F-Droid and Google Play cap changelogs at **500 characters**.
+   F-Droid reads the Fastlane changelog (`<versionCode>.txt`), while Google Play reads
+   the condensed file at `distribution/whatsnew/whatsnew-en-US`. 
+   **Both files must be ≤ 500 characters**, otherwise F-Droid will silently truncate it 
+   mid-sentence and Google Play will reject the upload! Use `wc -c` to verify lengths.
+   Additionally, if the commit adds major user-facing features (e.g. new 
    filesystems, encryption formats), you **MUST update the main Play Store description** 
    at `fastlane/metadata/android/en-US/full_description.txt` to advertise the new capabilities.
 
