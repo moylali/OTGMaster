@@ -1,0 +1,1 @@
+Case-sensitive APFS on a GPT disk built on macOS. Auto-mounts with no password; flower.jpg byte for byte; case.txt and CASE.txt are two files; the volume is read-only.

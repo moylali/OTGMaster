@@ -96,6 +96,16 @@ ensure_testdata() {
         echo "Generating the support-matrix fixtures..."
         python3 scripts/make_e2e_matrix.py || { echo "Matrix fixture generation failed!"; exit 1; }
     fi
+
+    # APFS, plain and encrypted, case-sensitive and not. Only a Mac can build these
+    # (docs/TEST_DATA.md §6b), so they are committed as an archive and unpacked here.
+    # --skip-old-files keeps the committed per-case files (description.txt and the
+    # E2E markers), which differ from the archive's own descriptions.
+    if [ ! -f "$TESTDATA_DIR/apfs_enc_cs/test.img" ]; then
+        echo "Unpacking the APFS fixtures..."
+        tar --warning=no-unknown-keyword --skip-old-files -xJf "$TESTDATA_DIR/apfs/apfs-images.tar.xz" \
+            -C "$TESTDATA_DIR" || { echo "Unpacking the APFS fixtures failed!"; exit 1; }
+    fi
 }
 
 # The commit the APKs are built from, read before the build rather than when the
@@ -286,6 +296,10 @@ for test_dir in "$TESTDATA_DIR"/*/; do
     fi
     READ_ONLY_ARG=""
     [ -f "$test_dir/read_only.txt" ] && READ_ONLY_ARG="-e expect_read_only true"
+    PLAIN_ARG=""
+    [ -f "$test_dir/plain.txt" ] && PLAIN_ARG="-e plain_mount true"
+    CASE_ARG=""
+    [ -f "$test_dir/case_sensitive.txt" ] && CASE_ARG="-e expect_case_sensitive $(cat "$test_dir/case_sensitive.txt")"
     FLOWER_ARG=""
     if [ -f "$test_dir/verify_flower.txt" ]; then
         FLOWER_ARG="-e flower_sha256 $(sha256sum "$TESTDATA_DIR/flower.jpg" | cut -d' ' -f1)"
@@ -363,7 +377,9 @@ for test_dir in "$TESTDATA_DIR"/*/; do
             $RECOVERY_ARG \
             $CONTAINER_ARG \
             $FLOWER_ARG \
-        $READ_ONLY_ARG \
+            $READ_ONLY_ARG \
+            $PLAIN_ARG \
+            $CASE_ARG \
             -e class app.fayaz.otgmaster.E2EAutomatedTest \
             $PACKAGE_NAME.test/androidx.test.runner.AndroidJUnitRunner)
 

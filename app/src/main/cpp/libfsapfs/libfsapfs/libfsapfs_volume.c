@@ -1494,8 +1494,12 @@ int libfsapfs_volume_get_size(
 		return( -1 );
 	}
 #endif
-/* TODO implement */
-	*size = (size64_t) 0;
+/* LOCAL PATCH (docs/VENDOR_FIXES.md V-APFS1): upstream leaves this unimplemented and
+ * fails. The volume's size is the space it has allocated in the container.
+ */
+	*size = (size64_t) internal_volume->superblock->number_of_allocated_blocks
+	      * internal_volume->io_handle->block_size;
+
 
 #if defined( HAVE_LIBFSAPFS_MULTI_THREAD_SUPPORT )
 	if( libcthreads_read_write_lock_release_for_read(
@@ -1512,7 +1516,7 @@ int libfsapfs_volume_get_size(
 		return( -1 );
 	}
 #endif
-	return( -1 );
+	return( 1 );
 }
 
 /* Retrieves the identifier

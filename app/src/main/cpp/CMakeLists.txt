@@ -49,6 +49,32 @@ target_compile_definitions(ntfs3g PRIVATE HAVE_CONFIG_H _FILE_OFFSET_BITS=64)
 target_include_directories(ntfs3g PUBLIC ntfs ntfs-3g/include/ntfs-3g)
 target_compile_options(ntfs3g PRIVATE -Wno-address-of-packed-member -Wno-unused-but-set-variable)
 
+# libfsapfs and the libyal libraries it needs (vendored, see docs/VENDOR_FIXES.md).
+# Read-only APFS, plain and natively encrypted. libyal's configure-generated
+# headers (common/config.h, common/types.h, include/libfsapfs*.h,
+# libfsapfs/libfsapfs_definitions.h) are checked in: config.h was generated
+# against the NDK and is ABI-neutral on __LP64__. Built without libyal's
+# multi-threading (so no libcthreads); ApfsFileSystem serialises every call.
+set(APFS_LIBS libfsapfs libbfio libcaes libcdata libcerror libcfile libclocale libcnotify
+        libcpath libcsplit libfcache libfdata libfdatetime libfguid libfmos libhmac libuna)
+set(APFS_SRCS "")
+set(APFS_INCS libfsapfs/common libfsapfs/include)
+foreach(lib ${APFS_LIBS})
+    file(GLOB lib_srcs "libfsapfs/${lib}/*.c")
+    list(APPEND APFS_SRCS ${lib_srcs})
+    list(APPEND APFS_INCS libfsapfs/${lib})
+endforeach()
+# The include paths stay PRIVATE: libyal's common.h and types.h share their names
+# with headers in mbedtls and ntfs-3g, so they must not reach the other bridges.
+# The JNI bridge is an object library for the same reason.
+add_library(fsapfs STATIC ${APFS_SRCS})
+target_compile_definitions(fsapfs PRIVATE HAVE_CONFIG_H)
+target_include_directories(fsapfs PRIVATE ${APFS_INCS})
+target_compile_options(fsapfs PRIVATE -w)
+add_library(apfs-jni OBJECT apfs/ApfsNative.cpp)
+target_compile_definitions(apfs-jni PRIVATE HAVE_CONFIG_H)
+target_include_directories(apfs-jni PRIVATE ${APFS_INCS})
+
 # serpent (vendored public-domain reference implementation, see serpent/PROVENANCE.md)
 add_library(serpent STATIC
         serpent/serpent-reference.c
@@ -64,7 +90,7 @@ target_include_directories(bitlocker PUBLIC bitlocker)
 target_link_libraries(bitlocker mbedcrypto)
 
 add_library(veracrypt-native SHARED VeraCryptNative.cpp exfat/ExFatNative.cpp ntfs/NtfsNative.cpp
-        bitlocker/BitLockerNative.cpp)
+        bitlocker/BitLockerNative.cpp $<TARGET_OBJECTS:apfs-jni>)
 target_compile_definitions(veracrypt-native PRIVATE _FILE_OFFSET_BITS=64)
 if(OTG_IO_STATS)
     target_compile_definitions(veracrypt-native PRIVATE OTG_IO_STATS=1)
@@ -75,5 +101,6 @@ target_link_libraries(veracrypt-native
         exfat
         ntfs3g
         bitlocker
+        fsapfs
         serpent
         log)

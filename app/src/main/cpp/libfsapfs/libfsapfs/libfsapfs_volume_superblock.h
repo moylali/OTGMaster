@@ -52,6 +52,11 @@ struct libfsapfs_volume_superblock
 	 */
 	uint64_t incompatible_features_flags;
 
+	/* LOCAL PATCH (docs/VENDOR_FIXES.md V-APFS1): upstream does not keep the allocated
+	 * block count, which libfsapfs_volume_get_size needs.
+	 */
+	uint64_t number_of_allocated_blocks;
+
 	/* The object map block number
 	 */
 	uint64_t object_map_block_number;

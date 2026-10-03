@@ -33,12 +33,12 @@ object FilesystemDetector {
             return DetectedFilesystem.Supported("NTFS")
         }
 
-        // APFS container superblock: magic "NXSB" at bytes 32-35
+        // APFS container superblock: magic "NXSB" at bytes 32-35. Read-only, plain or
+        // encrypted; VeraCryptUnlocker.classifyCandidate tells the two apart.
         if (data.size >= 36 &&
             data[32] == 0x4E.toByte() && data[33] == 0x58.toByte() &&
             data[34] == 0x53.toByte() && data[35] == 0x42.toByte()) {
-            return DetectedFilesystem.Unsupported("APFS",
-                "APFS (Apple File System) is not supported. Please reformat as FAT32 or exFAT.")
+            return DetectedFilesystem.Supported("APFS")
         }
 
         // FAT family — all valid FAT/exFAT boot sectors have 0x55AA at bytes 510-511

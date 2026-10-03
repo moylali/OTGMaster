@@ -321,6 +321,7 @@ class MainActivity : AppCompatActivity() {
         FileSystemFactory.registerFileSystem(ExFatFileSystemCreator(), 1)
         FileSystemFactory.registerFileSystem(app.fayaz.otgmaster.ext4.Ext4FileSystemCreator(), 2)
         FileSystemFactory.registerFileSystem(app.fayaz.otgmaster.ntfs.NtfsFileSystemCreator(), 2)
+        FileSystemFactory.registerFileSystem(app.fayaz.otgmaster.apfs.ApfsFileSystemCreator(), 2)
         
         val usbMgr = getSystemService(Context.USB_SERVICE) as UsbManager
         usbDeviceProvider = RealUsbDeviceProvider(usbMgr, permissionIntent)
@@ -975,12 +976,19 @@ class MainActivity : AppCompatActivity() {
                         app.fayaz.otgmaster.bitlocker.BitLockerUnlocker().unlock(
                             device, candidate.startBlock, candidate.blockCount, password.toCharArray()
                         )
+                    // Nothing to decrypt at the block level: libfsapfs takes the
+                    // password when the filesystem is mounted, below.
+                    app.fayaz.otgmaster.veracrypt.ContainerType.APFS ->
+                        app.fayaz.otgmaster.block.SlicedBlockDevice(device, candidate.startBlock,
+                            candidate.blockCount ?: (device.blockCount - candidate.startBlock))
                     else -> VeraCryptUnlocker().unlock(
                         device, candidate, password.toCharArray(), pim, keyfiles, contentResolver,
                         cipher, hash
                     )
                 }
-                withContext(Dispatchers.Main) { appendLog(getString(R.string.log_unlock_successful)) }
+                val isApfs = candidate.containerType == app.fayaz.otgmaster.veracrypt.ContainerType.APFS
+                // APFS is not unlocked until it mounts.
+                if (!isApfs) withContext(Dispatchers.Main) { appendLog(getString(R.string.log_unlock_successful)) }
 
                 val detected = FilesystemDetector.detect(decryptedDevice)
                 withContext(Dispatchers.Main) { appendLog(getString(R.string.log_detected_filesystem, detected.displayName)) }
@@ -1013,7 +1021,15 @@ class MainActivity : AppCompatActivity() {
                 val fsDevice: me.jahnen.libaums.core.driver.BlockDeviceDriver =
                     if (readOnly) app.fayaz.otgmaster.block.ReadOnlyBlockDeviceDriver(byteDevice) else byteDevice
                 val fileSystem = try {
-                    FileSystemFactory.createFileSystem(dummyEntry, fsDevice)
+                    if (isApfs) {
+                        app.fayaz.otgmaster.apfs.ApfsFileSystemCreator.mount(fsDevice, password).also {
+                            withContext(Dispatchers.Main) { appendLog(getString(R.string.log_unlock_successful)) }
+                        }
+                    } else {
+                        FileSystemFactory.createFileSystem(dummyEntry, fsDevice)
+                    }
+                } catch (e: app.fayaz.otgmaster.apfs.ApfsFileSystem.WrongPasswordException) {
+                    throw e   // an unlock failure, reported (and cached credentials dropped) below
                 } catch (e: Exception) {
                     android.util.Log.e("OTG_MOUNT", "Failed to mount file system", e)
                     val msg = if (detected is DetectedFilesystem.Unknown)
@@ -1197,6 +1213,7 @@ class MainActivity : AppCompatActivity() {
                 when (val fs = drive.fileSystem) {
                     is app.fayaz.otgmaster.exfat.ExFatFileSystem -> fs.unmount()
                     is app.fayaz.otgmaster.ntfs.NtfsFileSystem -> fs.unmount()
+                    is app.fayaz.otgmaster.apfs.ApfsFileSystem -> fs.unmount()
                 }
                 // drive.blockDevice is either NativeDecryptedBlockDevice (close zeros the key but
                 // does NOT close the underlying USB connection) or RawBlockDeviceAdapter (noop close).
@@ -1270,6 +1287,9 @@ class MainActivity : AppCompatActivity() {
 
     private fun detectPlainPartitions(device: RawBlockDevice, candidates: List<VolumeCandidate>): List<PlainPartition> {
         return candidates.mapNotNull { candidate ->
+            // Encrypted APFS carries the same container superblock as plain APFS, so
+            // the signature alone would auto-mount it without its password.
+            if (candidate.containerType == app.fayaz.otgmaster.veracrypt.ContainerType.APFS) return@mapNotNull null
             val startBlock = candidate.startBlock
             val available = device.blockCount - startBlock
             if (available <= 0) return@mapNotNull null
@@ -1807,6 +1827,7 @@ fun encryptionTag(type: app.fayaz.otgmaster.veracrypt.ContainerType?): Pair<Stri
         app.fayaz.otgmaster.veracrypt.ContainerType.LUKS1     -> Pair("LUKS1",     Color(0xFFE65100))
         app.fayaz.otgmaster.veracrypt.ContainerType.LUKS2     -> Pair("LUKS2",     Color(0xFF6A1B9A))
         app.fayaz.otgmaster.veracrypt.ContainerType.BITLOCKER -> Pair("BITLOCKER", Color(0xFF00838F))
+        app.fayaz.otgmaster.veracrypt.ContainerType.APFS      -> Pair("APFS",      Color(0xFF455A64))
         // "could not tell" is not the same claim as "it is not encrypted", and the
         // old catch-all else asserted the latter for both.
         app.fayaz.otgmaster.veracrypt.ContainerType.UNKNOWN   -> Pair("UNKNOWN",   Color(0xFF757575))
@@ -2174,11 +2195,12 @@ fun VeraCryptMountSection(
             ?: selectedDevice?.candidates?.firstOrNull()
     ) }
     val isBitLocker = selectedCandidate?.containerType == app.fayaz.otgmaster.veracrypt.ContainerType.BITLOCKER
+    val isApfs = selectedCandidate?.containerType == app.fayaz.otgmaster.veracrypt.ContainerType.APFS
     // "isLuks" gates the VeraCrypt-only fields (PIM, keyfiles, cipher, hash), which
-    // BitLocker has no use for either: its cipher is read from the volume.
+    // BitLocker and APFS have no use for either: their ciphers are read from the volume.
     val isLuks = selectedCandidate?.containerType == app.fayaz.otgmaster.veracrypt.ContainerType.LUKS1 ||
                  selectedCandidate?.containerType == app.fayaz.otgmaster.veracrypt.ContainerType.LUKS2 ||
-                 isBitLocker
+                 isBitLocker || isApfs
     var expanded by remember { mutableStateOf(false) }
 
     var password by remember(selectedDevice) { mutableStateOf(sessionCreds?.password ?: "") }
@@ -2390,6 +2412,7 @@ fun VeraCryptMountSection(
                 onValueChange = { if (!isPreFilled) password = it },
                 label = { Text(stringResource(when {
                     isBitLocker -> R.string.label_bitlocker_password
+                    isApfs -> R.string.label_apfs_password
                     isLuks -> R.string.label_password
                     else -> R.string.label_veracrypt_password
                 })) },

@@ -264,6 +264,14 @@ The encrypted volumes are created encrypted (`diskutil apfs addVolume -passphras
 not converted, so there is no background encryption to capture half-done. The script
 checks each volume's case behaviour before saving it. Password `password123`.
 
+**In the E2E suite** the four run as `testdata/apfs_ci`, `apfs_cs`, `apfs_enc_ci` and
+`apfs_enc_cs`. `run_e2e_tests.sh` unpacks the archive there (with `--skip-old-files`)
+beside the committed per-case files: `plain.txt` on the two unencrypted cases (they
+auto-mount with no form), `container.txt` = `APFS` on the encrypted two, and on all four
+`read_only.txt`, `verify_flower.txt` (flower.jpg byte for byte through the provider) and
+`case_sensitive.txt` (whether case.txt and CASE.txt are two files). `verify_apfs_images.py`
+unpacks into `testdata/apfs/` instead; the two copies are the same archive.
+
 **The images are not byte-reproducible.** Volume UUIDs, timestamps, the encryption keys
 and the random `large_file.bin` change on every run, so compare contents, not image hashes.
 

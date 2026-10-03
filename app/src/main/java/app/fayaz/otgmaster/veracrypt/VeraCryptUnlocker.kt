@@ -77,6 +77,18 @@ class VeraCryptUnlocker {
                     2    -> ContainerType.LUKS2
                     else -> ContainerType.UNKNOWN
                 }
+            } else if (app.fayaz.otgmaster.apfs.ApfsFileSystem.hasSignature(sector)) {
+                // Plain and encrypted APFS share the container superblock; only the
+                // volume says which, so ask libfsapfs. Encrypted APFS has no outer
+                // header — the password goes to the filesystem — but it needs the
+                // unlock form like any container, so it is offered as one.
+                val slice = app.fayaz.otgmaster.block.SlicedBlockDevice(
+                    device, startBlock, blockCount ?: (device.blockCount - startBlock))
+                when (app.fayaz.otgmaster.apfs.ApfsFileSystem.isEncrypted(slice)) {
+                    true -> ContainerType.APFS
+                    false -> ContainerType.UNENCRYPTED
+                    null -> ContainerType.UNKNOWN
+                }
             } else if (FilesystemDetector.detectFromBytes(sector) !is DetectedFilesystem.Unknown) {
                 // A readable filesystem signature rules VeraCrypt out: the first
                 // sector of a VeraCrypt volume is its encrypted header, so it
