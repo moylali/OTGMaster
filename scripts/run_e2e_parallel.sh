@@ -30,6 +30,11 @@ while [[ $# -gt 0 ]]; do
     shift
 done
 
+# The commit the APKs are built from, read before --prepare-only builds them, not
+# when the report is written half an hour later. --dirty marks uncommitted work.
+GIT_COMMIT=$(git describe --always --dirty --abbrev=7 2>/dev/null || echo "unknown")
+START=$SECONDS
+
 echo "Preparing fixtures and APKs once..."
 bash scripts/run_e2e_tests.sh --prepare-only || { echo "Preparation failed"; exit 1; }
 
@@ -77,7 +82,10 @@ for p in "${pids[@]}"; do wait "$p"; done
 
 # Merge: every result row from the shard reports, renumbered, with totals.
 APP_VERSION=$(grep 'versionName' app/build.gradle.kts | head -1 | grep -o '"[^"]*"' | tr -d '"')
-GIT_COMMIT=$(git rev-parse --short HEAD)
+END_COMMIT=$(git describe --always --dirty --abbrev=7 2>/dev/null || echo "unknown")
+AVD_NAME=$(sed -n 's/^AVD_NAME="\(.*\)"$/\1/p' scripts/run_e2e_tests.sh | head -1)
+AVD_IMAGE=$(sed -n 's|^image.sysdir.1=system-images/||p' "${ANDROID_AVD_HOME:-$HOME/.android/avd}/$AVD_NAME.avd/config.ini" 2>/dev/null | sed 's|/$||')
+ELAPSED=$((SECONDS - START))
 report="e2e_report_v${APP_VERSION}_${GIT_COMMIT}_${stamp}_parallel.md"
 rows=$(cat "$outdir"/shard_*.md 2>/dev/null | grep -E '^\| [0-9]+ \| `' | sort -t'`' -k2,2)
 passed=$(grep -c '✅ PASSED' <<< "$rows")
@@ -85,6 +93,9 @@ flaky=$(grep -c '⚠️ FLAKY' <<< "$rows")
 failed=$(grep -c '❌ FAILED' <<< "$rows")
 ran=$(grep -c '' <<< "$rows")
 missing=$(( ${#cases[@]} - ran ))
+# Name the cases with no result row, not just count them.
+missing_names=()
+for c in "${cases[@]}"; do grep -qF "| \`$c\` |" <<< "$rows" || missing_names+=("$c"); done
 {
     echo "# OTGMaster E2E Test Report (parallel, $JOBS emulators)"
     echo
@@ -92,7 +103,12 @@ missing=$(( ${#cases[@]} - ran ))
     echo "|-------|-------|"
     echo "| Version | $APP_VERSION |"
     echo "| Commit | \`$GIT_COMMIT\` |"
+    [ "$END_COMMIT" != "$GIT_COMMIT" ] && \
+        echo "| Commit at end | \`$END_COMMIT\` — the tree changed during the run; results are for \`$GIT_COMMIT\` |"
+    echo "| Host | $(uname -sm) |"
+    echo "| Emulator | $AVD_NAME (${AVD_IMAGE:-image unknown}) × $JOBS |"
     echo "| Date | $(date '+%Y-%m-%d %H:%M:%S') |"
+    printf '| Wall time | %dm %02ds |\n' $((ELAPSED / 60)) $((ELAPSED % 60))
     echo "| Shard logs | \`$outdir/\` |"
     echo
     echo "## Results"
@@ -116,6 +132,7 @@ missing=$(( ${#cases[@]} - ran ))
     echo "| Flaky (passed on retry, counted in Passed) | $flaky |"
     echo "| Failed | $failed |"
     echo "| Not run (a shard died) | $missing |"
+    [ "$missing" -gt 0 ] && echo "| Not run, by name | $(printf '`%s`, ' "${missing_names[@]}" | sed 's/, $//') |"
     if [ "$failed" -eq 0 ] && [ "$missing" -eq 0 ]; then
         echo "| Overall | ✅ ALL PASSED |"
     else
