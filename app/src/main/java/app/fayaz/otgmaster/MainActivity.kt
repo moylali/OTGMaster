@@ -1483,10 +1483,11 @@ class MainActivity : AppCompatActivity() {
                 mountPlainDevice(device, plain)
             }
             device.candidates.forEach { candidate ->
+                OtgMasterState.unlocksInFlight.incrementAndGet()
                 attemptUnlock(
                     device.deviceName, candidate, password, pim,
                     emptyList(), cipher, hash,
-                ) {}
+                ) { OtgMasterState.unlocksInFlight.decrementAndGet() }
             }
         }
     }

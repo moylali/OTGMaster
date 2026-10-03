@@ -110,6 +110,13 @@ object OtgMasterState {
     @Volatile
     var mountRequest: MountRequest? = null
 
+    /**
+     * Unlocks a [MountRequest] has started and not yet finished, successfully or not.
+     * Unlocks run one at a time and a key derivation can take many seconds, so the
+     * number of mounted drives going quiet for a while does not mean they are done.
+     */
+    val unlocksInFlight = java.util.concurrent.atomic.AtomicInteger(0)
+
     /** Unmounts every drive. Installed by MainActivity while it is alive. */
     @Volatile
     var unmountAllRequest: (() -> Unit)? = null
