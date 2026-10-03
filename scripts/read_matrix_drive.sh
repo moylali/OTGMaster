@@ -19,6 +19,10 @@ DEV="${1:?Usage: sudo bash $0 /dev/sdX OUT_DIR BUILD_DIR}"
 OUT="${2:?Usage: sudo bash $0 /dev/sdX OUT_DIR BUILD_DIR}"
 BUILD="${3:?Usage: sudo bash $0 /dev/sdX OUT_DIR BUILD_DIR}"
 [[ $EUID -eq 0 ]] || { echo "ERROR: run with sudo."; exit 1; }
+# GNU dd where it is installed as gnudd: uutils' dd (Ubuntu's default since 25.10)
+# fails iflag=direct with "IO error: Invalid input", which stopped the first real
+# read-back at its first partition.
+DD=$(command -v gnudd || command -v dd)
 [[ -b "$DEV" ]] || { echo "ERROR: $DEV is not a block device."; exit 1; }
 [[ "$(lsblk -dno TYPE "$DEV")" == disk ]] || { echo "ERROR: give the whole disk, not a partition."; exit 1; }
 [[ -f "$BUILD/drive.json" ]] || { echo "ERROR: $BUILD/drive.json not found."; exit 1; }
@@ -31,7 +35,9 @@ if lsblk -no MOUNTPOINTS "$DEV" | grep -q .; then
 fi
 
 SERIAL=$(udevadm info --query=property --name="$DEV" | sed -n 's/^ID_SERIAL=//p')
-RULE=/run/udev/rules.d/99-otg-matrix-ignore.rules
+# One file per disk: two drives can be written or read at once, and a shared file
+# let the second run replace the first's rule and the first to finish delete both.
+RULE=/run/udev/rules.d/99-otg-matrix-ignore-$(basename "$DEV").rules
 mkdir -p /run/udev/rules.d
 echo "ENV{ID_SERIAL}==\"$SERIAL\", ENV{UDISKS_IGNORE}=\"1\", ENV{UDISKS_AUTO}=\"0\"" > "$RULE"
 cleanup() { rm -f "$RULE"; udevadm control --reload; }
@@ -61,7 +67,9 @@ for label in $LABELS; do
     fi
     [[ -b "$part" ]] || { echo "ERROR: no partition for $label on $DEV."; exit 1; }
     echo "== $label <- $part"
-    dd if="$part" of="$OUT/$label.img" bs=16M iflag=direct conv=sparse status=progress
+    # Drop any cached pages of the partition, so what is copied is the device's.
+    blockdev --flushbufs "$part"
+    "$DD" if="$part" of="$OUT/$label.img" bs=16M iflag=direct conv=sparse status=progress
     chown "$OWNER": "$OUT/$label.img"
 done
 echo

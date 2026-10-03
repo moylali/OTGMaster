@@ -26,6 +26,10 @@ DEV="${1:?Usage: sudo bash $0 /dev/sdX BUILD_DIR [--yes]}"
 BUILD="${2:?Usage: sudo bash $0 /dev/sdX BUILD_DIR [--yes]}"
 YES="${3:-}"
 [[ $EUID -eq 0 ]] || { echo "ERROR: run with sudo."; exit 1; }
+# GNU dd where it is installed as gnudd: uutils' dd (Ubuntu's default since 25.10)
+# fails iflag=direct with "IO error: Invalid input", which stopped the first real
+# read-back at its first partition.
+DD=$(command -v gnudd || command -v dd)
 [[ -b "$DEV" ]] || { echo "ERROR: $DEV is not a block device."; exit 1; }
 [[ -f "$BUILD/drive.json" ]] || { echo "ERROR: $BUILD/drive.json not found."; exit 1; }
 DISK=$(basename "$DEV")
@@ -81,10 +85,14 @@ fi
 
 # udisks ignores the disk until this script ends.
 SERIAL=$(udevadm info --query=property --name="$DEV" | sed -n 's/^ID_SERIAL=//p')
-RULE=/run/udev/rules.d/99-otg-matrix-ignore.rules
+# One file per disk: two drives can be written or read at once, and a shared file
+# let the second run replace the first's rule and the first to finish delete both.
+RULE=/run/udev/rules.d/99-otg-matrix-ignore-$(basename "$DEV").rules
 mkdir -p /run/udev/rules.d
 echo "ENV{ID_SERIAL}==\"$SERIAL\", ENV{UDISKS_IGNORE}=\"1\", ENV{UDISKS_AUTO}=\"0\"" > "$RULE"
-cleanup() { rm -f "$RULE"; udevadm control --reload; udevadm trigger --name-match="$DEV" 2>/dev/null || true; }
+# No udevadm trigger on the way out: re-triggering is what would hand the new
+# partitions to the desktop's auto-mounter. They stay ignored until the next plug-in.
+cleanup() { rm -f "$RULE"; udevadm control --reload; }
 trap cleanup EXIT
 udevadm control --reload
 udevadm trigger --name-match="$DEV"; udevadm settle
@@ -113,7 +121,7 @@ for row in $PARTS; do
     img="$BUILD/$label.img"
     [[ "$size" == "$(stat -c %s "$img")" ]] || { echo "ERROR: $part is $size bytes, $img is $(stat -c %s "$img")."; exit 1; }
     echo "== $label -> $part"
-    dd if="$img" of="$part" bs=16M oflag=direct conv=fsync status=progress
+    "$DD" if="$img" of="$part" bs=16M oflag=direct conv=fsync status=progress
 done
 sync
 echo
