@@ -11,6 +11,7 @@ platforms, at different scales. Picking the wrong one wastes the most time.
 | System | Script / section | Host | Size | Answers |
 |---|---|---|---|---|
 | **E2E volume images** | `scripts/generate_testdata.sh`, §2–§5 | Linux | 10 MB each | Does unlock + mount + basic I/O work? Is an unsupported choice *rejected*? |
+| **APFS E2E images** | `scripts/make_apfs_images_macos.sh`, §6b | macOS | 64 MB each | Plain and encrypted APFS, case-sensitive and not (not yet run by the suite) |
 | **VeraCrypt benchmark drive** | `scripts/prepare_test_usb.sh`, §7 | macOS | 62 GB | How fast is it, and does it stay correct under load? |
 | **LUKS drives (3 of them)** | §8–§12, manual | Linux | 64 GB each | LUKS1/LUKS2 header parsing, Argon2 on a phone, ext4 detection |
 
@@ -223,6 +224,59 @@ How each piece is made, and what vouches for it:
 Password `password123`; BitLocker recovery key
 `111111-222222-333333-444444-555555-666666-111111-222222` (each group a multiple of
 11, and group/11 below 65536 — a random 48-digit string is not a valid key).
+
+## 6b. APFS (E2E images, macOS)
+
+`scripts/make_apfs_images_macos.sh` builds four raw images, each a GPT disk with one
+APFS partition — the layout Disk Utility gives a USB stick:
+
+| Case | Volume | Checks |
+|---|---|---|
+| `apfs_ci` | APFS, case-insensitive | mount, flower.jpg, case.txt and CASE.txt are one file |
+| `apfs_cs` | APFS, case-sensitive | as above, but case.txt and CASE.txt are two files |
+| `apfs_enc_ci` | APFS (Encrypted), case-insensitive | unlock with the password, then as `apfs_ci` |
+| `apfs_enc_cs` | APFS (Encrypted), case-sensitive | unlock with the password, then as `apfs_cs` |
+
+```sh
+bash scripts/make_apfs_images_macos.sh     # on a Mac, from the repo root
+```
+
+macOS only: no other OS creates natively encrypted APFS, and filling APFS on Linux
+needs the out-of-tree `linux-apfs-rw` module, which Secure Boot will not load unsigned.
+No root needed. Images land in `testdata/apfs/<case>/`, 64 MiB each, ignored by git
+like every other `test.img`. They sit one level below `testdata/` on purpose, so
+`run_e2e_tests.sh` does not pick them up until the app mounts APFS.
+
+The encrypted volumes are created encrypted (`diskutil apfs addVolume -passphrase`),
+not converted, so there is no background encryption to capture half-done. The script
+checks each volume's case behaviour before saving it. Password `password123`.
+
+**The images are not byte-reproducible.** Volume UUIDs, timestamps, the encryption keys
+and the random `large_file.bin` change on every run, so compare contents, not image hashes.
+
+**Verify on Linux, with code independent of Apple's and the app's:** copy
+`testdata/apfs/` to the Linux host and run `scripts/verify_apfs_images.py`. It runs
+`apfsck` on the container, then mounts through `apfs-fuse` (decrypting with the
+password) and checks flower.jpg byte for byte, the other files, and case sensitivity.
+
+A quick check is possible on the Mac, but it has a gap. Attach the saved raw image
+read-only (`hdiutil attach -readonly -nomount -imagekey diskimage-class=CRawDiskImage`),
+run `fsck_apfs -n` on the `Apple_APFS` partition, unlock with `diskutil apfs
+unlockVolume … -nomount` and mount with `mount_apfs -o rdonly`. `fsck_apfs` will not
+check an **encrypted** container on an attached image — *"failed to enable crypto I/O
+mode … Invalid argument"*, on read-only and writable attaches alike. The encrypted
+images therefore get no structural check on macOS; only `apfsck` on Linux covers them.
+
+First run, 2026-10-02, macOS 26.6.2 (arm64), script unchanged from `9f996ca`:
+
+| Case | `fsck_apfs -n` | flower.jpg | case.txt / CASE.txt | files |
+|---|---|---|---|---|
+| `apfs_ci` | container OK | matches | UPPER / UPPER | 6 |
+| `apfs_cs` | container OK | matches | lower / UPPER | 7 |
+| `apfs_enc_ci` | cannot run (above) | matches, after unlock | UPPER / UPPER | 6 |
+| `apfs_enc_cs` | cannot run (above) | matches, after unlock | lower / UPPER | 7 |
+
+`verify_apfs_images.py` has not yet been run on these images.
 
 ## 7. The VeraCrypt benchmark drive (macOS, scripted)
 
