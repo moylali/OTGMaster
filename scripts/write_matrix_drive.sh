@@ -84,7 +84,9 @@ SERIAL=$(udevadm info --query=property --name="$DEV" | sed -n 's/^ID_SERIAL=//p'
 RULE=/run/udev/rules.d/99-otg-matrix-ignore.rules
 mkdir -p /run/udev/rules.d
 echo "ENV{ID_SERIAL}==\"$SERIAL\", ENV{UDISKS_IGNORE}=\"1\", ENV{UDISKS_AUTO}=\"0\"" > "$RULE"
-cleanup() { rm -f "$RULE"; udevadm control --reload; udevadm trigger --name-match="$DEV" 2>/dev/null || true; }
+# No udevadm trigger on the way out: re-triggering is what would hand the new
+# partitions to the desktop's auto-mounter. They stay ignored until the next plug-in.
+cleanup() { rm -f "$RULE"; udevadm control --reload; }
 trap cleanup EXIT
 udevadm control --reload
 udevadm trigger --name-match="$DEV"; udevadm settle
