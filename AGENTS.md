@@ -84,6 +84,28 @@ These apply to every commit, without being asked.
    commit. Every file in `docs/` is publicly served. Keep
    `docs/privacy-policy.html` at that URL, because store listings link to it.
 
+6. **Every PR carries the results of a parallel E2E run on its head commit.**
+   Run `scripts/run_e2e_parallel.sh` on the PR's final commit, with a clean tree.
+   Paste the merged report's header and Summary tables into the PR description,
+   plus every Results row that is not a plain ✅ PASSED. The report files are
+   gitignored, so the PR description is the only lasting record.
+
+   The report must support the claim it is pasted under:
+   - **The Commit row names the PR's head commit, with no `-dirty`.** The commit
+     is read before the APKs are built, so `-dirty` means the APK held
+     uncommitted work that no commit names. A `Commit at end` row means the tree
+     changed during the run. Either way, run it again.
+   - **FLAKY, FAILED and `Not run, by name` rows appear as they are**, never
+     rounded up to a pass and never left out (the same principle as
+     `BENCHMARK_RUNS.md`). A run with failures is still a result. Say what was
+     done about each failure, or why the PR goes ahead anyway.
+   - **Results from an earlier commit do not count.** If the head commit changes,
+     run it again. Fold small follow-up fixes into the PR before running, rather
+     than after.
+
+   A PR that touches no app code, test scripts or test data (docs, the site,
+   store metadata) says `E2E not run: no app, test or test-data changes` instead.
+
 ## Benchmarking and verification
 
 **To run a benchmark, follow "Standard procedure" at the top of
