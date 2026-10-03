@@ -3,7 +3,8 @@
 Checks the APFS fixtures made by scripts/make_apfs_images_macos.sh, on Linux,
 with implementations independent of Apple's and of the app's:
 
-  - apfsck (linux-apfs/apfsprogs) on the APFS container — structure;
+  - apfsck (linux-apfs/apfsprogs) on the APFS container — structure, for the
+    unencrypted two (apfsck cannot check an encrypted volume);
   - apfs-fuse (sgan81/apfs-fuse), mounted as this user and given the password for
     the encrypted volumes — the files: flower.jpg byte for byte, the other fixture
     files, and case sensitivity (case.txt / CASE.txt are two files on a
@@ -63,7 +64,14 @@ def check(case_dir, work, apfs_fuse):
     with open(img, "rb") as src, open(container, "wb") as dst:
         src.seek(off)
         dst.write(src.read(length))
-    if APFSCK:
+    if "_enc" in name:
+        # apfsck cannot check encrypted volumes: it takes no password, reports their
+        # encrypted metadata as unknown, and its keybag parser predates the layout
+        # macOS 26 writes (16-byte-aligned entries, a DER-wrapped volume key, no null
+        # terminator), which apfs-fuse and Apple's reference both handle. The files
+        # below, read through apfs-fuse's own decryption, are the check here.
+        print(f"     {name}: apfsck skipped (encrypted volume); contents checked via apfs-fuse")
+    elif APFSCK:
         p = subprocess.run([APFSCK, container], capture_output=True, text=True)
         if p.returncode != 0:
             problems.append(f"apfsck rc={p.returncode}: {(p.stdout + p.stderr).strip()[:300]}")
@@ -112,7 +120,7 @@ def main():
     # unpack it on a fresh checkout.
     if not sys.argv[1:] and not glob.glob(pattern) and os.path.exists(archive):
         print(f"unpacking {os.path.relpath(archive, ROOT)}")
-        subprocess.run(["tar", "-xJf", archive, "-C", apfs_dir], check=True)
+        subprocess.run(["tar", "--warning=no-unknown-keyword", "-xJf", archive, "-C", apfs_dir], check=True)
     cases = sys.argv[1:] or sorted(os.path.dirname(p) for p in glob.glob(pattern))
     if not cases:
         raise SystemExit("no testdata/apfs/ fixtures — run scripts/make_apfs_images_macos.sh on a Mac")

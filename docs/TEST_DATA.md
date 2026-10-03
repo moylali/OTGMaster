@@ -279,8 +279,8 @@ run `fsck_apfs -n` on the `Apple_APFS` partition, unlock with `diskutil apfs
 unlockVolume … -nomount` and mount with `mount_apfs -o rdonly`. `fsck_apfs` will not
 check an **encrypted** container — *"failed to enable crypto I/O mode … Invalid
 argument"*. This happens on read-only and writable image attaches alike, and on a
-physical USB disk under `sudo` (§16.2). The encrypted
-images therefore get no structural check on macOS; only `apfsck` on Linux covers them.
+physical USB disk under `sudo` (§16.2). The encrypted images therefore get no
+structural check on macOS, and none on Linux either (below).
 
 First run, 2026-10-02, macOS 26.6.2 (arm64), script unchanged from `9f996ca`:
 
@@ -291,7 +291,25 @@ First run, 2026-10-02, macOS 26.6.2 (arm64), script unchanged from `9f996ca`:
 | `apfs_enc_ci` | cannot run (above) | matches, after unlock | UPPER / UPPER | 6 |
 | `apfs_enc_cs` | cannot run (above) | matches, after unlock | lower / UPPER | 7 |
 
-`verify_apfs_images.py` has not yet been run on these images.
+Linux, 2026-10-02, `verify_apfs_images.py` with apfsprogs `3721463` (0.2.1) and
+apfs-fuse built from source: **4 of 4 verified.** `apfsck` passes the two plain
+containers; `apfs-fuse` reads flower.jpg byte for byte, "file with spaces.txt" and the
+right case behaviour on all four, the encrypted two through its own decryption with
+the password.
+
+**No tool here checks an encrypted APFS volume's structure.** `apfsck` takes no
+password and treats encrypted metadata as unsupported, so the verifier skips it for
+the `_enc` cases and says so. Before stopping there, `apfsck` also fails earlier, at
+the container keybag. It predates the layout macOS 26 writes:
+- entries are aligned to 16 bytes, as Apple's reference and apfs-fuse's `KeyMgmt.cpp`
+  both specify;
+- the volume key is a 124-byte DER blob, not a bare 40-byte wrapped key;
+- `kl_nbytes` counts the 16-byte locker header, and no null entry follows.
+
+The keybag was decrypted and decoded by hand to confirm it is well-formed. With
+`apfsck` patched for those three points, it got through the container and stopped at
+the first encrypted volume block, as expected. The patch was not kept: it only shows
+that the keybag is not the problem.
 
 ## 7. The VeraCrypt benchmark drive (macOS, scripted)
 
