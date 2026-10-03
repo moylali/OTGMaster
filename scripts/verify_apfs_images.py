@@ -105,7 +105,15 @@ def check(case_dir, work, apfs_fuse):
 def main():
     if not APFS_FUSE:
         raise SystemExit("apfs-fuse not found (set APFS_FUSE)")
-    cases = sys.argv[1:] or sorted(glob.glob(os.path.join(ROOT, "testdata/apfs/apfs_*")))
+    apfs_dir = os.path.join(ROOT, "testdata/apfs")
+    archive = os.path.join(apfs_dir, "apfs-images.tar.xz")
+    pattern = os.path.join(apfs_dir, "apfs_*/test.img")
+    # The images are committed as an archive, since only a Mac can rebuild them;
+    # unpack it on a fresh checkout.
+    if not sys.argv[1:] and not glob.glob(pattern) and os.path.exists(archive):
+        print(f"unpacking {os.path.relpath(archive, ROOT)}")
+        subprocess.run(["tar", "-xJf", archive, "-C", apfs_dir], check=True)
+    cases = sys.argv[1:] or sorted(os.path.dirname(p) for p in glob.glob(pattern))
     if not cases:
         raise SystemExit("no testdata/apfs/ fixtures — run scripts/make_apfs_images_macos.sh on a Mac")
     bad = 0
