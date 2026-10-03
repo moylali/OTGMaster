@@ -14,6 +14,7 @@ platforms, at different scales. Picking the wrong one wastes the most time.
 | **APFS E2E images** | `scripts/make_apfs_images_macos.sh`, §6b | macOS | 64 MB each | Plain and encrypted APFS, case-sensitive and not (not yet run by the suite) |
 | **VeraCrypt benchmark drive** | `scripts/prepare_test_usb.sh`, §7 | macOS | 62 GB | How fast is it, and does it stay correct under load? |
 | **LUKS drives (3 of them)** | §8–§12, manual | Linux | 64 GB each | LUKS1/LUKS2 header parsing, Argon2 on a phone, ext4 detection |
+| **Device-matrix drives (4)** | `scripts/build_matrix_drive.py` and friends, §16 | Linux (+ macOS for Drive 1) | 64 GB, 10 partitions each | Every container × filesystem on real hardware, ~3 GB read set and large writes per partition, verified on the host in one pass per drive |
 
 The E2E images are the ones to add first for any new cipher, hash or filesystem: they
 are cheap, they run on an emulator, and they cover the case that matters most for a new
@@ -821,3 +822,141 @@ Collected from actually running these, in rough order of time lost.
   it is never presented in the same block as a read-only command, and it refuses
   anything that is not an external removable USB disk, with a size ceiling to catch a
   typo'd identifier. Read the summary it prints before confirming.
+
+## 16. The device-matrix drives (four 64 GB drives, ten partitions each)
+
+Every container × filesystem combination the app supports, on real USB hardware:
+37 combinations plus three BitLocker cipher variants, ten 5600 MiB partitions per
+drive. The layout lives in one place, `scripts/matrix_layout.py`:
+
+| Drive | Partitions |
+|---|---|
+| 1 | APFS ×4 (plain/encrypted × case-insensitive/sensitive) · plain FAT32, exFAT, NTFS, ext4 · BitLocker+NTFS (XTS-128), BitLocker+exFAT (XTS-256) |
+| 2 | VeraCrypt+FAT32/exFAT/NTFS/ext4 · LUKS1+FAT32/ext4 · LUKS2+exFAT · LUKS2 4K+ext4/NTFS · BitLocker+FAT32 (CBC-128) |
+| 3 | LUKS1+exFAT/NTFS · LUKS2+FAT32/NTFS/ext4 · LUKS2 4K+FAT32/exFAT · plain ext2, ext3 · BitLocker+NTFS (CBC-256) |
+| 4 | ext2/ext3 in LUKS1, LUKS2, LUKS2 4K and VeraCrypt · BitLocker+FAT32 (XTS-256), BitLocker+exFAT (CBC-128) |
+
+Every partition holds the same kind of read set, `BENCH/`
+(`scripts/make_fixture_tree.py`): a 2100 MiB file (reads cross the 2³¹-byte offset),
+a 256 MiB file, 10,000 short and 10,000 long names, a ten-deep path, ~900 mixed-size
+files in a tree, and edge cases (empty, cluster-boundary sizes, a 64 MiB zero file,
+spaces, Unicode, an emoji, a 200-character name). 3.0 GB on writable partitions,
+leaving ~2.4 GB for writes; 3.5 GB on read-only ones (APFS, ext2, ext3).
+`BENCH/MANIFEST.txt` hashes **every** file, and `fixtures` checks every one.
+
+Passwords: `password123` everywhere, VeraCrypt PIM 1, BitLocker recovery key
+`111111-222222-333333-444444-555555-666666-111111-222222`.
+
+### 16.1 How the pipeline is split
+
+Only two steps need root, and only those touch the drive:
+
+1. **Build** (Linux, no root): `build_matrix_drive.py` makes each partition as an
+   image file — filesystem, read set, container — with the same tools as the E2E
+   matrix. It also keeps the plaintext and a per-MiB hash of it: the baseline.
+2. **Verify the build** (no root): `verify_matrix_drive.py --build`.
+3. **Write** (`sudo`, DESTRUCTIVE): `write_matrix_drive.sh` partitions the drive and
+   `dd`s the images in.
+4. **Read back** (`sudo`, read-only): `read_matrix_drive.sh` copies every partition
+   to an image file.
+5. **Verify the drive** (no root): `verify_matrix_drive.py --images`. Per partition:
+   independent decryption, every MiB against the baseline (a read-only partition
+   must not change at all), the filesystem's own checker, then a read-only kernel
+   mount checking every manifest file byte for byte and flagging any file outside
+   `BENCH/reports/` and the runner's `BENCH_*` directories. One table, one verdict.
+
+After every phone run: steps 4 and 5 again. `--accept` makes a CLEAN state the new
+baseline (runs leave files behind, and even deleted files leave changed blocks).
+
+**Turn desktop auto-mount off before plugging a matrix drive into the laptop.** A
+read-write auto-mount changes the partition (ext4 records the mount in its
+superblock), and on ext2/ext3 that is a verification failure. The two root scripts
+refuse to start if anything is mounted and make udisks ignore the disk while they run.
+
+```sh
+gsettings set org.gnome.desktop.media-handling automount false
+```
+
+The work directory is `matrix/` in the workspace (gitignored). A full drive needs
+about 90 GB there: ~60 GB of images, ~30 GB of sparse plaintext, plus the read-back.
+APFS checks need apfs-fuse and apfsck: `bash scripts/build_apfs_tools.sh` builds both
+without root (apfs-fuse needs `libfuse3-dev`) and prints the two `export` lines.
+
+### 16.2 Drive 1 — the Mac first
+
+APFS can only be made on a Mac, and the Mac must go first: macOS writes its own files
+onto any volume it can mount, so it must never see the drive after the Linux
+partitions exist. On the Mac, from the repo root:
+
+```sh
+diskutil list                              # identify the USB disk, e.g. disk4
+```
+
+Then, on its own — this ERASES the disk, after asking for the identifier to be typed:
+
+```sh
+bash scripts/prepare_matrix_drive_macos.sh --disk disk4
+```
+
+It makes the GPT (macOS adds a 200 MiB EFI partition first), the four APFS partitions
+in this order — D1APFSCI, D1APFSCS, D1APFSECI, D1APFSECS — and leaves the rest free;
+fills each with the read set (3.5 GB, plus case.txt/CASE.txt on the case-sensitive
+two); checks each volume's case behaviour; and ejects. 15–40 minutes. Then move the
+drive to Linux and do not plug it into a Mac again.
+
+### 16.3 Building and writing (Linux)
+
+Build (no root; 15–30 minutes per drive with `-j 4`), then verify the build:
+
+```sh
+python3 scripts/build_matrix_drive.py --drive 1 --out matrix/d1
+python3 scripts/verify_matrix_drive.py --build matrix/d1
+```
+
+Drive 1's build covers its six Linux partitions; the APFS rows show NOT CHECKED until
+the drive is read back. `--test-scale` builds 300 MiB partitions instead, for testing
+the pipeline itself.
+
+Plug the drive in (auto-mount off), find it, and write — on its own, DESTRUCTIVE:
+
+```sh
+lsblk -o NAME,SIZE,TRAN,MODEL,SERIAL        # identify it, e.g. /dev/sdb
+```
+
+```sh
+sudo bash scripts/write_matrix_drive.sh /dev/sdb matrix/d1
+```
+
+Drives 2–4 are repartitioned from scratch. Drive 1 must already carry the Mac's EFI
+and four APFS partitions; the script refuses otherwise, and adds its six after them.
+
+### 16.4 Read back and take the baselines
+
+Before the drive goes near a phone:
+
+```sh
+sudo bash scripts/read_matrix_drive.sh /dev/sdb matrix/d1-read matrix/d1
+python3 scripts/verify_matrix_drive.py --build matrix/d1 --images matrix/d1-read --accept
+```
+
+Every partition must come back CLEAN with 0 MiB changed. This is the first look at
+Drive 1's APFS partitions from Linux: `--accept` takes their baselines and keeps their
+manifests. After each phone run, the same two commands, without `--accept` unless the
+result is CLEAN and the changes are the run's own.
+
+### 16.5 What the pipeline was tested against
+
+At `--test-scale`, all four drives' Linux partitions (36) built and verified CLEAN.
+Injected damage, each on a copy of a built partition:
+
+| Damage | Caught by |
+|---|---|
+| One ciphertext byte flipped inside a file (LUKS1+ext4) | content check; `e2fsck` passed it |
+| 4 KiB of FAT32's first FAT overwritten | `fsck.vfat`, and an I/O error reading a file |
+| One bit flipped in a file on read-only ext2 | "1 MiB changed on a partition the app must never write" |
+| A stray file at the root, beside a run's own output | "unexplained file", while the run's files were counted, not flagged |
+
+Not yet run: the two root scripts on a real drive, the Mac script on a Mac, and the
+APFS rows end to end (the verifier's APFS path was exercised on the 64 MiB Mac images,
+which mount and decrypt but carry no BENCH tree).
+
