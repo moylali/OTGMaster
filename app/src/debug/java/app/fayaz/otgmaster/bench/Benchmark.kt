@@ -402,6 +402,9 @@ object Benchmark {
             writeSection("unaligned", "unaligned     ") { benchUnaligned(live(), ::emit, mount) }
             phase("correctness")
             writeSection("correct", "correctness   ") { benchCorrectness(live(), ::emit, mount) }
+            // Opt-in: a 2.2 GB file and a churned tree, left for the host check.
+            phase("big writes")
+            writeSection("bigwrite", "bigwrite      ") { benchBigWrite(live(), ::emit, mount) }
             phase("SAF path")
             if (only.contains("saf")) runCatching { benchSaf(context, ::emit) }
                 .onFailure { emit("saf           : FAILED ${it}") }
@@ -1583,6 +1586,235 @@ object Benchmark {
      * then fails with "Item already exists!". Delete what is there; if that cannot
      * be done, fall back to a suffixed name rather than abandoning the run.
      */
+    // ---------------------------------------------------------------------------
+    // bigwrite: a 2 GB+ file and a churned tree of files, left on the volume with
+    // their expected content so the host can check them without the app
+    // (scripts/verify_matrix_drive.py; docs/TEST_DATA.md §16).
+    // ---------------------------------------------------------------------------
+
+    /**
+     * The content every bigwrite file holds: the AES-128-CTR keystream (zero IV) under
+     * a key derived from the volume label and the file's path. Fast on the phone
+     * (hardware AES), regenerated on the host with Python's `cryptography`, and
+     * different on every partition and path, so a write that lands on the wrong file
+     * or the wrong partition cannot match.
+     */
+    private class Keystream(label: String, path: String) {
+        private val cipher = javax.crypto.Cipher.getInstance("AES/CTR/NoPadding").apply {
+            val key = java.security.MessageDigest.getInstance("SHA-256")
+                .digest("otg-matrix:${label.trim()}/$path".toByteArray()).copyOf(16)
+            init(javax.crypto.Cipher.ENCRYPT_MODE, javax.crypto.spec.SecretKeySpec(key, "AES"),
+                javax.crypto.spec.IvParameterSpec(ByteArray(16)))
+        }
+        private var produced = 0L
+
+        /** The next [n] bytes of the stream. */
+        fun next(n: Int): ByteArray { produced += n; return cipher.update(ByteArray(n)) }
+
+        /** Bytes [from, from + n) of the stream; [from] must not be behind what was produced. */
+        fun at(from: Long, n: Int): ByteArray {
+            var skip = from - produced
+            require(skip >= 0) { "keystream cannot go backwards" }
+            while (skip > 0) { val k = minOf(skip, 1L shl 20).toInt(); next(k); skip -= k }
+            return next(n)
+        }
+
+        companion object {
+            fun content(label: String, path: String, size: Long): ByteArray =
+                Keystream(label, path).next(size.toInt())
+        }
+    }
+
+    private fun sha256Hex(b: ByteArray, len: Int = b.size): String =
+        java.security.MessageDigest.getInstance("SHA-256").apply { update(b, 0, len) }.digest()
+            .joinToString("") { "%02x".format(it) }
+
+    private const val BIG_BYTES = 2_200_000_000L          // past 2^31, under FAT32's 4 GiB
+    private const val BIG_DIR = "BENCH_BIG"
+    private const val TREE_DIR = "BENCH_TREE"
+
+    private fun benchBigWrite(drive: MountedDrive, emit: (String) -> Unit, mount: MountCredentials?) {
+        val label = runCatching { drive.fileSystem.volumeLabel }.getOrDefault("").trim()
+        val tag = driveTag(drive)
+        val root = drive.fileSystem.rootDirectory
+        // The previous run's files go first: they were for the host check after that run.
+        for (d in listOf(BIG_DIR, TREE_DIR)) runCatching { root.search(d)?.let { deleteRecursively(it) } }
+
+        // --- the big file ---------------------------------------------------------
+        val free = runCatching { drive.fileSystem.freeSpace }.getOrDefault(0L)
+        val bigPath = "big.bin"
+        var bigOk: Boolean? = null
+        if (free < BIG_BYTES + 256L * 1024 * 1024) {
+            emit("bigwrite      : big file SKIPPED — ${free / 1_000_000} MB free, needs ${BIG_BYTES / 1_000_000} MB + slack")
+        } else {
+            val f = root.createDirectory(BIG_DIR).createFile(bigPath)
+            val ks = Keystream(label, "$BIG_DIR/$bigPath")
+            // Odd sizes, so writes straddle sectors, clusters and 2^31.
+            val sizes = intArrayOf(1 shl 20, (1 shl 20) + 4097, 65535, 3 shl 20, 777_777)
+            var off = 0L
+            var i = 0
+            val ns = measureNanoTime {
+                while (off < BIG_BYTES) {
+                    val n = minOf(sizes[i++ % sizes.size].toLong(), BIG_BYTES - off).toInt()
+                    f.write(off, ByteBuffer.wrap(ks.next(n)))
+                    off += n
+                }
+                f.flush()
+            }
+            f.close()
+            emit("bigwrite      : $BIG_DIR/$bigPath ${BIG_BYTES} bytes written -> ${mbps(BIG_BYTES, ns)}")
+            bigOk = false
+        }
+
+        // --- the tree -------------------------------------------------------------
+        val expected = sortedMapOf<String, ByteArray>()   // path under TREE_DIR -> content
+        val rng = java.util.Random(label.hashCode().toLong())
+        val tree = root.createDirectory(TREE_DIR)
+        val dirs = mutableListOf<String>()
+        for (a in 0 until 5) {
+            tree.createDirectory("d$a").let { da ->
+                dirs += "d$a"
+                for (b in 0 until 3) { da.createDirectory("e$b"); dirs += "d$a/e$b" }
+            }
+        }
+        fun dirOf(p: String): UsbFile = tree.search(p) ?: throw java.io.IOException("$TREE_DIR/$p missing")
+        val edgeSizes = longArrayOf(0, 1, 511, 512, 513, 4095, 4096, 4097, 65536, 65537, 1L shl 20)
+        val treeNs = measureNanoTime {
+            for (n in 0 until 300) {
+                val dir = dirs[rng.nextInt(dirs.size)]
+                val size = if (n < edgeSizes.size) edgeSizes[n] else rng.nextInt(2 shl 20).toLong()
+                val path = "$dir/f$n.bin"
+                val content = Keystream.content(label, "$TREE_DIR/$path", size)
+                dirOf(dir).createFile("f$n.bin").apply { if (size > 0) write(0, ByteBuffer.wrap(content)); close() }
+                expected[path] = content
+            }
+            val names = expected.keys.toList()
+            fun pick() = names[rng.nextInt(names.size)]
+            fun file(p: String) = tree.search(p) ?: throw java.io.IOException("$TREE_DIR/$p missing")
+            // Overwrite a range in the middle.
+            repeat(40) {
+                val p = pick(); val c = expected[p] ?: return@repeat
+                if (c.size < 3000) return@repeat
+                val at = rng.nextInt(c.size - 2000); val patch = Keystream.content(label, "ow:$p", 1000)
+                file(p).apply { write(at.toLong(), ByteBuffer.wrap(patch)); close() }
+                expected[p] = c.copyOf().also { patch.copyInto(it, at) }
+            }
+            // Append, continuing the file's own keystream.
+            repeat(30) {
+                val p = pick(); val c = expected[p] ?: return@repeat
+                val add = 1 + rng.nextInt(70_000)
+                val more = Keystream(label, "$TREE_DIR/$p").at(c.size.toLong(), add)
+                file(p).apply { write(c.size.toLong(), ByteBuffer.wrap(more)); close() }
+                expected[p] = c + more
+            }
+            // Truncate.
+            repeat(30) {
+                val p = pick(); val c = expected[p] ?: return@repeat
+                val len = if (c.isEmpty()) 0 else rng.nextInt(c.size)
+                file(p).apply { length = len.toLong(); close() }
+                expected[p] = c.copyOf(len)
+            }
+            // Rename within the directory.
+            repeat(30) {
+                val p = pick(); val c = expected.remove(p) ?: return@repeat
+                val np = p.substringBeforeLast('/') + "/renamed_" + p.substringAfterLast('/')
+                file(p).name = np.substringAfterLast('/')
+                expected[np] = c
+            }
+            // Move to another directory.
+            repeat(20) {
+                val p = expected.keys.elementAt(rng.nextInt(expected.size))
+                val to = dirs[rng.nextInt(dirs.size)]
+                if (p.substringBeforeLast('/') == to) return@repeat
+                val np = "$to/" + p.substringAfterLast('/')
+                if (np in expected) return@repeat
+                file(p).moveTo(dirOf(to))
+                expected[np] = expected.remove(p)!!
+            }
+            // Delete files, then one whole directory.
+            repeat(40) {
+                val p = expected.keys.elementAt(rng.nextInt(expected.size))
+                file(p).delete(); expected.remove(p)
+            }
+            val gone = "d4/e2"
+            dirOf(gone).let { deleteRecursively(it) }
+            expected.keys.filter { it.startsWith("$gone/") }.forEach { expected.remove(it) }
+        }
+        // The expected state, for the host: computed from what was meant, never read back.
+        val listing = expected.entries.joinToString("") { (p, c) -> "$p\t${c.size}\t${sha256Hex(c)}\n" }
+        tree.createFile("EXPECTED.txt").apply {
+            write(0, ByteBuffer.wrap(("# bigwrite tree, label $label: path<TAB>bytes<TAB>sha256\n" + listing).toByteArray()))
+            close()
+        }
+        emit("bigwrite      : $TREE_DIR ${expected.size} files after create/overwrite/append/" +
+             "truncate/rename/move/delete (${ms(treeNs)})")
+
+        // --- remount, then read everything back -----------------------------------
+        var why: String? = null
+        if (!remountAndProve(mount, { rootForTag(tag)?.let { "live" } }, { why = it })) {
+            emit("bigwrite      : *** NOT VERIFIED — ${why ?: "remount failed"}; the host check still applies ***")
+            return
+        }
+        val live = rootForTag(tag) ?: return emit("bigwrite      : *** drive did not come back ***")
+        if (bigOk != null) {
+            val f = live.search(BIG_DIR)?.search(bigPath)
+            if (f == null || f.length != BIG_BYTES) {
+                emit("bigwrite      : *** $BIG_DIR/$bigPath is ${f?.length ?: "missing"}, expected $BIG_BYTES ***")
+            } else {
+                val ks = Keystream(label, "$BIG_DIR/$bigPath")
+                val bb = ByteBuffer.allocate(1 shl 20)
+                var off = 0L
+                var bad = -1L
+                val ns = measureNanoTime {
+                    while (off < BIG_BYTES && bad < 0) {
+                        bb.clear()
+                        val n = minOf(bb.capacity().toLong(), BIG_BYTES - off).toInt()
+                        bb.limit(n)
+                        f.read(off, bb)
+                        val want = ks.next(n)
+                        val got = bb.array()
+                        if (bb.position() != n) bad = off + bb.position()
+                        else for (k in 0 until n) if (got[k] != want[k]) { bad = off + k; break }
+                        off += n
+                    }
+                }
+                bigOk = bad < 0
+                emit("bigwrite      : $BIG_DIR/$bigPath after remount " +
+                     (if (bigOk) "matches (${mbps(BIG_BYTES, ns)})" else "*** DIFFERS at byte $bad ***"))
+            }
+        }
+        val liveTree = live.search(TREE_DIR)
+        var treeBad = 0
+        val found = mutableSetOf<String>()
+        fun walk(d: UsbFile, prefix: String) {
+            for (c in d.listFiles()) {
+                val p = if (prefix.isEmpty()) c.name else "$prefix/${c.name}"
+                if (c.isDirectory) walk(c, p) else if (p != "EXPECTED.txt") found += p
+            }
+        }
+        if (liveTree == null) { emit("bigwrite      : *** $TREE_DIR missing after remount ***"); treeBad++ }
+        else {
+            walk(liveTree, "")
+            for ((p, c) in expected) {
+                val f = liveTree.search(p)
+                if (f == null) { if (treeBad++ < 5) emit("bigwrite      : *** $p missing ***"); continue }
+                val bb = ByteBuffer.allocate(maxOf(c.size, 1))
+                if (c.isNotEmpty()) f.read(0, bb)
+                if (f.length != c.size.toLong() || sha256Hex(bb.array(), c.size) != sha256Hex(c)) {
+                    if (treeBad++ < 5) emit("bigwrite      : *** $p differs (${f.length} bytes, expected ${c.size}) ***")
+                }
+            }
+            (found - expected.keys).forEach { extra ->
+                if (treeBad++ < 5) emit("bigwrite      : *** $extra exists but should not ***")
+            }
+        }
+        emit("bigwrite      : " + when {
+            bigOk == false || treeBad > 0 -> "*** FAILED — big file ${bigOk ?: "skipped"}, $treeBad tree problem(s) ***"
+            else -> "ALL PASSED after remount (big file ${if (bigOk == null) "skipped" else "verified"}, " +
+                    "${expected.size} tree files verified); left on the volume for the host check"
+        })
+    }
+
     private fun freshDir(root: UsbFile, base: String): UsbFile {
         runCatching { root.search(base)?.let { deleteRecursively(it) } }
         runCatching { return root.createDirectory(base) }
