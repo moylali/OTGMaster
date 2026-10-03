@@ -53,3 +53,5 @@ e2e_parallel_*/
 matrix/
 # Manifests prepare_matrix_drive_macos.sh copies off the Mac-built volumes
 matrix-mac/
+# Unpacked from testdata/apfs/apfs-images.tar.xz
+testdata/apfs/apfs_*/

@@ -19,6 +19,6 @@ Rebuilding produces different bytes (UUIDs, keys, timestamps, random
 above in the same commit.
 
 Checked on macOS: contents and case behaviour on all four, `fsck_apfs -n` on the
-two plain containers. Not yet checked with `scripts/verify_apfs_images.py`
-(apfsck + apfs-fuse) on Linux, which is the only structural check of the encrypted
-two.
+two plain containers. Checked on Linux with `scripts/verify_apfs_images.py`: 4 of 4,
+`apfsck` clean on the two plain containers, contents through `apfs-fuse` on all four.
+No available checker covers the encrypted volumes' structure (`docs/TEST_DATA.md` §6b).
