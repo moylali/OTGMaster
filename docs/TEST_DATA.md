@@ -158,7 +158,7 @@ Two code paths matter: detection, and the driver.
 2. **Driver.** FAT32 goes through vendored libaums, exFAT through vendored libexfat
    plus `ExFatNative.cpp`. A third means either another vendored library — which
    requires an entry in `docs/VENDOR_FIXES.md` **before** the vendoring commit lands,
-   per `CLAUDE.md` — or new code implementing `UsbFile`.
+   per `AGENTS.md` — or new code implementing `UsbFile`.
 3. **E2E fixture.** Two shapes exist, and the difference matters:
    - **VeraCrypt formats it**: `--filesystem=<fs>`, as `create_exfat_volume` does.
      Only works for filesystems VeraCrypt itself can create.
@@ -309,7 +309,7 @@ fixtures, no bulk fill — for iterating on the script itself, never for measuri
 
 It refuses anything that is not an external, removable USB disk and has a size ceiling
 to catch a typo'd identifier. **It repartitions the disk.** Read the summary it prints
-before confirming, and per `CLAUDE.md` never paste it in the same block as a read-only
+before confirming, and per `AGENTS.md` never paste it in the same block as a read-only
 command.
 
 Verify and clean are separate scripts: `scripts/verify_test_usb.sh`,
@@ -819,7 +819,7 @@ Collected from actually running these, in rough order of time lost.
 - **The two generators use different passwords by convention.** `password123` in both,
   and `prepare_test_usb.sh` notes the match is deliberate so the E2E suite agrees;
   changing one silently breaks the other.
-- **`prepare_test_usb.sh` is destructive** — it repartitions a disk. Per `CLAUDE.md`,
+- **`prepare_test_usb.sh` is destructive** — it repartitions a disk. Per `AGENTS.md`,
   it is never presented in the same block as a read-only command, and it refuses
   anything that is not an external removable USB disk, with a size ceiling to catch a
   typo'd identifier. Read the summary it prints before confirming.

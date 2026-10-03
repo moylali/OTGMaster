@@ -4,7 +4,7 @@ Every vendored dependency is recorded here: what it is pinned to, why it is vend
 at all, and every local patch applied to it. A patch that is not in this file will be
 lost the next time upstream is pulled.
 
-See `CLAUDE.md` for what a new entry must contain and how to record an upstream pull.
+See `AGENTS.md` for what a new entry must contain and how to record an upstream pull.
 
 ## Index
 
@@ -23,7 +23,7 @@ registry deliberately does not restate them, to avoid the two drifting apart.
 in, so the exact commits are unknown. They should be established and written down the
 next time either is touched; until then an upstream pull cannot be done safely,
 because there is no baseline to diff against. This is precisely the gap the registry
-exists to prevent, and it is the reason the rule in `CLAUDE.md` requires a full SHA
+exists to prevent, and it is the reason the rule in `AGENTS.md` requires a full SHA
 before a vendoring commit lands.
 
 ---

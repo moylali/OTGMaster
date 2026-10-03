@@ -1,6 +1,6 @@
 # Benchmark run log
 
-Append-only. One row per run, newest first. Required by `CLAUDE.md` — a run that
+Append-only. One row per run, newest first. Required by `AGENTS.md` — a run that
 exists only in logcat and on the drive did not happen as far as the repo is
 concerned.
 
