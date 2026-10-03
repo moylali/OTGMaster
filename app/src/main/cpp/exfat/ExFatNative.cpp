@@ -73,6 +73,16 @@ Java_app_fayaz_otgmaster_exfat_ExFatNative_unmount(JNIEnv *env, jobject thiz, jl
     }
 }
 
+extern "C" JNIEXPORT jstring JNICALL
+Java_app_fayaz_otgmaster_exfat_ExFatNative_getLabel(JNIEnv *env, jclass clazz, jlong exfatPtr) {
+    struct exfat* ef = (struct exfat*) exfatPtr;
+    if (!ef) return env->NewStringUTF("");
+    /* libexfat keeps the volume label entry's name, already converted to UTF-8. */
+    jstring label = env->NewStringUTF(exfat_get_label(ef));
+    if (!label) { env->ExceptionClear(); return env->NewStringUTF(""); }
+    return label;
+}
+
 extern "C" JNIEXPORT jlong JNICALL
 Java_app_fayaz_otgmaster_exfat_ExFatNative_getFreeSpace(JNIEnv *env, jclass clazz, jlong exfatPtr) {
     struct exfat* ef = (struct exfat*) exfatPtr;
