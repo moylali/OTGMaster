@@ -356,6 +356,15 @@ class E2EAutomatedTest {
         // Pause here so a human watching the emulator can see OTGMaster back in front before the unmount click
         android.os.SystemClock.sleep(2000)
 
+        // A plain drive has no Unmount button by design: it was auto-mounted, and is
+        // released by unplugging. Its card must still be there after the viewer.
+        if (plainMount) {
+            assertNotNull("plain drive card gone after returning from the viewer",
+                device.wait(Until.findObject(By.textContains("Used:")), timeout))
+            assertNull("a plain drive must not offer Unmount",
+                device.findObject(By.descContains("unmount_button")))
+            return
+        }
         val unmountButton = device.wait(Until.findObject(By.descContains("unmount_button")), timeout)
         assertTrue("Unmount button not found", unmountButton != null)
         unmountButton?.click()
