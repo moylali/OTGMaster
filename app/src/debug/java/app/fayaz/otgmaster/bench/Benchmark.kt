@@ -36,7 +36,10 @@ object Benchmark {
         val hash: String = "SHA-512",
     )
 
-    private const val MOUNT_TIMEOUT_MS = 90_000L
+    // A backstop only: the wait ends when every unlock has finished. Two 10-partition
+    // drives unlock one partition at a time, LUKS1 keyslots at host-calibrated PBKDF2
+    // counts (2.8M iterations) among them.
+    private const val MOUNT_TIMEOUT_MS = 600_000L
 
     /**
      * @param only run just these sections (empty = all). Names:
@@ -209,15 +212,22 @@ object Benchmark {
                 while (System.currentTimeMillis() < deadline) {
                     val n = OtgMasterState.mountedDrives.size
                     val steady = System.currentTimeMillis() - stableSince
+                    val inFlight = OtgMasterState.unlocksInFlight.get()
                     if (n != lastCount) {
                         lastCount = n
                         stableSince = System.currentTimeMillis()
-                    } else if (n > startCount && steady >= 3_000) {
+                    } else if (inFlight == 0 && n > startCount && steady >= 3_000) {
+                        // Every unlock has finished; 3 s more for plain remounts.
                         break
-                    } else if (n > 0 && steady >= 15_000) {
+                    } else if (inFlight == 0 && n > 0 && steady >= 15_000) {
                         break
                     }
                     Thread.sleep(300)
+                }
+                val stillUnlocking = OtgMasterState.unlocksInFlight.get()
+                if (stillUnlocking > 0) {
+                    emit("*** $stillUnlocking unlock(s) still running after ${MOUNT_TIMEOUT_MS / 1000}s; " +
+                         "running against what is mounted ***")
                 }
                 if (OtgMasterState.mountedDrives.isEmpty()) {
                     emit("*** mount did not complete within ${MOUNT_TIMEOUT_MS / 1000}s ***")
