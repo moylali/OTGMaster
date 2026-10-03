@@ -32,7 +32,9 @@ These apply to every commit, without being asked.
    `distribution/whatsnew/whatsnew-en-US`, wired into `release.yml` via
    `whatsNewDirectory`. Update both, and check the Play one's length —
    `wc -c distribution/whatsnew/whatsnew-en-US` must be ≤ 500, or the upload is
-   rejected.
+   rejected. Additionally, if the commit adds major user-facing features (e.g. new 
+   filesystems, encryption formats), you **MUST update the main Play Store description** 
+   at `fastlane/metadata/android/en-US/full_description.txt` to advertise the new capabilities.
 
 2. **Every commit message carries a summary of changes.** A subject line alone is
    not enough. State what changed, and why — including the reasoning or evidence
