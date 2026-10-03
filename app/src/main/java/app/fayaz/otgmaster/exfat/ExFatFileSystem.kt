@@ -115,8 +115,15 @@ class ExFatFileSystem(
     override val rootDirectory: UsbFile
         get() = _rootDirectory
 
+    /**
+     * The label from the volume's label entry, or "exFAT" for a volume without one.
+     * It was "exFAT" for every volume, so two exFAT partitions on one drive could
+     * not be told apart by label — the benchmark's drive filter matches labels.
+     */
     override val volumeLabel: String
-        get() = "exFAT" // TODO: Fetch label from libexfat if needed
+        get() = lock.withLock {
+            if (isUnmounted) "exFAT" else ExFatNative.getLabel(exfatPtr).ifEmpty { "exFAT" }
+        }
 
     override val capacity: Long
         get() = blockDevice.blockCount * blockDevice.blockSize

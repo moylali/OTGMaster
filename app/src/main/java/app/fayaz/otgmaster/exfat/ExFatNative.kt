@@ -25,6 +25,10 @@ object ExFatNative {
     @JvmStatic
     external fun getFreeSpace(exfatPtr: Long): Long
 
+    /** The volume label, or "" if the volume has none. */
+    @JvmStatic
+    external fun getLabel(exfatPtr: Long): String
+
     @JvmStatic
     external fun getRootNode(exfatPtr: Long): ExFatNode?
 
