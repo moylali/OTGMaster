@@ -47,7 +47,7 @@ This is the only option that keeps **on-disk format interop** with desktop resti
 entire point of choosing restic — a repo written by the phone must open with `restic -r … snapshots`
 on a laptop, and vice versa.
 
-Licensing is fine: restic is BSD-2-Clause, compatible with the app's GPL-2.0-or-later.
+Licensing is fine: restic is BSD-2-Clause, compatible with the app's GPL-3.0-or-later.
 
 ### Alternatives considered and rejected
 
