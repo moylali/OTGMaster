@@ -1,23 +1,23 @@
-OTG Master lets you mount encrypted USB mass-storage devices on Android without root access.
+OTG Master lets you mount VeraCrypt and LUKS-encrypted USB drives directly on your Android device — no root required.
 
-The app reads raw sectors from the USB drive using the Android USB Host API, detects the encryption type on each partition, unlocks the volume, and exposes the decrypted filesystem through a standard Android DocumentsProvider — so other apps like Files or Gallery can browse the unlocked volume directly, just like any other storage location.
+Connect an encrypted volume via USB OTG, enter your password or use your fingerprint, and access your encrypted files through Android's built-in Files app. Unmount safely when done.
 
-Supported encryption:
+FEATURES
+• Multiple Encryption Formats — mount VeraCrypt, LUKS1, and LUKS2 volumes
+• Broad File System Support — read and write files on FAT32, exFAT, and ext4 partitions
+• Read-Only Mode — optionally mount partitions safely without risking accidental modifications
+• Auto Mount — automatically unlocks known drives on connect using biometric authentication
+• Hub Support — multiple USB drives connected via a hub are all prompted in a single biometric step
+• Keyfile Support — use a keyfile in addition to or instead of a password
+• Custom PIM — supports non-default PIM values for stronger key derivation
+• Cipher Selection — AES and Serpent supported
+• Partitioned Disks — scans MBR/GPT partition tables and lets you pick the exact volume to unlock
+• No Root Required — works on standard, unmodified Android devices
+• No Cloud, No Tracking — your files never leave your device
 
-* VeraCrypt volumes — password, PIM, and/or keyfiles; AES and Serpent ciphers; SHA-512 key derivation
-* LUKS1 volumes — PBKDF2-HMAC key derivation, AES-XTS bulk decryption
-* LUKS2 volumes — Argon2id key derivation, AES-XTS bulk decryption
+REQUIREMENTS
+• Android 8.0 (Oreo) or later
+• USB OTG cable or adapter
+• A VeraCrypt or LUKS-encrypted USB drive
 
-Supported filesystems:
-
-* FAT32 and exFAT — full read/write access
-* ext4 — full read/write access
-
-Other features:
-
-* Automatically detects and labels each partition as VeraCrypt, LUKS1, LUKS2, or unencrypted with colour-coded tags
-* Support for multiple simultaneously attached USB drives, with a picker when more than one is detected
-* Remembers credentials per device partition — re-mount in one tap
-* Sends a structured diagnostic report to the support form (no data leaves without your review)
-
-NTFS, HFS+, F2FS, and other filesystems are detected but not yet supported for mounting.
+OTG Master is free and open source.

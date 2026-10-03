@@ -2,7 +2,7 @@
 
 The live picture of what has been exercised on hardware and what has not. A
 tagging report (`docs/test-reports/<tag>.md`) is cut from this once the grid is
-full enough to justify the tag; `CLAUDE.md` requires at least four devices.
+full enough to justify the tag; `AGENTS.md` requires at least four devices.
 
 Every ✅ here traces to a row in [`../BENCHMARK_RUNS.md`](../BENCHMARK_RUNS.md).
 Nothing is marked done on the strength of a build, a unit test, or another

@@ -53,7 +53,7 @@ Consequences the proposal does not draw:
 
 `argon2kt` is a reasonable binding choice, but its licence must be checked against
 this project's GPL-2.0-or-later grant and added to the table in `README.md` and to
-`docs/VENDOR_FIXES.md` per `CLAUDE.md`.
+`docs/VENDOR_FIXES.md` per `AGENTS.md`.
 
 ### 2.2 Key size and sector size are hardcoded today
 

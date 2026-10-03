@@ -98,6 +98,11 @@ ensure_testdata() {
     fi
 }
 
+# The commit the APKs are built from, read before the build rather than when the
+# report is written: a commit or checkout during a long run would otherwise relabel
+# it. --dirty marks a tree with uncommitted changes, which the label cannot name.
+GIT_COMMIT=$(git describe --always --dirty --abbrev=7 2>/dev/null || echo "unknown")
+
 if [ "$NO_BUILD" = false ]; then
     ensure_testdata
     echo "Building Android Test APKs..."
@@ -191,7 +196,8 @@ echo "Starting E2E Tests..."
 
 # Collect version/commit info for the report
 APP_VERSION=$(grep 'versionName' app/build.gradle.kts 2>/dev/null | head -1 | grep -o '"[^"]*"' | tr -d '"' || echo "unknown")
-GIT_COMMIT=$(git rev-parse --short HEAD 2>/dev/null || echo "unknown")
+# The AVD's system image, e.g. android-34/google_apis/x86_64.
+AVD_IMAGE=$(sed -n 's|^image.sysdir.1=system-images/||p' "${ANDROID_AVD_HOME:-$HOME/.android/avd}/$AVD_NAME.avd/config.ini" 2>/dev/null | sed 's|/$||')
 RUN_DATE=$(date '+%Y-%m-%d %H:%M:%S')
 REPORT_FILE="${REPORT_OVERRIDE:-e2e_report_v${APP_VERSION}_${GIT_COMMIT}_$(date +%Y%m%d_%H%M%S).md}"
 
@@ -203,6 +209,7 @@ cat > "$REPORT_FILE" << REPORT_HEADER
 |-------|-------|
 | Version | $APP_VERSION |
 | Commit | \`$GIT_COMMIT\` |
+| Emulator | $AVD_NAME (${AVD_IMAGE:-image unknown}) |
 | Date | $RUN_DATE |
 
 ## Results
