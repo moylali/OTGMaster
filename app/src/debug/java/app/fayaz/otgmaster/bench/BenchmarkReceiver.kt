@@ -48,6 +48,10 @@ class BenchmarkReceiver : BroadcastReceiver() {
                     ?: intent.getIntExtra("pim", -1).takeIf { it >= 0 },
                 cipher = intent.getStringExtra("cipher") ?: "AES",
                 hash = intent.getStringExtra("hash") ?: "SHA-512",
+                // A run that writes mounts read-write whatever the phone's "read-only
+                // by default" says; --es readonly true|false overrides either way.
+                readOnly = intent.getStringExtra("readonly")?.toBooleanStrictOrNull()
+                    ?: if (only.any { it in setOf("write", "unaligned", "correct", "saf") }) false else null,
             )
         }
 

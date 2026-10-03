@@ -354,20 +354,22 @@ class MainActivity : AppCompatActivity() {
         }
         OtgMasterState.unmountAllRequest = installedUnmountAll
 
-        installedMountRequest = OtgMasterState.MountRequest { pw, pim, cipherName, hashName ->
-            // Probe first if nothing has been scanned yet. Without this the request
-            // depended on the UI having already scanned, which does not happen while
-            // the screen is off or locked — and needing the screen unlocked defeats
-            // the point of being able to mount programmatically.
+        installedMountRequest = OtgMasterState.MountRequest { pw, pim, cipherName, hashName, readOnly ->
+            // Open and probe every attached drive not already held, whether or not
+            // anything is listed. Without a probe the request depended on the UI having
+            // scanned, which does not happen while the screen is off or locked. And it
+            // used to probe only when no candidates were listed at all: after the
+            // benchmark's unmount-everything remount with two drives attached, the
+            // second drive's still-locked candidates kept the list non-empty, the first
+            // drive's closed connection was never reopened, and every partition on it
+            // was gone for the rest of the run (OnePlus 7, device-matrix Drives 1 + 2).
             lifecycleScope.launch {
-                if (_deviceCandidates.value.isEmpty()) {
-                    android.util.Log.i("OTGMaster", "Mount request: no candidates, probing")
-                    openAndProbeUsb()
-                    withTimeoutOrNull(25_000) {
-                        while (_deviceCandidates.value.isEmpty()) delay(300)
-                    }
+                reprobeHeldDevices()
+                openAndProbeUsb(quietIfNone = true)
+                withTimeoutOrNull(25_000) {
+                    while (isProbingDevices || _deviceCandidates.value.isEmpty()) delay(300)
                 }
-                mountProbedCandidates(pw, pim, cipherName, hashName)
+                mountProbedCandidates(pw, pim, cipherName, hashName, readOnly)
             }
         }
         OtgMasterState.mountRequest = installedMountRequest
@@ -789,7 +791,8 @@ class MainActivity : AppCompatActivity() {
      * in [_deviceCandidates], adding results to the dropdown rather than replacing it, so an
      * in-progress unlock attempt on one device isn't disturbed by a second device appearing.
      */
-    private fun openAndProbeUsb() {
+    /** @param quietIfNone say nothing when every attached drive is already open. */
+    private fun openAndProbeUsb(quietIfNone: Boolean = false) {
         // Rapid repeated ATTACHED broadcasts (e.g. a flaky OTG connection re-enumerating)
         // could otherwise start several overlapping probes that all race to open and add
         // the same physical device, producing duplicate dropdown entries — most of which
@@ -816,7 +819,7 @@ class MainActivity : AppCompatActivity() {
                         // failure, so Scan works as a recovery action.
                         if (deferredCandidates.isNotEmpty()) {
                             restoreDeferredCandidates()
-                        } else {
+                        } else if (!quietIfNone) {
                             appendLog(getString(R.string.log_could_not_open_block_device))
                         }
                     }
@@ -1247,7 +1250,8 @@ class MainActivity : AppCompatActivity() {
                         // this one over it put a dead connection back in openedDevices,
                         // and every unlock through it failed with result == -1.
                         if (!rawInUse) rawDevice.close()
-                    } else if (!stillUnmounting && !otherMounted && !candidatesInForm) {
+                    } else if (!stillUnmounting && !otherMounted && !candidatesInForm &&
+                            !OtgMasterState.holdConnections) {
                         // Last partition from this USB — release the connection.
                         //
                         // This used to close only if openedDevices still held it, but a
@@ -1441,11 +1445,45 @@ class MainActivity : AppCompatActivity() {
      * Backs [OtgMasterState.MountRequest]. Goes through the same attemptUnlock the
      * form uses, so it exercises the real path rather than a parallel one.
      */
+    /**
+     * Re-probes drives the app still holds a connection to but lists nothing for —
+     * what [OtgMasterState.holdConnections] leaves after unmounting everything — so a
+     * mount request can bring them back without releasing and reopening the stick.
+     * Probes through the held connection, under deviceMutex, like
+     * reofferPartlyMountedDevices.
+     */
+    private suspend fun reprobeHeldDevices() {
+        val listed = _deviceCandidates.value.map { it.deviceName }.toSet()
+        val mounted = OtgMasterState.mountedDrives.mapNotNull { it.sourceDeviceName }.toSet()
+        val held = openedDevices.filterKeys { it !in listed && it !in mounted && it != QEMU_DEVICE_KEY }
+        for ((key, raw) in held) {
+            val probed = withContext(Dispatchers.IO) {
+                runCatching {
+                    deviceMutex.withLock {
+                        val all = app.fayaz.otgmaster.veracrypt.VeraCryptUnlocker().probeCandidates(raw)
+                        all to detectPlainPartitions(raw, all)
+                    }
+                }.onFailure { android.util.Log.w(TAG, "re-probe of held $key failed", it) }.getOrNull()
+            } ?: continue
+            val (all, plain) = probed
+            val plainStarts = plain.map { it.startBlock }.toSet()
+            val locked = all.filter {
+                it.containerType != app.fayaz.otgmaster.veracrypt.ContainerType.UNKNOWN &&
+                    it.containerType != app.fayaz.otgmaster.veracrypt.ContainerType.UNENCRYPTED &&
+                    it.startBlock !in plainStarts
+            }
+            android.util.Log.i("OTGMaster", "re-probed held $key: ${locked.size} locked, ${plain.size} plain")
+            _deviceCandidates.value = _deviceCandidates.value +
+                UsbDeviceCandidate(key, key, raw, locked, plain, all.size - locked.size - plain.size)
+        }
+    }
+
     private fun mountProbedCandidates(
         password: String,
         pim: Int?,
         cipherName: String,
         hashName: String,
+        readOnly: Boolean? = null,
     ) {
         val cipher = app.fayaz.otgmaster.veracrypt.VeraCryptCipher.entries
             .find { it.name == cipherName || it.displayName == cipherName }
@@ -1486,7 +1524,7 @@ class MainActivity : AppCompatActivity() {
                 OtgMasterState.unlocksInFlight.incrementAndGet()
                 attemptUnlock(
                     device.deviceName, candidate, password, pim,
-                    emptyList(), cipher, hash,
+                    emptyList(), cipher, hash, readOnlyOverride = readOnly,
                 ) { OtgMasterState.unlocksInFlight.decrementAndGet() }
             }
         }
