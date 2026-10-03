@@ -33,6 +33,50 @@ to a row here.
 
 ---
 
+## 2026-10-03
+
+### OnePlus 7 (GM1901) · LineageOS 23.2 (Android 16, SDK 36) · build 0.4.1 (47) commit d9594a9 — device-matrix Drives 1 + 2, run 1
+
+The first run on the device-matrix drives (`docs/TEST_DATA.md` §16): Drives 1 and 2,
+two 62 GB PNY "USB 3.2.1 FD" sticks on one powered hub, 21 partitions between them.
+Sections: `free,block,dir,path,seq,random,opens,write,unaligned,correct,fixtures`,
+cache default, remount true. Started 13:49:53, screen interactive throughout.
+
+**Only 11 of the 21 partitions were measured.** The benchmark ended its mount wait
+when the mount count had been still for 3 s, while ten unlocks were still queued behind
+the LUKS1 keyslots (2.8M PBKDF2 iterations each). Fixed in `10f721e`.
+
+| Partition | Container / FS | Verdict |
+|---|---|---|
+| EFI | plain FAT32 (macOS's) | no BENCH/; block reads only |
+| D1APFSCI | plain APFS, case-insensitive | fixtures: ALL 22129 MATCHED; write sections FAILED as read-only (should be SKIPPED, fixed in `1e69e8b`) |
+| D1APFSCS | plain APFS, case-sensitive | fixtures: ALL 22024 MATCHED; write sections as above |
+| D1FAT32 | plain FAT32 | write verify PARTIAL (2 of 3 passes — "the drive did not come back after unmounting"); unaligned FAILED; correctness: no live mount; fixtures FAILED (USB block device is closed) |
+| D1EXFAT, D1NTFS, D1EXT4 | plain | not mounted at the start of their turn — skipped |
+| D2VCFAT32 | VeraCrypt FAT32 | fixtures: ALL 20958 MATCHED; write sections FAILED: mounted read-only |
+| D2VCEXFAT | VeraCrypt exFAT | fixtures: ALL 20974 MATCHED; write sections FAILED: mounted read-only |
+| D2VCNTFS | VeraCrypt NTFS | fixtures: ALL 20919 MATCHED; write sections FAILED: mounted read-only |
+| D2VCEXT4 | VeraCrypt ext4 | fixtures: ALL 21071 MATCHED; write sections FAILED: mounted read-only |
+
+Three harness faults, all fixed in `904e1da` before run 2:
+
+- **Read-only mounts.** The phone's "mount encrypted partitions read-only by default"
+  is on, and the benchmark's mount followed it.
+- **A remount lost Drive 1.** `remountAndProve` unmounted every drive; the mount
+  request re-probed USB only when no candidates were listed, and Drive 2's locked
+  candidates kept the list non-empty, so Drive 1 was never reopened.
+- **Android took the released drive.** At 14:14:59–14:15:19 vold ran `fsck_msdos` and
+  `fsck.exfat` on Drive 1 and mounted D1FAT32, D1EXFAT, D1NTFS and D1EXT4 read-write
+  (StorageManagerService in logcat). They were unmounted with `sm unmount` at about
+  14:30. **Any change the host check finds on those four not explained by the runs is
+  Android's**, not the app's — and is what this fault would do to a user's drive.
+
+libexfat also warned "volume was not unmounted cleanly" on D1EXFAT at the very first
+mount, while the read-back taken before the phone shows the flag clear: most likely
+Android had mounted it on plug-in before the app claimed the stick.
+
+Host verification: after run 2, below — the drives were not moved between runs.
+
 ## 2026-10-01
 
 ### OnePlus 7 (GM1901) · LineageOS 23.2 (Android 16, SDK 36) · build 0.4.1 (47) — drive D p3, plain NTFS `NTFSPLAIN`
