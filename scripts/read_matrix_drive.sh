@@ -31,7 +31,9 @@ if lsblk -no MOUNTPOINTS "$DEV" | grep -q .; then
 fi
 
 SERIAL=$(udevadm info --query=property --name="$DEV" | sed -n 's/^ID_SERIAL=//p')
-RULE=/run/udev/rules.d/99-otg-matrix-ignore.rules
+# One file per disk: two drives can be written or read at once, and a shared file
+# let the second run replace the first's rule and the first to finish delete both.
+RULE=/run/udev/rules.d/99-otg-matrix-ignore-$(basename "$DEV").rules
 mkdir -p /run/udev/rules.d
 echo "ENV{ID_SERIAL}==\"$SERIAL\", ENV{UDISKS_IGNORE}=\"1\", ENV{UDISKS_AUTO}=\"0\"" > "$RULE"
 cleanup() { rm -f "$RULE"; udevadm control --reload; }
