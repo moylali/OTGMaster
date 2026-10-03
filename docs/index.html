@@ -1,0 +1,122 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>OTG Master</title>
+  <meta name="description" content="Android app to open encrypted USB mass-storage devices for read/write without root. VeraCrypt, LUKS1 and LUKS2 with FAT32, exFAT and ext4.">
+  <style>
+    :root {
+      --bg: #ffffff;
+      --fg: #1f2328;
+      --muted: #59636e;
+      --accent: #0969da;
+      --card: #f6f8fa;
+      --border: #d1d9e0;
+    }
+    @media (prefers-color-scheme: dark) {
+      :root {
+        --bg: #0d1117;
+        --fg: #e6edf3;
+        --muted: #9198a1;
+        --accent: #4493f8;
+        --card: #151b23;
+        --border: #3d444d;
+      }
+    }
+    * { box-sizing: border-box; }
+    body {
+      margin: 0;
+      background: var(--bg);
+      color: var(--fg);
+      font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, "Noto Sans", Helvetica, Arial, sans-serif;
+      line-height: 1.6;
+    }
+    main { max-width: 760px; margin: 0 auto; padding: 48px 16px 64px; }
+    h1 { font-size: 2.25rem; margin: 0 0 0.5rem; }
+    h2 { font-size: 1.35rem; margin: 2.75rem 0 0.75rem; padding-bottom: 0.3rem; border-bottom: 1px solid var(--border); }
+    p, li { font-size: 1rem; }
+    a { color: var(--accent); text-decoration: none; }
+    a:hover { text-decoration: underline; }
+    code { font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace; font-size: 0.9em; background: var(--card); border: 1px solid var(--border); border-radius: 4px; padding: 0.1em 0.35em; }
+    .badges { display: flex; gap: 8px; flex-wrap: wrap; margin: 0.75rem 0 1.25rem; }
+    .lede { font-size: 1.1rem; }
+    .stores { display: flex; justify-content: center; gap: 48px; flex-wrap: wrap; margin: 2rem 0 0.5rem; text-align: center; }
+    .store img.badge { height: 80px; display: block; margin: 0 auto; }
+    .store img.qr { width: 130px; height: 130px; display: block; margin: 8px auto 0; background: #fff; padding: 6px; border-radius: 8px; }
+    ol li, ul li { margin: 0.35rem 0; }
+    ol ul { margin-top: 0.35rem; }
+    .kofi { vertical-align: middle; height: 32px; }
+    footer { max-width: 760px; margin: 0 auto; padding: 24px 16px 48px; color: var(--muted); font-size: 0.875rem; border-top: 1px solid var(--border); }
+    footer a { color: var(--muted); text-decoration: underline; }
+    @media (max-width: 480px) {
+      h1 { font-size: 1.85rem; }
+      .stores { gap: 24px; }
+      .store img.badge { height: 64px; }
+    }
+  </style>
+</head>
+<body>
+  <main>
+    <h1>OTG Master</h1>
+    <div class="badges">
+      <a href="https://github.com/moylali/OTGMaster/actions/workflows/ci.yml"><img src="https://github.com/moylali/OTGMaster/actions/workflows/ci.yml/badge.svg" alt="CI"></a>
+      <a href="https://github.com/moylali/OTGMaster/blob/main/LICENSE"><img src="https://img.shields.io/badge/license-GPL--2.0--or--later-blue.svg" alt="License: GPL v2 or later"></a>
+    </div>
+
+    <p class="lede">Android app to open encrypted USB mass-storage devices for read/write without root. Supports <strong>VeraCrypt</strong>, <strong>LUKS1</strong>, and <strong>LUKS2</strong> encrypted volumes with <strong>FAT32</strong>, <strong>exFAT</strong>, and <strong>ext4</strong> filesystems.</p>
+
+    <div class="stores">
+      <div class="store">
+        <a href="https://f-droid.org/packages/app.fayaz.otgmaster/">
+          <img class="badge" src="https://fdroid.gitlab.io/artwork/badge/get-it-on.png" alt="Get it on F-Droid">
+          <img class="qr" src="https://api.qrserver.com/v1/create-qr-code/?size=130x130&amp;data=https://f-droid.org/packages/app.fayaz.otgmaster/" alt="F-Droid QR Code">
+        </a>
+      </div>
+      <div class="store">
+        <a href="https://play.google.com/store/apps/details?id=app.fayaz.otgmaster">
+          <img class="badge" src="https://play.google.com/intl/en_us/badges/static/images/badges/en_badge_web_generic.png" alt="Get it on Google Play">
+          <img class="qr" src="https://api.qrserver.com/v1/create-qr-code/?size=130x130&amp;data=https://play.google.com/store/apps/details?id=app.fayaz.otgmaster" alt="Google Play QR Code">
+        </a>
+      </div>
+    </div>
+
+    <h2>How it works</h2>
+    <p>The app cannot perform a kernel mount on non-rooted Android. Instead it:</p>
+    <ol>
+      <li>Requests USB Host permission for a mass-storage device.</li>
+      <li>Reads raw sectors through a userspace USB Mass Storage adapter (<a href="https://github.com/moylali/OTGMaster/tree/main/libaums">libaums</a>).</li>
+      <li>Probes MBR/GPT partitions and detects the encryption type (VeraCrypt, LUKS1, or LUKS2) on each.</li>
+      <li>Unlocks the volume header and exposes a decrypted block-device wrapper:
+        <ul>
+          <li><strong>VeraCrypt</strong>: AES or Serpent cipher, SHA-512 / Whirlpool KDF</li>
+          <li><strong>LUKS1</strong>: PBKDF2-based KDF, AES-XTS bulk decryption</li>
+          <li><strong>LUKS2</strong>: Argon2id-based KDF, AES-XTS bulk decryption</li>
+        </ul>
+      </li>
+      <li>Feeds the decrypted block device into a userspace filesystem reader (FAT32 via libaums, exFAT via a vendored native <code>libexfat</code>, ext4 via a pure-Kotlin driver).</li>
+      <li>Surfaces files through the app UI and a <code>DocumentsProvider</code>, so other apps (Files, Gallery, etc.) can browse the unlocked volume.</li>
+    </ol>
+
+    <h2>Roadmap</h2>
+    <ul>
+      <li><strong>NTFS</strong> — read support (and write, if it can be made safe). Detected today but not mounted.</li>
+      <li><strong>APFS</strong> — read support for Apple's container format. Detected today but not mounted.</li>
+      <li><strong>BitLocker</strong> — unlock BitLocker-encrypted drives alongside VeraCrypt and LUKS.</li>
+      <li><strong>Encryption</strong> — encrypt unencrypted USB storage devices via the app.</li>
+    </ul>
+
+    <h2>Support</h2>
+    <ul>
+      <li>Help with refinement and translations of the text shown in the app.</li>
+      <li>Report issues via the <a href="https://otgmaster-feedback.moylali.workers.dev/">feedback form</a> or <a href="https://github.com/moylali/OTGMaster/issues">GitHub issues</a> to help make the app stable.</li>
+      <li>Donate to support the app via Ko-fi: <a href="https://ko-fi.com/moylali"><img class="kofi" src="https://ko-fi.com/img/githubbutton_sm.svg" alt="Support Me on Ko-fi"></a></li>
+    </ul>
+  </main>
+  <footer>
+    <a href="https://github.com/moylali/OTGMaster">Source on GitHub</a> ·
+    <a href="privacy-policy.html">Privacy policy</a> ·
+    GPL-2.0-or-later
+  </footer>
+</body>
+</html>
