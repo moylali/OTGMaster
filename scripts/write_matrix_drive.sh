@@ -26,6 +26,10 @@ DEV="${1:?Usage: sudo bash $0 /dev/sdX BUILD_DIR [--yes]}"
 BUILD="${2:?Usage: sudo bash $0 /dev/sdX BUILD_DIR [--yes]}"
 YES="${3:-}"
 [[ $EUID -eq 0 ]] || { echo "ERROR: run with sudo."; exit 1; }
+# GNU dd where it is installed as gnudd: uutils' dd (Ubuntu's default since 25.10)
+# fails iflag=direct with "IO error: Invalid input", which stopped the first real
+# read-back at its first partition.
+DD=$(command -v gnudd || command -v dd)
 [[ -b "$DEV" ]] || { echo "ERROR: $DEV is not a block device."; exit 1; }
 [[ -f "$BUILD/drive.json" ]] || { echo "ERROR: $BUILD/drive.json not found."; exit 1; }
 DISK=$(basename "$DEV")
@@ -117,7 +121,7 @@ for row in $PARTS; do
     img="$BUILD/$label.img"
     [[ "$size" == "$(stat -c %s "$img")" ]] || { echo "ERROR: $part is $size bytes, $img is $(stat -c %s "$img")."; exit 1; }
     echo "== $label -> $part"
-    dd if="$img" of="$part" bs=16M oflag=direct conv=fsync status=progress
+    "$DD" if="$img" of="$part" bs=16M oflag=direct conv=fsync status=progress
 done
 sync
 echo
