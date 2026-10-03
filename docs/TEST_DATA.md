@@ -978,6 +978,19 @@ it filled. The run then stopped before ejecting: Spotlight's `mds` refused the u
 of the last volume. A retry ten minutes later succeeded, and the script now retries for
 two minutes.
 
-Not yet run: the two root scripts on a real drive, and the APFS rows end to end (the verifier's APFS path was exercised on the 64 MiB Mac images,
-which mount and decrypt but carry no BENCH tree).
+Drives 1 and 2 were written and read back on 2026-10-03: two 62.0 GB PNY "USB 3.2.1
+FD" sticks, written in parallel. `verify_matrix_drive.py --accept` on the read-backs:
+**all 20 partitions CLEAN**. Every Linux-built partition came back with 0 MiB changed
+against its build; every manifest file matched (20,854–21,071 per writable partition);
+every checker was clean. Drive 1's APFS volumes were checked from Linux for the first
+time: `apfsck` clean on the two plain containers, and every file of all four read
+through apfs-fuse, decrypting the encrypted pair with the password (21,777–22,129 files
+each). Their baselines were taken from this read-back, and their manifests copied off
+the drive.
+
+Two problems surfaced on the way, both in the scripts, and were fixed before the run
+that counted. First, the host's `/usr/bin/dd` is uutils coreutils, whose
+`iflag=direct` fails ("IO error: Invalid input"); the scripts now prefer GNU dd
+(`gnudd`). Second, both drives running at once shared one udev rule file; it is now
+one per disk.
 
