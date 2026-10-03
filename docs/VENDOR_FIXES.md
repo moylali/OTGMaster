@@ -159,6 +159,20 @@ known-answer set `BitLockerCompatTest` decrypts and compares against.
 
 ---
 
+# `app/src/main/cpp/exfat/`
+
+libexfat ([relan/exfat](https://github.com/relan/exfat)), with the device I/O in
+`io.c` replaced by JNI calls into `ExFatNative.pread`/`pwrite`. Its upstream pin
+pre-dates this registry (see the note under the index).
+
+## Patches
+
+| Area | Patch | Commit |
+|---|---|---|
+| `io.c` | E1 — `exfat_pread`/`exfat_pwrite` check `NewByteArray` and the Kotlin callback for a pending exception, and return -1 instead of making the next JNI call with it pending, which aborts the app (seen on the emulator: an `OutOfMemoryError` during a benchmark write became SIGABRT in `SetByteArrayRegion`) | the commit adding this row |
+
+---
+
 # `libaums/`
 
 Vendored fork of [magnusja/libaums](https://github.com/magnusja/libaums).
