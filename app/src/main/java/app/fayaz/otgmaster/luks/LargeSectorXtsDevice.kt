@@ -2,6 +2,7 @@ package app.fayaz.otgmaster.luks
 
 import app.fayaz.otgmaster.bitlocker.BitLockerNative
 import app.fayaz.otgmaster.block.RawBlockDevice
+import app.fayaz.otgmaster.block.requireInRange
 import me.jahnen.libaums.core.driver.BlockDeviceDriver
 import java.io.IOException
 import java.nio.ByteBuffer
@@ -61,6 +62,7 @@ class LargeSectorXtsDevice(
     }
 
     override fun readBlocks(startBlock: Long, blockCount: Int): ByteArray = lifecycle.read {
+        requireInRange(startBlock, blockCount.toLong(), "read")
         val from = startBlock * bs
         val to = from + blockCount.toLong() * bs
         val aFrom = from / sectorSize * sectorSize
@@ -72,6 +74,7 @@ class LargeSectorXtsDevice(
 
     override fun writeBlocks(startBlock: Long, data: ByteArray): Unit = lifecycle.read {
         val h = checkOpen()
+        requireInRange(startBlock, data.size.toLong() / bs, "write")
         val from = startBlock * bs
         val to = from + data.size
         val aFrom = from / sectorSize * sectorSize

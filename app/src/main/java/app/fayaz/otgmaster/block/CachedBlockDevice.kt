@@ -198,6 +198,7 @@ class CachedBlockDevice(
     override fun writeBlocks(startBlock: Long, data: ByteArray) {
         require(data.size % blockSize == 0) { "write length must be block aligned" }
         val blocks = data.size / blockSize
+        requireInRange(startBlock, blocks.toLong(), "write")
 
         // The device write and the cache patch must be one atomic step.
         //

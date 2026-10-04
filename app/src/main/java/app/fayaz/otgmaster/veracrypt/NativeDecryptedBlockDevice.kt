@@ -1,6 +1,7 @@
 package app.fayaz.otgmaster.veracrypt
 
 import app.fayaz.otgmaster.block.RawBlockDevice
+import app.fayaz.otgmaster.block.requireInRange
 import me.jahnen.libaums.core.driver.BlockDeviceDriver
 import java.nio.ByteBuffer
 
@@ -56,6 +57,7 @@ class NativeDecryptedBlockDevice(
 
     override fun readBlocks(startBlock: Long, blockCount: Int): ByteArray {
         checkOpen()
+        requireInRange(startBlock, blockCount.toLong(), "read")
         val physicalStartBlock = startBlock + volumeDataOffset
         // Decrypted in place, so the delegate must hand back an array it does not
         // retain. LibaumsRawBlockDevice allocates a fresh one per call. Do not
@@ -91,6 +93,7 @@ class NativeDecryptedBlockDevice(
 
     override fun writeBlocks(startBlock: Long, data: ByteArray) {
         checkOpen()
+        requireInRange(startBlock, data.size.toLong() / blockSize, "write")
         val physicalStartBlock = startBlock + volumeDataOffset
         val sectorsPerBlock = blockSize / 512L
         val firstTweak = tweakDataOffset * sectorsPerBlock + startBlock * sectorsPerBlock
