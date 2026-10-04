@@ -4,6 +4,7 @@ import app.fayaz.otgmaster.block.RawBlockDevice
 import org.junit.After
 import org.junit.Assert.assertArrayEquals
 import org.junit.Assert.assertEquals
+import org.junit.Assert.fail
 import org.junit.Assume.assumeTrue
 import org.junit.BeforeClass
 import org.junit.Test
@@ -123,6 +124,41 @@ class LuksSectorSizeTest {
         assertArrayEquals("$type/$sectorSize: written data through an independent decryption",
             expected, out.readBytes().copyOf(expected.size))
     }
+
+    /**
+     * A write past the end of the volume must be refused, not translated onto the
+     * stick. The layer below accepts any position, so before the bounds check a write
+     * one block past the end landed in whatever followed the volume — on a real drive,
+     * the next partition's header (device-matrix Drive 2, D2VCFAT32 -> D2VCEXFAT).
+     */
+    private fun checkBounds(type: String, sectorSize: Int) {
+        assumeTrue("host toolchain or cryptsetup unavailable", ready)
+        val img = luks(type, sectorSize)
+        // Room after the volume, as a following partition would have.
+        val tail = 1L shl 20
+        RandomAccessFile(img, "rw").use { it.setLength(img.length() + tail) }
+        val raw = RwDevice(img)
+        val volumeEnd = img.length() - tail
+        val dev = LuksUnlocker().unlock(raw, 0, volumeEnd / 512, PASSWORD.toByteArray())
+        val before = RandomAccessFile(img, "r").use { r -> ByteArray(tail.toInt()).also { r.seek(volumeEnd); r.readFully(it) } }
+        val sectorBlocks = sectorSize / 512L
+        for ((start, blocks) in listOf(dev.blockCount - sectorBlocks + 0 to 2 * sectorBlocks, dev.blockCount to sectorBlocks)) {
+            try {
+                dev.writeBlocks(start, ByteArray((blocks * 512).toInt()) { 0x5A })
+                fail("$type/$sectorSize: write of $blocks blocks at $start past ${dev.blockCount} was accepted")
+            } catch (_: IllegalArgumentException) {}
+            try {
+                dev.readBlocks(start, blocks.toInt())
+                fail("$type/$sectorSize: read past the end was accepted")
+            } catch (_: IllegalArgumentException) {}
+        }
+        dev.close(); raw.close()
+        val after = RandomAccessFile(img, "r").use { r -> ByteArray(tail.toInt()).also { r.seek(volumeEnd); r.readFully(it) } }
+        assertArrayEquals("$type/$sectorSize: the bytes after the volume changed", before, after)
+    }
+
+    @Test fun luks1RefusesWritesPastTheEnd() = checkBounds("luks1", 512)
+    @Test fun luks2Sector4096RefusesWritesPastTheEnd() = checkBounds("luks2", 4096)
 
     @Test fun luks1() = check("luks1", 512)
     @Test fun luks2Sector512() = check("luks2", 512)
