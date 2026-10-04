@@ -1,6 +1,8 @@
-• New: NTFS (Windows) drives read and write, plain or inside VeraCrypt/LUKS
-• New: BitLocker drives unlock with their password or recovery key
+• New: NTFS drives read and write, plain or inside VeraCrypt/LUKS
+• New: BitLocker drives unlock with password or recovery key
 • New: Mac APFS drives open read-only, plain or encrypted
-• New: NTFS drives Windows did not shut down cleanly open read-only, keeping its pending changes safe
-• New: Folder access given to other apps (e.g. Backup Master) survives remounts
-• Known limitation: Windows-compressed NTFS files are read-only; EFS-encrypted files cannot be opened
+• New: Folder access given to other apps survives remounts
+• Fixed: LUKS2 drives with 4K sectors were refused
+• Fixed: ext2/ext3 writes damaged the drive; they now open read-only
+• Fixed: a nearly full FAT32 drive could be written past its end
+• Fixed: exFAT drives now show their own name

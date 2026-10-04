@@ -74,10 +74,10 @@
     <h1>OTG Master</h1>
     <div class="badges">
       <a href="https://github.com/moylali/OTGMaster/actions/workflows/ci.yml"><img src="https://github.com/moylali/OTGMaster/actions/workflows/ci.yml/badge.svg" alt="CI"></a>
-      <a href="https://github.com/moylali/OTGMaster/blob/main/LICENSE"><img src="https://img.shields.io/badge/license-GPL--2.0--or--later-blue.svg" alt="License: GPL v2 or later"></a>
+      <a href="https://github.com/moylali/OTGMaster/blob/main/LICENSE"><img src="https://img.shields.io/badge/license-GPL--3.0--or--later-blue.svg" alt="License: GPL v3 or later"></a>
     </div>
 
-    <p class="lede">Android app to open encrypted USB mass-storage devices for read/write without root. Supports <strong>VeraCrypt</strong>, <strong>LUKS1</strong>, and <strong>LUKS2</strong> encrypted volumes with <strong>FAT32</strong>, <strong>exFAT</strong>, and <strong>ext4</strong> filesystems.</p>
+    <p class="lede">Android app to open encrypted USB mass-storage devices for read/write without root. Supports <strong>VeraCrypt</strong>, <strong>LUKS1</strong>, <strong>LUKS2</strong> and <strong>BitLocker</strong> encrypted volumes with <strong>FAT32</strong>, <strong>exFAT</strong>, <strong>NTFS</strong> and <strong>ext4</strong> filesystems, and reads Mac <strong>APFS</strong> drives, plain or encrypted.</p>
 
     <div class="stores">
       <div class="store">
@@ -111,23 +111,23 @@
     <ol>
       <li>Requests USB Host permission for a mass-storage device.</li>
       <li>Reads raw sectors through a userspace USB Mass Storage adapter (<a href="https://github.com/moylali/OTGMaster/tree/main/libaums">libaums</a>).</li>
-      <li>Probes MBR/GPT partitions and detects the encryption type (VeraCrypt, LUKS1, or LUKS2) on each.</li>
+      <li>Probes MBR/GPT partitions and detects the encryption type (VeraCrypt, LUKS1, LUKS2, BitLocker or encrypted APFS) on each.</li>
       <li>Unlocks the volume header and exposes a decrypted block-device wrapper:
         <ul>
           <li><strong>VeraCrypt</strong>: AES or Serpent cipher, SHA-512 / Whirlpool KDF</li>
           <li><strong>LUKS1</strong>: PBKDF2-based KDF, AES-XTS bulk decryption</li>
           <li><strong>LUKS2</strong>: Argon2id-based KDF, AES-XTS bulk decryption</li>
+          <li><strong>BitLocker</strong>: password or recovery key; XTS-AES and AES-CBC, with or without the Elephant diffuser</li>
+          <li><strong>APFS (Encrypted)</strong>: the password goes to the filesystem reader, which unwraps the volume key itself</li>
         </ul>
       </li>
-      <li>Feeds the decrypted block device into a userspace filesystem reader (FAT32 via libaums, exFAT via a vendored native <code>libexfat</code>, ext4 via a pure-Kotlin driver).</li>
+      <li>Feeds the decrypted block device into a userspace filesystem reader (FAT32 via libaums, exFAT via a vendored native <code>libexfat</code>, ext4 via a pure-Kotlin driver, NTFS via a vendored <code>libntfs-3g</code>, and APFS, read-only, via a vendored <code>libfsapfs</code>).</li>
       <li>Surfaces files through the app UI and a <code>DocumentsProvider</code>, so other apps (Files, Gallery, etc.) can browse the unlocked volume.</li>
     </ol>
 
     <h2>Roadmap</h2>
     <ul>
-      <li><strong>NTFS</strong> — read support (and write, if it can be made safe). Detected today but not mounted.</li>
-      <li><strong>APFS</strong> — read support for Apple's container format. Detected today but not mounted.</li>
-      <li><strong>BitLocker</strong> — unlock BitLocker-encrypted drives alongside VeraCrypt and LUKS.</li>
+      <li><strong>APFS</strong> — write support. APFS is read-only today, plain or encrypted.</li>
       <li><strong>Encryption</strong> — encrypt unencrypted USB storage devices via the app.</li>
     </ul>
 
@@ -141,7 +141,7 @@
   <footer>
     <a href="https://github.com/moylali/OTGMaster">Source on GitHub</a> ·
     <a href="privacy-policy.html">Privacy policy</a> ·
-    GPL-2.0-or-later
+    GPL-3.0-or-later
   </footer>
 </body>
 </html>

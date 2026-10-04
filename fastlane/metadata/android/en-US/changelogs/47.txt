@@ -1,10 +1,8 @@
-• New: NTFS drives — the format Windows uses — can now be opened, both unencrypted and inside VeraCrypt or LUKS volumes. You can browse, open, create, write, rename, move and delete files on them
-• New: Drives formatted on a Mac as APFS can now be opened, both unencrypted and encrypted with a password (Disk Utility's "APFS (Encrypted)"), case-sensitive or not. You can browse, open and copy files from them; APFS drives open read-only, so files on them cannot be changed
-• New: BitLocker-encrypted drives can now be unlocked with their password or 48-digit recovery key, and the files on them read and written. Every BitLocker cipher Windows has used is supported (XTS-AES and AES-CBC, 128 and 256 bit, including the Elephant diffuser of Windows 7), as are BitLocker To Go drives and drives whose protection is suspended
-• New: An NTFS drive that Windows did not shut down cleanly — left hibernated, saved by Fast Startup, or unplugged without ejecting — opens read-only and says why, so the app cannot overwrite changes Windows has not finished applying
-• New: On NTFS, names Windows cannot open (such as CON, or names containing : ? | or a trailing dot) and names differing from an existing file only in upper/lower case are refused, so everything you create stays reachable from Windows
-• New: Folders on a mounted drive that you give another app access to — for example Backup Master, for scheduled backups to and from encrypted drives — keep working after the drive is unplugged and mounted again. Such apps can also see which drive, partition, encryption and filesystem a folder is on, and are told when the drive is mounted
-• Fixed: LUKS2 drives formatted with current Linux defaults (4096-byte sectors, used by cryptsetup 2.4 and later) were refused as "not yet supported". They now open, read and write
-• Fixed: On a drive with an unencrypted partition beside an encrypted one, the encrypted partition disappeared from the unlock form after leaving and returning to the app, until the drive was unplugged
-• Fixed: Writing to an ext2 or ext3 drive created files that Linux reports as damaged and cannot read. These drives now open read-only and say why; ext4 drives are unaffected and stay writable
-• Known limitation: NTFS files that Windows has compressed can be read but not changed, and files encrypted with Windows EFS cannot be opened. BitLocker drives locked only to a TPM, smart card or startup-key file cannot be unlocked, and a drive Windows is still encrypting or decrypting is refused until it finishes
+• New: NTFS drives read and write, plain or inside VeraCrypt/LUKS
+• New: BitLocker drives unlock with password or recovery key
+• New: Mac APFS drives open read-only, plain or encrypted
+• New: Folder access given to other apps survives remounts
+• Fixed: LUKS2 drives with 4K sectors were refused
+• Fixed: ext2/ext3 writes damaged the drive; they now open read-only
+• Fixed: a nearly full FAT32 drive could be written past its end
+• Fixed: exFAT drives now show their own name
