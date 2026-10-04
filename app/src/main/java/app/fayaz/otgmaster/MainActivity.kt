@@ -1466,9 +1466,14 @@ class MainActivity : AppCompatActivity() {
      * reofferPartlyMountedDevices.
      */
     private suspend fun reprobeHeldDevices() {
-        val listed = _deviceCandidates.value.map { it.deviceName }.toSet()
+        // A listed device can still be missing its plain partitions: unmounting an
+        // encrypted partition puts it back on the list as a new entry with no plain
+        // ones, so after the benchmark's unmount-everything the request remounted
+        // Drive 1's encrypted partitions and none of its seven plain ones.
+        val listedWithPlain = _deviceCandidates.value.filter { it.plainPartitions.isNotEmpty() }
+            .map { it.deviceName }.toSet()
         val mounted = OtgMasterState.mountedDrives.mapNotNull { it.sourceDeviceName }.toSet()
-        val held = openedDevices.filterKeys { it !in listed && it !in mounted }
+        val held = openedDevices.filterKeys { it !in listedWithPlain && it !in mounted }
         for ((key, raw) in held) {
             val probed = withContext(Dispatchers.IO) {
                 runCatching {
@@ -1486,8 +1491,13 @@ class MainActivity : AppCompatActivity() {
                     it.startBlock !in plainStarts
             }
             android.util.Log.i("OTGMaster", "re-probed held $key: ${locked.size} locked, ${plain.size} plain")
-            _deviceCandidates.value = _deviceCandidates.value +
-                UsbDeviceCandidate(key, key, raw, locked, plain, all.size - locked.size - plain.size)
+            val existing = _deviceCandidates.value.find { it.deviceName == key }
+            _deviceCandidates.value = if (existing != null) {
+                // Keep its locked candidates (unmountDrive restored them); add the plain ones.
+                _deviceCandidates.value.map { if (it.deviceName == key) it.copy(plainPartitions = plain) else it }
+            } else {
+                _deviceCandidates.value + UsbDeviceCandidate(key, key, raw, locked, plain, all.size - locked.size - plain.size)
+            }
         }
     }
 
