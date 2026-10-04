@@ -179,7 +179,7 @@ object Benchmark {
             OtgMasterState.holdConnections = true
             OtgMasterState.unmountAllRequest?.invoke()
             val deadline = System.currentTimeMillis() + 30_000
-            while (OtgMasterState.mountedDrives.isNotEmpty() &&
+            while ((OtgMasterState.mountedDrives.isNotEmpty() || OtgMasterState.unmountsInFlight.get() > 0) &&
                     System.currentTimeMillis() < deadline) {
                 Thread.sleep(300)
             }
@@ -1969,6 +1969,10 @@ object Benchmark {
             return false
         }
         Thread.sleep(1500)
+        // And every unmount's bookkeeping done, or its partitions are missing from the
+        // candidate list the mount request reads (run 5: Drive 2's ten put back 70 s late).
+        deadline = System.currentTimeMillis() + MOUNT_TIMEOUT_MS
+        while (OtgMasterState.unmountsInFlight.get() > 0 && System.currentTimeMillis() < deadline) Thread.sleep(200)
 
         mountReq.mount(mount.password, mount.pim, mount.cipher, mount.hash, mount.readOnly)
         deadline = System.currentTimeMillis() + MOUNT_TIMEOUT_MS
