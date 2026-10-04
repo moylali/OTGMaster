@@ -35,6 +35,20 @@ to a row here.
 
 ## 2026-10-03
 
+**Commit hashes on these dates.** The runs below were built from `feature/apfs`, which
+was rebased onto `main` on 2026-10-04 after #27 and #28 were merged. The rows keep the
+hashes the reports were stamped with; the same commits after the rebase are:
+
+| In the reports | After the rebase | Commit |
+|---|---|---|
+| `d9594a9` | `d6ef7f6` | licence: move the project to GPL-3.0-or-later (run 1) |
+| `904e1da` | `ef6d88b` | remounts keep the USB connection; writes mount read-write (run 2) |
+| `f364ae9` | `81d16cc` | docs: record run 2 (run 3) |
+| `d355f0f` | `ff432b7` | prove a remount by filesystem object (run 4) |
+| `9e6397e` | `1327be0` | fix: unmounting encrypted APFS closed the whole stick (run 5) |
+| `15b8448` | `9d1651d` | remount only after every unmount's bookkeeping (run 6) |
+
+
 ### OnePlus 7 (GM1901) · LineageOS 23.2 (Android 16, SDK 36) · build 0.4.1 (47) commit 904e1da — device-matrix Drives 1 + 2, run 2
 
 Same drives, hub and sections as run 1; started 14:40:46, all 21 partitions attached
