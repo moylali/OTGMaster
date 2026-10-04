@@ -981,9 +981,22 @@ class MainActivity : AppCompatActivity() {
                         )
                     // Nothing to decrypt at the block level: libfsapfs takes the
                     // password when the filesystem is mounted, below.
-                    app.fayaz.otgmaster.veracrypt.ContainerType.APFS ->
-                        app.fayaz.otgmaster.block.SlicedBlockDevice(device, candidate.startBlock,
+                    //
+                    // close() must stop here. Unmounting closes the mount's device
+                    // chain, and a bare SlicedBlockDevice passes close() on to the USB
+                    // connection itself — so unmounting an encrypted APFS volume closed
+                    // the whole stick under every other partition on it, the kernel
+                    // took it back, and Android mounted its plain partitions read-write
+                    // (device-matrix Drive 1, OnePlus 7: every run, at the first
+                    // remount). The other containers' devices do not close the raw one
+                    // either; its lifetime belongs to openedDevices / unmountDrive.
+                    app.fayaz.otgmaster.veracrypt.ContainerType.APFS -> {
+                        val slice = app.fayaz.otgmaster.block.SlicedBlockDevice(device, candidate.startBlock,
                             candidate.blockCount ?: (device.blockCount - candidate.startBlock))
+                        object : app.fayaz.otgmaster.block.RawBlockDevice by slice {
+                            override fun close() {}
+                        }
+                    }
                     else -> VeraCryptUnlocker().unlock(
                         device, candidate, password.toCharArray(), pim, keyfiles, contentResolver,
                         cipher, hash
