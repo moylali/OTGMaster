@@ -1191,6 +1191,7 @@ class MainActivity : AppCompatActivity() {
         drive.sourceDeviceName?.let { key ->
             pendingUnmounts.merge(key, 1) { a, b -> a + b }
         }
+        OtgMasterState.unmountsInFlight.incrementAndGet()
         val t0 = System.currentTimeMillis()
         OtgMasterState.removeDrive(drive.id)
         val tRemoved = System.currentTimeMillis()
@@ -1213,6 +1214,7 @@ class MainActivity : AppCompatActivity() {
             " notify=${tNotified - tRemoved}ms update=${tUpdated - tNotified}ms" +
             " shortcut=${System.currentTimeMillis() - tUpdated}ms")
         lifecycleScope.launch(Dispatchers.IO) {
+          try {
             // Wait for any in-flight ProxyFileDescriptor onRelease() callbacks to finish
             // before unmounting — prevents a use-after-free if the OS is still flushing a
             // file write when exfat_unmount frees the ef pointer.
@@ -1299,6 +1301,9 @@ class MainActivity : AppCompatActivity() {
 
                 refreshDevices()
             }
+          } finally {
+            OtgMasterState.unmountsInFlight.decrementAndGet()
+          }
         }
     }
 

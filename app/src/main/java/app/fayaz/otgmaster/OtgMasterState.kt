@@ -124,6 +124,14 @@ object OtgMasterState {
     val unlocksInFlight = java.util.concurrent.atomic.AtomicInteger(0)
 
     /**
+     * Unmounts started and not yet finished, including the bookkeeping that puts an
+     * encrypted partition back on the candidate list. That runs after the device lock,
+     * so it can trail the mount list emptying by more than a minute; a mount request
+     * made in between saw none of the partitions still waiting (run 5, Drive 2).
+     */
+    val unmountsInFlight = java.util.concurrent.atomic.AtomicInteger(0)
+
+    /**
      * While true, unmounting a drive's last partition keeps its USB connection open
      * instead of releasing it. Set by the debug benchmark around its own unmount and
      * remount: a released stick is taken by Android's own storage stack within about a
