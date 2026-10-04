@@ -65,7 +65,17 @@ NEED=$(( (10 * PART_BYTES) + 300 * 1024 * 1024 ))
 (( DISK_BYTES >= NEED )) || { echo "ERROR: $DEV holds $DISK_BYTES bytes; ten partitions need $NEED."; exit 1; }
 
 APFS_TYPE=7c3457ef-0000-11aa-aa11-00306543ecac
-if [[ "$DRIVE" == 1 ]]; then
+# Rewrite mode: every built partition already exists, named by its label. Then the
+# images go back into those partitions and nothing is repartitioned: restoring a
+# drive to its built state after runs (or damage) without touching anything else,
+# such as Drive 1's Mac-made APFS partitions.
+REWRITE=1
+for row in $PARTS; do
+    lsblk -lno PARTLABEL "$DEV" | grep -qx "${row%%:*}" || { REWRITE=0; break; }
+done
+if [[ "$REWRITE" == 1 ]]; then
+    PLAN="REWRITE the $(echo $PARTS | wc -w) existing partitions named below with their built images; no repartitioning"
+elif [[ "$DRIVE" == 1 ]]; then
     n_apfs=$(lsblk -lno PARTTYPE "$DEV" | grep -ci "$APFS_TYPE" || true)
     [[ "$n_apfs" == 4 ]] || { echo "ERROR: Drive 1 must first be prepared on the Mac (found $n_apfs APFS partitions, need 4)."; exit 1; }
     PLAN="keep the EFI and 4 APFS partitions; add 6 partitions of $PART_BYTES bytes after them"
@@ -97,20 +107,24 @@ trap cleanup EXIT
 udevadm control --reload
 udevadm trigger --name-match="$DEV"; udevadm settle
 
-if [[ "$DRIVE" != 1 ]]; then
+if [[ "$REWRITE" == 1 ]]; then
+    :   # partitions already exist
+elif [[ "$DRIVE" != 1 ]]; then
     wipefs -a -q "$DEV"
     sgdisk --zap-all "$DEV" >/dev/null
     sgdisk -o "$DEV" >/dev/null
 fi
-# Numbered explicitly after whatever is already there (nothing, or the Mac's five).
-num=$(sgdisk -p "$DEV" | awk '/^ +[0-9]+ / {n = $1} END {print n + 0}')
-args=()
-for row in $PARTS; do
-    num=$((num + 1))
-    args+=(-n "$num:0:+$SECTORS" -t "$num:${row##*:}" -c "$num:${row%%:*}")
-done
-sgdisk "${args[@]}" "$DEV" >/dev/null
-partprobe "$DEV"; udevadm settle
+if [[ "$REWRITE" != 1 ]]; then
+    # Numbered explicitly after whatever is already there (nothing, or the Mac's five).
+    num=$(sgdisk -p "$DEV" | awk '/^ +[0-9]+ / {n = $1} END {print n + 0}')
+    args=()
+    for row in $PARTS; do
+        num=$((num + 1))
+        args+=(-n "$num:0:+$SECTORS" -t "$num:${row##*:}" -c "$num:${row%%:*}")
+    done
+    sgdisk "${args[@]}" "$DEV" >/dev/null
+    partprobe "$DEV"; udevadm settle
+fi
 sgdisk -p "$DEV"
 
 for row in $PARTS; do
