@@ -33,6 +33,85 @@ to a row here.
 
 ---
 
+## 2026-10-04
+
+### Device-matrix Drives 1 + 2 — host verification after runs 3–6, and restore
+
+Read back on the laptop after run 6 (`scripts/read_matrix_drive.sh`, then
+`scripts/verify_matrix_drive.py` against the build baselines). The state is
+cumulative over runs 3–6, since the drives were not moved between them.
+
+| Partition | Checker | Result |
+|---|---|---|
+| D1APFSCI, D1APFSCS, D1APFSECI, D1APFSECS | apfsck (plain) / n/a (encrypted) | CLEAN, 0 MiB changed |
+| D1EXFAT, D1NTFS, D1EXT4, D1BLNTFS, D1BLEXFAT | fsck.exfat / ntfs_check + ntfsfix -n / e2fsck -fn | CLEAN; every `bigwrite` file (2,200,000,000 B big.bin, 244–250 tree files) matches its keystream |
+| D2VCNTFS, D2VCEXT4, D2L1FAT32, D2L1EXT4, D2L2EXFAT, D2L4EXT4, D2L4NTFS, D2BLFAT32 | as above | CLEAN; changes are the runs' own BENCH_* files and reports |
+| **D1FAT32** | fsck.fat | **FAILED** — `Cluster 1430795 out of range (1430798 > 1430797)`; `/BENCH_BIG/big.bin` 0 bytes with a cluster chain; free-cluster summary wrong. Read set intact (20995/20995). |
+| **D2VCFAT32** | fsck.fat | **FAILED** — the same signature (`Cluster 1430732 out of range`). Read set intact (20958/20958). |
+| **D2VCEXFAT** | — | **DESTROYED** — VeraCrypt primary header damaged; the backup header decrypts, but nothing recognisable follows. 4,891,905 sectors (2.4 GB) differ from the build, sectors 0..983 and many ranges from 8,197 on. |
+
+Root causes, both fixed before run 7:
+
+- **libaums FAT32 allocated past the data area** (`84459aa`, VENDOR_FIXES V14). The
+  FAT has entries past the last data cluster, all zero, and the allocator scanned up
+  from the FSInfo hint with no bound and no wrap. On D1FAT32, `SlicedBlockDevice`
+  refused the write ("Write exceeds slice bounds"), which left the 0-byte file with a
+  chain. `Fat32AllocBoundsTest` fails on the old code: the image grows by 29,184 bytes.
+- **The decrypted devices had no bounds**, so D2VCFAT32's runaway clusters went
+  straight through `NativeDecryptedBlockDevice` into the next partition, D2VCEXFAT,
+  across runs 3, 4 and 6 (`8ac715b`, `requireInRange` on every decrypting device and
+  on `CachedBlockDevice.writeBlocks`). `LuksSectorSizeTest.checkBounds` fails on the
+  old code for luks1/512 and luks2/4096.
+
+All 20 partitions were then rewritten from their build images
+(`write_matrix_drive.sh`, REWRITE mode), read back, and verified: **all 20 CLEAN, 0 MiB
+changed** against the build baselines.
+
+### OnePlus 7 (GM1901) · LineageOS 23.2 (Android 16, SDK 36) · build 0.4.1 (47) commit 9e6397e — device-matrix Drives 1 + 2, run 5
+
+Started 07:06:08. Sections:
+`free,block,dir,path,seq,random,opens,write,unaligned,correct,bigwrite,fixtures`,
+cache default, remount true. All 21 partitions attached; screen interactive throughout.
+
+| Partition | Container / FS | Verdict |
+|---|---|---|
+| EFI | plain FAT32 (macOS's) | no BENCH/; block reads only |
+| D1APFSCI, D1APFSCS | plain APFS | write sections SKIPPED (read-only); fixtures ALL 22129 / ALL 22024 MATCHED |
+| D1APFSECI, D1APFSECS | encrypted APFS | write sections SKIPPED (read-only); fixtures ALL 21777 / ALL 21911 MATCHED |
+| D1FAT32 | plain FAT32 | write verify PARTIAL (remount not performed); unaligned NOT VERIFIED; correctness: no live mount; bigwrite wrote 2,200,000,000 B at 8.61 MB/s, then NOT VERIFIED (drive did not come back); fixtures ALL 20995 MATCHED |
+| D1EXFAT, D1NTFS, D1EXT4 | plain | not mounted at the start of their turn — skipped |
+| D1BLNTFS | BitLocker NTFS | write verify, unaligned A+B, correctness A–G ALL PASSED; bigwrite ALL PASSED after remount (big.bin 3.22 MB/s write, 29.26 MB/s read; 246 tree files); fixtures ALL 20905 MATCHED |
+| D1BLEXFAT | BitLocker exFAT | write verify, unaligned A+B, correctness A–G ALL PASSED; bigwrite ALL PASSED after remount (big.bin 0.71 MB/s write, 23.58 MB/s read; 248 tree files); fixtures ALL 20898 MATCHED |
+| D2VCFAT32 | VeraCrypt FAT32 | write verify PARTIAL; unaligned FAILED (could not create BENCH_UNALIGNED); correctness: no live mount; bigwrite could not delete the previous BENCH_BIG/BENCH_TREE (block device closed) |
+| D2VCEXFAT … D2BLFAT32 (9) | | not mounted at the start of their turn — skipped |
+
+Three faults in the app, fixed in `15b8448` before run 6:
+
+- **Plain partitions were not remounted** after a remount on a drive that also held
+  encrypted ones; `reprobeHeldDevices` now re-probes them too.
+- **Drive 2 was lost** because unmount bookkeeping finished up to 70 s after the
+  remount had already started (`unmountsInFlight`).
+- **bigwrite wrote through a dropped mount**; it now checks that the mount is live.
+
+Host verification: above, after runs 3–6.
+
+### Runs 3, 4 and 6 — stopped, no report
+
+Each was stopped once logcat showed a fault that made the rest of the run pointless.
+None wrote a report (the `benchmark.txt` on the phone still held the previous run's),
+so there is no row to give. They are listed because their writes are in the host
+check above.
+
+- **Run 3**, commit `f364ae9`: every remount "did not change the mount identity",
+  so the remount proof was always false. Fixed in `d355f0f` by comparing filesystem
+  objects instead of mount IDs.
+- **Run 4**, commit `d355f0f`: Drive 1 dropped at the first remount. Unmounting
+  encrypted APFS closed the slice, and with it the whole USB connection. Fixed in
+  `9e6397e`.
+- **Run 6**, commit `15b8448`, `--es drive D1FAT32,D1EXFAT,D1NTFS,D1EXT4,D2`:
+  "Write exceeds slice bounds" on D1FAT32 and "read … exceeds device" on D2VCFAT32.
+  These are the two root causes above.
+
 ## 2026-10-03
 
 **Commit hashes on these dates.** The runs below were built from `feature/apfs`, which
