@@ -202,6 +202,28 @@ Vendored fork of [magnusja/libaums](https://github.com/magnusja/libaums).
 | `ScsiBlockDevice` | V11 — restart every retry from the caller's buffer window | see below |
 | `ScsiBlockDevice` | V12 — Reset Recovery before retrying a failed transfer | see below |
 | `usb.c`, `ScsiBlockDevice` | V13 — native clear-halt and reset resolve; a missing native cannot crash | see below |
+| `FAT` | V14 — allocation wraps at the last data cluster instead of running into the table's padding | see below |
+
+## V14 — allocation ran past the end of the data area
+
+`FAT.alloc` searched for free clusters by counting upward from the FSInfo hint with
+no upper bound and no wrap. A FAT32 table is sized in whole sectors, so it nearly
+always has entries past the last data cluster — 744 of them on the device-matrix
+drives' 5600 MiB partitions — and they are zero, which reads as free. On a volume
+whose hint sat near the end, `alloc` handed those out, then went on into whatever
+followed the table, and the clusters were written past the end of the partition.
+
+Found on hardware: the OnePlus 7 run on device-matrix D1FAT32 (nearly full) failed
+`bigwrite` with "Write exceeds slice bounds" — `SlicedBlockDevice` refusing a write
+past the partition. On a stick with one unsliced partition nothing would refuse it.
+
+Fix: `lastDataCluster` from the boot sector (data sectors / sectors per cluster + 1,
+capped at the table's extent); the scan wraps from there to cluster 2, a hint past it
+is ignored, and after one full pass `alloc` throws `IOException` (volume full) rather
+than looping. `Fat32AllocBoundsTest` reproduces it: a 64 MiB image (128 padding
+entries), the hint moved 8 clusters before the end, a 64-cluster file. Before the fix
+the image grew by 29,184 bytes (57 clusters written past the end); after it, the image
+keeps its size, `fsck.vfat -n` is clean, and the file reads back.
 
 ## V13 — the native USB helpers never resolved
 
