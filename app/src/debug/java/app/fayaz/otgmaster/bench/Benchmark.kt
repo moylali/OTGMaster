@@ -1890,7 +1890,10 @@ object Benchmark {
                 "remount cannot be performed and on-disk state cannot be judged")
             return false
         }
-        val before = OtgMasterState.mountedDrives.map { it.id }.toSet()
+        // By filesystem object, not by id: ids are stable across mounts by design (so a
+        // companion app's folder grants survive), which made every real remount look
+        // like none — run 3 on the device-matrix drives reported every one NOT VERIFIED.
+        val before = OtgMasterState.mountedDrives.map { it.fileSystem }
 
         // Keep every stick's connection through the unmount (OtgMasterState.holdConnections):
         // released, Android's storage stack takes the drive and mounts it itself.
@@ -1913,7 +1916,7 @@ object Benchmark {
         mount: MountCredentials,
         mountReq: OtgMasterState.MountRequest,
         unmountAll: () -> Unit,
-        before: Set<String>,
+        before: List<Any>,
         tagOf: () -> String?,
         why: (String) -> Unit,
     ): Boolean {
@@ -1968,15 +1971,16 @@ object Benchmark {
         while (tagOf() == null && System.currentTimeMillis() < deadline) Thread.sleep(500)
         // And every other partition back too, before the next section unmounts again.
         awaitUnlocks()
-        val after = OtgMasterState.mountedDrives.map { it.id }.toSet()
+        val after = OtgMasterState.mountedDrives.map { it.fileSystem }
         if (tagOf() == null) {
             why("the drive did not come back after unmounting")
             return false
         }
-        // A fresh mount gets a fresh id. Identical ids would mean the list never
-        // actually turned over, which is the failure this function exists to catch.
-        if (after.isNotEmpty() && after == before) {
-            why("the mount identity did not change, so no real remount occurred")
+        // A real mount builds a new filesystem object. Any object surviving from before
+        // means the list never turned over, which is the failure this function exists
+        // to catch.
+        if (after.any { a -> before.any { it === a } }) {
+            why("a filesystem object survived the remount, so no real remount occurred")
             return false
         }
         return true
