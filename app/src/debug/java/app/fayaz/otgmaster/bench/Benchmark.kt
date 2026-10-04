@@ -1640,6 +1640,10 @@ object Benchmark {
     private fun benchBigWrite(drive: MountedDrive, emit: (String) -> Unit, mount: MountCredentials?) {
         val label = runCatching { drive.fileSystem.volumeLabel }.getOrDefault("").trim()
         val tag = driveTag(drive)
+        // Only through a live mount. live() falls back to the drive object it was given,
+        // and libaums' FAT32 has no unmounted state: run 5 wrote 2.2 GB to D1FAT32
+        // through a mount the app had already dropped.
+        if (rootForTag(tag) == null) return emit("bigwrite      : *** no live mount — cannot run ***")
         val root = drive.fileSystem.rootDirectory
         // The previous run's files go first: they were for the host check after that run.
         // Their size is added back below: libexfat's free count right after deleting a
