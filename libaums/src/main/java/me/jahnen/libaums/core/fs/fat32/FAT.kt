@@ -63,6 +63,11 @@ internal constructor(private val blockDevice: BlockDeviceDriver, bootSector: Fat
     private val fatSizeBytes: Long
     private val maxValidCluster: Long
 
+    // LOCAL PATCH (docs/VENDOR_FIXES.md V14): the last cluster that has a place in
+    // the data area. The table is sized in whole sectors and usually has entries past
+    // it, which read as free; allocation must stop here, not at the table's end.
+    private val lastDataCluster: Long
+
     /**
      * LOCAL PATCH (docs/VENDOR_FIXES.md V8): whether [cluster] can name an entry
      * inside this FAT.
@@ -128,6 +133,9 @@ internal constructor(private val blockDevice: BlockDeviceDriver, bootSector: Fat
         // extent before it is turned into a byte offset.
         fatSizeBytes = bootSector.sectorsPerFat * bootSector.bytesPerSector.toLong()
         maxValidCluster = fatSizeBytes / 4 - 1
+        val dataSectors = bootSector.totalNumberOfSectors - bootSector.reservedSectors -
+            bootSector.fatCount * bootSector.sectorsPerFat
+        lastDataCluster = minOf(maxValidCluster, 1 + dataSectors / bootSector.sectorsPerCluster)
     }
 
 
@@ -248,7 +256,7 @@ internal constructor(private val blockDevice: BlockDeviceDriver, bootSector: Fat
             -1
 
         var lastAllocated = fsInfoStructure.lastAllocatedClusterHint
-        if (lastAllocated == FsInfoStructure.INVALID_VALUE.toLong()) {
+        if (lastAllocated == FsInfoStructure.INVALID_VALUE.toLong() || lastAllocated > lastDataCluster) {
             // we have to start from the beginning because there is no hint!
             lastAllocated = 2
         }
@@ -260,8 +268,19 @@ internal constructor(private val blockDevice: BlockDeviceDriver, bootSector: Fat
         var lastOffset: Long = -1
 
         // first we search all needed cluster and save them
+        // LOCAL PATCH (docs/VENDOR_FIXES.md V14): wrap from the last data cluster back
+        // to 2, and give up after one full pass. Upstream counted upward with no bound,
+        // so near the end of the volume it handed out the table's padding entries
+        // (zero, so "free") and then its arbitrary bytes, and wrote their clusters past
+        // the end of the partition.
+        var scanned = 0L
+        val scanLimit = lastDataCluster - 1
         while (numberOfClusters > 0) {
+            if (++scanned > scanLimit) {
+                throw IOException("FAT32 volume is full: $numberOfClusters more cluster(s) needed")
+            }
             currentCluster++
+            if (currentCluster > lastDataCluster) currentCluster = 2
             offset = (fatOffset[0] + currentCluster * 4) / bufferSize * bufferSize
             offsetInBlock = (fatOffset[0] + currentCluster * 4) % bufferSize
 
