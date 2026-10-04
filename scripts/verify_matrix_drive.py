@@ -91,9 +91,33 @@ def read_baseline(path):
     return int(lines[0].split()[2]), [h for h in lines[1:] if h]
 
 
-def decrypt_vc(raw, password, pim, out):
+def vc_open(raw, password, pim):
+    """(master key, data start, data size, which header). Tries the backup header in
+    the volume's last 128 KiB when the primary does not open, as VeraCrypt's own
+    "use backup header" does: a damaged primary must be reported as damage, and
+    whether the volume is still recoverable is part of that report."""
     from fill_veracrypt_volume import open_header
-    master, start, size = open_header(raw, password, pim)
+    try:
+        return (*open_header(raw, password, pim), "primary")
+    except SystemExit:
+        pass
+    backup = os.path.join(os.path.dirname(raw), os.path.basename(raw) + ".vcbackup")
+    try:
+        with open(raw, "rb") as src, open(backup, "wb") as dst:
+            src.seek(os.path.getsize(raw) - 128 * 1024)
+            dst.write(src.read(512))
+        try:
+            master, start, size = open_header(backup, password, pim)
+        except SystemExit:
+            raise RuntimeError("VeraCrypt primary and backup headers both fail to open "
+                               "(wrong password/PIM, or both overwritten)")
+        return master, start, size, "backup"
+    finally:
+        if os.path.exists(backup):
+            os.remove(backup)
+
+
+def decrypt_vc_with(raw, master, start, size, out):
     with open(raw, "rb") as src, open(out, "wb") as dst:
         src.seek(start)
         pos = 0
@@ -119,7 +143,10 @@ def decrypt(p, raw, work, meta):
     elif c == "bitlocker":
         r = run(sys.executable, os.path.join(HERE, "bitlk_decrypt.py"), raw, meta["password"], out)
     elif c == "vc":
-        decrypt_vc(raw, meta["password"], meta["pim"], out)
+        master, start, size, which = vc_open(raw, meta["password"], meta["pim"])
+        decrypt_vc_with(raw, master, start, size, out)
+        if which != "primary":
+            p["_header_note"] = "VeraCrypt primary header DAMAGED; decrypted with the backup header"
         return out
     else:
         raise RuntimeError(f"no decryptor for {c}")
@@ -320,6 +347,8 @@ def verify_part(p, build, images, meta, accept, work_root):
             password = meta["password"] if p["apfs"][1] else "unused"
         else:
             vol = decrypt(p, raw, work, meta)
+            if p.get("_header_note"):
+                fail(p["_header_note"])
             got = fs_type(vol)
             if got != FS_BLKID[fs]:
                 fail(f"decrypted volume holds '{got or 'nothing recognisable'}', expected {FS_BLKID[fs]}")
@@ -402,7 +431,7 @@ def verify_part(p, build, images, meta, accept, work_root):
                     f.write(manifest)
             row["notes"].append("accepted as the new baseline")
         return row
-    except Exception as e:  # noqa: BLE001 — one partition's failure must not hide the others
+    except (Exception, SystemExit) as e:  # noqa: BLE001 — one partition's failure must not hide the others
         fail(f"{type(e).__name__}: {e}")
         return row
     finally:
