@@ -449,13 +449,19 @@ def main():
     ap.add_argument("-j", "--jobs", type=int, default=4)
     a = ap.parse_args()
 
+    # Where scripts/build_apfs_tools.sh puts them, unless the environment says otherwise.
+    tools = os.path.join(os.path.dirname(HERE), "matrix", "tools")
+    for var, path in (("APFS_FUSE", "apfs-fuse/build/apfs-fuse"), ("APFSCK", "apfsprogs/apfsck/apfsck")):
+        if not os.environ.get(var) and os.access(os.path.join(tools, path), os.X_OK):
+            os.environ[var] = os.path.join(tools, path)
+
     meta = json.load(open(os.path.join(a.build, "drive.json")))
     images = a.images or a.build
     parts = [p for p in meta["partitions"] if not a.only or p["label"] in a.only]
     if any(p["container"] == "apfs" for p in parts) and os.path.exists(os.path.join(images, "D1APFSCI.img")):
         for tool in ("APFS_FUSE", "APFSCK"):
             if not os.environ.get(tool):
-                raise SystemExit(f"set {tool} to the built tool (docs/TEST_DATA.md §6b)")
+                raise SystemExit(f"{tool} not found: run scripts/build_apfs_tools.sh, or set {tool} (docs/TEST_DATA.md §6b)")
 
     # Beside the images, not in /tmp: each partition decrypts to a 6 GB working
     # copy, and /tmp is often a RAM-backed tmpfs.
