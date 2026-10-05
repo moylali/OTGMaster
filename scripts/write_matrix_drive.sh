@@ -25,6 +25,8 @@
 # be typed back unless --yes is given.
 {
 set -euo pipefail
+# set -e alone exits without a word; a failed --only lookup did exactly that.
+trap 'echo "ERROR: $0 stopped at line $LINENO: $BASH_COMMAND" >&2' ERR
 
 USAGE="Usage: sudo bash $0 /dev/sdX BUILD_DIR [--only LABEL,...] [--yes]"
 DEV="${1:?$USAGE}"
@@ -91,7 +93,8 @@ if [[ -n "$ONLY" ]]; then
     [[ "$REWRITE" == 1 ]] || { echo "ERROR: --only rewrites existing partitions; $DEV does not have them all."; exit 1; }
     kept=""
     for label in ${ONLY//,/ }; do
-        row=$(for r in $PARTS; do [[ "${r%%:*}" == "$label" ]] && echo "$r"; done)
+        row=""
+        for r in $PARTS; do [[ "${r%%:*}" != "$label" ]] || row=$r; done
         [[ -n "$row" ]] || { echo "ERROR: --only $label: not a built partition of Drive $DRIVE."; exit 1; }
         kept="$kept $row"
     done
