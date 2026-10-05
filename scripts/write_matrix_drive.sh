@@ -4,6 +4,10 @@
 # and read_matrix_drive.sh are the only two steps that touch the drive.
 #
 #   sudo bash scripts/write_matrix_drive.sh /dev/sdX matrix/d2
+#   sudo bash scripts/write_matrix_drive.sh /dev/sdX matrix/d2 --only D2VCFAT32,D2L1FAT32
+#
+# --only restores just the named partitions (rewrite mode only, below), leaving the
+# others as they are: after a run that damaged some partitions and not the rest.
 #
 # Drives 2-4: the whole disk is repartitioned — a new GPT with the ten partitions of
 #   drive.json, in order, each named after its label.
@@ -22,9 +26,19 @@
 {
 set -euo pipefail
 
-DEV="${1:?Usage: sudo bash $0 /dev/sdX BUILD_DIR [--yes]}"
-BUILD="${2:?Usage: sudo bash $0 /dev/sdX BUILD_DIR [--yes]}"
-YES="${3:-}"
+USAGE="Usage: sudo bash $0 /dev/sdX BUILD_DIR [--only LABEL,...] [--yes]"
+DEV="${1:?$USAGE}"
+BUILD="${2:?$USAGE}"
+shift 2
+YES=""; ONLY=""
+while (( $# )); do
+    case "$1" in
+        --yes) YES=--yes ;;
+        --only) ONLY="${2:?$USAGE}"; shift ;;
+        *) echo "$USAGE"; exit 1 ;;
+    esac
+    shift
+done
 [[ $EUID -eq 0 ]] || { echo "ERROR: run with sudo."; exit 1; }
 # GNU dd where it is installed as gnudd: uutils' dd (Ubuntu's default since 25.10)
 # fails iflag=direct with "IO error: Invalid input", which stopped the first real
@@ -73,6 +87,16 @@ REWRITE=1
 for row in $PARTS; do
     lsblk -lno PARTLABEL "$DEV" | grep -qx "${row%%:*}" || { REWRITE=0; break; }
 done
+if [[ -n "$ONLY" ]]; then
+    [[ "$REWRITE" == 1 ]] || { echo "ERROR: --only rewrites existing partitions; $DEV does not have them all."; exit 1; }
+    kept=""
+    for label in ${ONLY//,/ }; do
+        row=$(for r in $PARTS; do [[ "${r%%:*}" == "$label" ]] && echo "$r"; done)
+        [[ -n "$row" ]] || { echo "ERROR: --only $label: not a built partition of Drive $DRIVE."; exit 1; }
+        kept="$kept $row"
+    done
+    PARTS="${kept# }"
+fi
 if [[ "$REWRITE" == 1 ]]; then
     PLAN="REWRITE the $(echo $PARTS | wc -w) existing partitions named below with their built images; no repartitioning"
 elif [[ "$DRIVE" == 1 ]]; then

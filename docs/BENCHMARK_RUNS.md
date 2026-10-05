@@ -33,6 +33,63 @@ to a row here.
 
 ---
 
+## 2026-10-05
+
+### OnePlus 7 (GM1901) · LineageOS 23.2 (Android 16, SDK 36) · build 0.4.1 (47) commit 23480de — device-matrix Drives 1 + 2, run 7
+
+The first run on the restored drives, and the first with the FAT32 allocation bound
+(V14) and the decrypted-device bounds. Sections:
+`free,block,dir,path,seq,random,opens,write,unaligned,correct,bigwrite,fixtures`,
+cache default, remount true, all partitions. Started 2026-10-04 16:42:32 and ended
+04:05:03, 11 h 23 min. All 21 attached. Android's volumes were unmounted with
+`sm unmount` before the start, and none were mounted at the end. Screen interactive
+throughout.
+
+**On the phone: every section passed on every partition.** No FAILED, PARTIAL, NOT
+VERIFIED or CONTAMINATED line; no "exceeds" or FATAL EXCEPTION in logcat.
+
+| Partition | Container / FS | On the phone | big.bin write / read after remount (MB/s) |
+|---|---|---|---|
+| EFI | plain FAT32 (macOS's) | block reads only | — |
+| D1APFSCI, D1APFSCS, D1APFSECI, D1APFSECS | APFS, plain and encrypted | write sections SKIPPED (read-only); fixtures ALL 22129 / 22024 / 21777 / 21911 MATCHED | — |
+| D1EXFAT | plain exFAT | write verify, unaligned A+B, correctness A–G, bigwrite ALL PASSED; fixtures ALL 20963 | 0.78 / 37.13 |
+| D1FAT32 | plain FAT32 | all PASSED; fixtures ALL 20995 | 8.45 / 25.66 |
+| D1NTFS | plain NTFS | all PASSED; fixtures ALL 21052 | 3.52 / 47.71 |
+| D1EXT4 | plain ext4 | all PASSED; fixtures ALL 20854 | 1.21 / 44.34 |
+| D1BLNTFS | BitLocker NTFS | all PASSED; fixtures ALL 20905 | 3.21 / 29.31 |
+| D1BLEXFAT | BitLocker exFAT | all PASSED; fixtures ALL 20898 | 0.71 / 24.56 |
+| D2VCFAT32 | VeraCrypt FAT32 | all PASSED; fixtures ALL 20958 | 7.11 / 17.34 |
+| D2VCEXFAT | VeraCrypt exFAT | all PASSED; fixtures ALL 20974 | 0.72 / 24.14 |
+| D2VCNTFS | VeraCrypt NTFS | all PASSED; fixtures ALL 20919 | 3.07 / 26.49 |
+| D2VCEXT4 | VeraCrypt ext4 | all PASSED; fixtures ALL 21071 | 1.10 / 25.38 |
+| D2L1FAT32 | LUKS1 FAT32 | all PASSED; fixtures ALL 20953 | 6.38 / 17.65 |
+| D2L1EXT4 | LUKS1 ext4 | all PASSED; fixtures ALL 21024 | 1.09 / 25.39 |
+| D2L2EXFAT | LUKS2 exFAT | all PASSED; fixtures ALL 20942 | 0.72 / 24.46 |
+| D2L4EXT4 | LUKS2 4K ext4 | all PASSED; fixtures ALL 20888 | 1.08 / 25.51 |
+| D2L4NTFS | LUKS2 4K NTFS | all PASSED; fixtures ALL 20927 | 3.14 / 26.70 |
+| D2BLFAT32 | BitLocker FAT32 | all PASSED; fixtures ALL 20974 | 6.67 / 19.09 |
+
+**Host verification** (`read_matrix_drive.sh`, then `verify_matrix_drive.py` against
+the build baselines): **16 of 20 CLEAN, all four FAT32 partitions FAILED fsck.fat.**
+
+- The 16 others: checker clean (apfsck, fsck.exfat, ntfs_check + ntfsfix, e2fsck -fn),
+  every read-set file matching, and every `bigwrite` file — big.bin 2,200,000,000 B
+  and the 240–250 tree files — matching its keystream recipe.
+- D1FAT32, D2VCFAT32, D2L1FAT32, D2BLFAT32: read set intact, big.bin and every tree
+  file matching, **and fsck.fat failing** with "Duplicate directory entry" in
+  `BENCH_TREE` on all four. D1FAT32 and D2BLFAT32 also have the tree's empty `f0.bin`
+  holding a cluster, "File size is 0 bytes, cluster chain length is > 0 bytes", with
+  the free count off by one.
+
+Both are libaums bugs, now V15 and V16 in `VENDOR_FIXES.md`:
+- V15: a move kept the short name from the file's old directory, where it was unique.
+- V16: a new file was given a cluster before it was ever written.
+
+The V14 overrun and the cross-partition writes did not recur. Contents were right
+everywhere, so only the filesystem's own checker could see this: the case `AGENTS.md`
+describes. `Fat32MoveFsckTest` reproduces both bugs (and a third, a moved directory's
+stale `..`) on the old code.
+
 ## 2026-10-04
 
 ### Device-matrix Drives 1 + 2 — host verification after runs 3–6, and restore
