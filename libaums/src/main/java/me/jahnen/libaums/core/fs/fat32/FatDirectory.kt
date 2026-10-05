@@ -212,6 +212,19 @@ internal constructor(
     }
 
     /**
+     * LOCAL PATCH (docs/VENDOR_FIXES.md V15): upstream's moves added the entry with the
+     * short name it had in its old directory, where it was unique; here it can collide
+     * (libaums names `f32.bin` and `f33.bin` both `F30000~0.BIN`), which fsck.fat
+     * reports as a duplicate directory entry. Give it a new one if it does.
+     */
+    private fun adoptEntry(lfnEntry: FatLfnDirectoryEntry) {
+        if (shortNameMap.containsKey(lfnEntry.actualEntry.shortName!!))
+            lfnEntry.setName(lfnEntry.name,
+                    ShortNameGenerator.generateShortName(lfnEntry.name, shortNameMap.keys))
+        addEntry(lfnEntry, lfnEntry.actualEntry)
+    }
+
+    /**
      * Removes (if existing) the long file name entry from [.lfnMap] and
      * [.entries] and the actual entry from [.shortNameMap].
      *
@@ -309,9 +322,11 @@ internal constructor(
         val shortName = ShortNameGenerator.generateShortName(name, shortNameMap.keys)
 
         val entry = FatLfnDirectoryEntry(name, shortName)
-        // alloc completely new chain
-        val newStartCluster = fat.alloc(arrayOf(), 1)[0]
-        entry.startCluster = newStartCluster
+        // LOCAL PATCH (docs/VENDOR_FIXES.md V16): upstream allocated a cluster here, so
+        // a file that was never written was 0 bytes with a chain — an fsck.fat error and
+        // a leaked cluster. An empty file has start cluster 0; the first write allocates
+        // (ClusterChain handles the empty chain, and V2 writes the start cluster back).
+        entry.startCluster = 0
 
         Log.d(TAG, "adding entry: $entry with short name: $shortName")
         addEntry(entry, entry.actualEntry)
@@ -465,11 +480,19 @@ internal constructor(
 
         // now the actual magic happens!
         parent!!.removeEntry(entry)
-        destination.addEntry(entry!!, entry!!.actualEntry)
+        destination.adoptEntry(entry!!)   // LOCAL PATCH (docs/VENDOR_FIXES.md V15)
 
         parent!!.write()
         destination.write()
         parent = destination
+
+        // LOCAL PATCH (docs/VENDOR_FIXES.md V15): upstream left `..` naming the old
+        // parent ("Invalid '..' entry" to fsck.fat). The root is cluster 0 there.
+        val dotDot = entries!!.firstOrNull { it.actualEntry.shortName == ShortName("..", "") }
+        if (dotDot != null) {
+            dotDot.startCluster = if (destination.isRoot) 0 else destination.entry!!.startCluster
+            write()
+        }
     }
 
     /**
@@ -506,7 +529,7 @@ internal constructor(
 
         // now the actual magic happens!
         removeEntry(entry)
-        destination.addEntry(entry, entry.actualEntry)
+        destination.adoptEntry(entry)   // LOCAL PATCH (docs/VENDOR_FIXES.md V15)
 
         write()
         destination.write()

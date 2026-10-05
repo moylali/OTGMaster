@@ -203,6 +203,53 @@ Vendored fork of [magnusja/libaums](https://github.com/magnusja/libaums).
 | `ScsiBlockDevice` | V12 — Reset Recovery before retrying a failed transfer | see below |
 | `usb.c`, `ScsiBlockDevice` | V13 — native clear-halt and reset resolve; a missing native cannot crash | see below |
 | `FAT` | V14 — allocation wraps at the last data cluster instead of running into the table's padding | see below |
+| `FatDirectory` | V15 — a move gives the entry a short name unique in its new directory, and a moved directory's `..` names its new parent | see below |
+| `FatDirectory` | V16 — a new file owns no cluster until it is written | see below |
+
+## V15 — moves left duplicate short names and a stale `..`
+
+`FatDirectory.move` (files) and `FatDirectory.moveTo` (directories) took the entry out
+of one directory and added it to another as it was. Two things in it belonged to the
+old directory:
+
+- **The 8.3 short name.** It is generated to be unique among its siblings, and
+  libaums' generator gives many names the same one (`f32.bin` and `f33.bin` are both
+  `F30000~0.BIN`). Moved next to a sibling holding that name, the directory had two
+  entries with the same short name. fsck.fat reports "Duplicate directory entry" and
+  renames one to `FSCK0000.000`; Windows' chkdsk does the same. Creating and renaming
+  already generated against the directory's names, so only moves did this.
+- **A moved directory's `..`.** It kept the old parent's cluster. fsck.fat reports
+  "Invalid '..' entry in the second slot".
+
+Found on hardware: the device-matrix run 7 (OnePlus 7) wrote the `bigwrite` tree,
+which moves 20 files between directories, onto all four FAT32 partitions. Every file
+read back correctly, on the phone after a remount and on the host against its
+recipe, and fsck.fat failed all four on duplicate entries (four on D1FAT32, whose
+full output was checked; the encrypted three report only the tail of fsck's output,
+which shows two or three each). No other check could see it: contents were right,
+the structure was not.
+
+Fix: the destination generates a new short name if the entry's collides
+(`adoptEntry`), and a moved directory's `..` is set to the new parent's start
+cluster (0 for the root) and written. `Fat32MoveFsckTest` fails on the old code for
+both, with the same fsck.fat messages as the drives.
+
+## V16 — an empty file owned a cluster
+
+`createFile` allocated one cluster for every new file. A file that was never written
+was then 0 bytes with a one-cluster chain: fsck.fat reports "File size is 0 bytes,
+cluster chain length is > 0 bytes" and a wrong free-cluster count, and the cluster
+is lost until it does. Truncating to 0 already freed the whole chain (V2 writes start
+cluster 0 back), so only creation did this.
+
+Found alongside V15: the `bigwrite` tree's first file is created 0 bytes, and fsck.fat
+flagged it on D1FAT32 (`renamed_f0.bin`) and D2BLFAT32 (`d4/e1/f0.bin`); whether the
+other two had it is outside the part of fsck's output the verifier keeps.
+
+Fix: a new file has start cluster 0. `FAT.getChain(0)` is the empty chain, and the
+first write allocates and V2 records the start cluster. `Fat32MoveFsckTest` fails on
+the old code; after the fix an empty file is fsck-clean, and the same file written to
+10,000 bytes later reads back and stays clean.
 
 ## V14 — allocation ran past the end of the data area
 

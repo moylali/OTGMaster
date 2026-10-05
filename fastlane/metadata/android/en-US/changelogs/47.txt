@@ -4,5 +4,5 @@
 • New: Folder access given to other apps survives remounts
 • Fixed: LUKS2 drives with 4K sectors were refused
 • Fixed: ext2/ext3 writes damaged the drive; they now open read-only
-• Fixed: a nearly full FAT32 drive could write into the next partition
+• Fixed: FAT32 writes and moves could damage the drive
 • Fixed: exFAT drives now show their own name
