@@ -457,7 +457,13 @@ def main():
 
     meta = json.load(open(os.path.join(a.build, "drive.json")))
     images = a.images or a.build
-    parts = [p for p in meta["partitions"] if not a.only or p["label"] in a.only]
+    # --only takes repeats or a comma list. An unknown label is refused: a list that
+    # matched nothing used to verify zero partitions and print "ALL CLEAN".
+    only = {l for o in a.only or [] for l in o.split(",") if l}
+    unknown = only - {p["label"] for p in meta["partitions"]}
+    if unknown:
+        sys.exit(f"--only: not partitions of this build: {', '.join(sorted(unknown))}")
+    parts = [p for p in meta["partitions"] if not only or p["label"] in only]
     if any(p["container"] == "apfs" for p in parts) and os.path.exists(os.path.join(images, "D1APFSCI.img")):
         for tool in ("APFS_FUSE", "APFSCK"):
             if not os.environ.get(tool):
