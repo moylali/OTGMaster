@@ -35,6 +35,36 @@ to a row here.
 
 ## 2026-10-05
 
+### OnePlus 7 (GM1901) · LineageOS 23.2 (Android 16, SDK 36) · build 0.4.1 (47) commit 626699e — device-matrix FAT32 partitions, run 8
+
+Re-run of the four FAT32 partitions on the build with V15 and V16 (`5f9bf9a`). They
+were first restored from their build images (`write_matrix_drive.sh --only`), and
+the host verified them CLEAN at 0 MiB changed. The other 16 were left as run 7
+left them, and verified unchanged by the restore. Sections:
+`free,block,dir,path,seq,random,opens,write,unaligned,correct,bigwrite,fixtures`,
+cache default, remount true, `--es drive D1FAT32,D2VCFAT32,D2L1FAT32,D2BLFAT32`.
+Started 17:49:21, ended 18:56:36. Android's volumes unmounted before, none mounted
+after; USB power, battery 100%.
+
+| Partition | Container | On the phone | big.bin write / read after remount (MB/s) | Host |
+|---|---|---|---|---|
+| D1FAT32 | plain | write verify, unaligned A+B, correctness A–G, bigwrite (240 tree files) ALL PASSED; fixtures ALL 20995 | 7.12 / 23.97 | **CLEAN**: fsck.fat clean, big.bin + 240/240 tree OK |
+| D2VCFAT32 | VeraCrypt | all PASSED (245 tree files); fixtures ALL 20958 | 7.07 / 17.30 | **CLEAN**, 245/245 |
+| D2L1FAT32 | LUKS1 | all PASSED (250 tree files); fixtures ALL 20953 | 6.27 / 17.71 | **CLEAN**, 250/250 |
+| D2BLFAT32 | BitLocker | **dense opens FAILED `java.lang.NullPointerException`**; everything else PASSED (246 tree files); fixtures ALL 20974 | 6.66 / 19.33 | **CLEAN**, 246/246 |
+
+**V15 and V16 hold on hardware.** The same tree that left duplicate entries and a
+cluster-holding empty file on all four in run 7 is fsck-clean on all four. The host
+check covered all 20 partitions: the 16 others are CLEAN, still holding run 7's
+files.
+
+**The dense-opens failure** is V17 (`778dc07`). libaums' `listFiles` read its weak
+handle cache twice, and a GC between the reads made the second null. It came right
+after 2.1 GB of sequential reads. The harness logged only the exception's message,
+so the cause was found afterwards: the race was reproduced on the host by
+`Fat32ListGcRaceTest`. This build does not contain V17, so the failure stands as
+recorded.
+
 ### OnePlus 7 (GM1901) · LineageOS 23.2 (Android 16, SDK 36) · build 0.4.1 (47) commit 23480de — device-matrix Drives 1 + 2, run 7
 
 The first run on the restored drives, and the first with the FAT32 allocation bound
