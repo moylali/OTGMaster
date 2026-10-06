@@ -1004,6 +1004,30 @@ it filled. The run then stopped before ejecting: Spotlight's `mds` refused the u
 of the last volume. A retry ten minutes later succeeded, and the script now retries for
 two minutes.
 
+**Which stick is which.** All four are the same PNY "USB 3.2.1 FD" model, so the USB
+serial is the only electronic tell. Label each one physically as well.
+
+| Drive | USB serial | Contents |
+|---|---|---|
+| 1 | `071C5C4E138E6B31` | Mac EFI + APFS ×4, plain FAT32/exFAT/NTFS/ext4, BitLocker NTFS/exFAT |
+| 2 | `071C5C306F8A2D62` | VeraCrypt ×4, LUKS1 FAT32/ext4, LUKS2 exFAT, LUKS2-4K ext4/NTFS, BitLocker FAT32 |
+| 3 | `071C48F5FB0EF456` | LUKS1 exFAT/NTFS, LUKS2 FAT32/NTFS/ext4, LUKS2-4K FAT32/exFAT, plain ext2/ext3, BitLocker NTFS |
+| 4 | `071C48F5FB0EF450` | ext2/ext3 inside LUKS1, LUKS2, LUKS2-4K and VeraCrypt; BitLocker FAT32/exFAT |
+
+Pass the device by serial rather than by `/dev/sdX`, which changes between plug-ins:
+
+```sh
+D3=$(lsblk -dnpo NAME,SERIAL | awk '$2=="071C48F5FB0EF456"{print $1}')
+```
+
+Drives 3 and 4 were built, written and read back on 2026-10-05/06. The two builds
+ran in parallel, about 50 minutes each; the FAT32 partitions' dense folders take the
+longest. Every partition is **CLEAN** at 0 MiB changed against its build (20,910–21,971
+files each). Disk space is the constraint here: two builds plus two read-backs come to
+about 280 GB. Each build's `*.plain.img` files hold 29 GB and nothing downstream reads
+them (writing uses the encrypted image, verifying uses `.chunks`), so they can be
+truncated once a partition is built.
+
 Drives 1 and 2 were written and read back on 2026-10-03: two 62.0 GB PNY "USB 3.2.1
 FD" sticks, written in parallel. `verify_matrix_drive.py --accept` on the read-backs:
 **all 20 partitions CLEAN**. Every Linux-built partition came back with 0 MiB changed
