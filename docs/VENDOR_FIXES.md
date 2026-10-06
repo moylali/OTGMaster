@@ -205,6 +205,7 @@ Vendored fork of [magnusja/libaums](https://github.com/magnusja/libaums).
 | `FAT` | V14 — allocation wraps at the last data cluster instead of running into the table's padding | see below |
 | `FatDirectory` | V15 — a move gives the entry a short name unique in its new directory, and a moved directory's `..` names its new parent | see below |
 | `FatDirectory` | V16 — a new file owns no cluster until it is written | see below |
+| `FatDirectory` | V17 — `listFiles` reads the weak handle cache once, so a GC cannot null it mid-listing | see below |
 
 ## V15 — moves left duplicate short names and a stale `..`
 
@@ -233,6 +234,28 @@ Fix: the destination generates a new short name if the entry's collides
 (`adoptEntry`), and a moved directory's `..` is set to the new parent's start
 cluster (0 for the root) and written. `Fat32MoveFsckTest` fails on the old code for
 both, with the same fsck.fat messages as the drives.
+
+## V17 — a GC mid-listing threw NullPointerException
+
+`FatDirectory.listFiles` looked each entry up in `fs.fileCache` twice:
+`fileCache[path] != null -> fileCache[path]!!`. The cache is a
+`WeakHashMap<String, UsbFile>` keyed by the path string, which nothing else holds, so
+any garbage collection can clear an entry. One landing between the two reads made the
+second null, and `!!` threw. Every `search` lists its directory, so lookups failed
+the same way.
+
+It was intermittent and only on the phone, where heavy I/O keeps the collector busy:
+device-matrix run 8 (OnePlus 7, D2BLFAT32) failed "dense opens" with a bare
+`java.lang.NullPointerException` right after 2.1 GB of sequential reads. The benchmark
+harness had guarded against a "null name" since it was written, without the cause
+being known. The same lookups on the host, on a FAT32 image holding the same fixture
+tree, did not fail.
+
+Fix: read the cache once into a local. `Fat32ListGcRaceTest` reproduces it on the
+host: a thread churning the heap while a 1000-entry directory is listed repeatedly.
+The old code threw at `FatDirectory.kt:434` within 10 s. The new code listed 331,582
+times in 15 s without failing. The harness now also logs the stack trace of every
+failed section, which would have named this line the first time.
 
 ## V16 — an empty file owned a cluster
 

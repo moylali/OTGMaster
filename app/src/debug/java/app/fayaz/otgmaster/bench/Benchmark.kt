@@ -332,7 +332,7 @@ object Benchmark {
             emit("")
 
             phase("free space")
-            if (wants("free")) runCatching { benchFreeSpace(fs, ::emit) }.onFailure { emit("freeSpace     : FAILED ${it}") }
+            if (wants("free")) runCatching { benchFreeSpace(fs, ::emit) }.onFailure { Log.w(TAG, "section failed", it); emit("freeSpace     : FAILED ${it}") }
             phase("block layer")
             if (wants("block")) runCatching { benchBlockLayer(drive, ::emit) }.onFailure {
                 emit("block layer   : FAILED ${it}")
@@ -347,15 +347,15 @@ object Benchmark {
             }
 
             phase("directory listing")
-            if (wants("dir")) runCatching { benchDirListing(bench, ::emit) }.onFailure { emit("dir listing   : FAILED ${it}") }
+            if (wants("dir")) runCatching { benchDirListing(bench, ::emit) }.onFailure { Log.w(TAG, "section failed", it); emit("dir listing   : FAILED ${it}") }
             phase("path resolve")
-            if (wants("path")) runCatching { benchPathResolve(drive.fileSystem.rootDirectory, ::emit) }.onFailure { emit("path resolve  : FAILED ${it}") }
+            if (wants("path")) runCatching { benchPathResolve(drive.fileSystem.rootDirectory, ::emit) }.onFailure { Log.w(TAG, "section failed", it); emit("path resolve  : FAILED ${it}") }
             phase("sequential read")
-            if (wants("seq")) runCatching { benchSequentialRead(bench, ::emit) }.onFailure { emit("seq read      : FAILED ${it}") }
+            if (wants("seq")) runCatching { benchSequentialRead(bench, ::emit) }.onFailure { Log.w(TAG, "section failed", it); emit("seq read      : FAILED ${it}") }
             phase("random read")
-            if (wants("random")) runCatching { benchRandomRead(bench, ::emit) }.onFailure { emit("random read   : FAILED ${it}") }
+            if (wants("random")) runCatching { benchRandomRead(bench, ::emit) }.onFailure { Log.w(TAG, "section failed", it); emit("random read   : FAILED ${it}") }
             phase("dense opens")
-            if (wants("opens")) runCatching { benchDenseOpens(bench, ::emit) }.onFailure { emit("dense opens   : FAILED ${it}") }
+            if (wants("opens")) runCatching { benchDenseOpens(bench, ::emit) }.onFailure { Log.w(TAG, "section failed", it); emit("dense opens   : FAILED ${it}") }
             // Each remounting section below replaces the MountedDrive, so the
             // reference captured at the top of this drive's turn is dead as soon as
             // the first of them runs. Re-resolving per *drive* is not enough; it has
@@ -391,7 +391,7 @@ object Benchmark {
             fun writeSection(name: String, label: String, body: () -> Unit) {
                 if (!only.contains(name)) return
                 if (readOnly != null) { emit("$label: SKIPPED — read-only: $readOnly"); return }
-                runCatching { body() }.onFailure { emit("$label: FAILED ${it}") }
+                runCatching { body() }.onFailure { Log.w(TAG, "section failed", it); emit("$label: FAILED ${it}") }
             }
             // Opt-in only: this one writes to the drive, so a default run stays
             // read-only.
@@ -407,14 +407,14 @@ object Benchmark {
             writeSection("bigwrite", "bigwrite      ") { benchBigWrite(live(), ::emit, mount) }
             phase("SAF path")
             if (only.contains("saf")) runCatching { benchSaf(context, ::emit) }
-                .onFailure { emit("saf           : FAILED ${it}") }
+                .onFailure { Log.w(TAG, "section failed", it); emit("saf           : FAILED ${it}") }
             // Opt-in: hashing a 2 GiB fixture takes minutes.
             phase("fixture hashes")
             // The trace, not just the message: this handler printed
             // "FAILED java.io.IOException: File is closed" and dropped the one
             // piece of information that identified the throwing line.
             if (only.contains("fixtures")) runCatching { benchFixtures(live(), ::emit) }
-                .onFailure { emit("fixtures      : FAILED ${it.stackTraceToString()}") }
+                .onFailure { Log.w(TAG, "section failed", it); emit("fixtures      : FAILED ${it.stackTraceToString()}") }
             emit("")
         }
 
@@ -549,8 +549,9 @@ object Benchmark {
     private fun benchDenseOpens(bench: UsbFile, emit: (String) -> Unit) {
         for (dirName in listOf("dense_short", "dense_lfn")) {
             val dir = bench.search(dirName) ?: continue
-            // name is a platform type from libaums and has been observed null,
-            // which threw an NPE mid-run and lost the whole section.
+            // An NPE here lost this whole section on the phone more than once. The cause
+            // was libaums' listFiles reading its weak handle cache twice (VENDOR_FIXES
+            // V17), not a null name; the guards stay, as they cost nothing.
             val listed = runCatching {
                 dir.listFiles().take(50).mapNotNull { runCatching { it.name }.getOrNull() }
             }
@@ -764,7 +765,7 @@ object Benchmark {
         })
         runCatching {
             liveRoot()?.search(dirName)?.let { deleteRecursively(it) }
-        }.onFailure { emit("write verify  : could not remove $dirName: $it") }
+        }.onFailure { Log.w(TAG, "section failed", it); emit("write verify  : could not remove $dirName: $it") }
     }
 
     /**
@@ -871,7 +872,7 @@ object Benchmark {
             f.write(0, ByteBuffer.wrap(ByteArray(10) { 0xAA.toByte() }))
             f.flush()
             f.close()
-        }.onFailure { emit("unaligned     : case A write FAILED $it"); }
+        }.onFailure { Log.w(TAG, "section failed", it); emit("unaligned     : case A write FAILED $it"); }
 
         // ---- Case B: truncate to zero, rewrite, and see if the chain survives.
         val truncFile = "trunc.bin"
@@ -884,7 +885,7 @@ object Benchmark {
             f.write(0, ByteBuffer.wrap(second.copyOf()))
             f.flush()
             f.close()
-        }.onFailure { emit("unaligned     : case B write FAILED $it") }
+        }.onFailure { Log.w(TAG, "section failed", it); emit("unaligned     : case B write FAILED $it") }
 
         if (!remount()) {
             emit("unaligned     : *** NOT VERIFIED — ${remountFailure ?: "remount failed"} ***")
@@ -1652,7 +1653,7 @@ object Benchmark {
         val previousBig = runCatching { root.search(BIG_DIR)?.search("big.bin")?.length }.getOrNull() ?: 0L
         for (d in listOf(BIG_DIR, TREE_DIR)) {
             runCatching { root.search(d)?.let { deleteRecursively(it) } }
-                .onFailure { emit("bigwrite      : could not delete the previous $d: $it") }
+                .onFailure { Log.w(TAG, "section failed", it); emit("bigwrite      : could not delete the previous $d: $it") }
         }
 
         // --- the big file ---------------------------------------------------------
