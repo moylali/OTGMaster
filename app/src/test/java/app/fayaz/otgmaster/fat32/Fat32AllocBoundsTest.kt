@@ -112,4 +112,45 @@ class Fat32AllocBoundsTest {
             assertArrayEquals(content, buf.array())
         } finally { dev2.close() }
     }
+
+    /**
+     * Under 65,536 sectors (32 MiB) the boot sector's total-sectors count is the
+     * 16-bit field at offset 19, and the 32-bit one at 32 is zero (mkfs.vfat does
+     * this; the FAT spec says to use whichever is non-zero). libaums read only the
+     * 32-bit one, so V14's bound saw no data area at all and refused every
+     * allocation as "volume is full" — the E2E `fat32_write` case (a 10 MB volume)
+     * failed on it — and `capacity` reported 0.
+     */
+    @Test
+    fun aVolumeUnder32MibIsNotFullAndReportsItsSize() {
+        assumeTrue("mkfs.vfat not available",
+            File("/usr/sbin/mkfs.vfat").exists() || File("/sbin/mkfs.vfat").exists())
+        val f = File.createTempFile("fat32small", ".img").also { img = it }
+        val size = 10L shl 20
+        RandomAccessFile(f, "rw").use { it.setLength(size) }
+        val (rc, out) = run("mkfs.vfat", "-F", "32", "-n", "SMALL", f.absolutePath)
+        assumeTrue("mkfs.vfat failed: $out", rc == 0)
+        RandomAccessFile(f, "r").use { r ->
+            assumeTrue("not the small-volume layout", u16(r, 19) > 0 && u32(r, 32) == 0L)
+        }
+
+        val content = Random(11).nextBytes(100_000)
+        val dev = FileBlockDevice(f)
+        try {
+            val fs = Fat32FileSystem.read(ByteBlockDevice(RawBlockDeviceAdapter(dev)))!!
+            fs.rootDirectory.createFile("small.bin").apply { write(0, ByteBuffer.wrap(content)); close() }
+            assertEquals(size, fs.capacity)
+        } finally { dev.close() }
+
+        val (fsck, fsckOut) = run("fsck.vfat", "-n", f.absolutePath)
+        assertEquals("fsck.vfat:\n$fsckOut", 0, fsck)
+        val dev2 = FileBlockDevice(f)
+        try {
+            val fs = Fat32FileSystem.read(ByteBlockDevice(RawBlockDeviceAdapter(dev2)))!!
+            val file = fs.rootDirectory.search("small.bin")!!
+            val buf = ByteBuffer.allocate(file.length.toInt())
+            file.read(0, buf)
+            assertArrayEquals(content, buf.array())
+        } finally { dev2.close() }
+    }
 }
