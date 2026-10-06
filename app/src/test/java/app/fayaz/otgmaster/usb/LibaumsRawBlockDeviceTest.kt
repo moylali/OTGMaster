@@ -199,6 +199,81 @@ class LibaumsRawBlockDeviceTest {
         assertTrue("expected an IOException, got $e", e is java.io.IOException)
     }
 
+    /**
+     * A drive, or a phone's USB stack, that rejects any single transfer above
+     * [limitBlocks], every time, as libaums reports it once its own retries and
+     * Reset Recovery are exhausted. Issue #29: a realme RMX5110 (Android 16) failed
+     * every 120 KiB read of a SanDisk 3.2Gen1 at block 2048, so the volume never
+     * unlocked, while the partition table's small reads had worked.
+     */
+    private class LimitedDriver(
+        private val limitBlocks: Int,
+        override val blockSize: Int = 512,
+        override val blocks: Long = 120_164_352L,
+    ) : BlockDeviceDriver {
+        var rejected = 0
+        val accepted = mutableListOf<Int>()
+        val written = java.io.ByteArrayOutputStream()
+        override fun init() {}
+        private fun check(buffer: ByteBuffer) {
+            val count = buffer.remaining() / blockSize
+            if (count > limitBlocks) {
+                rejected++
+                throw java.io.IOException("MAX_RECOVERY_ATTEMPTS Exceeded while trying to transfer command to device, please reattach device and try again")
+            }
+            accepted += count
+        }
+        override fun read(deviceOffset: Long, buffer: ByteBuffer) {
+            check(buffer)
+            val base = deviceOffset * blockSize
+            val start = buffer.position()
+            for (i in 0 until buffer.remaining()) buffer.put(start + i, ((base + i) % 251).toByte())
+            buffer.position(buffer.limit())
+        }
+        override fun write(deviceOffset: Long, buffer: ByteBuffer) {
+            check(buffer)
+            while (buffer.hasRemaining()) written.write(buffer.get().toInt())
+        }
+    }
+
+    @Test
+    fun `a drive that rejects large transfers is read in smaller ones`() {
+        val driver = LimitedDriver(limitBlocks = 64)
+        val device = LibaumsRawBlockDevice(driver, FakeCommunication())
+        // The read that failed in #29: a VeraCrypt header area at the partition start.
+        val data = device.readBlocks(2048, 512)
+        assertArrayEquals(expectedBytes(2048, 512, 512), data)
+        val failuresToLearn = driver.rejected
+        assertTrue("it must have had to step down", failuresToLearn > 0)
+        assertTrue("every accepted transfer within the drive's limit", driver.accepted.all { it <= 64 })
+
+        // The smaller size sticks: later reads do not fail their way down again.
+        assertArrayEquals(expectedBytes(0, 3697, 512), device.readBlocks(0, 3697))
+        assertEquals("no further rejections once the size is learned", failuresToLearn, driver.rejected)
+    }
+
+    @Test
+    fun `a drive that rejects large transfers is written in smaller ones`() {
+        val driver = LimitedDriver(limitBlocks = 64)
+        val payload = ByteArray(1000 * 512) { (it % 97).toByte() }
+        LibaumsRawBlockDevice(driver, FakeCommunication()).writeBlocks(64, payload)
+        assertArrayEquals("every byte written once, in order", payload, driver.written.toByteArray())
+        assertTrue(driver.accepted.all { it <= 64 })
+    }
+
+    @Test
+    fun `stepping down stops at the floor and the error keeps its cause`() {
+        // Rejects everything above 8 blocks (4 KiB): below the 16 KiB floor.
+        val driver = LimitedDriver(limitBlocks = 8)
+        val e = runCatching { LibaumsRawBlockDevice(driver, FakeCommunication()).readBlocks(2048, 512) }
+            .exceptionOrNull()
+        assertTrue("expected an IOException, got $e", e is java.io.IOException)
+        val floor = LibaumsRawBlockDevice.MIN_TRANSFER_BYTES / 512
+        assertTrue("the message names the floor: ${e!!.message}", e.message!!.contains("chunk limit $floor blocks"))
+        assertTrue("the message carries the driver's reason: ${e.message}", e.message!!.contains("MAX_RECOVERY_ATTEMPTS"))
+        assertTrue("never below the floor", driver.accepted.isEmpty())
+    }
+
     /** Records the peak number of threads inside read/write simultaneously. */
     private class OverlapDetectingDriver(
         override val blockSize: Int = 512,

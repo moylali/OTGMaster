@@ -1,8 +1,9 @@
-• New: NTFS drives read and write, plain or inside VeraCrypt/LUKS
-• New: BitLocker drives unlock with password or recovery key
+• New: NTFS read and write, plain or in VeraCrypt/LUKS
+• New: BitLocker unlock by password or recovery key
 • New: Mac APFS drives open read-only, plain or encrypted
-• New: Folder access given to other apps survives remounts
-• Fixed: LUKS2 drives with 4K sectors were refused
-• Fixed: ext2/ext3 writes damaged the drive; they now open read-only
-• Fixed: FAT32 folders could fail to open; writes could damage the drive
+• New: Folder access for other apps survives remounts
+• Fixed: LUKS2 with 4K sectors was refused
+• Fixed: ext2/ext3 writes caused damage; now read-only
+• Fixed: FAT32 folders could fail to open; writes could cause damage
 • Fixed: exFAT drives now show their own name
+• Fixed: some phones could not read USB drives
