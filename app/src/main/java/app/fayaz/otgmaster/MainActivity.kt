@@ -59,6 +59,7 @@ import android.content.SharedPreferences
 import androidx.compose.foundation.isSystemInDarkTheme
 import androidx.compose.material.icons.filled.Settings
 import androidx.compose.material3.*
+import app.fayaz.otgmaster.usb.UsbHostDiagnosis
 import app.fayaz.otgmaster.usb.RealUsbDeviceProvider
 import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
@@ -607,6 +608,26 @@ class MainActivity : AppCompatActivity() {
     private fun objId(o: Any?): String =
         if (o == null) "null" else Integer.toHexString(System.identityHashCode(o))
 
+    /** The hints last logged for an empty device list, so a refresh does not repeat them. */
+    private var lastNoDeviceHints: List<UsbHostDiagnosis.Hint>? = null
+
+    /**
+     * Says why the phone may be listing no USB device: "Found 0 USB devices" was the
+     * whole log in several reports (#8, #23, #26). Logged once until it changes.
+     */
+    private fun logNoDeviceHints() {
+        val state = runCatching { UsbHostDiagnosis.read(this) }.getOrNull() ?: return
+        val hints = UsbHostDiagnosis.hints(state)
+        if (hints == lastNoDeviceHints) return
+        lastNoDeviceHints = hints
+        for (hint in hints) appendLog(when (hint) {
+            UsbHostDiagnosis.Hint.NO_HOST_SUPPORT -> getString(R.string.log_hint_no_usb_host)
+            UsbHostDiagnosis.Hint.CONNECTED_TO_COMPUTER -> getString(R.string.log_hint_connected_to_computer)
+            UsbHostDiagnosis.Hint.CHARGING_FROM_PORT -> getString(R.string.log_hint_charging_from_port)
+            UsbHostDiagnosis.Hint.OTG_SWITCH -> getString(R.string.log_hint_otg_switch, state.manufacturer)
+        })
+    }
+
     private fun refreshDevices() {
         val devices = usbDeviceProvider.getDevices()
         appendLog(getString(R.string.log_found_usb_devices, devices.size))
@@ -656,9 +677,11 @@ class MainActivity : AppCompatActivity() {
                 }
                 _deviceCandidates.value = emptyList()
                 appendLog(getString(R.string.log_no_usb_devices))
+                logNoDeviceHints()
             }
             return
         }
+        lastNoDeviceHints = null
 
         // Devices not already mounted, not already sitting in the dropdown unprobed, and
         // that actually expose a mass-storage interface (skips USB hubs/keyboards/etc.).
