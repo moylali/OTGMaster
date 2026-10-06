@@ -35,6 +35,31 @@ to a row here.
 
 ## 2026-10-05
 
+### OnePlus 7 (GM1901) · LineageOS 23.2 (Android 16, SDK 36) · build 0.4.1 (47) commit fd054df — device-matrix FAT32 partitions, run 9
+
+The four FAT32 partitions again, on the build with V17 (the listing GC race), as
+they were left by run 8 (host-verified CLEAN). Sections:
+`free,block,dir,path,seq,random,opens,write,unaligned,correct,bigwrite,fixtures`,
+cache default, remount true, `--es drive D1FAT32,D2VCFAT32,D2L1FAT32,D2BLFAT32`.
+Started 19:37:04, ended 20:44:58. Android's volumes unmounted before, none mounted
+after; USB power, battery 100%.
+
+| Partition | Container | On the phone | big.bin write / read after remount (MB/s) | Host |
+|---|---|---|---|---|
+| D1FAT32 | plain | dense opens 50+50; write verify, unaligned A+B, correctness A–G, bigwrite (240 tree files) ALL PASSED; fixtures ALL 20995 | 8.27 / 27.15 | **CLEAN**, fsck.fat clean, 240/240 |
+| D2VCFAT32 | VeraCrypt | all PASSED (245); fixtures ALL 20958 | 6.30 / 18.80 | **CLEAN**, 245/245 |
+| D2L1FAT32 | LUKS1 | all PASSED (250); fixtures ALL 20953 | 6.41 / 18.49 | **CLEAN**, 250/250 |
+| D2BLFAT32 | BitLocker | **dense opens 50+50 (FAILED in run 8)**; all PASSED (246); fixtures ALL 20974 | 6.37 / 20.39 | **CLEAN**, 246/246 |
+
+No FAILED, PARTIAL, NOT VERIFIED or CONTAMINATED line, and no "exceeds" or FATAL
+EXCEPTION in logcat. All 20 partitions were host-verified CLEAN afterwards; the 16
+others still hold run 7's files.
+
+The race was intermittent, so a clean run cannot prove V17 on its own:
+`Fat32ListGcRaceTest` does that on the host. What this run shows is that the build
+passes on hardware the step that failed on it in run 8. It is also the second
+consecutive fsck-clean `bigwrite` tree on all four FAT32 partitions (V15, V16).
+
 ### OnePlus 7 (GM1901) · LineageOS 23.2 (Android 16, SDK 36) · build 0.4.1 (47) commit 626699e — device-matrix FAT32 partitions, run 8
 
 Re-run of the four FAT32 partitions on the build with V15 and V16 (`5f9bf9a`). They
