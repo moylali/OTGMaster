@@ -1,5 +1,6 @@
 package app.fayaz.otgmaster.usb
 
+import android.util.Log
 import app.fayaz.otgmaster.block.RawBlockDevice
 import me.jahnen.libaums.core.driver.BlockDeviceDriver
 import me.jahnen.libaums.core.usb.UsbCommunication
@@ -31,9 +32,34 @@ class LibaumsRawBlockDevice(
      * 512-byte sectors), which exists for the same reason: devices misbehave
      * above it. Expressed in bytes so it stays correct for 4096-byte-sector
      * drives, where 240 blocks would be 960 KiB.
+     *
+     * Some combinations reject even that. A realme RMX5110 (Android 16) with a
+     * SanDisk 3.2Gen1 failed every 120 KiB read (issue #29), after libaums'
+     * retries and Reset Recovery, while the partition table's small reads worked.
+     * So a chunk that fails is halved and retried, down to [minTransferBlocks],
+     * and the smaller size is kept for this device from then on. Re-sending a
+     * whole READ(10) or WRITE(10) is safe: V12 resets the drive after a failed
+     * transfer, and the same bytes go to the same blocks.
      */
-    private val maxTransferBlocks: Int =
+    @Volatile private var maxTransferBlocks: Int =
         (MAX_TRANSFER_BYTES / blockSize).coerceAtLeast(1)
+
+    /** The floor for [maxTransferBlocks]: 16 KiB, the bulk transfer size every Android release has accepted. */
+    private val minTransferBlocks: Int =
+        (MIN_TRANSFER_BYTES / blockSize).coerceAtLeast(1)
+
+    /**
+     * After [chunk] blocks failed with [e], whether to retry smaller. Lowers
+     * [maxTransferBlocks] if so. Not for a closed device: that failure is not
+     * about size.
+     */
+    private fun stepDown(chunk: Int, e: Exception, op: String, at: Long): Boolean {
+        if (closed || chunk <= minTransferBlocks) return false
+        val next = (chunk / 2).coerceAtLeast(minTransferBlocks)
+        synchronized(transferLock) { if (next < maxTransferBlocks) maxTransferBlocks = next }
+        Log.w(TAG, "$op of $chunk blocks at $at failed (${e.message}); retrying with chunks of $next blocks")
+        return true
+    }
 
     @Volatile private var closed = false
 
@@ -88,14 +114,16 @@ class LibaumsRawBlockDevice(
                     driver.read(startBlock + done, view)
                 }
             } catch (e: Exception) {
+                if (stepDown(chunk, e, "read", startBlock + done)) continue
                 // Transfer failures here are otherwise reported with no indication of
                 // what was being read, which made a Pixel 10 Pro XL failure impossible
-                // to attribute without guesswork.
+                // to attribute without guesswork. The cause's message goes in too: the
+                // app's log shows only this one (issue #29 had nothing else to go on).
                 throw java.io.IOException(
                     "read failed: chunk of $chunk blocks at ${startBlock + done} " +
                     "(request was $blockCount blocks at $startBlock; " +
                     "device has ${this.blockCount} blocks of $blockSize bytes; " +
-                    "chunk limit $maxTransferBlocks blocks)",
+                    "chunk limit $maxTransferBlocks blocks): ${e.message}",
                     e,
                 )
             }
@@ -118,10 +146,12 @@ class LibaumsRawBlockDevice(
                     driver.write(startBlock + done, view)
                 }
             } catch (e: Exception) {
+                if (stepDown(chunk, e, "write", startBlock + done)) continue
                 throw java.io.IOException(
                     "write failed: chunk of $chunk blocks at ${startBlock + done} " +
                     "(request was $total blocks at $startBlock; " +
-                    "device has ${this.blockCount} blocks of $blockSize bytes)",
+                    "device has ${this.blockCount} blocks of $blockSize bytes; " +
+                    "chunk limit $maxTransferBlocks blocks): ${e.message}",
                     e,
                 )
             }
@@ -143,5 +173,8 @@ class LibaumsRawBlockDevice(
     companion object {
         /** See [maxTransferBlocks]. 120 KiB, matching Linux usb-storage max_sectors. */
         const val MAX_TRANSFER_BYTES = 120 * 1024
+        /** See [minTransferBlocks]. */
+        const val MIN_TRANSFER_BYTES = 16 * 1024
+        private const val TAG = "LibaumsRawBlockDevice"
     }
 }
