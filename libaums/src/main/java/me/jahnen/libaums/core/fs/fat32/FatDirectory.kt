@@ -430,8 +430,12 @@ internal constructor(
                 absolutePath + UsbFile.separator + entry.name
             }
 
+            // LOCAL PATCH (docs/VENDOR_FIXES.md V17): read the cache once. It is a
+            // WeakHashMap keyed by a path string nothing else holds, so a GC between
+            // upstream's `!= null` check and its `!!` read made the second read null.
+            val cached = fs.fileCache[entryAbsolutePath]
             val file = when {
-                fs.fileCache[entryAbsolutePath] != null -> fs.fileCache[entryAbsolutePath]!!
+                cached != null -> cached
                 entry.isDirectory -> FatDirectory(fs, blockDevice, fat, bootSector, entry, this)
                 else -> FatFile(blockDevice, fat, bootSector, entry, this)
             }
