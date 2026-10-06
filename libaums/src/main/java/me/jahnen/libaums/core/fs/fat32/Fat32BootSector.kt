@@ -173,6 +173,7 @@ internal class Fat32BootSector private constructor() {
         private const val SECTORS_PER_CLUSTER_OFF = 13
         private const val RESERVED_COUNT_OFF = 14
         private const val FAT_COUNT_OFF = 16
+        private const val TOTAL_SECTORS_16_OFF = 19
         private const val TOTAL_SECTORS_OFF = 32
         private const val SECTORS_PER_FAT_OFF = 36
         private const val FLAGS_OFF = 40
@@ -196,7 +197,12 @@ internal class Fat32BootSector private constructor() {
             result.sectorsPerCluster = (buffer.get(SECTORS_PER_CLUSTER_OFF).toInt() and 0xff).toShort()
             result.reservedSectors = buffer.getShort(RESERVED_COUNT_OFF)
             result.fatCount = buffer.get(FAT_COUNT_OFF)
-            result.totalNumberOfSectors = buffer.getInt(TOTAL_SECTORS_OFF).toLong() and 0xffffffffL
+            // LOCAL PATCH (docs/VENDOR_FIXES.md V18): below 65,536 sectors the count is
+            // the 16-bit field and the 32-bit one is 0. Upstream read only the latter,
+            // so V14's bound saw no data area on a volume under 32 MiB, and capacity was 0.
+            val totalSectors16 = buffer.getShort(TOTAL_SECTORS_16_OFF).toLong() and 0xffffL
+            result.totalNumberOfSectors = if (totalSectors16 != 0L) totalSectors16
+                else buffer.getInt(TOTAL_SECTORS_OFF).toLong() and 0xffffffffL
             result.sectorsPerFat = buffer.getInt(SECTORS_PER_FAT_OFF).toLong() and 0xffffffffL
             result.rootDirStartCluster = buffer.getInt(ROOT_DIR_CLUSTER_OFF).toLong() and 0xffffffffL
             result.fsInfoStartSector = buffer.getShort(FS_INFO_SECTOR_OFF)

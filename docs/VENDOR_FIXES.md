@@ -206,6 +206,7 @@ Vendored fork of [magnusja/libaums](https://github.com/magnusja/libaums).
 | `FatDirectory` | V15 — a move gives the entry a short name unique in its new directory, and a moved directory's `..` names its new parent | see below |
 | `FatDirectory` | V16 — a new file owns no cluster until it is written | see below |
 | `FatDirectory` | V17 — `listFiles` reads the weak handle cache once, so a GC cannot null it mid-listing | see below |
+| `Fat32BootSector` | V18 — the 16-bit total-sectors field is used when set (volumes under 32 MiB) | see below |
 
 ## V15 — moves left duplicate short names and a stale `..`
 
@@ -234,6 +235,31 @@ Fix: the destination generates a new short name if the entry's collides
 (`adoptEntry`), and a moved directory's `..` is set to the new parent's start
 cluster (0 for the root) and written. `Fat32MoveFsckTest` fails on the old code for
 both, with the same fsck.fat messages as the drives.
+
+## V18 — a FAT32 volume under 32 MiB had no data area
+
+The boot sector holds the volume's sector count in one of two fields. Below 65,536
+sectors (32 MiB at 512 bytes) it is the 16-bit field at offset 19, and the 32-bit
+field at offset 32 is zero. That is what `mkfs.vfat` writes, and the FAT
+specification says to use whichever is non-zero. `Fat32BootSector` read only the
+32-bit field, so on such a volume `totalNumberOfSectors` was 0.
+
+Upstream used it only for `capacity`, which therefore read 0: wrong, but harmless.
+V14 then made it load-bearing. The allocation bound derives the last data cluster
+from it, so on a small volume the bound was nothing, and every allocation failed
+with "FAT32 volume is full".
+
+Found by the parallel E2E run on `96c7843`: `fat32_write`, a 10 MB volume, failed
+both attempts. The app logged `FAT32 volume is full: 1 more cluster(s) needed`, and
+the test saw `EBADF` on its write pipe. Every host test of V14 used 64 MiB images,
+and the device-matrix partitions are 5.6 GB, so none of them reached this layout.
+V14 was never in a tagged release.
+
+Fix: use the 16-bit field when it is non-zero, otherwise the 32-bit one.
+`Fat32AllocBoundsTest.aVolumeUnder32MibIsNotFullAndReportsItsSize` builds a 10 MB
+FAT32 image and checks its layout. It fails on the old code with "FAT32 volume is
+full: 196 more cluster(s) needed". On the new code the write succeeds, fsck.fat is
+clean, the file reads back, and `capacity` is 10 MiB.
 
 ## V17 — a GC mid-listing threw NullPointerException
 
