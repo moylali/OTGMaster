@@ -107,6 +107,10 @@
     <string name="log_found_candidates_qemu">Found %1$d VeraCrypt volume candidates on QEMU disk.</string>
     <string name="log_error_probing_qemu_candidates">Error probing QEMU candidates: %1$s</string>
     <string name="log_no_usb_devices">No USB devices found.</string>
+    <string name="log_hint_no_usb_host">This phone does not support USB drives (it reports no USB host / OTG support).</string>
+    <string name="log_hint_connected_to_computer">This phone\'s USB port is connected to a computer, with the phone as the device, so it cannot read a drive through that port.</string>
+    <string name="log_hint_charging_from_port">This phone is charging through its USB port. Many phones cannot read USB drives while charging that way: if the drive is on a hub with a power supply, unplug the power supply, or connect the drive directly with an OTG adapter.</string>
+    <string name="log_hint_otg_switch">On %1$s phones, USB drives work only while OTG is switched on in Settings (search Settings for \"OTG\"). It switches itself off after a few minutes unused.</string>
     <string name="log_requested_usb_permission">Requested USB permission…</string>
     <string name="log_could_not_open_block_device">Could not open RawBlockDevice via libaums.</string>
     <string name="log_probed_devices">Probed new USB drive(s): %1$s</string>
