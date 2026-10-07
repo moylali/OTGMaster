@@ -35,6 +35,57 @@ to a row here.
 
 ## 2026-10-07 — the 0.4.1 release candidate, `8655eeb`
 
+**Commit hashes after the merge of #31.** The runs, `VENDOR_FIXES.md`, the issues and
+PR #31 cite the hashes that `feature/apfs` and `fix/*` had when they were built and
+run. `main` requires linear history, so #31 was rebase-merged and every commit
+was given a new hash. Same order, same subjects:
+
+| On the branch (cited) | On `main` | Commit |
+|---|---|---|
+| `048d8bc` | `560b2aa` | testdata: verify the Mac APFS images on Linux, 4 of 4 |
+| `e077386` | `ac1e0ba` | vendor: libfsapfs f63c83b (20260921) and 16 libyal libraries |
+| `5b3aee3` | `941cdd9` | feat: read APFS drives, plain and encrypted, case-sensitive or not |
+| `93db7a4` | `5d28a43` | e2e: a plain drive has no Unmount button; check that instead of clicking it |
+| `af5cc72` | `5b4b0b1` | e2e: 47/47 with the four APFS cases, on 9e958fd |
+| `45cf743` | `eae6f78` | docs: README lists NTFS, BitLocker and APFS as supported |
+| `d6ef7f6` | `7ba40e8` | licence: move the project from GPL-2.0-or-later to GPL-3.0-or-later |
+| `808ca5f` | `304fc37` | bench: wait for every unlock to finish, not for the mount count to go quiet |
+| `377682f` | `601e558` | bench: write sections report SKIPPED, not FAILED, on a read-only volume |
+| `548156f` | `1536480` | exfat: report the volume's own label, not "exFAT" for every volume |
+| `ef6d88b` | `9e7bfb5` | bench, app: remounts keep the USB connection; writes mount read-write |
+| `afb6e1c` | `3a73144` | bench: bigwrite — a 2.2 GB file and a churned tree, checked by the host |
+| `9704489` | `0b0ffd2` | bench, exfat: bigwrite fixes from its first emulator runs; remounts wait for unlocks |
+| `354a0c0` | `e40a7bf` | docs: record the first device-matrix run (OnePlus 7, d9594a9) |
+| `81d16cc` | `b13bead` | docs: record device-matrix run 2 (OnePlus 7, 904e1da) |
+| `ff432b7` | `3fff007` | bench: prove a remount by filesystem object, not by mount id |
+| `1327be0` | `214ea61` | fix: unmounting an encrypted APFS volume closed the whole USB stick |
+| `299214e` | `3f356a9` | bench, app: re-probe a listed drive whose plain partitions were dropped |
+| `6afc729` | `1d2d025` | bench: bigwrite runs only through a live mount |
+| `9d1651d` | `1384482` | bench, app: remount only after every unmount's bookkeeping has finished |
+| `84459aa` | `8af1df1` | libaums: FAT32 allocation wraps at the last data cluster (V14) |
+| `c2242b8` | `eafff62` | docs: map the device-matrix runs' commits across the rebase onto main |
+| `952a474` | `ac81d7d` | docs, store: bring the listing and the site up to NTFS, BitLocker and APFS |
+| `8ac715b` | `3e6d791` | fix: decrypted volumes refuse reads and writes past their own end |
+| `5677881` | `9dee17a` | matrix: the verifier survives, and diagnoses, a damaged VeraCrypt header |
+| `d25a179` | `b80d1a2` | matrix: write_matrix_drive.sh rewrites existing partitions in place |
+| `23480de` | `adabcc9` | matrix: the verifier finds apfs-fuse and apfsck in matrix/tools by itself |
+| `d784c40` | `bffad4b` | docs: record matrix runs 3-6 and the host check that followed them |
+| `5f9bf9a` | `8a52dad` | fix: FAT32 moves left duplicate short names; empty files held a cluster |
+| `0fda879` | `ee1aa45` | matrix: write_matrix_drive.sh --only no longer exits silently |
+| `626699e` | `06a5e05` | matrix: verify --only takes a comma list and refuses unknown labels |
+| `778dc07` | `080e0fc` | fix: a GC in the middle of a FAT32 listing threw NullPointerException |
+| `d004775` | `2adb17d` | changelog: FAT32 folders could fail to open (V17) |
+| `fd054df` | `cc2ca6f` | docs: record matrix run 8 — FAT32 partitions fsck-clean after the tree |
+| `96c7843` | `266b725` | docs: record matrix run 9 — FAT32 clean on the V17 build |
+| `f3bc53a` | `2c271cf` | fix: FAT32 volumes under 32 MiB refused every write as "volume full" |
+| `c4f706b` | `f576a4c` | fix: drives that reject 120 KiB transfers now open (issue #29) |
+| `bddc43a` | `f8fa90b` | feat: say why no USB device is listed, not just "Found 0 USB devices" |
+| `746e108` | `6494db8` | docs: all four matrix drives built; which stick is which |
+| `ed59669` | `0016d2e` | fix: ext4 deletes unlink before freeing, a block group at a time (#33) |
+| `8b21b1e` | `5090611` | fix: Android 10 reported mounted drives as failed and forgot their passwords |
+| `8655eeb` | `aa6d83f` | bench: write only to prepared fixture volumes, and never create BENCH/ |
+| `2a6fe4f` | `c397743` | docs: record the 0.4.1 release-candidate runs on 8655eeb |
+
 Both runs below used the same build, `8655eeb`: E2E 47/47 on it. Sections:
 `free,block,dir,path,seq,random,opens,write,unaligned,correct,bigwrite,fixtures`,
 cache default, remount true, every partition of the drives attached. Android's
