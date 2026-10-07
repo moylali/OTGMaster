@@ -339,9 +339,9 @@ object Benchmark {
                 emit("*** the device is not readable — every number below is meaningless ***")
             }
 
-            val bench = runCatching { drive.fileSystem.rootDirectory.search("BENCH") }.getOrNull()
+            val bench = preparedBench(drive.fileSystem.rootDirectory)
             if (bench == null) {
-                emit("BENCH/ not found — is this a prepared fixture drive?")
+                emit("BENCH/MANIFEST.txt not found — not a prepared fixture volume; block reads only, nothing written")
                 emit("")
                 continue
             }
@@ -1638,6 +1638,15 @@ object Benchmark {
     private const val BIG_DIR = "BENCH_BIG"
     private const val TREE_DIR = "BENCH_TREE"
 
+    /**
+     * BENCH/ of a prepared fixture volume, or null. BENCH/MANIFEST.txt is what the
+     * preparation scripts write and nothing in the app creates, so it, not BENCH/
+     * alone, is what makes a volume one the write sections may touch.
+     */
+    private fun preparedBench(root: UsbFile): UsbFile? = runCatching {
+        root.search("BENCH")?.takeIf { it.isDirectory && it.search("MANIFEST.txt") != null }
+    }.getOrNull()
+
     private fun benchBigWrite(drive: MountedDrive, emit: (String) -> Unit, mount: MountCredentials?) {
         val label = runCatching { drive.fileSystem.volumeLabel }.getOrDefault("").trim()
         val tag = driveTag(drive)
@@ -2094,7 +2103,11 @@ object Benchmark {
         val roots = tags.mapNotNull { rootForTag(it) }
         for (root in roots) runCatching {
             run {
-                val bench = root.search("BENCH") ?: root.createDirectory("BENCH")
+                // Only onto a prepared fixture volume, and never by creating BENCH/:
+                // that is what put BENCH/reports/ on the Mac's EFI partition of
+                // device-matrix Drive 1 in run 7, and the next run (Samsung M30) then
+                // took EFI for a fixture volume and ran its write sections there.
+                val bench = preparedBench(root) ?: return@run
                 val reports = bench.search("reports") ?: bench.createDirectory("reports")
                 val bytes = text.toByteArray()
                 val f = reports.search(name) ?: reports.createFile(name)
