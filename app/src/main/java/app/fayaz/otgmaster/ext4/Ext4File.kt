@@ -376,6 +376,7 @@ class Ext4File private constructor(
     private fun truncateTo(newLength: Long) {
         if (newLength < 0) throw IllegalArgumentException("length must be >= 0")
         fs.markDirty()
+        var toFree: List<LongArray> = emptyList()
 
         if (newLength > currentSize) {
             // Grow: allocate blocks to cover the new tail.  The bytes are already
@@ -398,22 +399,44 @@ class Ext4File private constructor(
                 pos += fs.blockSize
             }
         } else if (newLength < currentSize) {
-            // Shrink: free blocks beyond the new end.
+            // Shrink: drop the extents beyond the new end. Their blocks are freed
+            // below, once the inode no longer maps them (#33).
             val lastNeededBlock = if (newLength == 0L) -1L
                 else (newLength - 1) / fs.blockSize
-            freeBlocksAbove(lastNeededBlock)
+            toFree = freeBlocksAbove(lastNeededBlock)
         }
 
         currentSize = newLength
         updateInodeSize(newLength)
         touchMtime()
         dirty = true
-        flush()  // same reasoning as write(): the freed/allocated bitmap is already durable
+        // Growing: the bitmap is already durable, so this inode only maps blocks
+        // already marked used. Shrinking: the inode stops mapping the tail first,
+        // and the tail is freed only after it (#33).
+        flush()
+        freeAfterUnmapping(toFree)
     }
 
     /**
-     * Free all physical blocks mapped to logical blocks > [lastBlock], removing
-     * the corresponding extents from the tree.
+     * Free [runs] (start, count) once nothing on disk maps them any more.
+     *
+     * Interrupted here, the volume only leaks blocks, which fsck reclaims safely.
+     * Freeing first, as the driver used to, left a live inode pointing at blocks the
+     * bitmap called free: issue #33, found on a Huawei P20 Lite stopped partway
+     * through deleting a 2.2 GB file.
+     */
+    private fun freeAfterUnmapping(runs: List<LongArray>) {
+        if (runs.isEmpty()) return
+        fs.markDirty()
+        fs.allocator.freeRuns(runs)
+        fs.markClean()
+    }
+
+    /**
+     * Remove every extent mapping logical blocks > [lastBlock] from the tree, and
+     * return the physical runs they held as (start, count), the emptied leaf blocks
+     * included. Nothing is freed here: the caller frees the runs once the inode no
+     * longer maps them, so an interrupted shrink or delete only leaks (#33).
      *
      * Handles a depth-1 tree as well as the inline one: each leaf is trimmed in
      * place, and a leaf left with no extents is freed along with its index
@@ -421,15 +444,16 @@ class Ext4File private constructor(
      * fragmented enough to have grown a tree — e2fsck reported them as still
      * allocated but owned by nothing.
      */
-    private fun freeBlocksAbove(lastBlock: Long) {
+    private fun freeBlocksAbove(lastBlock: Long): List<LongArray> {
+        val runs = mutableListOf<LongArray>()
         val bb = ByteBuffer.wrap(inode).order(ByteOrder.LITTLE_ENDIAN)
         val entries = bb.getShort(42).toInt() and 0xFFFF
         val depth   = bb.getShort(46).toInt() and 0xFFFF
 
         if (depth == 0) {
-            bb.putShort(42, trimExtents(inode, 40, entries, lastBlock).toShort())
+            bb.putShort(42, trimExtents(inode, 40, entries, lastBlock, runs).toShort())
             dirty = true
-            return
+            return runs
         }
 
         var keptIdx = 0
@@ -444,9 +468,9 @@ class Ext4File private constructor(
                 throw IOException("Extent tree deeper than one level is not supported")
 
             val lEntries = lb.getShort(2).toInt() and 0xFFFF
-            val kept = trimExtents(leafData, 0, lEntries, lastBlock)
+            val kept = trimExtents(leafData, 0, lEntries, lastBlock, runs)
             if (kept == 0) {
-                fs.allocator.freeBlock(leafPhys)
+                runs += longArrayOf(leafPhys, 1)
                 addToIBlocks(-1)  // the leaf block itself counted toward i_blocks
                 continue
             }
@@ -464,15 +488,17 @@ class Ext4File private constructor(
             bb.putShort(46, 0.toShort())
         }
         dirty = true
+        return runs
     }
 
     /**
-     * Free every block above [lastBlock] in the extent array belonging to the
+     * Drop every block above [lastBlock] from the extent array belonging to the
      * header at [offset] in [data], trimming an extent that straddles the
-     * boundary.  Surviving extents are compacted to the front; returns how many
-     * are left.
+     * boundary, and add the dropped runs to [runs] for the caller to free.
+     * Surviving extents are compacted to the front; returns how many are left.
      */
-    private fun trimExtents(data: ByteArray, offset: Int, entries: Int, lastBlock: Long): Int {
+    private fun trimExtents(data: ByteArray, offset: Int, entries: Int, lastBlock: Long,
+                            runs: MutableList<LongArray>): Int {
         val bb = ByteBuffer.wrap(data).order(ByteOrder.LITTLE_ENDIAN)
         var kept = 0
         for (i in 0 until entries) {
@@ -486,14 +512,14 @@ class Ext4File private constructor(
 
             if (eBlock > lastBlock) {
                 // Entire extent is past the truncation point — free all its blocks.
-                for (b in 0 until count) fs.allocator.freeBlock(physStart + b)
+                runs += longArrayOf(physStart, count.toLong())
                 addToIBlocks(-count)
                 continue
             }
             if (eBlock + count - 1 > lastBlock) {
                 // Extent straddles the boundary — keep the prefix, free the rest.
                 val keepBlocks = (lastBlock - eBlock + 1).toInt()
-                for (b in keepBlocks until count) fs.allocator.freeBlock(physStart + b)
+                runs += longArrayOf(physStart + keepBlocks, (count - keepBlocks).toLong())
                 addToIBlocks(-(count - keepBlocks))
                 bb.putShort(e + 4, keepBlocks.toShort())
             }
@@ -590,29 +616,37 @@ class Ext4File private constructor(
 
         fs.markDirty()
 
-        if (isDir_) {
+        val wasDir = isDir_
+        if (wasDir) {
             // Must be empty (only "." and ".." entries remain).
             val children = listFiles()
             if (children.isNotEmpty())
                 throw IOException("Directory not empty: $entryName")
-            // Free directory blocks.
-            freeBlocksAbove(-1L)
-            // Decrement parent link count for the ".." entry.
-            (p as? Ext4File)?.run { incrLinkCount(-1); touchMtime(); dirty = true; flush() }
-        } else {
-            freeBlocksAbove(-1L)
         }
+        // Which blocks the file holds. Nothing is freed yet: each step below leaves
+        // the volume safe to interrupt, at worst leaking blocks or an inode (#33).
+        val toFree = freeBlocksAbove(-1L)
 
-        // Zero out the inode.
+        // 1. Unlink. Cut off here, the inode is unattached but still owns its
+        //    blocks, which fsck reconnects or reclaims.
+        val childInode = inodeNum
+        val childName = entryName
+        (p as? Ext4File)?.run {  // receiver is the parent: use the captured child values
+            removeDirEntry(childInode, childName)
+            if (wasDir) incrLinkCount(-1)  // the ".." entry pointed at the parent
+            touchMtime(); dirty = true; flush()
+        }
+        fs.markDirty()  // the parent's flush marked the volume clean
+
+        // 2. Clear the inode. Cut off after this, its blocks are only leaked.
         inode.fill(0)
         ByteBuffer.wrap(inode).order(ByteOrder.LITTLE_ENDIAN)
             .putInt(20, (System.currentTimeMillis() / 1000L).toInt())  // i_dtime
         fs.writeInode(inodeNum, inode)
-        fs.allocator.freeInode(inodeNum, isDir_)
+        fs.allocator.freeInode(inodeNum, wasDir)
 
-        // Remove this entry from the parent directory.
-        (p as? Ext4File)?.removeDirEntry(inodeNum, entryName)
-        (p as? Ext4File)?.run { touchMtime(); dirty = true; flush() }
+        // 3. Free the blocks, a block group at a time.
+        fs.allocator.freeRuns(toFree)
 
         fs.markClean()
     }
