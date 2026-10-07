@@ -945,6 +945,13 @@ class MainActivity : AppCompatActivity() {
         readOnlyOverride: Boolean? = null,
         onComplete: () -> Unit
     ) {
+        // An exception after the success path's onComplete() reached the catch block,
+        // which called it again; the benchmark's unlocks-in-flight count then hit
+        // zero while other unlocks were still running. Once, whichever path ends it.
+        val completed = java.util.concurrent.atomic.AtomicBoolean(false)
+        val callerOnComplete = onComplete
+        @Suppress("NAME_SHADOWING")
+        val onComplete = { if (completed.compareAndSet(false, true)) callerOnComplete() }
         val device = openedDevices[deviceName]
         val readOnly = readOnlyOverride ?: isPartitionReadOnly(deviceName, candidate.startBlock)
         android.util.Log.i("OTGMaster",
@@ -1885,10 +1892,25 @@ class MainActivity : AppCompatActivity() {
             .setCategories(setOf(SHARE_TARGET_CATEGORY))
             .setLongLived(true)
             .build()
-        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.R) {
-            shortcutManager.pushDynamicShortcut(shortcut)
-        } else {
-            shortcutManager.addDynamicShortcuts(listOf(shortcut))
+        // Best-effort: a share shortcut is a convenience, and failing to add one must
+        // not fail the mount it follows. On Android 10 addDynamicShortcuts throws
+        // "Max number of dynamic shortcuts exceeded" from about the fifth mounted
+        // drive (pushDynamicShortcut, from Android 11, evicts instead). Thrown inside
+        // attemptUnlock's success path, that reported a mounted drive as failed,
+        // deleted its saved password, and ran onComplete twice (Samsung M30).
+        try {
+            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.R) {
+                shortcutManager.pushDynamicShortcut(shortcut)
+            } else {
+                // Make room by dropping shortcuts of drives no longer mounted first.
+                val live = OtgMasterState.mountedDrives.map { "drive_share_${it.id}" }.toSet()
+                val stale = shortcutManager.dynamicShortcuts.map { it.id }.filter { it !in live }
+                if (stale.isNotEmpty()) shortcutManager.removeDynamicShortcuts(stale)
+                if (shortcutManager.dynamicShortcuts.size < shortcutManager.maxShortcutCountPerActivity)
+                    shortcutManager.addDynamicShortcuts(listOf(shortcut))
+            }
+        } catch (e: Exception) {
+            android.util.Log.w("OTGMaster", "share shortcut for ${drive.name} not added: ${e.message}")
         }
     }
 
