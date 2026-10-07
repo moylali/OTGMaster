@@ -236,7 +236,44 @@ internal class Ext4Allocator(private val fs: Ext4FileSystem) {
         fs.updateSuperblockFreeBlocks(+1)
     }
 
-    fun freeBlocks(blocks: Iterable<Long>) = blocks.forEach { freeBlock(it) }
+    fun freeBlocks(blocks: Iterable<Long>) = freeRuns(blocks.map { longArrayOf(it, 1) })
+
+    /**
+     * Free every run of (start, count) blocks in [runs], one block group at a time:
+     * one bitmap write, one group-descriptor update and one superblock update per
+     * group touched. [freeBlock] costs all of those per block, so deleting a 2.2 GB
+     * file was ~537,000 rounds of them, and still running after 77 minutes on a
+     * Huawei P20 Lite (#33). Blocks already free are skipped, as [freeBlock] does.
+     */
+    fun freeRuns(runs: List<LongArray>) {
+        val byGroup = sortedMapOf<Int, MutableList<Int>>()
+        for (r in runs) {
+            for (blockNum in r[0] until r[0] + r[1]) {
+                val g = ((blockNum - firstDataBlock) / fs.blocksPerGroup).toInt()
+                byGroup.getOrPut(g) { mutableListOf() } +=
+                    ((blockNum - firstDataBlock) % fs.blocksPerGroup).toInt()
+            }
+        }
+        var total = 0
+        for ((g, bits) in byGroup) {
+            val bitmapBlock = readBgd64(g, 0, 32)
+            val bitmap = fs.readBlock(bitmapBlock).copyOf()
+            var n = 0
+            for (blockInGroup in bits) {
+                val byteIdx = blockInGroup / 8
+                val mask = 1 shl (blockInGroup % 8)
+                if ((bitmap[byteIdx].toInt() and mask) == 0) continue  // already free
+                bitmap[byteIdx] = (bitmap[byteIdx].toInt() and mask.inv()).toByte()
+                n++
+            }
+            if (n == 0) continue
+            writeBitmap(bitmapBlock, bitmap, g, isBitmap = true)
+            writeBgdShort(g, 12, (readBgdShort(g, 12) + n).toShort())
+            writeBgdChecksum(g)
+            total += n
+        }
+        if (total > 0) fs.updateSuperblockFreeBlocks(+total)
+    }
 
     // -----------------------------------------------------------------------
     // Inode allocation / free
