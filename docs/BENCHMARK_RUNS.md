@@ -33,6 +33,119 @@ to a row here.
 
 ---
 
+## 2026-10-07 — the 0.4.1 release candidate, `8655eeb`
+
+Both runs below used the same build, `8655eeb`: E2E 47/47 on it. Sections:
+`free,block,dir,path,seq,random,opens,write,unaligned,correct,bigwrite,fixtures`,
+cache default, remount true, every partition of the drives attached. Android's
+volumes were unmounted before each run (`sm unmount`). Each drive was read back on
+the laptop afterwards and checked with `verify_matrix_drive.py`, which runs each
+filesystem's own checker, compares against the build baselines, and verifies every
+`bigwrite` file against its recipe.
+
+### OnePlus 7 (GM1901) · LineageOS 23.2 (Android 16, SDK 36) · commit 8655eeb — device-matrix Drives 3 + 4
+
+The first run on Drives 3 and 4: 2026-10-06 23:51:23 to 2026-10-07 07:50:21. The
+phone charged through the hub throughout (34% → 48%).
+
+| Partition | Container / FS | On the phone | big.bin write / read after remount (MB/s) | Host |
+|---|---|---|---|---|
+| D3EXT2, D3EXT3 | plain ext2 / ext3 | write sections SKIPPED (read-only by design); fixtures ALL 21821 / 21883 | — | CLEAN, 0 MiB changed |
+| D3L1EXFAT | LUKS1 exFAT | write verify, unaligned A+B, correctness A–G, bigwrite ALL PASSED; fixtures ALL 20929 | 0.72 / 22.92 | CLEAN |
+| D3L1NTFS | LUKS1 NTFS | all PASSED; fixtures ALL 20920 | 3.22 / 26.79 | CLEAN |
+| D3L2FAT32 | LUKS2 FAT32 | all PASSED; fixtures ALL 20913 | 6.73 / 17.84 | CLEAN, fsck.fat clean |
+| D3L2NTFS | LUKS2 NTFS | all PASSED; fixtures ALL 20925 | 3.09 / 26.15 | CLEAN |
+| D3L2EXT4 | LUKS2 ext4 | all PASSED; fixtures ALL 20939 | 1.11 / 24.65 | CLEAN, e2fsck clean |
+| D3L4FAT32 | LUKS2 4K FAT32 | all PASSED; fixtures ALL 20972 | 3.81 / 17.95 | CLEAN |
+| D3L4EXFAT | LUKS2 4K exFAT | all PASSED; fixtures ALL 20910 | 0.53 / 23.94 | CLEAN |
+| D3BLNTFS | BitLocker CBC-256 NTFS | all PASSED; fixtures ALL 21023 | 3.12 / 29.28 | CLEAN |
+| D4{L1,L2,L4,VC}EXT{2,3} (8) | ext2/ext3 in LUKS1, LUKS2, LUKS2 4K, VeraCrypt | write sections SKIPPED (read-only by design); fixtures ALL, 21678–21971 each | — | CLEAN, 0 MiB changed |
+| D4BLFAT32 | BitLocker XTS-256 FAT32 | all PASSED; fixtures ALL 20918 | 6.23 / 17.08 | CLEAN |
+| D4BLEXFAT | BitLocker CBC-128 exFAT | all PASSED; fixtures ALL 21073 | 0.73 / 24.98 | CLEAN |
+
+No FAILED, PARTIAL, NOT VERIFIED or CONTAMINATED line. **Host: 20 of 20 CLEAN.**
+
+### Samsung Galaxy M30 (SM-M305F) · Android 10 (SDK 29) · commit 8655eeb — device-matrix Drive 1
+
+The second device in the matrix, and the first on Android 10: 2026-10-06 23:43:06
+to 2026-10-07 07:57:14. The M30 charged through its hub throughout (100%). All 11
+partitions attached, both BitLocker ones included. That they attached is the fix
+`8b21b1e` at work; see the note below.
+
+| Partition | Container / FS | On the phone | big.bin write / read after remount (MB/s) | Host |
+|---|---|---|---|---|
+| EFI | plain FAT32 (macOS's) | "BENCH/MANIFEST.txt not found — block reads only, nothing written" (`8655eeb`) | — | not checked (not a fixture volume) |
+| D1APFSCI, D1APFSCS, D1APFSECI, D1APFSECS | APFS | write sections SKIPPED (read-only); fixtures ALL 22129 / 22024 / 21777 / 21911 | — | CLEAN, 0 MiB changed |
+| D1FAT32 | plain FAT32 | all PASSED; fixtures ALL 20995 | 4.36 / 12.25 | **FAILED: Android's mount, not the app's writes** (below) |
+| D1EXFAT | plain exFAT | all PASSED; fixtures ALL 20963 | 0.33 / 15.64 | CLEAN |
+| D1NTFS | plain NTFS | all PASSED; fixtures ALL 21052 | 2.19 / 16.70 | CLEAN |
+| D1EXT4 | plain ext4 | all PASSED; fixtures ALL 20854 | 0.82 / 14.17 | CLEAN, e2fsck clean |
+| D1BLNTFS | BitLocker XTS-128 NTFS | all PASSED; fixtures ALL 20905 | 2.03 / 12.17 | CLEAN |
+| D1BLEXFAT | BitLocker XTS-256 exFAT | all PASSED; fixtures ALL 20898 | 0.26 / 9.48 | CLEAN |
+
+No FAILED, PARTIAL, NOT VERIFIED or CONTAMINATED line on the phone, and no "Max
+number of dynamic shortcuts" in logcat.
+
+**D1FAT32, host FAILED.** fsck.fat reported:
+- the dirty bit set, and the boot sector differing from its backup at offset 65
+  (that same flag);
+- "Free cluster summary wrong (83599 vs. really 83594)";
+- one unexplained file, `Android/data/.nomedia`.
+
+The directory entries date it: `LOST.DIR`, `Android/data/.nomedia` and
+`Android/data/com.samsung.android.app.simplesharing` were all created 2026-10-06
+23:35:30–34. That was when Drive 1 was plugged in, a minute before the first run
+started. Samsung's Android mounted the partition and created those, and the app then
+claimed the stick from under it (`force=true`), so the volume was never unmounted.
+Every file the app wrote from 00:17 on is intact: big.bin and all 240 tree files
+match. No duplicate directory entry, and no empty file holding a cluster: V15 and
+V16 hold on this device too. This is the takeover of an OS-mounted drive, deferred
+since runs 1–2, not a regression in this release.
+
+**#33 on hardware.** D1EXT4 still held run 7's 2.2 GB big.bin. The bigwrite step
+began at 03:13:18 and the new file finished writing at 03:56:28.8 after 2564 s, so
+deleting the old file and tree took about 26 s. The same delete was still running
+after 77 minutes on the Huawei before the fix. e2fsck is clean afterwards.
+
+Throughput on the M30 is roughly a third of the OnePlus's for the same container and
+filesystem. exFAT and software BitLocker are the slowest. That is a figure, not a
+fault.
+
+**Before this run, on `ed59669`.** The first M30 attempt found two bugs, and was
+stopped once they were understood:
+- On Android 10, a share shortcut threw "Max number of dynamic shortcuts exceeded"
+  after about the fourth mount. In attemptUnlock's catch that reported a mounted
+  drive as failed, deleted its saved password, and ran onComplete twice, so the
+  run started without the BitLocker partitions. Fixed in `8b21b1e`.
+- The benchmark wrote to the Mac's EFI partition, because run 7's report writer had
+  created `BENCH/` there. Fixed in `8655eeb`.
+
+That attempt left no complete report and is not a row.
+
+### OnePlus 7 · Android 16 · commit 8655eeb — V18 on a 30 MiB FAT32 SD card
+
+FAT32 under 32 MiB, the layout V18 fixes: `TotSec16 = 61440`, `TotSec32 = 0`,
+60462 clusters. Drive D's SD card was repartitioned for it, which erased the old
+drive D volumes, and the image was built by `mkfs.vfat` on the host with
+`BENCH/MANIFEST.txt` added. Sections `free,block,dir,write,unaligned,correct,fixtures`.
+- **On the phone:** capacity 30 MiB (upstream libaums read 0); write verify 16 MiB
+  ALL PASSED across a remount; unaligned A+B PASS; correctness A–F ALL PASSED (G
+  skipped, no large file on this volume). Before V18 every write here failed
+  "FAT32 volume is full".
+- **Host:** `fsck.fat -n` clean, apart from the warning every FAT32 this small gets,
+  which the fresh image also got. Dirty flag clear, layout unchanged.
+
+### Not rows: two runs that did not complete
+
+- **Samsung M30, Drive 2, `8655eeb`, 2026-10-07 08:3x–10:54.** D2VCFAT32 passed
+  everything (fixtures ALL 20958). Then at 10:54:30 the M30 lost its whole USB hub
+  (VMM7100), the stick and the hub's LAN port in one event, partway through
+  D2VCEXFAT's 2.2 GB write. libaums failed with `MAX_RECOVERY_ATTEMPTS`. The drive
+  stopped responding, so there is no result. D2VCEXFAT must be checked before its
+  next use.
+- **Huawei P20 Lite, Drive 2, `96c7843`, 2026-10-05/06.** Stopped at 9% battery
+  while deleting a 2.2 GB file on D2L1EXT4. That run found #33.
+
 ## 2026-10-05
 
 ### OnePlus 7 (GM1901) · LineageOS 23.2 (Android 16, SDK 36) · build 0.4.1 (47) commit fd054df — device-matrix FAT32 partitions, run 9
