@@ -44,6 +44,16 @@ object Benchmark {
     private const val MOUNT_TIMEOUT_MS = 600_000L
 
     /**
+     * How long a mount request may run past [MOUNT_TIMEOUT_MS] while unlocks are still
+     * going. The timeout used to end the wait regardless: on a Pixel 7 Pro (Android
+     * 17) the key derivations of a ten-partition encrypted drive took longer, so
+     * D3L4EXFAT and D3BLNTFS were never measured ("2 unlock(s) still running after
+     * 600s"). A request that is still making progress now gets to finish; one with
+     * nothing in flight still stops at [MOUNT_TIMEOUT_MS].
+     */
+    private const val UNLOCK_WAIT_MAX_MS = 3_600_000L
+
+    /**
      * @param only run just these sections (empty = all). Names:
      *   free, block, dir, path, seq, random, opens
      *
@@ -211,10 +221,13 @@ object Benchmark {
                 // seconds, so 3 s of no change is expected before the first unlock
                 // lands. The 15 s fallback covers a request with nothing left to unlock.
                 val startCount = OtgMasterState.mountedDrives.size
-                val deadline = System.currentTimeMillis() + MOUNT_TIMEOUT_MS
+                val started = System.currentTimeMillis()
+                val deadline = started + MOUNT_TIMEOUT_MS
+                val hardDeadline = started + UNLOCK_WAIT_MAX_MS
                 var lastCount = -1
                 var stableSince = System.currentTimeMillis()
-                while (System.currentTimeMillis() < deadline) {
+                while (System.currentTimeMillis() < deadline ||
+                       (OtgMasterState.unlocksInFlight.get() > 0 && System.currentTimeMillis() < hardDeadline)) {
                     val n = OtgMasterState.mountedDrives.size
                     val steady = System.currentTimeMillis() - stableSince
                     val inFlight = OtgMasterState.unlocksInFlight.get()
@@ -230,9 +243,12 @@ object Benchmark {
                     Thread.sleep(300)
                 }
                 val stillUnlocking = OtgMasterState.unlocksInFlight.get()
+                val waited = (System.currentTimeMillis() - started) / 1000
                 if (stillUnlocking > 0) {
-                    emit("*** $stillUnlocking unlock(s) still running after ${MOUNT_TIMEOUT_MS / 1000}s; " +
+                    emit("*** $stillUnlocking unlock(s) still running after ${waited}s; " +
                          "running against what is mounted ***")
+                } else if (waited > MOUNT_TIMEOUT_MS / 1000) {
+                    emit("unlocks took ${waited}s; waited for them past the ${MOUNT_TIMEOUT_MS / 1000}s mount timeout")
                 }
                 OtgMasterState.holdConnections = false
                 if (OtgMasterState.mountedDrives.isEmpty()) {
@@ -1647,6 +1663,10 @@ object Benchmark {
         root.search("BENCH")?.takeIf { it.isDirectory && it.search("MANIFEST.txt") != null }
     }.getOrNull()
 
+    /** Total length of the files under [dir], recursively. */
+    private fun bytesUnder(dir: UsbFile): Long =
+        dir.listFiles().sumOf { if (it.isDirectory) bytesUnder(it) else it.length }
+
     private fun benchBigWrite(drive: MountedDrive, emit: (String) -> Unit, mount: MountCredentials?) {
         val label = runCatching { drive.fileSystem.volumeLabel }.getOrDefault("").trim()
         val tag = driveTag(drive)
@@ -1660,6 +1680,11 @@ object Benchmark {
         // 2.2 GB file still included it (727 MB "free" on a volume with 2.7 GB free, on
         // the emulator), so the big file would be skipped every second run.
         val previousBig = runCatching { root.search(BIG_DIR)?.search("big.bin")?.length }.getOrNull() ?: 0L
+        // The previous tree is deleted too, and its space is just as stale in libexfat's
+        // count. Adding back only big.bin left a partition one run had already used a
+        // few MB short of big.bin + slack: D3L1EXFAT on the Pixel, "2461 MB free, needs
+        // 2200 MB + slack", skipped the big file with the space plainly there.
+        val previousTree = runCatching { root.search(TREE_DIR)?.let { bytesUnder(it) } }.getOrNull() ?: 0L
         for (d in listOf(BIG_DIR, TREE_DIR)) {
             runCatching { root.search(d)?.let { deleteRecursively(it) } }
                 .onFailure { Log.w(TAG, "section failed", it); emit("bigwrite      : could not delete the previous $d: $it") }
@@ -1667,7 +1692,7 @@ object Benchmark {
 
         // --- the big file ---------------------------------------------------------
         val reported = runCatching { drive.fileSystem.freeSpace }.getOrDefault(0L)
-        val free = maxOf(reported, minOf(reported + previousBig, drive.fileSystem.capacity))
+        val free = maxOf(reported, minOf(reported + previousBig + previousTree, drive.fileSystem.capacity))
         val bigPath = "big.bin"
         var bigOk: Boolean? = null
         if (free < BIG_BYTES + 256L * 1024 * 1024) {
@@ -1919,9 +1944,9 @@ object Benchmark {
         }
     }
 
-    /** Waits (up to MOUNT_TIMEOUT_MS) until no unlock started by a mount request is running. */
+    /** Waits (up to UNLOCK_WAIT_MAX_MS) until no unlock started by a mount request is running. */
     private fun awaitUnlocks() {
-        val deadline = System.currentTimeMillis() + MOUNT_TIMEOUT_MS
+        val deadline = System.currentTimeMillis() + UNLOCK_WAIT_MAX_MS
         while (OtgMasterState.unlocksInFlight.get() > 0 && System.currentTimeMillis() < deadline) Thread.sleep(300)
         Thread.sleep(500)   // the unlocks' completion posts land on the main thread
     }
