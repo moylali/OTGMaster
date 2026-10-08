@@ -296,6 +296,13 @@ in the same code block. `scripts/prepare_test_usb.sh` repartitions a disk; keep 
 visually separated from `verify`/`clean`, and prefer running it yourself over
 giving it to the user to paste.
 
+One exception: a matrix-drive restore chained to its own read-back,
+`write_matrix_drive.sh … --only LABEL,… && read_matrix_drive.sh …` on the same
+drive. The read-back is the restore's next step, not an unrelated read, and
+chaining it lets the verification run without a person waiting at the terminal.
+Label the block destructive, resolve both device paths from the drive's serial,
+and leave out `--yes` so the restore still asks for its typed confirmation.
+
 ## Vendored code
 
 `docs/VENDOR_FIXES.md` is the registry of every vendored dependency. Nothing is
