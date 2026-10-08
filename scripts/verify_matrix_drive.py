@@ -54,6 +54,9 @@ from cryptography.hazmat.primitives.ciphers import Cipher, algorithms, modes  # 
 from verify_e2e_volume import check_structure, fs_type  # noqa: E402
 
 MiB = 1 << 20
+# exFAT allocated-but-unowned bytes tolerated: a couple of clusters of bitmap and
+# upcase table, at the largest cluster size the drives use.
+EXFAT_UNOWNED_LIMIT = MiB
 FS_BLKID = {"fat32": "vfat", "exfat": "exfat", "ntfs": "ntfs", "ext2": "ext2", "ext3": "ext3", "ext4": "ext4"}
 READ_ONLY = ("apfs", "ext2", "ext3")
 # Entries a filesystem or the OS that filled it keeps outside BENCH/, which no run made.
@@ -182,6 +185,21 @@ def keystream_matches(path, label, rel):
             if enc.update(bytes(len(chunk))) != chunk:
                 return False
     return True
+
+
+def exfat_unowned_bytes(root):
+    """Bytes exFAT marks allocated that no file or directory owns: statvfs used minus du.
+
+    fsck.exfat 1.3.2 does not report clusters marked used in the bitmap with no
+    owner, and the app leaked them on every delete until a5f10ae, so neither the
+    checker nor the content checks see it. A freshly built volume measures 0 here
+    (the bitmap and upcase table fit inside the rounding), which is what makes a
+    small threshold safe."""
+    st = os.statvfs(root)
+    used = (st.f_blocks - st.f_bfree) * st.f_frsize
+    r = run("du", "-s", "-B1", root)
+    owned = int(r.stdout.split()[0])
+    return used - owned
 
 
 def check_bigwrite(root, label):
@@ -402,6 +420,11 @@ def verify_part(p, build, images, meta, accept, work_root):
                 row["notes"].append("manifest read from the drive (Mac-built)")
             res = check_files(root, manifest, fs)
             big_summary, big_problems = check_bigwrite(root, label)
+            if fs == "exfat":
+                unowned = exfat_unowned_bytes(root)
+                if unowned > EXFAT_UNOWNED_LIMIT:
+                    fail(f"exFAT: {unowned / MiB:.0f} MiB allocated with no file owning it "
+                         "(leaked clusters; fsck.exfat does not report this)")
         row["files"] = f"{res.checked - len(res.bad)}/{res.checked}"
         row["run_output"] = f"{res.run_files} files, {res.run_bytes / MiB:.0f} MiB; {res.reports} reports"
         if big_summary:
