@@ -35,6 +35,8 @@ class E2EAutomatedTest {
          */
         const val BIG_FILE_NAME = "big_write.bin"
         const val BIG_FILE_BLOCKS = 3 * 1024 * 1024 / 32
+        const val LEAK_FILE_NAME = "delete_while_open.bin"
+        const val LEAK_FILE_BYTES = 2 * 1024 * 1024
 
         fun bigFileBlock(i: Int): ByteArray =
             java.security.MessageDigest.getInstance("SHA-256").digest("otg-e2e-big-$i".toByteArray())
@@ -549,6 +551,37 @@ class E2EAutomatedTest {
         }
         assertTrue("write_test.txt still visible immediately after deletion", goneImmediately)
 
+        // ── DELETE an open file: its space must come back at once ──────────────
+        // exFAT freed a deleted file's clusters only when the last handle on it was
+        // released — and a listing's handles are released by the GC, or never if the
+        // drive is unmounted first. A full drive then refused the next write with
+        // ENOSPC straight after a delete that had succeeded. Holding the file open
+        // across the delete makes that deterministic rather than GC-dependent.
+        val leakUri = DocumentsContract.createDocument(
+            context.contentResolver, DocumentsContract.buildDocumentUri(AUTHORITY, rootDocId2),
+            "application/octet-stream", LEAK_FILE_NAME
+        )
+        assertNotNull("createDocument($LEAK_FILE_NAME) returned null", leakUri)
+        context.contentResolver.openOutputStream(leakUri!!)?.use { out ->
+            val chunk = ByteArray(65536) { 0x5a }
+            repeat(LEAK_FILE_BYTES / chunk.size) { out.write(chunk) }
+        } ?: fail("openOutputStream for $LEAK_FILE_NAME returned null")
+        val holder = context.contentResolver.openInputStream(leakUri)
+            ?: throw AssertionError("$LEAK_FILE_NAME could not be opened")
+        try {
+            assertEquals("$LEAK_FILE_NAME first byte", 0x5a, holder.read())
+            val freeBefore = availableBytes(context, rootDocId2)
+            DocumentsContract.deleteDocument(context.contentResolver, leakUri)
+            val freeAfter = availableBytes(context, rootDocId2)
+            assertTrue(
+                "Deleting $LEAK_FILE_NAME ($LEAK_FILE_BYTES bytes) while it was open freed only " +
+                    "${freeAfter - freeBefore} bytes (free $freeBefore -> $freeAfter)",
+                freeAfter - freeBefore >= LEAK_FILE_BYTES,
+            )
+        } finally {
+            holder.close()
+        }
+
         doUnmount()
 
         // ── REMOUNT #3 — verify deletion persisted ────────────────────────────
@@ -799,6 +832,18 @@ class E2EAutomatedTest {
             }
         }
         return rootDocId
+    }
+
+    /** The root's COLUMN_AVAILABLE_BYTES, which the provider reads live from the filesystem. */
+    private fun availableBytes(context: Context, rootDocId: String): Long {
+        context.contentResolver.query(DocumentsContract.buildRootsUri(AUTHORITY), null, null, null, null)?.use { cur ->
+            val idCol = cur.getColumnIndex(DocumentsContract.Root.COLUMN_DOCUMENT_ID)
+            val freeCol = cur.getColumnIndex(DocumentsContract.Root.COLUMN_AVAILABLE_BYTES)
+            while (cur.moveToNext()) {
+                if (cur.getString(idCol) == rootDocId) return cur.getLong(freeCol)
+            }
+        }
+        throw AssertionError("root $rootDocId not listed")
     }
 
     private fun assertCannotMountError(expectedFs: String) {

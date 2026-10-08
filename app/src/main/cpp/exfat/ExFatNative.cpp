@@ -244,12 +244,29 @@ Java_app_fayaz_otgmaster_exfat_ExFatNative_deleteNode(JNIEnv *env, jclass clazz,
     struct exfat_node* node = (struct exfat_node*) nodePtr;
     
     if (!ef || !node) return -1;
-    
-    if (node->attrib & EXFAT_ATTRIB_DIR) {
-        return exfat_rmdir(ef, node);
-    } else {
-        return exfat_unlink(ef, node);
+
+    int rc = (node->attrib & EXFAT_ATTRIB_DIR) ? exfat_rmdir(ef, node) : exfat_unlink(ef, node);
+    if (rc != 0) return rc;
+
+    // Free the clusters now. libexfat frees them in exfat_cleanup_node, after the
+    // last reference is put — and every Kotlin ExFatFile holds one, released on
+    // close() or, for the handles a listing hands out, whenever the GC finalizes
+    // them. Until then the space stays allocated, and an unmount first loses it
+    // for good: the node is already detached from the tree, so exfat_unmount
+    // never visits it and the bitmap keeps the clusters marked used with no file
+    // owning them (fsck.exfat 1.3.2 does not report that). On a full drive the
+    // next write failed with ENOSPC right after a delete that had "succeeded".
+    //
+    // An unlinked node is never flushed (exfat_flush_node skips a node with no
+    // parent), so clearing is_dirty only silences the zero-reference warning;
+    // exfat_cleanup_node's own truncate then finds size 0 and just frees the node.
+    int trc = exfat_truncate(ef, node, 0, true);
+    if (trc != 0) {
+        // The entry is gone either way; the final put retries the truncate.
+        LOGE("deleteNode: freeing clusters failed with %d", trc);
     }
+    node->is_dirty = false;
+    return 0;
 }
 
 extern "C" JNIEXPORT jint JNICALL
