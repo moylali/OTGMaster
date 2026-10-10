@@ -332,6 +332,7 @@ object Benchmark {
                 emit("*** not mounted at the start of its turn — skipped rather than")
                 emit("    measured through a closed device ***")
                 emit("")
+                saveProgress(context, out, plan.indexOf(tag) + 1, plan.size)
                 continue
             }
             emit("--- drive: ${drive.name} ---")
@@ -432,6 +433,7 @@ object Benchmark {
             if (only.contains("fixtures")) runCatching { benchFixtures(live(), ::emit) }
                 .onFailure { Log.w(TAG, "section failed", it); emit("fixtures      : FAILED ${it.stackTraceToString()}") }
             emit("")
+            saveProgress(context, out, plan.indexOf(tag) + 1, plan.size)
         }
 
         emit("")
@@ -2112,6 +2114,33 @@ object Benchmark {
      *     exactly the modern devices where it still exists.
      *  3. **getExternalFilesDir**, unchanged, as the last resort and for adb pulls.
      */
+    /**
+     * Rewrites the report so far to benchmark-in-progress.txt after every partition.
+     *
+     * [save] runs once, at the very end, so a run that never reaches the end leaves
+     * nothing behind. Two device-matrix runs were lost that way in one night: a
+     * Samsung M30 run unplugged at its fourth partition after seven hours, and a
+     * Pixel run whose USB connection dropped. Each had finished partitions whose
+     * results existed only in logcat, and logcat had rotated by morning.
+     *
+     * App-private storage only, never the drive under test: a write to the drive
+     * between partitions would change the volumes the remaining sections measure.
+     * The file carries a trailer saying how far the run got, so a partial report
+     * cannot be mistaken for a finished one; the final [save] does not touch it.
+     */
+    private fun saveProgress(context: Context, out: StringBuilder, done: Int, total: Int) {
+        runCatching {
+            val dir = context.getExternalFilesDir(null) ?: context.filesDir
+            File(dir, "benchmark-in-progress.txt").writeText(
+                out.toString() +
+                    "*** IN PROGRESS: $done of $total partition(s) finished at " +
+                    java.text.SimpleDateFormat("yyyy-MM-dd HH:mm:ss", java.util.Locale.US)
+                        .format(java.util.Date()) +
+                    "; anything after this line has not run yet ***\n"
+            )
+        }.onFailure { Log.w(TAG, "could not save the progress report: $it") }
+    }
+
     private fun save(context: Context, text: String, tags: List<String> = emptyList()) {
         val stamp = java.text.SimpleDateFormat("yyyyMMdd-HHmmss", java.util.Locale.US)
             .format(java.util.Date())
