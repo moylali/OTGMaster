@@ -29,6 +29,22 @@ object VeraCryptNative {
     ): ByteArray?
 
     /**
+     * The inverse of [decryptHeader], for creating a volume: derives the header key the
+     * same way and encrypts [plainHeader]'s first 448 bytes (the header from offset 64,
+     * "VERA" first). Same exceptions as [decryptHeader].
+     */
+    @JvmStatic
+    external fun encryptHeader(
+        ciphers: IntArray,
+        kdf: Int,
+        password: ByteArray,
+        salt: ByteArray,
+        iterations: Int,
+        memoryKiB: Int,
+        plainHeader: ByteArray
+    ): ByteArray?
+
+    /**
      * Crypts [length] bytes of [buffer] starting at [offset] in place, as a run of
      * consecutive 512-byte sectors beginning at [startSector], under the cascade
      * [ciphers] (one id for a single cipher, as LUKS uses it).

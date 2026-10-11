@@ -111,10 +111,9 @@ Java_app_fayaz_otgmaster_veracrypt_VeraCryptNative_cryptSectorsInPlace(
  * the allocation of hundreds of MiB failing — needs telling apart from a wrong
  * password.
  */
-extern "C" JNIEXPORT jbyteArray JNICALL
-Java_app_fayaz_otgmaster_veracrypt_VeraCryptNative_decryptHeader(
-        JNIEnv *env, jobject thiz, jintArray jCiphers, jint kdf, jbyteArray jPassword,
-        jbyteArray jSalt, jint iterations, jint memoryKiB, jbyteArray jEncHeader) {
+static jbyteArray cryptHeader(
+        JNIEnv *env, jintArray jCiphers, jint kdf, jbyteArray jPassword,
+        jbyteArray jSalt, jint iterations, jint memoryKiB, jbyteArray jEncHeader, bool encrypt) {
 
     int ids[VC_MAX_CASCADE];
     const int n = readCipherIds(env, jCiphers, ids);
@@ -148,7 +147,7 @@ Java_app_fayaz_otgmaster_veracrypt_VeraCryptNative_decryptHeader(
         }
         mbedtls_md_free(&md);
     } else {
-        LOGE("decryptHeader: unknown KDF %d", kdf);
+        LOGE("cryptHeader: unknown KDF %d", kdf);
         ret = -1;
     }
 
@@ -173,14 +172,15 @@ Java_app_fayaz_otgmaster_veracrypt_VeraCryptNative_decryptHeader(
     VcCascade* cascade = vc_cascade_new(ids, n, headerKey, (size_t) keyBytes);
     mbedtls_platform_zeroize(headerKey, sizeof(headerKey));
     if (!cascade) {
-        LOGE("decryptHeader: key setup failed for a %d-cipher cascade", n);
+        LOGE("cryptHeader: key setup failed for a %d-cipher cascade", n);
         return nullptr;
     }
 
     uint8_t decHeader[HEADER_ENCRYPTED_SIZE];
     env->GetByteArrayRegion(jEncHeader, 0, HEADER_ENCRYPTED_SIZE, (jbyte*) decHeader);
     // The header is one data unit, number 0.
-    vc_cascade_decrypt_unit(cascade, 0, decHeader, HEADER_ENCRYPTED_SIZE);
+    if (encrypt) vc_cascade_encrypt_unit(cascade, 0, decHeader, HEADER_ENCRYPTED_SIZE);
+    else vc_cascade_decrypt_unit(cascade, 0, decHeader, HEADER_ENCRYPTED_SIZE);
     vc_cascade_free(cascade);
 
     jbyteArray jDecHeader = env->NewByteArray(HEADER_ENCRYPTED_SIZE);
@@ -189,4 +189,23 @@ Java_app_fayaz_otgmaster_veracrypt_VeraCryptNative_decryptHeader(
     // undoes the care taken to zero the key on the Kotlin side.
     mbedtls_platform_zeroize(decHeader, sizeof(decHeader));
     return jDecHeader;
+}
+
+extern "C" JNIEXPORT jbyteArray JNICALL
+Java_app_fayaz_otgmaster_veracrypt_VeraCryptNative_decryptHeader(
+        JNIEnv *env, jobject thiz, jintArray jCiphers, jint kdf, jbyteArray jPassword,
+        jbyteArray jSalt, jint iterations, jint memoryKiB, jbyteArray jEncHeader) {
+    return cryptHeader(env, jCiphers, kdf, jPassword, jSalt, iterations, memoryKiB, jEncHeader, false);
+}
+
+/*
+ * The inverse, for creating a volume: the same key derivation, then the plaintext
+ * header's 448 bytes (from offset 64) encrypted as data unit 0. The caller writes the
+ * salt before them.
+ */
+extern "C" JNIEXPORT jbyteArray JNICALL
+Java_app_fayaz_otgmaster_veracrypt_VeraCryptNative_encryptHeader(
+        JNIEnv *env, jobject thiz, jintArray jCiphers, jint kdf, jbyteArray jPassword,
+        jbyteArray jSalt, jint iterations, jint memoryKiB, jbyteArray jPlainHeader) {
+    return cryptHeader(env, jCiphers, kdf, jPassword, jSalt, iterations, memoryKiB, jPlainHeader, true);
 }
