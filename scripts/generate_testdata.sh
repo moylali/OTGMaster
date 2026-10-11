@@ -10,10 +10,10 @@ mkdir -p testdata/fat16
 mkdir -p testdata/serpent
 
 
-PASSWORD="password123"
-# VeraCrypt refuses PIM 1 with Argon2 unless the password is at least 20 characters,
-# and PIM 12 would ask the emulator for 416 MiB. docs/TEST_DATA.md §1.
-LONG_PASSWORD="otgmaster-test-password-2026"
+# VeraCrypt 1.26 refuses a low PIM with a password under 20 characters (PBKDF2 then
+# wants PIM 485, Argon2 PIM 12 — 416 MiB, too much to ask of the emulator), so every
+# case uses this one. "password123" worked only with older VeraCrypt. TEST_DATA.md §1.
+PASSWORD="otgmaster-test-password-2026"
 
 populate_complex_files() {
     local MNT=$1
@@ -36,8 +36,6 @@ create_fat32_volume() {
     PIM_VAL=${4:-1}
     HASH=${5:-SHA-512}
     IMG_FILE="$DIR/test.img"
-    local PASSWORD="$PASSWORD"
-    [ "$HASH" = "Argon2" ] && PASSWORD="$LONG_PASSWORD"
 
     echo "$PASSWORD" > "$DIR/password.txt"
     echo "$PIM_VAL" > "$DIR/pim.txt"

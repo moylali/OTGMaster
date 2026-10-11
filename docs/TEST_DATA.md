@@ -72,8 +72,10 @@ Every fixture uses **PIM 1** — 16,000 iterations, or 64 MiB and 3 passes — b
 multi-minute wait, and 416 MiB is more than an emulator should be asked for. If you
 generate a fixture without `--pim`, expect the unlock to look hung rather than broken.
 
-VeraCrypt refuses PIM 1 with a password shorter than 20 characters (it wants PIM 485
-for PBKDF2 or 12 for Argon2 then), so the Argon2 fixtures use a longer password.
+VeraCrypt 1.26 refuses PIM 1 with a password shorter than 20 characters (it wants PIM
+485 for PBKDF2 or 12 for Argon2 then), so every fixture — the host ones and the E2E
+images — uses `otgmaster-test-password-2026`. The old `password123` images were made
+by an earlier VeraCrypt that did not check.
 
 ### 1.1 Cipher and KDF fixtures for the host tests (no root)
 
@@ -403,8 +405,9 @@ lsblk -o NAME,SIZE,TYPE,TRAN,MODEL,MOUNTPOINT
 
 Two conventions used throughout, both deliberate:
 
-- `PASS=password123` — matches the VeraCrypt fixtures and `generate_testdata.sh`, so
-  one password fits every fixture in the project.
+- `PASS=password123` — the LUKS drives' password, and once every fixture's. The
+  VeraCrypt ones moved to `otgmaster-test-password-2026` (§1), because VeraCrypt 1.26
+  refuses PIM 1 with a password under 20 characters; cryptsetup has no such rule.
 - **`--pbkdf-memory 65536` (64 MB) on every LUKS2 volume.** cryptsetup's desktop
   default is 1–4 GB of Argon2 memory, which a phone cannot allocate — a drive formatted
   with defaults tests nothing except the out-of-memory path. This is the single most
