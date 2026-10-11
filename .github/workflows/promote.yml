@@ -1,8 +1,18 @@
-# Promotes the latest release on the internal track to production.
-# Trigger manually: gh workflow run promote.yml -f version_code=47
-# or via GitHub UI: Actions → Promote to Production → Run workflow.
+# Promotes the release on the internal track to other tracks, and (by default) brings the
+# Play store listing up to date with fastlane/metadata/android — in one Play edit.
+#
+#   gh workflow run promote.yml -f version_code=47
+#   gh workflow run promote.yml -f version_code=47 -f tracks=production -f update_listing=false
+#
+# or via GitHub UI: Actions → Promote → Run workflow.
+#
+# Tracks: "alpha" is Play's closed testing track, "production" is production. The
+# internal release's notes and name are carried over to each; without them a promoted
+# release had no "What's new" although release.yml uploads it (distribution/whatsnew).
+# The listing step replaces the title, short and full description and every image type
+# with the repo's — the same files F-Droid reads from the tag, so the two stores match.
 
-name: Promote to Production
+name: Promote
 
 on:
   workflow_dispatch:
@@ -10,6 +20,15 @@ on:
       version_code:
         description: "versionCode expected on the internal track (refuses to promote anything else)"
         required: true
+      tracks:
+        description: "comma-separated target tracks (alpha = closed testing)"
+        required: true
+        default: "alpha,production"
+      update_listing:
+        description: "also update the store listing (texts and images) from fastlane/metadata"
+        type: boolean
+        required: true
+        default: true
 
 permissions:
   contents: read
@@ -18,15 +37,19 @@ jobs:
   promote:
     runs-on: ubuntu-latest
     steps:
-      - name: Promote internal → production
+      - uses: actions/checkout@v4
+
+      - name: Promote internal and update the listing
         env:
           SERVICE_ACCOUNT_JSON: ${{ secrets.SERVICE_ACCOUNT_JSON }}
           EXPECTED_VERSION_CODE: ${{ inputs.version_code }}
+          TRACKS: ${{ inputs.tracks }}
+          UPDATE_LISTING: ${{ inputs.update_listing }}
         run: |
           pip install google-auth requests --quiet
 
           python3 - <<'PYEOF'
-          import json, os, requests
+          import json, os, pathlib, requests
           import google.auth.transport.requests
           import google.oauth2.service_account as sa
 
@@ -34,24 +57,27 @@ jobs:
           PACKAGE = "app.fayaz.otgmaster"
           SCOPES = ["https://www.googleapis.com/auth/androidpublisher"]
           BASE = "https://androidpublisher.googleapis.com/androidpublisher/v3/applications"
+          UPLOAD = "https://androidpublisher.googleapis.com/upload/androidpublisher/v3/applications"
+          META = pathlib.Path("fastlane/metadata/android")
 
           creds = sa.Credentials.from_service_account_info(KEY, scopes=SCOPES)
           creds.refresh(google.auth.transport.requests.Request())
-          token = creds.token
-          headers = {"Authorization": f"Bearer {token}", "Content-Type": "application/json"}
+          auth = {"Authorization": f"Bearer {creds.token}"}
+          headers = {**auth, "Content-Type": "application/json"}
+
+          def ok(r):
+              if not r.ok:
+                  raise SystemExit(f"{r.request.method} {r.url} -> {r.status_code}: {r.text}")
+              return r
 
           # 1. Open edit
-          r = requests.post(f"{BASE}/{PACKAGE}/edits", headers=headers)
-          r.raise_for_status()
-          edit_id = r.json()["id"]
+          edit_id = ok(requests.post(f"{BASE}/{PACKAGE}/edits", headers=headers)).json()["id"]
+          EDIT = f"{BASE}/{PACKAGE}/edits/{edit_id}"
           print(f"Edit: {edit_id}")
 
-          # 2. Get internal track releases
-          r = requests.get(f"{BASE}/{PACKAGE}/edits/{edit_id}/tracks/internal", headers=headers)
-          r.raise_for_status()
-          internal = r.json()
-          releases = internal.get("releases", [])
-          completed = [rel for rel in releases if rel.get("status") == "completed"]
+          # 2. The completed release on the internal track, which must be the expected one
+          internal = ok(requests.get(f"{EDIT}/tracks/internal", headers=headers)).json()
+          completed = [rel for rel in internal.get("releases", []) if rel.get("status") == "completed"]
           if not completed:
               raise SystemExit("No completed release found on internal track")
           release = completed[0]
@@ -59,25 +85,55 @@ jobs:
           if expected not in [str(v) for v in release["versionCodes"]]:
               raise SystemExit(f"Internal track holds {release['versionCodes']}, not {expected}; nothing promoted")
           notes = release.get("releaseNotes", [])
-          print(f"Promoting versionCodes {release['versionCodes']} ({release.get('name','')}), "
+          print(f"Internal release {release.get('name', '')}: versionCodes {release['versionCodes']}, "
                 f"release notes in {[n.get('language') for n in notes]}")
 
-          # 3. Update production track. The release notes and name are carried over:
-          # without them the production release had no "What's new" at all, although
-          # release.yml had uploaded them (distribution/whatsnew) with the internal one.
-          prod_release = {"versionCodes": release["versionCodes"], "status": "completed"}
+          # 3. Each target track gets that release, with its notes and name
+          new_release = {"versionCodes": release["versionCodes"], "status": "completed"}
           if notes:
-              prod_release["releaseNotes"] = notes
+              new_release["releaseNotes"] = notes
           if release.get("name"):
-              prod_release["name"] = release["name"]
-          prod_body = {"releases": [prod_release]}
-          r = requests.put(f"{BASE}/{PACKAGE}/edits/{edit_id}/tracks/production",
-                           headers=headers, json=prod_body)
-          r.raise_for_status()
-          print("Production track updated")
+              new_release["name"] = release["name"]
+          for track in [t.strip() for t in os.environ["TRACKS"].split(",") if t.strip()]:
+              ok(requests.put(f"{EDIT}/tracks/{track}", headers=headers,
+                              json={"track": track, "releases": [new_release]}))
+              print(f"Track {track}: {release['versionCodes']}")
 
-          # 4. Commit
-          r = requests.post(f"{BASE}/{PACKAGE}/edits/{edit_id}:commit", headers=headers)
-          r.raise_for_status()
-          print("Edit committed — promotion complete")
+          # 4. The store listing: texts, then every image type, from fastlane/metadata
+          if os.environ["UPDATE_LISTING"] == "true":
+              IMAGE_DIRS = {"phoneScreenshots": "phoneScreenshots",
+                            "sevenInchScreenshots": "sevenInchScreenshots",
+                            "tenInchScreenshots": "tenInchScreenshots"}
+              SINGLE_IMAGES = {"icon": "icon.png", "featureGraphic": "featureGraphic.png"}
+              for lang_dir in sorted(p for p in META.iterdir() if p.is_dir()):
+                  lang = lang_dir.name
+                  def text(name):
+                      f = lang_dir / name
+                      return f.read_text(encoding="utf-8").strip() if f.exists() else None
+                  listing = {"language": lang}
+                  for field, name in (("title", "title.txt"), ("shortDescription", "short_description.txt"),
+                                      ("fullDescription", "full_description.txt")):
+                      value = text(name)
+                      if value is not None:
+                          listing[field] = value
+                  ok(requests.patch(f"{EDIT}/listings/{lang}", headers=headers, json=listing))
+                  print(f"Listing {lang}: {sorted(k for k in listing if k != 'language')}")
+
+                  images = lang_dir / "images"
+                  uploads = {t: sorted((images / d).glob("*.png")) for t, d in IMAGE_DIRS.items()
+                             if (images / d).is_dir()}
+                  uploads.update({t: [images / f] for t, f in SINGLE_IMAGES.items() if (images / f).exists()})
+                  for image_type, files in uploads.items():
+                      if not files:
+                          continue
+                      ok(requests.delete(f"{EDIT}/listings/{lang}/{image_type}", headers=headers))
+                      for f in files:
+                          ok(requests.post(f"{UPLOAD}/{PACKAGE}/edits/{edit_id}/listings/{lang}/{image_type}",
+                                           params={"uploadType": "media"},
+                                           headers={**auth, "Content-Type": "image/png"}, data=f.read_bytes()))
+                      print(f"Images {lang}/{image_type}: {[f.name for f in files]}")
+
+          # 5. Commit: everything above lands together, or nothing does
+          ok(requests.post(f"{EDIT}:commit", headers=headers))
+          print("Edit committed")
           PYEOF
