@@ -33,6 +33,32 @@ to a row here.
 
 ---
 
+## 2026-10-10 — first runs of the benchmark build type, `7936666`
+
+### Pixel 7 Pro · Android 17 (SDK 37) · build 0.4.1-bench (47) commit 7936666 — device-matrix Drive 1, D1FAT32 (plain)
+
+The first benchmark-build install (`app.fayaz.otgmaster.bench`, not debuggable,
+native `-O2`), beside the debug `ae25575` app already on the phone. It was there to
+show the build works on hardware, not to measure, so these figures are not a
+baseline and, being `-bench`, are **not comparable** with any figure above (rule 6
+in `BENCHMARK_RESULTS.md`). Same session, two runs, `--es drive D1FAT32`, cache
+default, no remount:
+
+| Run | Sections | Result |
+|---|---|---|
+| 23:00 | `free,block,path,seq` | All ran, none FAILED. block read 4 KiB 6.32 · 64 KiB 90.51 · 512 KiB 86.85 · 4096 KiB 90.50 MB/s; path resolve depth 10 3.1 ms; seq read `seq_2100m.bin` 32 KiB 19.08 · 128 KiB 36.95 · 512 KiB 35.46 MB/s |
+| 23:03 | `saf` | `saf : BENCH/large missing`. The section measures `mountedDrives[0]`, not the drive named, and that was the EFI partition. A harness limitation, not this build's |
+
+- **Provider authority, checked on the phone:** `dumpsys package providers` maps
+  `app.fayaz.otgmaster.documents` to the debug app and
+  `app.fayaz.otgmaster.bench.documents` to the benchmark build, and
+  `content query …/root` on each returned Drive 1's roots.
+- **Host check: not yet run.** Both runs wrote a report to D1FAT32's
+  `BENCH/reports/`, so the volume changed; it was verified ALL CLEAN at 21:47 the
+  same day, before these runs. The debug app still had Drive 1 mounted from its
+  own earlier run while these ran — read-only here, but two apps holding one drive
+  is not something to repeat with writes.
+
 ## 2026-10-07 — the 0.4.1 release candidate, `8655eeb`
 
 **Commit hashes after the merge of #31.** The runs, `VENDOR_FIXES.md`, the issues and
