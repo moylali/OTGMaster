@@ -379,7 +379,10 @@ for test_dir in "$TESTDATA_DIR"/*/; do
         sleep 2
 
         echo "Running UI Automator Test..."
-        TEST_OUT=$($CMD_ADB -s $SERIAL shell am instrument -w \
+        # Bounded: when the test runner itself dies before the test starts (a class R8
+        # stripped from the app, for one), `am instrument -w` never returns, and the
+        # minified run once sat four hours on its first case.
+        TEST_OUT=$(timeout "${E2E_CASE_TIMEOUT:-900}" $CMD_ADB -s $SERIAL shell am instrument -w \
             -e password "$PASSWORD" \
             -e testCase "$TEST_NAME" \
             $KEYFILE_ARG \
@@ -410,10 +413,12 @@ for test_dir in "$TESTDATA_DIR"/*/; do
             $CMD_ADB -s $SERIAL shell rm -f "$f"
         done
 
-        if echo "$TEST_OUT" | grep -q "FAILURES!!!" || echo "$TEST_OUT" | grep -q "Process crashed"; then
-            TEST_EXIT_CODE=1
-        else
+        # A pass is JUnit saying so. Checking only for the failure markers counted a run
+        # that printed nothing at all — a timed-out or crashed runner — as passed.
+        if echo "$TEST_OUT" | grep -q "^OK (" && ! echo "$TEST_OUT" | grep -q "Process crashed"; then
             TEST_EXIT_CODE=0
+        else
+            TEST_EXIT_CODE=1
         fi
 
         # Write cases: judge what is on the drive without the app. The QEMU slot is

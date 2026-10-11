@@ -100,6 +100,9 @@ android {
             matchingFallbacks += "release"
             // The test APK is shrunk against the app's mapping; these rules are for it alone.
             testProguardFiles("proguard-test-rules.pro")
+            // Libraries the test APK shares with the app are left out of the test APK and
+            // must survive in the app; R8 strips the ones the app itself never calls.
+            proguardFiles("proguard-minified-test.pro")
             buildConfigField("String", "GIT_COMMIT", "\"${gitCommit()}${if (gitDirty()) "-dirty" else ""}\"")
         }
     }
