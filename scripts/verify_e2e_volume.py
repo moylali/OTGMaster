@@ -20,6 +20,10 @@ a write case this:
 
     python3 scripts/verify_e2e_volume.py SLOT.img testdata/<case>
 
+A case with erase.txt (Format/Encrypt from a mounted card) is checked differently:
+fsck clean, flower.jpg gone, after_erase.txt as the test wrote it, the label kept on a
+Format, and — for a full erase — no byte of the old flower.jpg left on the raw drive.
+
 Exit 0 when everything holds; the problems are printed otherwise.
 """
 import hashlib
@@ -162,10 +166,145 @@ def check_files(img, case_dir):
     return problems
 
 
+def read_erase_spec(case_dir):
+    spec = {}
+    with open(os.path.join(case_dir, "erase.txt")) as f:
+        for line in f:
+            if "=" in line:
+                k, v = line.strip().split("=", 1)
+                spec[k] = v
+    return spec
+
+
+def vc_decrypt(slot, password, pim, out):
+    """The data area of an AES / SHA-512 VeraCrypt volume, decrypted in Python."""
+    from fill_veracrypt_volume import open_header
+    master, start, size = open_header(slot, password, pim)
+    with open(slot, "rb") as src, open(out, "wb") as dst:
+        src.seek(start)
+        pos = 0
+        while pos < size:
+            chunk = src.read(min(1 << 20, size - pos))
+            buf = bytearray()
+            for i in range(0, len(chunk), 512):
+                unit = (start + pos + i) // 512
+                d = Cipher(algorithms.AES(master), modes.XTS(unit.to_bytes(16, "little"))).decryptor()
+                buf += d.update(chunk[i:i + 512]) + d.finalize()
+            dst.write(buf)
+            pos += len(chunk)
+
+
+def old_plaintext_left(img):
+    """True if flower.jpg's first 512 bytes still sit on a sector boundary of `img`."""
+    with open(os.path.join(ROOT, "testdata/flower.jpg"), "rb") as f:
+        head = f.read(512)
+    with open(img, "rb") as f:
+        while chunk := f.read(1 << 20):
+            for i in range(0, len(chunk) - 511, 512):
+                if chunk[i] == head[0] and chunk[i:i + 512] == head:
+                    return True
+    return False
+
+
+def check_erased_files(img, expected_content):
+    """After Format/Encrypt: flower.jpg gone, after_erase.txt as the test wrote it."""
+    out = run("udisksctl", "loop-setup", "-r", "-f", img, "--no-user-interaction")
+    m = re.search(r"/dev/loop\d+", out.stdout)
+    if not m:
+        return [f"udisksctl loop-setup failed: {out.stdout}{out.stderr}"]
+    dev = m.group(0)
+    problems = []
+    try:
+        mo = run("udisksctl", "mount", "-b", dev, "-o", "ro", "--no-user-interaction")
+        mnt = re.search(r" at (.+?)\.?$", mo.stdout.strip())
+        if not mnt:
+            return [f"udisksctl mount failed: {mo.stdout}{mo.stderr}"]
+        root = mnt.group(1)
+        try:
+            names = sorted(os.listdir(root))
+            if "flower.jpg" in names:
+                problems.append("flower.jpg is still listed after the erase")
+            try:
+                with open(os.path.join(root, "after_erase.txt"), "rb") as f:
+                    got = f.read().decode(errors="replace")
+                if got != expected_content:
+                    problems.append(f"after_erase.txt reads {got!r}, the test wrote {expected_content!r}")
+            except OSError as e:
+                problems.append(f"after_erase.txt: {e} (listing: {names})")
+            extra = [n for n in names if n not in ("after_erase.txt", "System Volume Information")]
+            if extra:
+                problems.append(f"files left over from before the erase: {extra}")
+        finally:
+            run("udisksctl", "unmount", "-b", dev, "--no-user-interaction")
+    finally:
+        run("udisksctl", "loop-delete", "-b", dev, "--no-user-interaction")
+    return problems
+
+
+def erase_main(slot, case_dir):
+    """Host check for a Format/Encrypt case (testEraseOperations)."""
+    spec = read_erase_spec(case_dir)
+    action = spec["action"]
+    full = spec.get("quick", "false") != "true"
+    plain_case = os.path.exists(os.path.join(case_dir, "plain.txt"))
+    name = os.path.basename(os.path.normpath(case_dir))
+    expected = f"OTGMaster after {action} ({name})"
+    problems, what = [], []
+    with tempfile.TemporaryDirectory() as work:
+        snapshot = os.path.join(work, "slot.img")
+        with open(slot, "rb") as src, open(snapshot, "wb") as dst:
+            while chunk := src.read(1 << 20):
+                dst.write(chunk)
+        if full and old_plaintext_left(snapshot):
+            problems.append("a full erase left the old flower.jpg's bytes on the drive")
+        what.append("old plaintext gone" if full else "quick (old data may remain)")
+
+        if action == "format" and plain_case:
+            fs_img, label_want = snapshot, "OTGFAT32" if "fat32" in name else "OTGEXFAT"
+            label = run("blkid", "-p", "-o", "value", "-s", "LABEL", fs_img).stdout.strip()
+            if label != label_want:
+                problems.append(f"label {label!r} after Format, was {label_want!r}")
+            what.append(f"label {label!r} kept")
+        elif action == "format":
+            password = open(os.path.join(case_dir, "password.txt")).read().strip()
+            pim = int(open(os.path.join(case_dir, "pim.txt")).read().strip())
+            fs_img = os.path.join(work, "plain.img")
+            vc_decrypt(snapshot, password, pim, fs_img)
+            what.append("same VeraCrypt password opens it")
+        elif spec.get("cipher") == "AES" and spec.get("hash") == "SHA-512":
+            fs_img = os.path.join(work, "plain.img")
+            vc_decrypt(snapshot, spec["password"], int(spec.get("pim", "0") or 0), fs_img)
+            what.append("new VeraCrypt header opened and data decrypted in Python")
+        else:
+            # Argon2 / cascades: no host tool decrypts these. The volume must at least
+            # not be readable as a plain filesystem any more.
+            if fs_type(snapshot):
+                problems.append(f"the drive still reads as plain {fs_type(snapshot)} after Encrypt")
+            fs_img = None
+            what.append(f"{spec.get('cipher')}/{spec.get('hash')}: not host-decryptable, checked opaque")
+
+        if fs_img is not None:
+            fs = fs_type(fs_img)
+            want_fs = {"exfat": "exfat", "fat32": "vfat"}.get(spec.get("fs", ""), None)
+            if action == "encrypt" and want_fs and fs != want_fs:
+                problems.append(f"filesystem inside is {fs!r}, asked for {want_fs!r}")
+            problems += check_structure(fs, fs_img)
+            problems += check_erased_files(fs_img, expected)
+            what.append(f"{fs} checker clean, flower.jpg gone, after_erase.txt present")
+    if problems:
+        print(f"HOST CHECK FAILED {name} ({action}):")
+        for p in problems:
+            print(f"  - {p}")
+        sys.exit(1)
+    print(f"HOST CHECK OK {name} ({action}): " + "; ".join(what))
+
+
 def main():
     if len(sys.argv) != 3:
         raise SystemExit(__doc__)
     slot, case_dir = sys.argv[1:]
+    if os.path.exists(os.path.join(case_dir, "erase.txt")):
+        return erase_main(slot, case_dir)
     with tempfile.TemporaryDirectory() as work:
         snapshot = os.path.join(work, "slot.img")
         with open(slot, "rb") as src, open(snapshot, "wb") as dst:   # a stable copy

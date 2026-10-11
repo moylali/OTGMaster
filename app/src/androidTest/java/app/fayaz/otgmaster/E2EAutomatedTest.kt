@@ -87,6 +87,7 @@ class E2EAutomatedTest {
     fun testMountUsbDrive() {
         val arguments = InstrumentationRegistry.getArguments()
         if (arguments.getString("write_test", "false") == "true") return
+        if (arguments.getString("erase_action", "").isNotEmpty()) return
         val password = arguments.getString("password", "password123")
         val testCase = arguments.getString("testCase", "exfat")
 
@@ -375,6 +376,7 @@ class E2EAutomatedTest {
     fun testWriteOperations() {
         val arguments = InstrumentationRegistry.getArguments()
         if (arguments.getString("write_test", "false") != "true") return
+        if (arguments.getString("erase_action", "").isNotEmpty()) return
 
         val password = arguments.getString("password", "password123")
         val pim = arguments.getString("pim", "")
@@ -600,6 +602,199 @@ class E2EAutomatedTest {
         assertFalse("write_test.txt reappeared after remount #3 — deletion not persisted!", reappeared)
 
         doUnmount()
+    }
+
+    /**
+     * Format and Encrypt from a mounted card, through the UI a user drives: the More
+     * menu, the confirmation screen (typing ERASE), the progress dialog. Then, through
+     * the provider: the fixture's flower.jpg is gone, a new file can be written and read
+     * back, and — where the result is encrypted — the volume unmounts and unlocks again
+     * with the password it now has and still holds that file.
+     * scripts/verify_e2e_volume.py --erase then checks the drive on the host.
+     *
+     * Case files: erase.txt (action, quick, and for encrypt cipher, hash, pim, fs,
+     * password, label), plus plain.txt for a volume that auto-mounts without a password.
+     */
+    @Test
+    fun testEraseOperations() {
+        val arguments = InstrumentationRegistry.getArguments()
+        val action = arguments.getString("erase_action", "")
+        if (action.isEmpty()) return
+        val password = arguments.getString("password", "password123")
+        val pim = arguments.getString("pim", "")
+        val testCase = arguments.getString("testCase", "")
+        val plain = arguments.getString("plain_mount", "false") == "true"
+        val quick = arguments.getString("erase_quick", "false") == "true"
+        val context = ApplicationProvider.getApplicationContext<Context>()
+        android.os.SystemClock.sleep(1000)
+
+        val scan = findScanButton()
+        assertNotNull("Scan button not found", scan)
+        scan!!.click()
+        device.wait(Until.findObject(By.text(java.util.regex.Pattern.compile("(?i)Allow|OK"))), 5000L)?.click()
+        if (plain) {
+            assertNotNull("plain volume was not auto-mounted", waitForMounted(120000L))
+        } else {
+            assertTrue("Mount before $action failed", doMount(password, pim, testCase, clearFields = false))
+        }
+        assertTrue("flower.jpg not on the volume before $action", listRoot(context).any { it.endsWith("flower.jpg") })
+
+        // ── The card's More menu ──────────────────────────────────────────────
+        val more = findScrolling(By.desc("more_actions_button"), desc = "more_actions_button")
+        assertNotNull("More actions button not found on the mounted card", more)
+        more!!.click()
+        val item = device.wait(Until.findObject(By.desc("${action}_menu_item")), timeout)
+        if (item == null) captureScreen("no_${action}_menu_item")
+        assertNotNull("$action not in the More menu", item)
+        assertTrue("$action is disabled for this volume", item!!.isEnabled)
+        item.click()
+        android.os.SystemClock.sleep(1000)
+
+        var newPassword = password
+        var newPim = pim
+        var newCipher = arguments.getString("cipher", "")
+        var newHash = arguments.getString("hash", "")
+        if (action == "encrypt") {
+            newPassword = arguments.getString("erase_password", "")
+            newPim = arguments.getString("erase_pim", "")
+            newCipher = arguments.getString("erase_cipher", "AES")
+            newHash = arguments.getString("erase_hash", "SHA-512")
+            typeInto("encrypt_password", newPassword)
+            typeInto("encrypt_password_confirm", newPassword)
+            hideKeyboard()
+            if (newCipher != "AES") pickOption("encrypt_cipher", newCipher)
+            if (newHash != "SHA-512") pickOption("encrypt_kdf", newHash)
+            if (newPim.isNotEmpty()) { typeInto("encrypt_pim", newPim); hideKeyboard() }
+            clickInDialog("encrypt_fs_${arguments.getString("erase_fs", "exfat")}")
+            arguments.getString("erase_label", "").takeIf { it.isNotEmpty() }?.let {
+                typeInto("encrypt_label", it); hideKeyboard()
+            }
+        }
+        if (quick) clickInDialog("quick_checkbox")
+        typeInto("erase_confirm_field", "ERASE")
+        hideKeyboard()
+        val confirm = findInDialog("${action}_confirm_button")
+        assertNotNull("$action confirm button not found", confirm)
+        if (!confirm!!.isEnabled) captureScreen("${action}_confirm_disabled")
+        assertTrue("$action confirm button stayed disabled after typing ERASE", confirm.isEnabled)
+        confirm.click()
+        // The confirmation screen closes as the operation starts; if it is still up,
+        // the click did not take, and waiting for the result would only time out.
+        if (!device.wait(Until.gone(By.desc("${action}_confirm_button")), 15000L)) {
+            captureScreen("${action}_confirm_did_not_start")
+            fail("$action did not start: the confirmation screen is still showing")
+        }
+
+        // ── Progress, then the result ─────────────────────────────────────────
+        val done = device.wait(Until.findObject(By.desc("operation_done_button")), 900_000L)
+        if (done == null) captureScreen("${action}_never_finished")
+        assertNotNull("$action did not finish within 15 minutes", done)
+        val failed = device.findObject(By.textStartsWith("Failed:"))
+        if (failed != null) captureScreen("${action}_failed")
+        assertNull("$action failed: ${failed?.text}", failed)
+        done!!.click()
+        assertNotNull("no mounted card after $action", waitForMounted(60000L))
+
+        var root = listRoot(context)
+        assertFalse("flower.jpg survived the $action: $root", root.any { it.endsWith("flower.jpg") })
+        val content = "OTGMaster after $action ($testCase)"
+        val rootId = getRootDocId(context)!!
+        val uri = DocumentsContract.createDocument(context.contentResolver,
+            DocumentsContract.buildDocumentUri(AUTHORITY, rootId), "text/plain", "after_erase.txt")
+        assertNotNull("createDocument(after_erase.txt) failed on the new volume", uri)
+        context.contentResolver.openOutputStream(uri!!)?.use { it.write(content.toByteArray()) }
+            ?: fail("openOutputStream(after_erase.txt) returned null")
+        assertEquals(content, context.contentResolver.openInputStream(uri)?.use { it.readBytes().toString(Charsets.UTF_8) })
+
+        // An encrypted result must open again with the password it now has.
+        if (action == "encrypt" || !plain) {
+            doUnmount()
+            val scan2 = findScanButton()
+            assertNotNull("Scan button not found for the remount", scan2)
+            scan2!!.click()
+            android.os.SystemClock.sleep(2000)
+            assertTrue("password field not offered for the new volume",
+                device.wait(Until.findObject(By.descContains("password_input")), 30000L) != null)
+            if (newCipher.isNotEmpty() && newCipher != "AES") pickOption("cipher_picker", newCipher)
+            if (newHash.isNotEmpty() && newHash != "SHA-512") pickOption("hash_picker", newHash)
+            assertTrue("the volume did not unlock with its new password after $action",
+                doMount(newPassword, newPim, testCase, clearFields = true))
+            root = listRoot(context)
+            val id = root.firstOrNull { it.endsWith("after_erase.txt") }
+            assertNotNull("after_erase.txt missing after the remount: $root", id)
+            assertEquals("after_erase.txt changed across the remount", content,
+                context.contentResolver.openInputStream(DocumentsContract.buildDocumentUri(AUTHORITY, id!!))
+                    ?.use { it.readBytes().toString(Charsets.UTF_8) })
+            doUnmount()
+        }
+    }
+
+    /** Every document id in the first root's top directory. */
+    private fun listRoot(context: Context): List<String> {
+        val ids = mutableListOf<String>()
+        val rootId = getRootDocId(context) ?: return ids
+        context.contentResolver.query(DocumentsContract.buildChildDocumentsUri(AUTHORITY, rootId), null, null, null, null)
+            ?.use { cur ->
+                val col = cur.getColumnIndex(DocumentsContract.Document.COLUMN_DOCUMENT_ID)
+                while (cur.moveToNext()) cur.getString(col)?.let { ids += it }
+            }
+        return ids
+    }
+
+    /**
+     * Finds [desc] in the full-screen Format/Encrypt dialog, swiping its form up until
+     * it shows. The dialog is its own window, so the page scroller behind it is no help.
+     */
+    private fun findInDialog(desc: String): androidx.test.uiautomator.UiObject2? {
+        repeat(8) {
+            device.wait(Until.findObject(By.desc(desc)), 1500L)?.let { return it }
+            val h = device.displayHeight
+            device.swipe(device.displayWidth / 2, h * 3 / 4, device.displayWidth / 2, h / 3, 25)
+            device.waitForIdle()
+        }
+        captureScreen("dialog_missing_$desc")
+        return null
+    }
+
+    private fun clickInDialog(desc: String) {
+        val obj = findInDialog(desc)
+        assertNotNull("$desc not found in the dialog", obj)
+        obj!!.click()
+        android.os.SystemClock.sleep(300)
+    }
+
+    /**
+     * Sets a field's text through the accessibility set-text action. Typing with
+     * `input text` goes to whichever field has focus, and a tap on the next field did not
+     * always move it there: ERASE once landed in the label field above the confirmation
+     * field, and the case then waited out its whole timeout on a disabled button.
+     */
+    private fun typeInto(desc: String, text: String) {
+        val field = findInDialog(desc)
+        assertNotNull("$desc not found in the dialog", field)
+        editTextOf(field!!).text = text
+        android.os.SystemClock.sleep(300)
+        // Read back through the field itself. Password fields are hidden from
+        // accessibility; for those, the confirm button enabling (it needs both
+        // passwords to match) is the check.
+        if (!desc.startsWith("encrypt_password")) {
+            val shown = device.findObject(By.desc(desc))?.let { editTextOf(it).text } ?: ""
+            if (shown != text) captureScreen("typed_$desc")
+            assertEquals("$desc after setting its text", text, shown)
+        }
+    }
+
+    /**
+     * The editable node of a Compose text field found by its description. The
+     * description lands on a View *inside* the EditText (seen in the hierarchy dump of
+     * the ERASE field), so the EditText is its parent; set-text on the inner View is
+     * silently ignored.
+     */
+    private fun editTextOf(obj: androidx.test.uiautomator.UiObject2): androidx.test.uiautomator.UiObject2 {
+        val edit = "android.widget.EditText"
+        if (obj.className == edit) return obj
+        obj.parent?.takeIf { it.className == edit }?.let { return it }
+        return obj.findObject(By.clazz(edit)) ?: obj
     }
 
     // ── helpers ──────────────────────────────────────────────────────────────

@@ -481,7 +481,14 @@ class MainActivity : AppCompatActivity() {
                         toastIsSuccess = toastState.value?.second ?: true,
                         onToastDismiss = { toastState.value = null },
                         newlyMountedDriveIds = newlyMountedDriveIds.value,
-                        onHighlightConsumed = { driveId -> newlyMountedDriveIds.value = newlyMountedDriveIds.value - driveId }
+                        onHighlightConsumed = { driveId -> newlyMountedDriveIds.value = newlyMountedDriveIds.value - driveId },
+                        formatUnavailable = { formatUnavailable(it) },
+                        encryptUnavailable = { encryptUnavailable(it) },
+                        driveSummary = { driveSummary(it) },
+                        onFormat = { drive, full -> formatDrive(drive, full) },
+                        onEncrypt = { drive, req -> encryptDrive(drive, req) },
+                        driveOperation = driveOperation.value,
+                        onDriveOperationClose = { driveOperation.value = null },
                     )
                 }
             }
@@ -1341,6 +1348,220 @@ class MainActivity : AppCompatActivity() {
         }
     }
 
+    // ── Format and Encrypt ────────────────────────────────────────────────────
+
+    /** The running or last Format/Encrypt, shown by DriveOperationDialog. */
+    private val driveOperation = mutableStateOf<app.fayaz.otgmaster.ui.DriveOperation?>(null)
+
+    /** Why Format is not offered for [drive], or null if it is. */
+    private fun formatUnavailable(drive: MountedDrive): String? = when {
+        drive.isReadOnly -> getString(R.string.action_unavailable_read_only)
+        drive.sourceVolumeCandidate?.containerType == app.fayaz.otgmaster.veracrypt.ContainerType.BITLOCKER ->
+            getString(R.string.format_unavailable_fs, "BitLocker")
+        drive.filesystemName != "FAT32" && drive.filesystemName != "exFAT" ->
+            getString(R.string.format_unavailable_fs, drive.filesystemName)
+        drive.blockDevice == null -> getString(R.string.encrypt_unavailable_bounds)
+        else -> null
+    }
+
+    /** Why Encrypt is not offered for [drive], or null if it is. */
+    private fun encryptUnavailable(drive: MountedDrive): String? = when {
+        drive.isReadOnly -> getString(R.string.action_unavailable_read_only)
+        drive.partitionStartBlock == null || drive.partitionBlockCount == null || drive.rawBlockDevice == null ->
+            getString(R.string.encrypt_unavailable_bounds)
+        drive.rawBlockDevice.blockSize != 512 -> getString(R.string.encrypt_unavailable_sector)
+        else -> null
+    }
+
+    private fun driveSummary(drive: MountedDrive): app.fayaz.otgmaster.ui.DriveSummary {
+        val type = drive.sourceVolumeCandidate?.containerType
+        val bytes = (drive.partitionBlockCount ?: 0L) * (drive.rawBlockDevice?.blockSize ?: 512)
+        return app.fayaz.otgmaster.ui.DriveSummary(
+            deviceName = drive.sourceDeviceDisplayName ?: drive.name,
+            partitionLabel = drive.partitionLabel,
+            filesystem = drive.filesystemName,
+            container = if (type == null || drive.isPlain) "Not encrypted" else encryptionTag(type).first,
+            sizeText = if (bytes > 0) formatSize(bytes) else formatSize(drive.fileSystem.capacity),
+            serial = drive.sourceDeviceName?.split(":")?.getOrNull(2)?.takeIf { it.isNotBlank() },
+        )
+    }
+
+    /**
+     * Takes [drive] out of the mount list and unmounts its filesystem, leaving the block
+     * device it was mounted from — and so any container's key, and the USB connection —
+     * open for the caller to write through.
+     */
+    private suspend fun detachForErase(drive: MountedDrive) {
+        withContext(Dispatchers.Main) {
+            OtgMasterState.removeDrive(drive.id)
+            contentResolver.notifyChange(
+                android.provider.DocumentsContract.buildRootsUri("app.fayaz.otgmaster.documents"), null)
+            app.fayaz.otgmaster.extension.ExtensionContract.notifyCompanions(
+                applicationContext, app.fayaz.otgmaster.extension.ExtensionContract.ACTION_VOLUME_UNMOUNTED, drive)
+            updateMountedDrives()
+            removeDriveShortcut(drive.id)
+        }
+        // As in unmountDrive: let in-flight file callbacks finish before the filesystem goes.
+        app.fayaz.otgmaster.provider.VeraCryptDocumentProvider.drainCallbacks()
+        deviceMutex.withLock {
+            when (val fs = drive.fileSystem) {
+                is app.fayaz.otgmaster.exfat.ExFatFileSystem -> fs.unmount()
+                is app.fayaz.otgmaster.ntfs.NtfsFileSystem -> fs.unmount()
+                is app.fayaz.otgmaster.apfs.ApfsFileSystem -> fs.unmount()
+            }
+        }
+    }
+
+    /** Mounts the filesystem now on [device] in [old]'s place, and lists it again. */
+    private suspend fun remountAfterErase(
+        old: MountedDrive,
+        device: RawBlockDevice,
+        filesystemName: String,
+        candidate: VolumeCandidate?,
+        plain: Boolean,
+    ): MountedDrive {
+        val byteDevice = me.jahnen.libaums.core.driver.ByteBlockDevice(
+            device as me.jahnen.libaums.core.driver.BlockDeviceDriver)
+        val fileSystem = FileSystemFactory.createFileSystem(PartitionTableEntry(0, 0, 0), byteDevice)
+        val displayName = old.sourceDeviceDisplayName ?: old.name
+        val drive = old.copy(
+            name = if (plain) getString(R.string.mounted_drive_name_plain, displayName, filesystemName, old.id)
+                   else getString(R.string.mounted_drive_name, displayName, old.id),
+            fileSystem = fileSystem,
+            blockDevice = device,
+            isPlain = plain,
+            sourceVolumeCandidate = candidate,
+            filesystemName = filesystemName,
+            mountedReadOnly = false,
+        )
+        OtgMasterState.addDrive(drive)
+        withContext(Dispatchers.Main) {
+            contentResolver.notifyChange(
+                android.provider.DocumentsContract.buildRootsUri("app.fayaz.otgmaster.documents"), null)
+            app.fayaz.otgmaster.extension.ExtensionContract.notifyCompanions(
+                applicationContext, app.fayaz.otgmaster.extension.ExtensionContract.ACTION_VOLUME_MOUNTED, drive)
+            newlyMountedDriveIds.value = newlyMountedDriveIds.value + drive.id
+            updateMountedDrives()
+            pushDriveShortcut(drive)
+        }
+        return drive
+    }
+
+    private fun progressFor(title: String) = app.fayaz.otgmaster.format.DriveFormatter.Progress { phase, fraction ->
+        driveOperation.value = app.fayaz.otgmaster.ui.DriveOperation(title, phase, fraction)
+    }
+
+    /**
+     * Format: an empty filesystem of the same kind, size, cluster size and label, written
+     * through the device the volume is mounted from, so a container stays as it is.
+     */
+    private fun formatDrive(drive: MountedDrive, full: Boolean) {
+        val title = getString(R.string.operation_format_title, drive.partitionLabel.ifEmpty { drive.name })
+        val device = drive.blockDevice ?: return
+        driveOperation.value = app.fayaz.otgmaster.ui.DriveOperation(title, getString(R.string.operation_unmounting), null)
+        window.addFlags(android.view.WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON)
+        appendLog(getString(R.string.log_format_started, drive.name, drive.filesystemName, if (full) "full" else "quick"))
+        lifecycleScope.launch(Dispatchers.IO) {
+            val t0 = System.currentTimeMillis()
+            try {
+                val label = runCatching { drive.fileSystem.volumeLabel.trim() }.getOrDefault("")
+                // Read before anything is touched: a volume the formatter cannot lay out
+                // again is refused with its files intact.
+                val existing = deviceMutex.withLock {
+                    app.fayaz.otgmaster.format.DriveFormatter.readExisting(device, label)
+                }
+                detachForErase(drive)
+                deviceMutex.withLock {
+                    app.fayaz.otgmaster.format.DriveFormatter.reformat(device, existing, full, progressFor(title))
+                    (device as? app.fayaz.otgmaster.block.CachedBlockDevice)?.invalidate()
+                }
+                driveOperation.value = app.fayaz.otgmaster.ui.DriveOperation(title, getString(R.string.operation_mounting), null)
+                remountAfterErase(drive, device, existing.filesystem.displayName, drive.sourceVolumeCandidate, drive.isPlain)
+                val secs = ((System.currentTimeMillis() - t0) / 1000).toInt()
+                withContext(Dispatchers.Main) {
+                    appendLog(getString(R.string.log_format_done, drive.name, existing.filesystem.displayName, secs))
+                    driveOperation.value = app.fayaz.otgmaster.ui.DriveOperation(title,
+                        getString(R.string.operation_format_done, existing.filesystem.displayName), 1f, finished = true)
+                }
+            } catch (e: Exception) {
+                android.util.Log.e("OTGMaster", "format failed", e)
+                withContext(Dispatchers.Main) {
+                    appendLog(getString(R.string.log_operation_failed, title, e.message ?: e.javaClass.simpleName))
+                    driveOperation.value = app.fayaz.otgmaster.ui.DriveOperation(title, "", null, finished = true,
+                        error = getString(R.string.operation_failed, e.message ?: e.javaClass.simpleName))
+                    refreshDevices()
+                }
+            } finally {
+                withContext(Dispatchers.Main) {
+                    window.clearFlags(android.view.WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON)
+                }
+            }
+        }
+    }
+
+    /**
+     * Encrypt: a new VeraCrypt volume over the whole partition, holding a new exFAT or
+     * FAT32, mounted in the old volume's place. Erases the partition.
+     */
+    private fun encryptDrive(drive: MountedDrive, req: app.fayaz.otgmaster.ui.EncryptRequest) {
+        val title = getString(R.string.operation_encrypt_title, drive.partitionLabel.ifEmpty { drive.name })
+        val raw = drive.rawBlockDevice ?: return
+        val start = drive.partitionStartBlock ?: return
+        val count = drive.partitionBlockCount ?: return
+        val deviceKey = drive.sourceDeviceName
+        driveOperation.value = app.fayaz.otgmaster.ui.DriveOperation(title, getString(R.string.operation_unmounting), null)
+        window.addFlags(android.view.WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON)
+        appendLog(getString(R.string.log_encrypt_started, drive.name, req.cipher.displayName, req.hash.displayName,
+            req.filesystem.displayName, if (req.full) "full" else "quick"))
+        lifecycleScope.launch(Dispatchers.IO) {
+            val t0 = System.currentTimeMillis()
+            try {
+                detachForErase(drive)
+                deviceMutex.withLock { drive.blockDevice?.close() }
+                // The whole partition, raw. Not closed with the volume: the USB connection
+                // under it belongs to openedDevices / unmountDrive, as for APFS.
+                val slice = app.fayaz.otgmaster.block.SlicedBlockDevice(raw, start, count)
+                val partition = object : RawBlockDevice by slice { override fun close() {} }
+                val volume = deviceMutex.withLock {
+                    app.fayaz.otgmaster.format.DriveFormatter.encrypt(partition, req.password, req.pim,
+                        req.cipher, req.hash, req.filesystem, req.label, req.full, progressFor(title))
+                }
+                // Any credentials saved for the old volume would now only fail.
+                if (deviceKey != null) {
+                    withContext(Dispatchers.Main) {
+                        credentialStore.deletePartition(deviceKey, start)
+                        sessionPlaintextCreds.remove(deviceKey)
+                    }
+                }
+                driveOperation.value = app.fayaz.otgmaster.ui.DriveOperation(title, getString(R.string.operation_mounting), null)
+                val cached = wrapWithCache(volume, req.filesystem.displayName)
+                val candidate = VolumeCandidate(drive.partitionLabel, start, count,
+                    app.fayaz.otgmaster.veracrypt.ContainerType.VERACRYPT)
+                remountAfterErase(drive, cached, req.filesystem.displayName, candidate, plain = false)
+                val secs = ((System.currentTimeMillis() - t0) / 1000).toInt()
+                withContext(Dispatchers.Main) {
+                    appendLog(getString(R.string.log_encrypt_done, drive.name, secs))
+                    driveOperation.value = app.fayaz.otgmaster.ui.DriveOperation(title,
+                        getString(R.string.operation_encrypt_done, req.cipher.displayName, req.hash.displayName,
+                            req.filesystem.displayName), 1f, finished = true)
+                }
+            } catch (e: Exception) {
+                android.util.Log.e("OTGMaster", "encrypt failed", e)
+                withContext(Dispatchers.Main) {
+                    appendLog(getString(R.string.log_operation_failed, title, e.message ?: e.javaClass.simpleName))
+                    driveOperation.value = app.fayaz.otgmaster.ui.DriveOperation(title, "", null, finished = true,
+                        error = getString(R.string.operation_failed, e.message ?: e.javaClass.simpleName))
+                    refreshDevices()
+                }
+            } finally {
+                req.password.fill('\u0000')
+                withContext(Dispatchers.Main) {
+                    window.clearFlags(android.view.WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON)
+                }
+            }
+        }
+    }
+
     private fun detectPlainPartitions(device: RawBlockDevice, candidates: List<VolumeCandidate>): List<PlainPartition> {
         return candidates.mapNotNull { candidate ->
             // Encrypted APFS carries the same container superblock as plain APFS, so
@@ -2006,16 +2227,47 @@ fun OtgMasterApp(
     toastIsSuccess: Boolean = true,
     onToastDismiss: () -> Unit = {},
     newlyMountedDriveIds: Set<String> = emptySet(),
-    onHighlightConsumed: (String) -> Unit = {}
+    onHighlightConsumed: (String) -> Unit = {},
+    formatUnavailable: (MountedDrive) -> String? = { "" },
+    encryptUnavailable: (MountedDrive) -> String? = { "" },
+    driveSummary: (MountedDrive) -> app.fayaz.otgmaster.ui.DriveSummary? = { null },
+    onFormat: (MountedDrive, Boolean) -> Unit = { _, _ -> },
+    onEncrypt: (MountedDrive, app.fayaz.otgmaster.ui.EncryptRequest) -> Unit = { _, _ -> },
+    driveOperation: app.fayaz.otgmaster.ui.DriveOperation? = null,
+    onDriveOperationClose: () -> Unit = {},
 ) {
     var showSettings by remember { mutableStateOf(false) }
+    var formatTarget by remember { mutableStateOf<MountedDrive?>(null) }
+    var encryptTarget by remember { mutableStateOf<MountedDrive?>(null) }
+    formatTarget?.let { target ->
+        driveSummary(target)?.let { summary ->
+            app.fayaz.otgmaster.ui.FormatScreen(
+                drive = summary,
+                insideContainer = !target.isPlain,
+                onConfirm = { full -> formatTarget = null; onFormat(target, full) },
+                onDismiss = { formatTarget = null },
+            )
+        }
+    }
+    encryptTarget?.let { target ->
+        driveSummary(target)?.let { summary ->
+            app.fayaz.otgmaster.ui.EncryptScreen(
+                drive = summary,
+                onConfirm = { req -> encryptTarget = null; onEncrypt(target, req) },
+                onDismiss = { encryptTarget = null },
+            )
+        }
+    }
+    driveOperation?.let { app.fayaz.otgmaster.ui.DriveOperationDialog(it, onDriveOperationClose) }
     var isVeraCryptExpanded by remember { mutableStateOf(true) }
     val scrollState = rememberScrollState()
+    val mountedScrollState = rememberScrollState()
     var previousMountedCount by remember { mutableIntStateOf(mountedDrives.size) }
 
     LaunchedEffect(mountedDrives.size) {
         if (mountedDrives.size > previousMountedCount) {
             scrollState.animateScrollTo(0)
+            mountedScrollState.animateScrollTo(0)
         }
         previousMountedCount = mountedDrives.size
     }
@@ -2033,212 +2285,256 @@ fun OtgMasterApp(
             )
         }
     ) { paddingValues ->
-        Column(
+        // Sections, laid out below as one column or, on a wide window, two panes.
+        val scanButton: @Composable () -> Unit = {
+            Button(
+                onClick = onRefreshDevices,
+                modifier = Modifier.fillMaxWidth().semantics { contentDescription = "scan_button" }
+            ) {
+                Text(stringResource(R.string.scan_usb_devices))
+            }
+        }
+        val mountedSection: @Composable (alwaysShowTitle: Boolean) -> Unit = { alwaysShowTitle ->
+            if (mountedDrives.isNotEmpty() || alwaysShowTitle) {
+                Text(stringResource(R.string.mounted_devices), style = MaterialTheme.typography.titleLarge)
+            }
+            if (mountedDrives.isEmpty() && alwaysShowTitle) {
+                Text(stringResource(R.string.no_drives_mounted), style = MaterialTheme.typography.bodyMedium,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant)
+            }
+                mountedDrives.forEach { drive ->
+                    key(drive.id) {
+                    val highlightAlpha = remember { Animatable(0f) }
+                    val isNewlyMounted = drive.id in newlyMountedDriveIds
+                    LaunchedEffect(isNewlyMounted) {
+                        if (isNewlyMounted) {
+                            repeat(3) {
+                                highlightAlpha.animateTo(1f, tween(250))
+                                highlightAlpha.animateTo(0f, tween(250))
+                            }
+                            onHighlightConsumed(drive.id)
+                        }
+                    }
+                    val normalColor = MaterialTheme.colorScheme.secondaryContainer
+                    val cardColor = lerp(normalColor, Color(0xFF2E7D32), highlightAlpha.value * 0.6f)
+                    Card(
+                        modifier = Modifier.fillMaxWidth(),
+                        colors = CardDefaults.cardColors(containerColor = cardColor)
+                    ) {
+                        Column(modifier = Modifier.padding(16.dp)) {
+                            val totalSpace = drive.fileSystem.capacity
+                            val freeSpace = drive.fileSystem.freeSpace
+                            val usedSpace = totalSpace - freeSpace
+                            val progress = if (totalSpace > 0) usedSpace.toFloat() / totalSpace.toFloat() else 0f
+
+                            val deviceTitle = buildString {
+                                append(drive.sourceDeviceDisplayName ?: drive.name)
+                                if (drive.partitionLabel.isNotEmpty()) {
+                                    append(" · ")
+                                    append(drive.partitionLabel)
+                                }
+                            }
+                            Text(text = deviceTitle, style = MaterialTheme.typography.titleMedium)
+
+                            Spacer(modifier = Modifier.height(6.dp))
+
+                            // Encryption + filesystem tags
+                            Row(horizontalArrangement = Arrangement.spacedBy(6.dp)) {
+                                val encTag = encryptionTag(drive.sourceVolumeCandidate?.containerType)
+                                DriveTag(label = encTag.first, color = encTag.second)
+
+                                if (drive.filesystemName.isNotEmpty()) {
+                                    val fsColor = when {
+                                        drive.filesystemName.startsWith("ext", ignoreCase = true) -> Color(0xFF1565C0)
+                                        drive.filesystemName.equals("exFAT", ignoreCase = true)   -> Color(0xFF00796B)
+                                        drive.filesystemName.equals("FAT32", ignoreCase = true)   -> Color(0xFF2E7D32)
+                                        drive.filesystemName.equals("NTFS", ignoreCase = true)    -> Color(0xFF6A1B9A)
+                                        else -> Color(0xFF37474F)
+                                    }
+                                    DriveTag(label = drive.filesystemName.uppercase(), color = fsColor)
+                                }
+
+                                // Red, not a filesystem colour: it is a warning that the
+                                // drive refuses writes, and why is in the log.
+                                if (drive.isReadOnly) {
+                                    DriveTag(label = "READ-ONLY", color = Color(0xFFC62828))
+                                }
+                            }
+
+                            Spacer(modifier = Modifier.height(4.dp))
+                            Text(text = formatSize(totalSpace), style = MaterialTheme.typography.bodyMedium, color = MaterialTheme.colorScheme.onSurfaceVariant)
+
+                            Spacer(modifier = Modifier.height(8.dp))
+                            LinearProgressIndicator(
+                                progress = progress,
+                                modifier = Modifier.fillMaxWidth().height(8.dp),
+                                color = MaterialTheme.colorScheme.primary,
+                                trackColor = MaterialTheme.colorScheme.primaryContainer
+                            )
+                            Spacer(modifier = Modifier.height(4.dp))
+                            Row(
+                                modifier = Modifier.fillMaxWidth(),
+                                horizontalArrangement = Arrangement.SpaceBetween
+                            ) {
+                                Text(text = stringResource(R.string.used_label, formatSize(usedSpace)), style = MaterialTheme.typography.bodySmall)
+                                Text(text = stringResource(R.string.free_label, formatSize(freeSpace)), style = MaterialTheme.typography.bodySmall)
+                            }
+
+                            Spacer(modifier = Modifier.height(16.dp))
+                            @OptIn(androidx.compose.foundation.layout.ExperimentalLayoutApi::class)
+                            FlowRow(horizontalArrangement = Arrangement.spacedBy(8.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                                Button(onClick = { onOpenFilesApp(drive) }) {
+                                    Text(stringResource(R.string.open_files_app))
+                                }
+                                if (!drive.isPlain) {
+                                    Button(
+                                        onClick = { onUnmount(drive) },
+                                        modifier = Modifier.semantics { contentDescription = "unmount_button" }
+                                    ) {
+                                        Text(stringResource(R.string.unmount))
+                                    }
+                                }
+                                val deviceKey = drive.sourceDeviceName
+                                // Everything but the two everyday actions lives in this menu.
+                                // hasCachedCreds is keyed by device, not partition, so on a
+                                // mixed drive the unencrypted partition's card offered to
+                                // clear the *encrypted* partition's credentials.
+                                app.fayaz.otgmaster.ui.DriveMoreMenu(
+                                    canClearCredentials = !drive.isPlain && deviceKey != null && hasCachedCreds(deviceKey, null),
+                                    onClearCredentials = { deviceKey?.let(onClearDeviceCreds) },
+                                    formatUnavailable = formatUnavailable(drive),
+                                    onFormat = { formatTarget = drive },
+                                    encryptUnavailable = encryptUnavailable(drive),
+                                    onEncrypt = { encryptTarget = drive },
+                                )
+                            }
+                        }
+                    }
+                    } // key(drive.id)
+                }
+        }
+        val unlockSection: @Composable () -> Unit = {
+            Card(modifier = Modifier.fillMaxWidth()) {
+                Column(modifier = Modifier.padding(16.dp)) {
+                    Row(
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .clickable { isVeraCryptExpanded = !isVeraCryptExpanded },
+                        horizontalArrangement = Arrangement.SpaceBetween,
+                        verticalAlignment = Alignment.CenterVertically
+                    ) {
+                        Text(stringResource(R.string.mount_veracrypt_drive), style = MaterialTheme.typography.titleMedium)
+                        Icon(
+                            imageVector = if (isVeraCryptExpanded) Icons.Default.KeyboardArrowUp else Icons.Default.KeyboardArrowDown,
+                            contentDescription = stringResource(R.string.cd_expand)
+                        )
+                    }
+
+                    AnimatedVisibility(visible = isVeraCryptExpanded) {
+                        key(formResetKey) {
+                            VeraCryptMountSection(
+                                deviceCandidates = deviceCandidates,
+                                onUnlock = onUnlock,
+                                autoMountEnabled = autoMountEnabled,
+                                sessionCredentials = sessionCredentials,
+                                hasCachedCreds = hasCachedCreds,
+                                isExcluded = isExcluded,
+                                onSetExcluded = onSetExcluded,
+                                isPartitionReadOnly = isPartitionReadOnly,
+                                onSetPartitionReadOnly = onSetPartitionReadOnly,
+                                onQuickUnlock = onQuickUnlock
+                            )
+                        }
+                    }
+                }
+            }
+        }
+        val logsSection: @Composable () -> Unit = {
+            Row(
+                modifier = Modifier.fillMaxWidth(),
+                horizontalArrangement = Arrangement.SpaceBetween,
+                verticalAlignment = Alignment.CenterVertically
+            ) {
+                val logsLabel = stringResource(R.string.logs)
+                Text(logsLabel, style = MaterialTheme.typography.titleMedium)
+                Row(verticalAlignment = Alignment.CenterVertically) {
+                    val ctx = androidx.compose.ui.platform.LocalContext.current
+                    TextButton(onClick = {
+                        ctx.startActivity(
+                            Intent(ctx, app.fayaz.otgmaster.feedback.FeedbackActivity::class.java)
+                        )
+                    }) {
+                        Text(stringResource(R.string.feedback_report_issue))
+                    }
+                    IconButton(onClick = { onClearLogs() }) {
+                        Icon(Icons.Default.Delete, contentDescription = stringResource(R.string.cd_clear_logs))
+                    }
+                    IconButton(onClick = { onCopyText(logs.joinToString("\n"), logsLabel) }) {
+                        Icon(Icons.Default.ContentCopy, contentDescription = stringResource(R.string.cd_copy_logs))
+                    }
+                }
+            }
+            Card(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .height(150.dp)
+            ) {
+                // Newest entries first so the latest status is visible without scrolling
+                // (the page itself, and this card, both have bounded/scrollable height).
+                LazyColumn(modifier = Modifier.padding(8.dp)) {
+                    items(logs.asReversed()) { log ->
+                        Text(text = log, style = MaterialTheme.typography.bodySmall)
+                    }
+                }
+            }
+        }
+
+        BoxWithConstraints(
             modifier = Modifier
                 .fillMaxSize()
                 .semantics { testTagsAsResourceId = true }
                 .padding(paddingValues)
                 .consumeWindowInsets(paddingValues)
                 .imePadding()
-                .padding(16.dp)
-                .verticalScroll(scrollState),
-            verticalArrangement = Arrangement.spacedBy(16.dp)
         ) {
-        
-        Button(
-            onClick = onRefreshDevices,
-            modifier = Modifier.fillMaxWidth().semantics { contentDescription = "scan_button" }
-        ) {
-            Text(stringResource(R.string.scan_usb_devices))
-        }
-
-        // Section: Mounted Devices
-        if (mountedDrives.isNotEmpty()) {
-            Text(stringResource(R.string.mounted_devices), style = MaterialTheme.typography.titleLarge)
-            mountedDrives.forEach { drive ->
-                key(drive.id) {
-                val highlightAlpha = remember { Animatable(0f) }
-                val isNewlyMounted = drive.id in newlyMountedDriveIds
-                LaunchedEffect(isNewlyMounted) {
-                    if (isNewlyMounted) {
-                        repeat(3) {
-                            highlightAlpha.animateTo(1f, tween(250))
-                            highlightAlpha.animateTo(0f, tween(250))
-                        }
-                        onHighlightConsumed(drive.id)
-                    }
-                }
-                val normalColor = MaterialTheme.colorScheme.secondaryContainer
-                val cardColor = lerp(normalColor, Color(0xFF2E7D32), highlightAlpha.value * 0.6f)
-                Card(
-                    modifier = Modifier.fillMaxWidth(),
-                    colors = CardDefaults.cardColors(containerColor = cardColor)
-                ) {
-                    Column(modifier = Modifier.padding(16.dp)) {
-                        val totalSpace = drive.fileSystem.capacity
-                        val freeSpace = drive.fileSystem.freeSpace
-                        val usedSpace = totalSpace - freeSpace
-                        val progress = if (totalSpace > 0) usedSpace.toFloat() / totalSpace.toFloat() else 0f
-
-                        val deviceTitle = buildString {
-                            append(drive.sourceDeviceDisplayName ?: drive.name)
-                            if (drive.partitionLabel.isNotEmpty()) {
-                                append(" · ")
-                                append(drive.partitionLabel)
-                            }
-                        }
-                        Text(text = deviceTitle, style = MaterialTheme.typography.titleMedium)
-
-                        Spacer(modifier = Modifier.height(6.dp))
-
-                        // Encryption + filesystem tags
-                        Row(horizontalArrangement = Arrangement.spacedBy(6.dp)) {
-                            val encTag = encryptionTag(drive.sourceVolumeCandidate?.containerType)
-                            DriveTag(label = encTag.first, color = encTag.second)
-
-                            if (drive.filesystemName.isNotEmpty()) {
-                                val fsColor = when {
-                                    drive.filesystemName.startsWith("ext", ignoreCase = true) -> Color(0xFF1565C0)
-                                    drive.filesystemName.equals("exFAT", ignoreCase = true)   -> Color(0xFF00796B)
-                                    drive.filesystemName.equals("FAT32", ignoreCase = true)   -> Color(0xFF2E7D32)
-                                    drive.filesystemName.equals("NTFS", ignoreCase = true)    -> Color(0xFF6A1B9A)
-                                    else -> Color(0xFF37474F)
-                                }
-                                DriveTag(label = drive.filesystemName.uppercase(), color = fsColor)
-                            }
-
-                            // Red, not a filesystem colour: it is a warning that the
-                            // drive refuses writes, and why is in the log.
-                            if (drive.isReadOnly) {
-                                DriveTag(label = "READ-ONLY", color = Color(0xFFC62828))
-                            }
-                        }
-
-                        Spacer(modifier = Modifier.height(4.dp))
-                        Text(text = formatSize(totalSpace), style = MaterialTheme.typography.bodyMedium, color = MaterialTheme.colorScheme.onSurfaceVariant)
-
-                        Spacer(modifier = Modifier.height(8.dp))
-                        LinearProgressIndicator(
-                            progress = progress,
-                            modifier = Modifier.fillMaxWidth().height(8.dp),
-                            color = MaterialTheme.colorScheme.primary,
-                            trackColor = MaterialTheme.colorScheme.primaryContainer
-                        )
-                        Spacer(modifier = Modifier.height(4.dp))
-                        Row(
-                            modifier = Modifier.fillMaxWidth(),
-                            horizontalArrangement = Arrangement.SpaceBetween
-                        ) {
-                            Text(text = stringResource(R.string.used_label, formatSize(usedSpace)), style = MaterialTheme.typography.bodySmall)
-                            Text(text = stringResource(R.string.free_label, formatSize(freeSpace)), style = MaterialTheme.typography.bodySmall)
-                        }
-
-                        Spacer(modifier = Modifier.height(16.dp))
-                        @OptIn(androidx.compose.foundation.layout.ExperimentalLayoutApi::class)
-                        FlowRow(horizontalArrangement = Arrangement.spacedBy(8.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
-                            Button(onClick = { onOpenFilesApp(drive) }) {
-                                Text(stringResource(R.string.open_files_app))
-                            }
-                            if (!drive.isPlain) {
-                                Button(
-                                    onClick = { onUnmount(drive) },
-                                    modifier = Modifier.semantics { contentDescription = "unmount_button" }
-                                ) {
-                                    Text(stringResource(R.string.unmount))
-                                }
-                            }
-                            val deviceKey = drive.sourceDeviceName
-                            // hasCachedCreds is keyed by device, not partition, so on a
-                            // mixed drive the unencrypted partition's card offered to
-                            // clear the *encrypted* partition's credentials.
-                            if (!drive.isPlain && deviceKey != null && hasCachedCreds(deviceKey, null)) {
-                                Button(onClick = { onClearDeviceCreds(deviceKey) }) {
-                                    Text(stringResource(R.string.clear_cached_credentials))
-                                }
-                            }
-                        }
-                    }
-                }
-                } // key(drive.id)
-            }
-            Spacer(modifier = Modifier.height(16.dp))
-        }
-
-        // Section: Supported Encryptions - VeraCrypt
-        Card(modifier = Modifier.fillMaxWidth()) {
-            Column(modifier = Modifier.padding(16.dp)) {
+            // Two panes on a tablet, or a phone-sized window in landscape wide enough
+            // for both: the unlock form on the left, what is mounted on the right, so a
+            // mount is seen landing without scrolling past the form.
+            val twoPane = maxWidth >= 840.dp || (maxWidth > maxHeight && maxWidth >= 600.dp)
+            if (twoPane) {
                 Row(
-                    modifier = Modifier
-                        .fillMaxWidth()
-                        .clickable { isVeraCryptExpanded = !isVeraCryptExpanded },
-                    horizontalArrangement = Arrangement.SpaceBetween,
-                    verticalAlignment = Alignment.CenterVertically
+                    modifier = Modifier.fillMaxSize().padding(16.dp),
+                    horizontalArrangement = Arrangement.spacedBy(16.dp)
                 ) {
-                    Text(stringResource(R.string.mount_veracrypt_drive), style = MaterialTheme.typography.titleMedium)
-                    Icon(
-                        imageVector = if (isVeraCryptExpanded) Icons.Default.KeyboardArrowUp else Icons.Default.KeyboardArrowDown,
-                        contentDescription = stringResource(R.string.cd_expand)
-                    )
-                }
-
-                AnimatedVisibility(visible = isVeraCryptExpanded) {
-                    key(formResetKey) {
-                        VeraCryptMountSection(
-                            deviceCandidates = deviceCandidates,
-                            onUnlock = onUnlock,
-                            autoMountEnabled = autoMountEnabled,
-                            sessionCredentials = sessionCredentials,
-                            hasCachedCreds = hasCachedCreds,
-                            isExcluded = isExcluded,
-                            onSetExcluded = onSetExcluded,
-                            isPartitionReadOnly = isPartitionReadOnly,
-                            onSetPartitionReadOnly = onSetPartitionReadOnly,
-                            onQuickUnlock = onQuickUnlock
-                        )
+                    Column(
+                        modifier = Modifier.weight(1f).fillMaxHeight().verticalScroll(scrollState),
+                        verticalArrangement = Arrangement.spacedBy(16.dp)
+                    ) {
+                        scanButton()
+                        unlockSection()
+                        logsSection()
+                    }
+                    Column(
+                        modifier = Modifier.weight(1f).fillMaxHeight().verticalScroll(mountedScrollState)
+                            .semantics { contentDescription = "mounted_pane" },
+                        verticalArrangement = Arrangement.spacedBy(16.dp)
+                    ) {
+                        mountedSection(true)
                     }
                 }
-            }
-        }
-
-        // Logs
-        Row(
-            modifier = Modifier.fillMaxWidth(),
-            horizontalArrangement = Arrangement.SpaceBetween,
-            verticalAlignment = Alignment.CenterVertically
-        ) {
-            val logsLabel = stringResource(R.string.logs)
-            Text(logsLabel, style = MaterialTheme.typography.titleMedium)
-            Row(verticalAlignment = Alignment.CenterVertically) {
-                val ctx = androidx.compose.ui.platform.LocalContext.current
-                TextButton(onClick = {
-                    ctx.startActivity(
-                        Intent(ctx, app.fayaz.otgmaster.feedback.FeedbackActivity::class.java)
-                    )
-                }) {
-                    Text(stringResource(R.string.feedback_report_issue))
-                }
-                IconButton(onClick = { onClearLogs() }) {
-                    Icon(Icons.Default.Delete, contentDescription = stringResource(R.string.cd_clear_logs))
-                }
-                IconButton(onClick = { onCopyText(logs.joinToString("\n"), logsLabel) }) {
-                    Icon(Icons.Default.ContentCopy, contentDescription = stringResource(R.string.cd_copy_logs))
+            } else {
+                Column(
+                    modifier = Modifier.fillMaxSize().padding(16.dp).verticalScroll(scrollState),
+                    verticalArrangement = Arrangement.spacedBy(16.dp)
+                ) {
+                    scanButton()
+                    mountedSection(false)
+                    if (mountedDrives.isNotEmpty()) Spacer(modifier = Modifier.height(16.dp))
+                    unlockSection()
+                    logsSection()
                 }
             }
         }
-        Card(
-            modifier = Modifier
-                .fillMaxWidth()
-                .height(150.dp)
-        ) {
-            // Newest entries first so the latest status is visible without scrolling
-            // (the page itself, and this card, both have bounded/scrollable height).
-            LazyColumn(modifier = Modifier.padding(8.dp)) {
-                items(logs.asReversed()) { log ->
-                    Text(text = log, style = MaterialTheme.typography.bodySmall)
-                }
-            }
-        }
-    }
     }
 
     SettingsDrawer(

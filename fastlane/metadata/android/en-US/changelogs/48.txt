@@ -1,2 +1,7 @@
-• New: VeraCrypt Twofish and all five cascades (e.g. AES-Twofish-Serpent)
-• New: VeraCrypt Argon2id volumes (VeraCrypt 1.26.29+), with PIM
+• New: encrypt a USB partition as a new VeraCrypt volume
+• New: format FAT32/exFAT partitions, keeping their encryption
+• New: VeraCrypt Twofish and all five cascades
+• New: VeraCrypt Argon2id volumes, with PIM
+• New: More actions menu on mounted drives
+• New: tablet layout, drives beside the unlock form
+• Fixed: screens drawn under the system bars

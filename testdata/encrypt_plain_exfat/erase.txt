@@ -1,0 +1,8 @@
+action=encrypt
+quick=false
+cipher=Serpent-Twofish-AES
+hash=Argon2
+pim=1
+fs=fat32
+password=otgmaster-encrypt-test-2026
+label=ENCFAT

@@ -12,6 +12,9 @@ FEATURES
 • Keyfile Support — use a keyfile in addition to or instead of a password
 • Custom PIM — supports non-default PIM values for stronger key derivation
 • Cipher Selection — AES, Serpent and Twofish, VeraCrypt's five cascades of them, and SHA-512 or Argon2id key derivation
+• Encrypt a Drive — turn a USB partition into a new VeraCrypt volume (FAT32 or exFAT inside), with any of those ciphers
+• Format — erase a FAT32 or exFAT partition in place, keeping its encryption and password
+• Tablet Layout — on a wide screen, mounted drives sit beside the unlock form
 • Partitioned Disks — scans MBR/GPT partition tables and lets you pick the exact volume to unlock
 • No Root Required — works on standard, unmodified Android devices
 • No Cloud, No Tracking — your files never leave your device

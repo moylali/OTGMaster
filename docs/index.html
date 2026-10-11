@@ -77,7 +77,7 @@
       <a href="https://github.com/moylali/OTGMaster/blob/main/LICENSE"><img src="https://img.shields.io/badge/license-GPL--3.0--or--later-blue.svg" alt="License: GPL v3 or later"></a>
     </div>
 
-    <p class="lede">Android app to open encrypted USB mass-storage devices for read/write without root. Supports <strong>VeraCrypt</strong>, <strong>LUKS1</strong>, <strong>LUKS2</strong> and <strong>BitLocker</strong> encrypted volumes with <strong>FAT32</strong>, <strong>exFAT</strong>, <strong>NTFS</strong> and <strong>ext4</strong> filesystems, and reads Mac <strong>APFS</strong> drives, plain or encrypted.</p>
+    <p class="lede">Android app to open encrypted USB mass-storage devices for read/write without root. Supports <strong>VeraCrypt</strong>, <strong>LUKS1</strong>, <strong>LUKS2</strong> and <strong>BitLocker</strong> encrypted volumes with <strong>FAT32</strong>, <strong>exFAT</strong>, <strong>NTFS</strong> and <strong>ext4</strong> filesystems, and reads Mac <strong>APFS</strong> drives, plain or encrypted. It can also <strong>format</strong> a FAT32 or exFAT partition, or <strong>encrypt</strong> one into a new VeraCrypt volume.</p>
 
     <div class="stores">
       <div class="store">
@@ -123,12 +123,19 @@
       </li>
       <li>Feeds the decrypted block device into a userspace filesystem reader (FAT32 via libaums, exFAT via a vendored native <code>libexfat</code>, ext4 via a pure-Kotlin driver, NTFS via a vendored <code>libntfs-3g</code>, and APFS, read-only, via a vendored <code>libfsapfs</code>).</li>
       <li>Surfaces files through the app UI and a <code>DocumentsProvider</code>, so other apps (Files, Gallery, etc.) can browse the unlocked volume.</li>
+      <li>Formats and encrypts from a mounted drive's <strong>More actions</strong> menu, after the user types ERASE:
+        <ul>
+          <li><strong>Format</strong> writes an empty FAT32 or exFAT of the same size, cluster size and label; a volume inside an encrypted container stays in it, with the same password</li>
+          <li><strong>Encrypt</strong> erases the partition and creates a new VeraCrypt volume — any of the ciphers and cascades above, SHA-512 or Argon2id, optional PIM — holding a new FAT32 or exFAT</li>
+          <li>both overwrite every sector by default; <strong>Quick</strong> writes only the filesystem structures, and the old data stays on the drive until overwritten</li>
+        </ul>
+      </li>
     </ol>
 
     <h2>Roadmap</h2>
     <ul>
       <li><strong>APFS</strong> — write support. APFS is read-only today, plain or encrypted.</li>
-      <li><strong>Encryption</strong> — encrypt unencrypted USB storage devices via the app.</li>
+      <li><strong>Format and encrypt</strong> — NTFS and ext4 formatting, and LUKS2 as an encryption choice. Format and Encrypt cover FAT32 and exFAT, with VeraCrypt, today.</li>
     </ul>
 
     <h2>Support</h2>

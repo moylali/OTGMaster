@@ -1,0 +1,1 @@
+Plain FAT32 (64 MiB, whole device), formatted from the card's More menu (full overwrite): same size, cluster size and label, flower.jpg gone, a new file written. Host: fsck.vfat, label kept, flower.jpg absent, after_erase.txt present, no byte of the old flower.jpg left on the drive.

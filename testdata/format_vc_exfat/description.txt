@@ -1,0 +1,1 @@
+The exfat case's VeraCrypt AES/SHA-512 exFAT volume, formatted from the card's More menu (quick): the container and its password stay, flower.jpg is gone, a new file survives an unmount and unlock with the same password. Host: decrypted with Python's AES, fsck.exfat, flower.jpg absent, after_erase.txt present.

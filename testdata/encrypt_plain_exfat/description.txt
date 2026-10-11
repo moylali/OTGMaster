@@ -1,0 +1,1 @@
+Plain exFAT (64 MiB) encrypted from the card's More menu: VeraCrypt Serpent-Twofish-AES / Argon2, PIM 1, FAT32 inside, full overwrite. The new volume is mounted, takes a file, and unlocks again with its new password and cipher. Host: no plaintext of the old files left (no host tool decrypts Argon2 VeraCrypt; desktop VeraCrypt opens these on Drive 5).

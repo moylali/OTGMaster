@@ -96,6 +96,16 @@ ensure_testdata() {
         fi
     done
 
+    # Format and Encrypt from a mounted card (scripts/make_erase_fixtures.py, no root;
+    # format_vc_exfat is a copy of the exfat case, so this runs after it exists).
+    for case_name in format_vc_exfat format_plain_fat32 encrypt_plain_fat32 encrypt_plain_exfat; do
+        if [ ! -f "$TESTDATA_DIR/$case_name/test.img" ]; then
+            echo "Generating the Format/Encrypt fixtures..."
+            python3 scripts/make_erase_fixtures.py || { echo "Format/Encrypt fixture generation failed!"; exit 1; }
+            break
+        fi
+    done
+
     # The support matrix: every filesystem in every container (scripts/make_e2e_matrix.py).
     if [ ! -f "$TESTDATA_DIR/m_bitlocker_ntfs/test.img" ] || [ ! -f "$TESTDATA_DIR/m_luks2_ext2/test.img" ]; then
         echo "Generating the support-matrix fixtures..."
@@ -324,6 +334,13 @@ for test_dir in "$TESTDATA_DIR"/*/; do
         CONTAINER_ARG="-e expected_container $(cat "$test_dir/container.txt")"
     fi
 
+    # Format/Encrypt cases: erase.txt is key=value lines, passed as erase_<key>.
+    ERASE_ARG=""
+    if [ -f "$test_dir/erase.txt" ]; then
+        while IFS='=' read -r key value; do
+            [ -n "$key" ] && ERASE_ARG="$ERASE_ARG -e erase_$key $value"
+        done < "$test_dir/erase.txt"
+    fi
     WRITE_TEST_ARG=""
     if [ -f "$test_dir/write_test.txt" ]; then
         WRITE_TEST_ARG="-e write_test true"
@@ -393,6 +410,7 @@ for test_dir in "$TESTDATA_DIR"/*/; do
             $HASH_ARG \
             $REMOUNT_ARG \
             $WRITE_TEST_ARG \
+            $ERASE_ARG \
             $RECOVERY_ARG \
             $CONTAINER_ARG \
             $FLOWER_ARG \
@@ -427,7 +445,7 @@ for test_dir in "$TESTDATA_DIR"/*/; do
         # with the kernel's driver and checks every file the case left behind. The
         # in-app checks above only read the writes back through the same code.
         HOST_CHECK=""
-        if [ $TEST_EXIT_CODE -eq 0 ] && [ -f "$test_dir/write_test.txt" ]; then
+        if [ $TEST_EXIT_CODE -eq 0 ] && { [ -f "$test_dir/write_test.txt" ] || [ -f "$test_dir/erase.txt" ]; }; then
             HOST_OUT=$(python3 scripts/verify_e2e_volume.py "$SLOT_FILE" "$test_dir" 2>&1)
             echo "$HOST_OUT"
             if echo "$HOST_OUT" | grep -q "^HOST CHECK OK"; then

@@ -252,6 +252,38 @@ Password `password123`; BitLocker recovery key
 `111111-222222-333333-444444-555555-666666-111111-222222` (each group a multiple of
 11, and group/11 below 65536 — a random 48-digit string is not a valid key).
 
+## 6c. Format and Encrypt from a mounted card (E2E, no root)
+
+`scripts/make_erase_fixtures.py` builds the four cases `E2EAutomatedTest.testEraseOperations`
+runs, without sudo. Each starts holding the usual mount tree (flower.jpg, `file with
+spaces.txt`, …) so the test can see the old files go:
+
+| Case | Starts as | Action (from `erase.txt`) | Host check |
+|---|---|---|---|
+| `format_vc_exfat` | the `exfat` case's VeraCrypt AES/SHA-512 exFAT, 10 MB | Format, quick | decrypted in Python, `fsck.exfat`, flower.jpg gone, `after_erase.txt` present |
+| `format_plain_fat32` | plain FAT32, 64 MiB, label `OTGFAT32` | Format, full | `fsck.vfat`, label kept, files as above, no byte of the old flower.jpg left |
+| `encrypt_plain_fat32` | plain FAT32, 64 MiB | Encrypt: AES / SHA-512, PIM 1, exFAT inside, full | new header opened and decrypted in Python, `fsck.exfat`, files as above, no plaintext left |
+| `encrypt_plain_exfat` | plain exFAT, 64 MiB | Encrypt: Serpent-Twofish-AES / Argon2, PIM 1, FAT32 inside, full | no plaintext left, and the drive no longer reads as a filesystem |
+
+```sh
+python3 scripts/make_erase_fixtures.py      # writes test.img and password.txt (+ pim.txt for format_vc_exfat)
+```
+
+- **The case files.** `erase.txt` holds `key=value` lines — `action` (format/encrypt),
+  `quick`, and for encrypt `cipher`, `hash`, `pim`, `fs` (exfat/fat32), `password`,
+  `label` — which `run_e2e_tests.sh` passes to the test as `-e erase_<key> <value>`.
+  `plain.txt` marks a volume that auto-mounts without a password.
+- **Images.** Plain ones come from `make_e2e_matrix.make_fs` (mkfs, then filled through
+  a `udisksctl` loop mount as this user). 64 MiB is the emulator's USB slot, and enough
+  for FAT32 — which needs 65,525 clusters; Windows decides the FAT type by cluster count
+  alone. The 10 MB VeraCrypt FAT32 fixtures are below that, and Format refuses them.
+- **What the app is checked against.** The test writes `after_erase.txt` on the new
+  volume; where the result is encrypted it unmounts and unlocks again with the password
+  it now has and reads the file back. `scripts/verify_e2e_volume.py` (it sees `erase.txt`)
+  then judges the drive without the app. No host tool decrypts Argon2 VeraCrypt volumes
+  (cryptsetup has no Argon2 for TCRYPT, and libsodium's Argon2 takes only 16-byte salts),
+  so the Argon2 cascade is opened in desktop VeraCrypt on Drive 5 (§16) instead.
+
 ## 6b. APFS (E2E images, macOS)
 
 `scripts/make_apfs_images_macos.sh` builds four raw images, each a GPT disk with one

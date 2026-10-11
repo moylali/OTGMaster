@@ -1,0 +1,1 @@
+Plain FAT32 (64 MiB) encrypted from the card's More menu: VeraCrypt AES / SHA-512, PIM 1, exFAT inside, full overwrite. The new volume is mounted, takes a file, and unlocks again with its new password. Host: VeraCrypt header opened and decrypted with Python, fsck.exfat, flower.jpg absent, after_erase.txt present, no plaintext of the old files left.
