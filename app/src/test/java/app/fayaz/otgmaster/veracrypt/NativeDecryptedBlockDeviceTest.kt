@@ -33,7 +33,7 @@ class NativeDecryptedBlockDeviceTest {
             masterKey = masterKey,
             volumeDataOffset = candidate.startBlock + dataOffsetSectors,
             decryptedBlockCount = (candidate.blockCount ?: (fakeDevice.blockCount - candidate.startBlock)) - dataOffsetSectors,
-            cipherNativeId = SingleCipher.AES.nativeId,
+            cipherNativeIds = intArrayOf(SingleCipher.AES.nativeId),
             tweakDataOffset = dataOffsetSectors
         )
         
@@ -82,7 +82,7 @@ class NativeDecryptedBlockDeviceTest {
             masterKey = ByteArray(32) { 1 },
             volumeDataOffset = 256,
             decryptedBlockCount = 1000,
-            cipherNativeId = SingleCipher.AES.nativeId,
+            cipherNativeIds = intArrayOf(SingleCipher.AES.nativeId),
             tweakDataOffset = 256,
         ).also { it.close() }
     }

@@ -132,7 +132,7 @@ class LuksUnlocker {
 
         // XTS-decrypt key material using slotKey (plain64 IV: sector 0 at start of key material)
         val rc = app.fayaz.otgmaster.veracrypt.VeraCryptNative.cryptSectorsInPlace(
-            SingleCipher.AES.nativeId,
+            intArrayOf(SingleCipher.AES.nativeId),
             0, // decrypt
             slotKey,
             0L, // start sector 0 — plain64 from start of key material area
@@ -241,7 +241,7 @@ class LuksUnlocker {
 
         // XTS-decrypt using slotKey (area encryption is e.g. "aes-xts-plain64")
         val rc = app.fayaz.otgmaster.veracrypt.VeraCryptNative.cryptSectorsInPlace(
-            SingleCipher.AES.nativeId,
+            intArrayOf(SingleCipher.AES.nativeId),
             0,        // decrypt
             slotKey,
             0L,       // plain64: sector 0 at start of key material
@@ -291,7 +291,7 @@ class LuksUnlocker {
             masterKey          = masterKey,
             volumeDataOffset   = volumeDataOffsetBlocks,
             decryptedBlockCount= decryptedBlocks,
-            cipherNativeId     = SingleCipher.AES.nativeId,
+            cipherNativeIds    = intArrayOf(SingleCipher.AES.nativeId),
             tweakDataOffset    = 0L
         )
     }

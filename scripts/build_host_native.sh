@@ -12,7 +12,10 @@ out="${1:-app/build/host-native/libotg-host.so}"
 cpp=app/src/main/cpp
 srcs=("$cpp"/ntfs-3g/libntfs-3g/*.c "$cpp"/ntfs/NtfsNative.cpp
       "$cpp"/bitlocker/*.c "$cpp"/bitlocker/*.cpp "$cpp"/mbedtls/library/*.c
-      "$cpp"/VeraCryptNative.cpp "$cpp"/serpent/*.c "$cpp"/apfs/ApfsNative.cpp)
+      "$cpp"/VeraCryptNative.cpp "$cpp"/vc_cascade.cpp "$cpp"/vc_cascade.h "$cpp"/serpent/*.c
+      "$cpp"/libtomcrypt/src/ciphers/twofish/*.c "$cpp"/libtomcrypt/src/misc/*.c
+      "$cpp"/libtomcrypt/src/misc/crypt/*.c "$cpp"/argon2/src/*.c "$cpp"/argon2/src/blake2/*.c
+      "$cpp"/apfs/ApfsNative.cpp)
 apfs_libs=(libfsapfs libbfio libcaes libcdata libcerror libcfile libclocale libcnotify libcpath
            libcsplit libfcache libfdata libfdatetime libfguid libfmos libhmac libuna)
 for l in "${apfs_libs[@]}"; do srcs+=("$cpp"/libfsapfs/"$l"/*.c); done
@@ -32,15 +35,25 @@ flags=(-fPIC -O1 -g -DHAVE_CONFIG_H -D_FILE_OFFSET_BITS=64
        -I"$java_home/include" -I"$java_home/include/linux" -w)
 objs=()
 pids=()
-mbed=(-I"$cpp/mbedtls/include" -I"$cpp/bitlocker" -I"$cpp/serpent")
+# The LTC_* definitions shape symmetric_key, so the Twofish objects and vc_cascade.cpp
+# must be built with the same ones (as app/src/main/cpp/CMakeLists.txt does).
+ltc=(-DLTC_NOTHING -DLTC_TWOFISH -DLTC_TWOFISH_TABLES -DLTC_NO_TEST -I"$cpp/libtomcrypt/src/headers")
+mbed=(-I"$cpp/mbedtls/include" -I"$cpp/bitlocker" -I"$cpp/serpent" "${ltc[@]}" -I"$cpp/argon2/include")
 for f in "$cpp"/ntfs-3g/libntfs-3g/*.c; do
     o="$obj/ntfs_$(basename "$f" .c).o"
     gcc -c "${flags[@]}" "$f" -o "$o" & pids+=($!)
     objs+=("$o")
 done
-for f in "$cpp"/mbedtls/library/*.c "$cpp"/bitlocker/*.c "$cpp"/serpent/*.c; do
+for f in "$cpp"/mbedtls/library/*.c "$cpp"/bitlocker/*.c "$cpp"/serpent/*.c \
+         "$cpp"/libtomcrypt/src/ciphers/twofish/twofish.c "$cpp"/libtomcrypt/src/misc/*.c \
+         "$cpp"/libtomcrypt/src/misc/crypt/*.c; do
     o="$obj/mbed_$(basename "$f" .c).o"
     gcc -c -fPIC -O2 -w "${mbed[@]}" "$f" -o "$o" & pids+=($!)
+    objs+=("$o")
+done
+for f in "$cpp"/argon2/src/*.c "$cpp"/argon2/src/blake2/*.c; do
+    o="$obj/argon2_$(basename "$f" .c).o"
+    gcc -c -fPIC -O2 -w -DARGON2_NO_THREADS -I"$cpp/argon2/include" "$f" -o "$o" & pids+=($!)
     objs+=("$o")
 done
 # libfsapfs and its libyal dependencies, with the configure-generated headers in
@@ -60,7 +73,8 @@ objs+=("$obj/ApfsNative.o")
 g++ -c -std=c++17 "${flags[@]}" "$cpp/ntfs/NtfsNative.cpp" -o "$obj/NtfsNative.o" & pids+=($!)
 g++ -c -std=c++17 "${flags[@]}" "${mbed[@]}" "$cpp/bitlocker/BitLockerNative.cpp" -o "$obj/BitLockerNative.o" & pids+=($!)
 g++ -c -std=c++17 "${flags[@]}" "${mbed[@]}" "$cpp/VeraCryptNative.cpp" -o "$obj/VeraCryptNative.o" & pids+=($!)
-objs+=("$obj/NtfsNative.o" "$obj/BitLockerNative.o" "$obj/VeraCryptNative.o")
+g++ -c -std=c++17 "${flags[@]}" "${mbed[@]}" "$cpp/vc_cascade.cpp" -o "$obj/vc_cascade.o" & pids+=($!)
+objs+=("$obj/NtfsNative.o" "$obj/BitLockerNative.o" "$obj/VeraCryptNative.o" "$obj/vc_cascade.o")
 for p in "${pids[@]}"; do wait "$p"; done
 g++ -shared -o "$out" "${objs[@]}"
 echo "built $out"

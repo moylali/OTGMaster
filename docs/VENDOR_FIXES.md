@@ -16,6 +16,8 @@ See `AGENTS.md` for what a new entry must contain and how to record an upstream 
 | `app/src/main/cpp/libfsapfs/` | [libyal/libfsapfs](https://github.com/libyal/libfsapfs) + 16 libyal libraries | `f63c83b` (20260921) | see the section below |
 | `app/src/test/resources/bitlk/bitlk-images.tar.xz` (test data) | [cryptsetup](https://gitlab.com/cryptsetup/cryptsetup) | `ca4cc7a` | see the section below |
 | `app/src/main/cpp/` (VeraCrypt primitives, mbedtls, Serpent) | VeraCrypt / Mbed-TLS | see note below | pre-dates this registry |
+| `app/src/main/cpp/libtomcrypt/` (Twofish only) | [libtom/libtomcrypt](https://github.com/libtom/libtomcrypt) | `7e7eb69` (v1.18.2) | see the section below |
+| `app/src/main/cpp/argon2/` | [P-H-C/phc-winner-argon2](https://github.com/P-H-C/phc-winner-argon2) | `f57e61e` | see the section below |
 
 **Licences** are listed in the table in `README.md`, which is authoritative — this
 registry deliberately does not restate them, to avoid the two drifting apart.
@@ -26,6 +28,70 @@ next time either is touched; until then an upstream pull cannot be done safely,
 because there is no baseline to diff against. This is precisely the gap the registry
 exists to prevent, and it is the reason the rule in `AGENTS.md` requires a full SHA
 before a vendoring commit lands.
+
+---
+
+# `app/src/main/cpp/libtomcrypt/`
+
+LibTomCrypt's Twofish, for VeraCrypt's Twofish volumes and the cascades that include
+it (AES-Twofish, AES-Twofish-Serpent, Serpent-Twofish-AES, Twofish-Serpent). Driven by
+`app/src/main/cpp/vc_cascade.cpp`.
+
+- **Pinned upstream:** `7e7eb695d581782f04b24dc444cbfde86af59853`, the `v1.18.2`
+  release tag, pinned 2026-10-10.
+- **What was taken:** `src/ciphers/twofish/twofish.c` and `twofish_tab.c`, the four
+  helpers it calls (`src/misc/burn_stack.c`, `zeromem.c`, `compare_testvector.c`,
+  `src/misc/crypt/crypt_argchk.c`), every header in `src/headers/`, and `LICENSE`,
+  byte for byte. Nothing else of the library. It is built with `LTC_NOTHING
+  LTC_TWOFISH LTC_TWOFISH_TABLES LTC_NO_TEST` (`app/src/main/cpp/CMakeLists.txt`), so
+  the headers declare Twofish alone; those definitions are PUBLIC because they set the
+  size of `symmetric_key`, which `vc_cascade.cpp` allocates.
+- **Why vendored rather than a dependency:** no Android package of a C Twofish exists to
+  depend on. **Why not VeraCrypt's own `Twofish.c`:** it is Brian Gladman's code
+  "adapted for TrueCrypt", and the TrueCrypt licence covering those adaptations is not
+  GPL-compatible. LibTomCrypt's is an independent implementation under a public-domain
+  dedication. That it matches VeraCrypt's is checked against volumes VeraCrypt made
+  (`VeraCryptCascadeTest`), not assumed.
+- **Licence:** public domain or WTFPL, at the user's option (`LICENSE`); see the table
+  in `README.md`.
+
+## Patches
+
+| Area | Patch | Commit |
+|---|---|---|
+| — | none | — |
+
+---
+
+# `app/src/main/cpp/argon2/`
+
+The Password Hashing Competition's reference Argon2, for VeraCrypt's Argon2id header
+key derivation (VeraCrypt 1.26.24 and later). Called from
+`app/src/main/cpp/VeraCryptNative.cpp`.
+
+- **Pinned upstream:** `f57e61e19229e23c4445b85494dbf7c07de721cb`, the head of
+  `master` (2021-06-25, after the `20190702` release), pinned 2026-10-10.
+- **What was taken:** `include/argon2.h`; from `src/`, `argon2.c`, `core.c`/`.h`,
+  `encoding.c`/`.h`, `ref.c`, `thread.c`/`.h`, and `blake2/` `blake2.h`,
+  `blake2-impl.h`, `blake2b.c`, `blamka-round-ref.h`; and `LICENSE`. Byte for byte.
+  Left out: `opt.c` and `blamka-round-opt.h` (x86 SSE, does not build for ARM), the
+  command-line tool, benchmarks, test vectors and build files. Built with
+  `ARGON2_NO_THREADS`: VeraCrypt derives with parallelism 1.
+- **Why vendored rather than a dependency:** the app already depends on argon2kt for
+  LUKS2, but that is an Android library that cannot load on the host JVM, so nothing
+  that uses it can be tested against real volumes there — `LuksSectorSizeTest` says so
+  and uses PBKDF2 keyslots instead. Compiled into `veracrypt-native`, the same code runs
+  in the host tests, which open volumes VeraCrypt itself made with Argon2. It also keeps
+  the derived key in native memory, as the PBKDF2 path does. LUKS2 could move to it and
+  drop argon2kt; it has not.
+- **Licence:** CC0-1.0 or Apache-2.0, at the user's option (`LICENSE`); see the table in
+  `README.md`.
+
+## Patches
+
+| Area | Patch | Commit |
+|---|---|---|
+| — | none | — |
 
 ---
 

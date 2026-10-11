@@ -114,7 +114,7 @@
       <li>Probes MBR/GPT partitions and detects the encryption type (VeraCrypt, LUKS1, LUKS2, BitLocker or encrypted APFS) on each.</li>
       <li>Unlocks the volume header and exposes a decrypted block-device wrapper:
         <ul>
-          <li><strong>VeraCrypt</strong>: AES or Serpent cipher, SHA-512 / Whirlpool KDF</li>
+          <li><strong>VeraCrypt</strong>: AES, Serpent or Twofish, and the cascades AES-Twofish, AES-Twofish-Serpent, Serpent-AES, Serpent-Twofish-AES and Twofish-Serpent; SHA-512 or Argon2id header KDF</li>
           <li><strong>LUKS1</strong>: PBKDF2-based KDF, AES-XTS bulk decryption</li>
           <li><strong>LUKS2</strong>: Argon2id-based KDF, AES-XTS bulk decryption</li>
           <li><strong>BitLocker</strong>: password or recovery key; XTS-AES and AES-CBC, with or without the Elephant diffuser</li>

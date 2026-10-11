@@ -10,7 +10,8 @@ class NativeDecryptedBlockDevice(
     private val masterKey: ByteArray,
     private val volumeDataOffset: Long, // absolute device blocks to skip to reach data (for I/O)
     private val decryptedBlockCount: Long,
-    private val cipherNativeId: Int = SingleCipher.AES.nativeId,
+    // The cascade in VeraCrypt table order (VeraCryptCipher.nativeIds); one id for a single cipher.
+    private val cipherNativeIds: IntArray = intArrayOf(SingleCipher.AES.nativeId),
     // Sector number (relative to the START OF THE VOLUME, not the physical disk) where the
     // data area begins — this is what VeraCrypt's XTS tweak is actually computed from. For a
     // standard volume this is always headerSize/blockSize (e.g. 256 for 512-byte sectors),
@@ -71,7 +72,7 @@ class NativeDecryptedBlockDevice(
         // per-sector path rebuilt the schedule for every 512 bytes, which cost as
         // much as the decryption it was setting up for.
         val rc = VeraCryptNative.cryptSectorsInPlace(
-            cipherNativeId, DECRYPT, masterKey, firstTweak,
+            cipherNativeIds, DECRYPT, masterKey, firstTweak,
             encryptedData, 0, encryptedData.size,
         )
         if (rc != 0) {
@@ -102,7 +103,7 @@ class NativeDecryptedBlockDevice(
         // and the cache above holds this same array as a cached line.
         val encryptedData = data.copyOf()
         val rc = VeraCryptNative.cryptSectorsInPlace(
-            cipherNativeId, ENCRYPT, masterKey, firstTweak,
+            cipherNativeIds, ENCRYPT, masterKey, firstTweak,
             encryptedData, 0, encryptedData.size,
         )
         if (rc != 0) {

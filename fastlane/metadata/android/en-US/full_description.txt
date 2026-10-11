@@ -11,7 +11,7 @@ FEATURES
 • Hub Support — multiple USB drives connected via a hub are all prompted in a single biometric step
 • Keyfile Support — use a keyfile in addition to or instead of a password
 • Custom PIM — supports non-default PIM values for stronger key derivation
-• Cipher Selection — AES and Serpent supported
+• Cipher Selection — AES, Serpent and Twofish, VeraCrypt's five cascades of them, and SHA-512 or Argon2id key derivation
 • Partitioned Disks — scans MBR/GPT partition tables and lets you pick the exact volume to unlock
 • No Root Required — works on standard, unmodified Android devices
 • No Cloud, No Tracking — your files never leave your device

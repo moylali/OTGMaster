@@ -29,27 +29,30 @@ Adding test data for something the app cannot do is useful (that is the rejectio
 case), but you need to know which side of the line you are on. The authority is
 `app/src/main/java/app/fayaz/otgmaster/veracrypt/VeraCryptCipher.kt`:
 
-**Ciphers** — `isSupported` in `VeraCryptCipher`:
+**Ciphers** — every `VeraCryptCipher` entry is supported:
 
-| Cipher | Supported | Key material |
+| Cipher | Key material | `components` (VeraCrypt table order = encryption order) |
 |---|---|---|
-| AES | **yes** | 64 bytes |
-| Serpent | **yes** | 64 bytes |
-| Twofish | no | 64 bytes |
-| AES-Twofish | no | 128 bytes |
-| Serpent-AES | no | 128 bytes |
-| Twofish-Serpent | no | 128 bytes |
-| AES-Twofish-Serpent | no | 192 bytes |
-| Serpent-Twofish-AES | no | 192 bytes |
+| AES | 64 bytes | AES |
+| Serpent | 64 bytes | Serpent |
+| Twofish | 64 bytes | Twofish |
+| AES-Twofish | 128 bytes | Twofish, AES |
+| Serpent-AES | 128 bytes | AES, Serpent |
+| Twofish-Serpent | 128 bytes | Serpent, Twofish |
+| AES-Twofish-Serpent | 192 bytes | Serpent, Twofish, AES |
+| Serpent-Twofish-AES | 192 bytes | AES, Twofish, Serpent |
 
-`keySizeBytes` is `components.size * 64` — VeraCrypt stores two 256-bit XTS keys per
-cipher in the cascade, and the header parser depends on getting that length right.
-`SingleCipher.TWOFISH` carries `nativeId = -1`, which is the marker for "no native
-implementation"; AES is 0 and Serpent is 1, matching `CIPHER_SERPENT` in
-`app/src/main/cpp/VeraCryptNative.cpp`.
+A cascade's name is the reverse of the order its ciphers are applied in: VeraCrypt
+builds the name from the last cipher of its table entry back to the first. `components`
+follows the table, because that is also the order of the keys in the header — every
+cipher's 32-byte primary key, then every cipher's 32-byte tweak key — and
+`keySizeBytes` is `components.size * 64`. Native ids (`SingleCipher.nativeId`, the
+`VC_CIPHER_*` ids in `app/src/main/cpp/vc_cascade.h`): AES 0, Serpent 1, Twofish 2.
+VeraCrypt's Camellia and Kuznyechik, and their cascades, are not offered.
 
-**Hashes** — only `SHA512` has `isSupported = true`. SHA-256, Whirlpool and Streebog
-are listed so the picker can reject them by name rather than mis-deriving a key.
+**Hashes** — SHA-512 (PBKDF2) and Argon2 (Argon2id, VeraCrypt 1.26.24 and later) are
+supported; SHA-256, Whirlpool and Streebog are listed so the picker can reject them by
+name rather than mis-deriving a key. `kdfNativeId` on `VeraCryptHash` is the switch.
 
 **Filesystems** — FAT32 (via the vendored libaums), exFAT (via vendored libexfat), ext4
 (written here) and, from 0.4.1, NTFS (via vendored libntfs-3g). FAT16 exists as a test
@@ -60,11 +63,32 @@ now mount.
 Windows 7 and later; password, recovery key or suspended protection). §6a builds the
 BitLocker fixtures.
 
-**PIM** matters more than it looks. `VeraCryptUnlocker` derives iterations as
-`15000 + pim * 1000` when a PIM is set, against `500000` when it is not. Every fixture
-uses **PIM 1 → 16,000 iterations**, because 500,000 iterations of PBKDF2-SHA512 on a
-1,248 MHz phone turns an unlock into a multi-minute wait. If you generate a fixture
-without `--pim`, expect the unlock to look hung rather than broken.
+**PIM** matters more than it looks. `KdfParams.forVolume` follows VeraCrypt: for
+PBKDF2, `15000 + pim * 1000` iterations when a PIM is set, against `500000` when it is
+not; for Argon2id, 64 MiB plus 32 MiB per PIM step (capped at 1 GiB from PIM 31) and
+`3 + (pim - 1) / 3` passes, with no PIM meaning PIM 12 — **416 MiB and 6 passes**.
+Every fixture uses **PIM 1** — 16,000 iterations, or 64 MiB and 3 passes — because
+500,000 iterations of PBKDF2-SHA512 on a 1,248 MHz phone turns an unlock into a
+multi-minute wait, and 416 MiB is more than an emulator should be asked for. If you
+generate a fixture without `--pim`, expect the unlock to look hung rather than broken.
+
+VeraCrypt refuses PIM 1 with a password shorter than 20 characters (it wants PIM 485
+for PBKDF2 or 12 for Argon2 then), so the Argon2 fixtures use a longer password.
+
+### 1.1 Cipher and KDF fixtures for the host tests (no root)
+
+`app/src/test/resources/veracrypt/` holds one 1 KiB fixture per cipher × supported KDF
+(16), cut from volumes VeraCrypt formatted itself: the header sector, then the first data
+sector (a FAT boot sector). `VeraCryptCascadeTest` unlocks each through
+`VeraCryptUnlocker` and expects that boot sector back. Regenerate them with:
+
+```sh
+scripts/make_veracrypt_fixtures.sh      # veracrypt >= 1.26.24 on PATH; no root
+```
+
+It writes the VeraCrypt version used to `VERSION` beside them. Every run makes new keys,
+so the fixtures change completely each time; nothing may depend on their bytes. For a
+new cipher or KDF, add it to the two lists at the top of the script.
 
 ## 2. The per-case contract (E2E images)
 
@@ -98,12 +122,14 @@ legibly. Add the name in both places.
 Work in this order. Steps 1–2 are app code; a fixture for an unimplemented cipher is
 only ever a rejection case.
 
-1. **Native.** Implement it in `app/src/main/cpp/VeraCryptNative.cpp` and give it a
-   `#define CIPHER_<NAME>` id. Note `cryptSectorsInPlace` builds one key schedule per
-   run — a new cipher must follow that, not schedule per sector.
-2. **Kotlin.** Set `nativeId` on `SingleCipher`, flip `isSupported = true` on the
-   `VeraCryptCipher` entry, and check `keySizeBytes` is right for a cascade.
-3. **E2E fixture.** `create_fat32_volume` already takes the cipher as its third
+1. **Native.** Add a stage to `app/src/main/cpp/vc_cascade.cpp` and a
+   `VC_CIPHER_<NAME>` id to `vc_cascade.h`. Key schedules are built once per
+   `cryptSectorsInPlace` run, not per sector; a new cipher gets that for free.
+2. **Kotlin.** Add it to `SingleCipher` with that id, and add `VeraCryptCipher` entries
+   with `components` in **VeraCrypt's table order**, which is the reverse of the name.
+3. **Host fixture.** Add it to `scripts/make_veracrypt_fixtures.sh` (§1.1) and run it:
+   `VeraCryptCascadeTest` covers every `VeraCryptCipher` entry automatically.
+4. **E2E fixture.** `create_fat32_volume` already takes the cipher as its third
    argument, so a standalone cipher is one line next to the existing Serpent case:
 
    ```bash
@@ -112,14 +138,14 @@ only ever a rejection case.
 
    The name must be what `veracrypt --encryption=` accepts. Add the directory to the
    `mkdir -p` block at the top and to `ensure_testdata`'s list.
-4. **Rejection fixture**, if it is *not* implemented — copy the `unsupported_cipher`
+5. **Rejection fixture**, if it is *not* implemented — copy the `unsupported_cipher`
    pattern: a working AES volume plus a `cipher.txt` naming the new cipher and an
    `expects_error.txt`. This is the more valuable of the two cases, because a cipher
    that is silently mis-decrypted looks like a corrupt drive to the user.
-5. **Cascades** need an image whose header actually uses the cascade, so
+6. **Cascades** need an image whose header actually uses the cascade, so
    `--encryption="AES(Twofish)"`-style names must round-trip through VeraCrypt. Verify
    the header parses to the full `keySizeBytes` before trusting a mount result.
-6. **Physical drive**, only once it mounts: `prepare_test_usb.sh --vc-encryption
+7. **Physical drive**, only once it mounts: `prepare_test_usb.sh --vc-encryption
    <name>`. That flag already exists and is documented as "AES or Serpent"; widen the
    comment when a third lands.
 

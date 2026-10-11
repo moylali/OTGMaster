@@ -31,7 +31,7 @@ The app cannot perform a kernel mount on non-rooted Android. Instead it:
 2. Reads raw sectors through a userspace USB Mass Storage adapter ([libaums](libaums/)).
 3. Probes MBR/GPT partitions and detects the encryption type (VeraCrypt, LUKS1, LUKS2, BitLocker or encrypted APFS) on each.
 4. Unlocks the volume header and exposes a decrypted block-device wrapper:
-   - **VeraCrypt**: AES or Serpent cipher, SHA-512 / Whirlpool KDF
+   - **VeraCrypt**: AES, Serpent or Twofish, and the cascades AES-Twofish, AES-Twofish-Serpent, Serpent-AES, Serpent-Twofish-AES and Twofish-Serpent; SHA-512 or Argon2id header KDF
    - **LUKS1**: PBKDF2-based KDF, AES-XTS bulk decryption
    - **LUKS2**: Argon2id-based KDF, AES-XTS bulk decryption
    - **BitLocker**: password or recovery key; XTS-AES and AES-CBC, with or without the Elephant diffuser
@@ -120,8 +120,9 @@ and the reference figures in [docs/BENCHMARK_RESULTS.md](docs/BENCHMARK_RESULTS.
 GPL-3.0-or-later — see [LICENSE](LICENSE). The app and its source, and the binary that
 statically links every component below, are distributed under it. Each component's own
 licence permits this: `libexfat` and `libntfs-3g` are GPL-2.0-or-later, `libfsapfs` and its
-libyal libraries LGPL-3.0-or-later, and the Apache-2.0 components (libaums, argon2kt,
-mbedTLS) are compatible with GPL-3.0.
+libyal libraries LGPL-3.0-or-later, the Apache-2.0 components (libaums, argon2kt,
+mbedTLS) are compatible with GPL-3.0, and LibTomCrypt's Twofish and the Argon2 reference
+implementation are public domain or dual-licensed with a permissive option.
 
 ### Third-party components
 
@@ -134,6 +135,8 @@ mbedTLS) are compatible with GPL-3.0.
 | [libfsapfs](https://github.com/libyal/libfsapfs) and 16 libyal libraries (`app/src/main/cpp/libfsapfs/`) | LGPL-3.0-or-later | APFS reader, plain and natively encrypted; pinned in [VENDOR_FIXES.md](docs/VENDOR_FIXES.md). LGPL-3.0 code cannot be combined into a GPL-2.0-only binary, which is why the project moved to GPL-3.0-or-later |
 | Serpent reference implementation (`app/src/main/cpp/serpent/`) | Public domain | See [PROVENANCE.md](app/src/main/cpp/serpent/PROVENANCE.md) for the exact source and the one portability fix applied |
 | [argon2kt](https://github.com/lambdapioneer/argon2kt) (`com.lambdapioneer.argon2kt:argon2kt:1.6.0`) | Apache-2.0 | Argon2id KDF for LUKS2 key derivation; ships native `.so` in the APK |
+| [LibTomCrypt](https://github.com/libtom/libtomcrypt) Twofish (`app/src/main/cpp/libtomcrypt/`) | Public domain OR WTFPL | Twofish for VeraCrypt volumes and cascades; pinned in [VENDOR_FIXES.md](docs/VENDOR_FIXES.md) |
+| [Argon2 reference implementation](https://github.com/P-H-C/phc-winner-argon2) (`app/src/main/cpp/argon2/`) | CC0-1.0 OR Apache-2.0 | Argon2id KDF for VeraCrypt headers; pinned in [VENDOR_FIXES.md](docs/VENDOR_FIXES.md) |
 
 ### Support
 

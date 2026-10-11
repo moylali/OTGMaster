@@ -83,13 +83,39 @@ add_library(serpent STATIC
         serpent/xts_generic.c)
 target_include_directories(serpent PUBLIC serpent)
 
+# twofish: libtomcrypt's, unmodified (docs/VENDOR_FIXES.md). LTC_NOTHING switches every
+# other algorithm off, and the definitions are PUBLIC because they shape symmetric_key,
+# which vc_cascade.cpp allocates: a translation unit that saw different ones would
+# disagree with this library about its size.
+add_library(twofish STATIC
+        libtomcrypt/src/ciphers/twofish/twofish.c
+        libtomcrypt/src/misc/burn_stack.c
+        libtomcrypt/src/misc/zeromem.c
+        libtomcrypt/src/misc/compare_testvector.c
+        libtomcrypt/src/misc/crypt/crypt_argchk.c)
+target_compile_definitions(twofish PUBLIC LTC_NOTHING LTC_TWOFISH LTC_TWOFISH_TABLES LTC_NO_TEST)
+target_include_directories(twofish PUBLIC libtomcrypt/src/headers)
+
+# argon2: the PHC reference implementation, unmodified (docs/VENDOR_FIXES.md). ref.c, not
+# the SSE opt.c, which does not build for ARM. VeraCrypt derives with parallelism 1, so
+# no threads.
+add_library(argon2 STATIC
+        argon2/src/argon2.c
+        argon2/src/core.c
+        argon2/src/encoding.c
+        argon2/src/ref.c
+        argon2/src/thread.c
+        argon2/src/blake2/blake2b.c)
+target_compile_definitions(argon2 PRIVATE ARGON2_NO_THREADS)
+target_include_directories(argon2 PUBLIC argon2/include)
+
 # veracrypt-native
 # BitLocker sector crypto, key stretch and AES-CCM unwrap over mbedtls (see bitlocker/).
 add_library(bitlocker STATIC bitlocker/bitlocker_crypto.c)
 target_include_directories(bitlocker PUBLIC bitlocker)
 target_link_libraries(bitlocker mbedcrypto)
 
-add_library(veracrypt-native SHARED VeraCryptNative.cpp exfat/ExFatNative.cpp ntfs/NtfsNative.cpp
+add_library(veracrypt-native SHARED VeraCryptNative.cpp vc_cascade.cpp exfat/ExFatNative.cpp ntfs/NtfsNative.cpp
         bitlocker/BitLockerNative.cpp $<TARGET_OBJECTS:apfs-jni>)
 target_compile_definitions(veracrypt-native PRIVATE _FILE_OFFSET_BITS=64)
 if(OTG_IO_STATS)
@@ -103,4 +129,6 @@ target_link_libraries(veracrypt-native
         bitlocker
         fsapfs
         serpent
+        twofish
+        argon2
         log)

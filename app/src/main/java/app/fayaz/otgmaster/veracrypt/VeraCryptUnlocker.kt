@@ -198,21 +198,11 @@ class VeraCryptUnlocker {
             passwordBytes = combined
         }
 
-        // Non-system encryption (OTGMaster only supports non-system volumes)
-        val iterations = if (pim != null && pim > 0) {
-            15000 + (pim * 1000)
-        } else {
-            when (hash) {
-                VeraCryptHash.SHA512 -> 500000
-                VeraCryptHash.WHIRLPOOL -> 500000
-                VeraCryptHash.SHA256 -> 500000
-                else -> 500000
-            }
-        }
-        
-        android.util.Log.i("VeraCryptUnlocker", "Iterations: $iterations")
-
-        android.util.Log.i("VeraCryptUnlocker", "Password length: ${password.size}, PIM: $pim, Iterations: $iterations")
+        val kdf = KdfParams.forVolume(hash, pim)
+        android.util.Log.i("VeraCryptUnlocker",
+            "Password length: ${password.size}, PIM: $pim, ${hash.displayName}: " +
+                if (hash == VeraCryptHash.ARGON2) "${kdf.iterations} passes over ${kdf.memoryKiB / 1024} MiB"
+                else "${kdf.iterations} iterations")
         
         val headerSector = device.readBlocks(candidate.startBlock, 1)
         android.util.Log.i("VeraCryptUnlocker", "startBlock: ${candidate.startBlock}, header length: ${headerSector.size}")
@@ -221,12 +211,18 @@ class VeraCryptUnlocker {
         val salt = headerSector.copyOfRange(0, 64)
         val encryptedHeader = headerSector.copyOfRange(64, 512)
 
-        // Only single (non-cascaded) ciphers are supported today; cipher.isSupported was
-        // already validated above, and every currently-supported VeraCryptCipher has exactly
-        // one component.
-        val cipherNativeId = cipher.components.first().nativeId
-
-        val decryptedHeader = VeraCryptNative.decryptHeader(cipherNativeId, passwordBytes, salt, iterations, encryptedHeader)
+        val decryptedHeader = try {
+            VeraCryptNative.decryptHeader(
+                cipher.nativeIds, hash.kdfNativeId!!, passwordBytes, salt,
+                kdf.iterations, kdf.memoryKiB, encryptedHeader)
+        } catch (e: IllegalStateException) {
+            // Only Argon2id throws: almost always its working memory, which is hundreds
+            // of MiB at the default PIM and up to 1 GiB, failing to allocate.
+            passwordBytes.fill(0)
+            throw IllegalStateException(
+                "Argon2 could not derive the key (${e.message}). It needs " +
+                    "${kdf.memoryKiB / 1024} MiB of memory at this PIM; close other apps and try again.", e)
+        }
 
         if (decryptedHeader == null) {
             throw IllegalArgumentException("Decryption failed internally")
@@ -256,7 +252,7 @@ class VeraCryptUnlocker {
             masterKey,
             volumeDataOffset = candidate.startBlock + dataOffsetSectors,
             decryptedBlockCount = (candidate.blockCount ?: (device.blockCount - candidate.startBlock)) - dataOffsetSectors,
-            cipherNativeId = cipherNativeId,
+            cipherNativeIds = cipher.nativeIds,
             tweakDataOffset = dataOffsetSectors
         )
     }
