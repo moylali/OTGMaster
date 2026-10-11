@@ -85,12 +85,19 @@ jobs:
         if: always()
         run: rm -f release.jks keystore.properties
 
+      # R8 renames classes in the release build; stack traces pasted into issues decode
+      # with this file (`retrace mapping-<tag>.txt trace.txt`). Play reads its own copy
+      # from inside the AAB.
+      - name: Name the R8 mapping after the tag
+        run: cp app/build/outputs/mapping/release/mapping.txt "mapping-${GITHUB_REF_NAME}.txt"
+
       - name: Create GitHub Release
         uses: softprops/action-gh-release@v2
         with:
           files: |
             app/build/outputs/apk/release/*.apk
             app/build/outputs/bundle/release/*.aab
+            mapping-*.txt
           generate_release_notes: true
 
       - name: Upload AAB to Google Play (internal track)

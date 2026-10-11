@@ -1,31 +1,45 @@
-# ── JNI: keep classes whose methods are called from native code ──────────────
--keepclasseswithmembernames class app.fayaz.otgmaster.veracrypt.VeraCryptNative {
-    native <methods>;
-}
--keepclasseswithmembernames class app.fayaz.otgmaster.exfat.ExFatNative {
+# R8 keep rules for the release build (and the "minified" E2E build type).
+#
+# What must survive renaming is everything native code reaches by name. The E2E suite
+# runs against the minified build type for exactly this reason: a missing rule is a
+# NoSuchMethodError or ClassNotFoundException on the first mount of that format, not a
+# build error.
+
+# ── JNI entry points ──────────────────────────────────────────────────────────
+# Every `external fun` is bound by its mangled Java name (Java_app_fayaz_…): the class
+# and the method keep their names. Covers VeraCryptNative, ExFatNative, NtfsNative,
+# ApfsNative, BitLockerNative, libaums' AndroidUsbCommunication and argon2kt.
+-keepclasseswithmembernames,includedescriptorclasses class * {
     native <methods>;
 }
 
-# ExFatNode is constructed and read by JNI
--keep class app.fayaz.otgmaster.exfat.ExFatNode { *; }
-
-# RawBlockDevice is passed into JNI (ExFatNative.mount)
+# ── Callbacks native code looks up with GetStaticMethodID ────────────────────
+# exfat/io.c, ntfs/NtfsNative.cpp, apfs/ApfsNative.cpp: pread, pwrite, getDeviceSize,
+# with RawBlockDevice in the signature.
+-keep class app.fayaz.otgmaster.exfat.ExFatNative { *; }
+-keep class app.fayaz.otgmaster.ntfs.NtfsNative { *; }
+-keep class app.fayaz.otgmaster.apfs.ApfsNative { *; }
 -keep class app.fayaz.otgmaster.block.RawBlockDevice { *; }
--keep interface app.fayaz.otgmaster.block.RawBlockDevice { *; }
 
-# ── USB / libaums: accessed reflectively by the USB stack ────────────────────
--keep class com.github.mjdev.libaums.** { *; }
+# ── Classes native code constructs (FindClass + GetMethodID "<init>") ─────────
+-keep class app.fayaz.otgmaster.exfat.ExFatNode { *; }
+-keep class app.fayaz.otgmaster.ntfs.NtfsNode { *; }
+-keep class app.fayaz.otgmaster.apfs.ApfsNode { *; }
 
-# ── Standard Android keep rules (supplement android-optimize.txt) ────────────
+# ── argon2kt (LUKS2 Argon2): ships no consumer rules; its .so names
+#    com/lambdapioneer/argon2kt/ByteBufferTarget and throws Argon2Exception ──────
+-keep class com.lambdapioneer.argon2kt.** { *; }
+
+# ── Standard Android keep rules (supplement proguard-android-optimize.txt) ────
 -keepclassmembers class * implements android.os.Parcelable {
     public static final android.os.Parcelable$Creator CREATOR;
 }
 
-# ── Suppress missing annotation classes (compile-time only, not used at runtime) ─
+# ── Compile-time-only annotations ─────────────────────────────────────────────
 -dontwarn com.google.errorprone.annotations.**
 -dontwarn javax.annotation.**
--dontwarn javax.annotation.concurrent.**
 
-# Preserve line numbers in crash stack traces
+# Line numbers in stack traces; decode them with the release's mapping.txt (attached
+# to each GitHub release, and inside the AAB for Play).
 -keepattributes SourceFile,LineNumberTable
 -renamesourcefileattribute SourceFile

@@ -104,6 +104,13 @@ These apply to every commit, without being asked.
      run it again. Fold small follow-up fixes into the PR before running, rather
      than after.
 
+   **The release build is R8-minified; the default E2E run is not.** A PR that changes
+   `proguard-rules.pro`, the release build type, a dependency, or anything native code
+   reaches by name (`external fun`, a class JNI constructs, a callback it looks up)
+   also runs `E2E_BUILD_TYPE=minified scripts/run_e2e_parallel.sh` and pastes that
+   report too. A missing keep rule passes every debug test and fails on the first
+   mount of that format in the release.
+
    A PR that touches no app code, test scripts or test data (docs, the site,
    store metadata) says `E2E not run: no app, test or test-data changes` instead.
 

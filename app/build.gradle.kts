@@ -76,12 +76,37 @@ android {
             }
         }
         release {
-            isMinifyEnabled = false
+            // R8 shrinks and obfuscates the release build: Play Console flagged 0.4.x at 0%
+            // obfuscation. Everything native code reaches by name (JNI methods, the classes
+            // it constructs, the callbacks it looks up) is kept in proguard-rules.pro — a
+            // missing rule shows up as NoSuchMethodError on the first mount of that format.
+            isMinifyEnabled = true
+            isShrinkResources = true
+            proguardFiles(getDefaultProguardFile("proguard-android-optimize.txt"), "proguard-rules.pro")
+            // The AAB then carries the native symbol tables, which Play asks for so it
+            // can symbolicate native crashes. The .so files in the APK stay stripped.
+            ndk { debugSymbolLevel = "SYMBOL_TABLE" }
             if (hasReleaseSigning) {
                 signingConfig = signingConfigs.getByName("release")
             }
         }
+        // The release build's code — R8, release native flags — signed with the debug key,
+        // so the E2E suite can install it beside its test APK and catch a missing keep rule
+        // before a release does: E2E_BUILD_TYPE=minified scripts/run_e2e_parallel.sh.
+        // Main sources only, like release: none of the debug-only receivers.
+        create("minified") {
+            initWith(getByName("release"))
+            signingConfig = signingConfigs.getByName("debug")
+            matchingFallbacks += "release"
+            // The test APK is shrunk against the app's mapping; these rules are for it alone.
+            testProguardFiles("proguard-test-rules.pro")
+            buildConfigField("String", "GIT_COMMIT", "\"${gitCommit()}${if (gitDirty()) "-dirty" else ""}\"")
+        }
     }
+
+    // Instrumented tests run against debug unless -Potg.testBuildType names another type
+    // (the E2E scripts pass "minified").
+    testBuildType = (project.findProperty("otg.testBuildType") as String?) ?: "debug"
 
     compileOptions {
         sourceCompatibility = JavaVersion.VERSION_17

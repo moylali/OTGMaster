@@ -1,0 +1,2 @@
+• New: VeraCrypt Twofish and all five cascades (e.g. AES-Twofish-Serpent)
+• New: VeraCrypt Argon2id volumes (VeraCrypt 1.26.29+), with PIM

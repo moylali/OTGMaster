@@ -103,6 +103,7 @@ for c in "${cases[@]}"; do grep -qF "| \`$c\` |" <<< "$rows" || missing_names+=(
     echo "|-------|-------|"
     echo "| Version | $APP_VERSION |"
     echo "| Commit | \`$GIT_COMMIT\` |"
+    echo "| Build type | ${E2E_BUILD_TYPE:-debug} |"
     [ "$END_COMMIT" != "$GIT_COMMIT" ] && \
         echo "| Commit at end | \`$END_COMMIT\` — the tree changed during the run; results are for \`$GIT_COMMIT\` |"
     echo "| Host | $(uname -sm) |"

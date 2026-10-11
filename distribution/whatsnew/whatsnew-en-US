@@ -1,10 +1,2 @@
-• New: NTFS read/write, plain or in VeraCrypt/LUKS
-• New: BitLocker, by password or recovery key
-• New: Mac APFS, encrypted too, read-only
-• New: App folder access survives remounts
-• Fixed: LUKS2 4K sectors refused
-• Fixed: slow ext4 deletes; ext2/3 read-only (writes damaged it)
-• Fixed: FAT32 folders failed to open; write damage
-• Fixed: exFAT drive names; deletes didn't free space
-• Fixed: some phones couldn't read drives
-• Fixed: Android 10 lost passwords after 4+ mounts
+• New: VeraCrypt Twofish and all five cascades (e.g. AES-Twofish-Serpent)
+• New: VeraCrypt Argon2id volumes (VeraCrypt 1.26.29+), with PIM

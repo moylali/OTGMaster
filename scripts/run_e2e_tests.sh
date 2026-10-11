@@ -19,6 +19,11 @@ PACKAGE_NAME="app.fayaz.otgmaster"
 SLOT_FILE="/tmp/otg_usb_slot.img"
 PORT=5554             # emulator console port; the adb serial is emulator-$PORT
 OWN_PORT=false        # --port given: never touch other emulators (parallel shards)
+# E2E_BUILD_TYPE=minified tests the release build's R8 output (debug-signed) instead
+# of the debug build: the only test that sees a missing keep rule.
+E2E_BUILD_TYPE="${E2E_BUILD_TYPE:-debug}"
+case "$E2E_BUILD_TYPE" in debug|minified) ;; *) echo "E2E_BUILD_TYPE must be debug or minified"; exit 1 ;; esac
+BUILD_TYPE_CAP="$(tr '[:lower:]' '[:upper:]' <<< "${E2E_BUILD_TYPE:0:1}")${E2E_BUILD_TYPE:1}"
 NO_BUILD=false        # --no-build: APKs and fixtures prepared already (run_e2e_parallel.sh)
 PREPARE_ONLY=false    # --prepare-only: generate fixtures and build, then exit
 READ_ONLY_AVD=false   # --read-only-avd: -read-only, so several instances share the AVD
@@ -116,7 +121,8 @@ GIT_COMMIT=$(git describe --always --dirty --abbrev=7 2>/dev/null || echo "unkno
 if [ "$NO_BUILD" = false ]; then
     ensure_testdata
     echo "Building Android Test APKs..."
-    ./gradlew assembleDebug assembleDebugAndroidTest || { echo "Build failed!"; exit 1; }
+    ./gradlew "assemble${BUILD_TYPE_CAP}" "assemble${BUILD_TYPE_CAP}AndroidTest" \
+        -Potg.testBuildType="$E2E_BUILD_TYPE" || { echo "Build failed!"; exit 1; }
 fi
 [ "$PREPARE_ONLY" = true ] && { echo "Prepared."; exit 0; }
 
@@ -199,8 +205,8 @@ fi
 
 # Install APKs once
 echo "Installing App and Test APK..."
-$CMD_ADB -s $SERIAL install -t app/build/outputs/apk/debug/app-debug.apk
-$CMD_ADB -s $SERIAL install -t app/build/outputs/apk/androidTest/debug/app-debug-androidTest.apk
+$CMD_ADB -s $SERIAL install -t "app/build/outputs/apk/$E2E_BUILD_TYPE/app-$E2E_BUILD_TYPE.apk"
+$CMD_ADB -s $SERIAL install -t "app/build/outputs/apk/androidTest/$E2E_BUILD_TYPE/app-$E2E_BUILD_TYPE-androidTest.apk"
 
 echo "Starting E2E Tests..."
 
@@ -219,6 +225,7 @@ cat > "$REPORT_FILE" << REPORT_HEADER
 |-------|-------|
 | Version | $APP_VERSION |
 | Commit | \`$GIT_COMMIT\` |
+| Build type | $E2E_BUILD_TYPE |
 | Emulator | $AVD_NAME (${AVD_IMAGE:-image unknown}) |
 | Date | $RUN_DATE |
 
