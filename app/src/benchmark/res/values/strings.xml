@@ -1,0 +1,6 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <!-- The benchmark build installs beside the store app; this tells the two apart
+         in the launcher, the USB "open with" chooser and the Files sidebar. -->
+    <string name="app_name">OTG Master Bench</string>
+</resources>

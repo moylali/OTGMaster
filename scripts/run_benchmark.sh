@@ -18,7 +18,13 @@
 #     early-return path when no drive is mounted skips the latter.
 #   - The crash buffer is cleared up front and polled every 3 s, so a crash aborts
 #     immediately with its trace instead of after the poll loop expires.
+#
+# PKG selects the installed build: app.fayaz.otgmaster.bench (the default) is the
+# benchmark build type, release code plus the harness; PKG=app.fayaz.otgmaster drives
+# a debug build instead. Components are named in full because the benchmark build's
+# package is not the classes' package, so ".bench.BenchmarkReceiver" would not resolve.
 set -uo pipefail
+PKG="${PKG:-app.fayaz.otgmaster.bench}"
 S="$1"; LABEL="$2"; TESTS="$3"; CACHE="$4"; RA="${5:-}"
 OUT="$6"
 
@@ -33,11 +39,11 @@ adb -s "$S" shell input keyevent KEYCODE_WAKEUP >/dev/null 2>&1
 # MainActivity must be in the foreground: it owns the mount handler the benchmark
 # calls through, and a reinstall kills it. Without this the run ends immediately
 # with "no mount handler installed".
-adb -s "$S" shell am start -n app.fayaz.otgmaster/.MainActivity >/dev/null 2>&1
+adb -s "$S" shell am start -n "$PKG/app.fayaz.otgmaster.MainActivity" >/dev/null 2>&1
 for _ in $(seq 1 20); do
     sleep 1
     adb -s "$S" shell dumpsys activity activities 2>/dev/null \
-        | grep -q "app.fayaz.otgmaster/.MainActivity.*Resumed\|ResumedActivity.*otgmaster" && break
+        | grep -q "ResumedActivity.*$PKG/" && break
 done
 sleep 2
 adb -s "$S" logcat -c >/dev/null 2>&1
@@ -48,7 +54,7 @@ EXTRAS=(--es password password123 --es pim 1 --es cipher AES --es hash SHA-512
 [ -n "$RA" ] && EXTRAS+=(--es readahead "$RA")
 
 adb -s "$S" shell am broadcast -a app.fayaz.otgmaster.RUN_BENCHMARK \
-    -n app.fayaz.otgmaster/.bench.BenchmarkReceiver "${EXTRAS[@]}" >/dev/null 2>&1
+    -n "$PKG/app.fayaz.otgmaster.bench.BenchmarkReceiver" "${EXTRAS[@]}" >/dev/null 2>&1
 
 { echo "################ $LABEL ################"; } >> "$OUT"
 
@@ -75,7 +81,7 @@ for _ in $(seq 1 600); do
         { echo "*** CRASHED ***"; echo "$CRASH"; } >> "$OUT"
         rm -f /tmp/bl.$$.txt; exit 2
     fi
-    if adb -s "$S" shell pidof app.fayaz.otgmaster 2>/dev/null | grep -q '[0-9]'; then
+    if adb -s "$S" shell pidof "$PKG" 2>/dev/null | grep -q '[0-9]'; then
         misses=0
     else
         misses=$((misses+1))
