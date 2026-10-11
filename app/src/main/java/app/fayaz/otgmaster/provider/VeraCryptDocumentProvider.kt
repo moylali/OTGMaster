@@ -18,7 +18,7 @@ import android.os.storage.StorageManager
 class VeraCryptDocumentProvider : DocumentsProvider() {
 
     companion object {
-        const val AUTHORITY = "app.fayaz.otgmaster.documents"
+        const val AUTHORITY = ExtensionContract.AUTHORITY
 
         /**
          * Every (package, document URI) [extendReadGrant] granted, to revoke exactly those.

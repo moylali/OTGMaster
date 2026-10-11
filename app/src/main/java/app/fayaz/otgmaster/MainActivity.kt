@@ -1179,7 +1179,7 @@ class MainActivity : AppCompatActivity() {
                     }
                     withContext(Dispatchers.Main) {
                         appendLog("Mounted ${session.name} over MTP, read-only: ${drives.joinToString { it.partitionLabel }}")
-                        contentResolver.notifyChange(android.provider.DocumentsContract.buildRootsUri("app.fayaz.otgmaster.documents"), null)
+                        contentResolver.notifyChange(android.provider.DocumentsContract.buildRootsUri(app.fayaz.otgmaster.extension.ExtensionContract.AUTHORITY), null)
                         newlyMountedDriveIds.value = newlyMountedDriveIds.value + drives.map { it.id }
                         updateMountedDrives()
                     }
@@ -1654,7 +1654,7 @@ class MainActivity : AppCompatActivity() {
                     withContext(Dispatchers.Main) { appendLog("${mountedDrive.name} is read-only: $reason") }
                 }
                 contentResolver.notifyChange(
-                    android.provider.DocumentsContract.buildRootsUri("app.fayaz.otgmaster.documents"), null
+                    android.provider.DocumentsContract.buildRootsUri(app.fayaz.otgmaster.provider.VeraCryptDocumentProvider.AUTHORITY), null
                 )
                 app.fayaz.otgmaster.extension.ExtensionContract.notifyCompanions(
                     applicationContext, app.fayaz.otgmaster.extension.ExtensionContract.ACTION_VOLUME_MOUNTED, mountedDrive)
@@ -1857,7 +1857,7 @@ class MainActivity : AppCompatActivity() {
         OtgMasterState.removeDrive(drive.id)
         val tRemoved = System.currentTimeMillis()
         contentResolver.notifyChange(
-            android.provider.DocumentsContract.buildRootsUri("app.fayaz.otgmaster.documents"), null
+            android.provider.DocumentsContract.buildRootsUri(app.fayaz.otgmaster.provider.VeraCryptDocumentProvider.AUTHORITY), null
         )
         app.fayaz.otgmaster.extension.ExtensionContract.notifyCompanions(
             applicationContext, app.fayaz.otgmaster.extension.ExtensionContract.ACTION_VOLUME_UNMOUNTED, drive)
@@ -2247,7 +2247,7 @@ class MainActivity : AppCompatActivity() {
         withContext(Dispatchers.Main) {
             OtgMasterState.removeDrive(drive.id)
             contentResolver.notifyChange(
-                android.provider.DocumentsContract.buildRootsUri("app.fayaz.otgmaster.documents"), null)
+                android.provider.DocumentsContract.buildRootsUri(app.fayaz.otgmaster.extension.ExtensionContract.AUTHORITY), null)
             app.fayaz.otgmaster.extension.ExtensionContract.notifyCompanions(
                 applicationContext, app.fayaz.otgmaster.extension.ExtensionContract.ACTION_VOLUME_UNMOUNTED, drive)
             updateMountedDrives()
@@ -2315,7 +2315,7 @@ class MainActivity : AppCompatActivity() {
         OtgMasterState.addDrive(drive)
         withContext(Dispatchers.Main) {
             contentResolver.notifyChange(
-                android.provider.DocumentsContract.buildRootsUri("app.fayaz.otgmaster.documents"), null)
+                android.provider.DocumentsContract.buildRootsUri(app.fayaz.otgmaster.extension.ExtensionContract.AUTHORITY), null)
             app.fayaz.otgmaster.extension.ExtensionContract.notifyCompanions(
                 applicationContext, app.fayaz.otgmaster.extension.ExtensionContract.ACTION_VOLUME_MOUNTED, drive)
             newlyMountedDriveIds.value = newlyMountedDriveIds.value + drive.id
@@ -2559,7 +2559,7 @@ class MainActivity : AppCompatActivity() {
                     withContext(Dispatchers.Main) { appendLog("${mountedDrive.name} is read-only: $reason") }
                 }
                 contentResolver.notifyChange(
-                    android.provider.DocumentsContract.buildRootsUri("app.fayaz.otgmaster.documents"), null
+                    android.provider.DocumentsContract.buildRootsUri(app.fayaz.otgmaster.provider.VeraCryptDocumentProvider.AUTHORITY), null
                 )
                 app.fayaz.otgmaster.extension.ExtensionContract.notifyCompanions(
                     applicationContext, app.fayaz.otgmaster.extension.ExtensionContract.ACTION_VOLUME_MOUNTED, mountedDrive)
@@ -2824,7 +2824,7 @@ class MainActivity : AppCompatActivity() {
                 updateMountedDrives()
                 // The provider's root loses or gains FLAG_SUPPORTS_CREATE with it.
                 contentResolver.notifyChange(
-                    android.provider.DocumentsContract.buildRootsUri("app.fayaz.otgmaster.documents"), null
+                    android.provider.DocumentsContract.buildRootsUri(app.fayaz.otgmaster.extension.ExtensionContract.AUTHORITY), null
                 )
             }
         }
