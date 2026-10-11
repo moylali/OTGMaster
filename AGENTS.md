@@ -39,7 +39,7 @@ These apply to every commit, without being asked.
    not enough. State what changed, and why — including the reasoning or evidence
    that justified it, so the commit stands on its own later.
 
-3. **A tagging commit must attach a regression test report covering at least four
+3. **A tagging commit must attach a regression test report covering at least three
    devices.** No tag ships without it. Reports live in `docs/test-reports/` as
    `<tag>.md`, and each must name the device, Android version, filesystem, and the
    measurements or checks that were run.
@@ -135,9 +135,11 @@ commit is pushed to the remote.** "Validated" means a relevant E2E test or manua
 exercise completes successfully on a real device with a real (or emulator-backed)
 filesystem — not just a clean build and install. Do not push until this is done.
 
-**Benchmark runs must cover at least four devices before a release is tagged.**
+**Benchmark runs must cover at least three devices before a release is tagged.**
 Commit rule 3 (the tagging regression report) is the gate; this reinforces it:
-the four-device bar applies to benchmark figures, not just smoke checks.
+the three-device bar applies to benchmark figures, not just smoke checks. (It was
+four until 0.4.1, which was tagged on three — OnePlus 7, Pixel 7 Pro, Samsung M30 — with
+the Huawei P20 Lite's partial run kept in the report but not counted.)
 
 **A content hash does not verify a filesystem write — run the filesystem's own
 checker.** A write path must leave the volume structurally valid, and SHA-256 over

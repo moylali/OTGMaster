@@ -33,6 +33,157 @@ to a row here.
 
 ---
 
+## 2026-10-10 to 10-11 — 0.4.1 on `ae25575`, completing the matrix
+
+Every run here is `ae25575` (the release app code plus the per-partition report save; see
+the next section), the same sections and the same laptop check as there. Runs were
+driven one partition at a time by `matrix/helpers/sequence_runs.sh` unless a row says
+otherwise, so each partition has its own report.
+
+**The Drive 2 copy.** The Pixel 7 Pro's Drive 2 run used a second stick, serial
+`071C48F5FB0EF451`, written from the same Drive 2 build images with
+`write_matrix_drive.sh` and read back ALL CLEAN with **0 MiB changed against the build**
+before the run — a byte-for-byte Drive 2, so the M30 and the Pixel could run Drive 2 at
+once. (It had been the LUKS1+ext4 Drive B of `TEST_DATA.md` §10, which no longer exists.)
+
+**A queue bug, found and fixed during these runs.** `sequence_runs.sh` copied a run's
+`benchmark.txt` a fixed 60 s after its end line; on the Pixel's D2VCEXFAT the app took two
+minutes to write it, so the queue copied the previous partition's report (and its
+notification showed D2VCFAT32's figures). The run itself was complete: its own report,
+`otgbench-Pixel_7_Pro-20261010-164537.txt`, was pulled from the phone into its place, and
+the queue now waits for the app's "results written to" line. Every other report was
+checked to name its own partition.
+
+| Device · Android | Drive · when | On the phone | Host |
+|---|---|---|---|
+| Pixel 7 Pro · 17 | D1: FAT32, NTFS, EXT4, APFSECI, APFSECS, BLNTFS · 10-10 07:31 (one multi-partition run) | ro ×2 (fixtures ALL 21777 / 21911); FAT32 6.22 / 31.56, NTFS 3.03 / 37.12, EXT4 0.98 / 37.00, BLNTFS 2.72 / 27.08 — all PASSED | D1 ALL CLEAN (10:05) |
+| Pixel 7 Pro · 17 | D4, all 10 · 10-10 09:56 (one run) | ro ×8; D4BLFAT32 5.00 / 25.37, D4BLEXFAT 1.34 / 30.00 — all PASSED | D4 ALL CLEAN (11:32), D4BLEXFAT < 1 MiB |
+| Samsung M30 · 10 | D2: VCFAT32 · 10-10 08:37 | all PASSED, 3.40 / 7.52 | D2 ALL CLEAN (10:07, with the incomplete run below) |
+| Samsung M30 · 10 | D2: VCEXFAT 10:10, VCNTFS 11:41, VCEXT4 12:44, L1EXT4 14:34 | all PASSED: VCEXFAT 0.91 / 9.52, VCNTFS 1.88 / 10.48, VCEXT4 0.60 / 9.55, L1EXT4 0.59 / 8.24 | D2 ALL CLEAN (16:43), D2VCEXFAT < 1 MiB |
+| Pixel 7 Pro · 17 | D2 (the copy), all 10 · 10-10 15:43–21:51 | all PASSED: VCFAT32 5.97 / 23.21, VCEXFAT 1.17 / 27.18, VCNTFS 2.90 / 27.97, VCEXT4 0.89 / 26.82, L1FAT32 5.49 / 22.79, L1EXT4 0.90 / 26.77, L2EXFAT 1.31 / 27.24, L4EXT4 0.89 / 25.83, L4NTFS 2.74 / 26.06, BLFAT32 5.33 / 24.52 | ALL CLEAN (22:08), both exFAT < 1 MiB |
+| OnePlus 7 · 16 | D1, all 10 · 10-10 18:00–21:25 | ro ×4 (fixtures ALL 22129 / 22024 / 21777 / 21911); FAT32 7.73 / 26.01, EXFAT 1.76 / 39.80, NTFS 3.19 / 41.71, EXT4 1.21 / 40.16, BLNTFS 2.90 / 26.79, BLEXFAT 1.53 / 24.66 — all PASSED | D1 ALL CLEAN (21:49), both exFAT < 1 MiB |
+| Pixel 7 Pro · 17 | D1: APFSCS · 10-10 21:56 | ro, fixtures ALL 22024 — including `large/seq_2100m.bin`, whose read the 10-09 USB loss had cut | not re-read: APFS is read-only to the app, and the drive had been ALL CLEAN at 21:49 |
+| Samsung M30 · 10 | D2: L1FAT32 18:23, L2EXFAT 19:17, L4EXT4 20:46, L4NTFS 22:35 | all PASSED: L1FAT32 3.33 / 8.45, L2EXFAT 0.91 / 9.57, L4EXT4 0.60 / 9.72, L4NTFS 1.97 / 10.64 | D2 ALL CLEAN (10-11 06:15), D2L2EXFAT < 1 MiB |
+| OnePlus 7 · 16 | D3: L1EXFAT, L4EXFAT · 10-10 21:39–23:11 | all PASSED: L1EXFAT 1.57 / 24.31, L4EXFAT 1.25 / 22.80 | D3 ALL CLEAN (23:30), both exFAT < 1 MiB |
+
+No PARTIAL, NOT VERIFIED or CONTAMINATED line in any of them.
+
+### Not rows: runs that did not complete
+
+- **Samsung M30, Drive 2, 10-10 09:37.** The next partition after D2VCFAT32: D2VCEXFAT's log
+  stops at 09:53 in its correctness section after write verify and unaligned had passed. No
+  report. Drive 2 read back ALL CLEAN at 10:07, and D2VCEXFAT was run again at 10:10 (above).
+- **Samsung M30, Drive 2, D2BLFAT32, 10-10 23:38.** The queue started it, and the laptop
+  session driving the queue ended moments later and took the queue, its log capture and the
+  adb server with it; by morning the phone, left on battery, was off the network. The 10-11
+  read-back found D2BLFAT32 exactly as at 16:43 (4 reports, the earlier big file): it never
+  ran. So the M30's Drive 2 is 9 of 10 on the release; BitLocker + FAT32 is covered on this
+  phone by D4BLFAT32 (`ae25575`, 10-09).
+
+---
+
+## 2026-10-07 to 10-10 — the 0.4.1 release candidate, after the exFAT leak
+
+**Builds.** Four builds ran in this period. The app code is identical within each pair:
+- `2a6fe4f` and `8655eeb`: the PR #31 release candidate (2a6fe4f only adds the 10-07 run
+  records);
+- `cfc9a64`: + the benchmark harness fix (wait for unlocks still in progress; count the
+  previous tree as free space). Debug benchmark code only;
+- `a5f10ae`: + the exFAT delete-leak fix (`deleteNode` frees the clusters at unlink);
+- `ae25575`: + the benchmark saving `benchmark-in-progress.txt` after every partition.
+  Debug benchmark code only — the app is the same as `a5f10ae`.
+
+**Commit hashes after the merge of #37** (rebase-merge, so new hashes):
+
+| On the branch (cited below) | On `main` | Commit |
+|---|---|---|
+| `cfc9a64` | `eecf254` | bench: wait for unlocks still in progress; count the deleted tree as free |
+| `a5f10ae` | `d330a32` | fix: exFAT deletes did not free the file's space |
+| `ae25575` | `e5f76bb` | bench: save the report so far after every partition (PR #39) |
+| `2814a8d` | `584c1f2` | verify: fail exFAT volumes holding clusters no file owns (PR #39) |
+
+**Sections, every row:** `free,block,dir,path,seq,random,opens,write,unaligned,correct,bigwrite,fixtures`,
+cache default, remount true. **Host** is the laptop read-back checked with
+`verify_matrix_drive.py`: each filesystem's own checker, the build baselines, every `bigwrite`
+file against its recipe, and — from 2026-10-08 on, branch `verify/exfat-unowned-clusters` —
+**exFAT space no file owns** (statvfs used − du > 1 MiB fails). `fsck.exfat` 1.3.2 does not
+report that, which is how the leak below passed every earlier check.
+
+### The exFAT leak, and its fix on hardware
+
+On the old code a delete only freed a file's clusters once every handle on its node had been
+released — by `close()`, or by the GC for the handles a listing hands out; an unmount first
+lost them for good. Fixed in `a5f10ae` (PR #37). Laptop measurements, statvfs used − du:
+
+| Partition | Old code (2a6fe4f / cfc9a64) | Fixed (a5f10ae / ae25575) |
+|---|---|---|
+| D1EXFAT | **101 MiB** (OnePlus 7) | 188,416 B — identical to the freshly built image (bitmap + upcase table); Pixel 7 Pro and M30 |
+| D1BLEXFAT | — | < 1 MiB (Pixel, M30) |
+| D2VCEXFAT | — | < 1 MiB (OnePlus) |
+| D2L2EXFAT | **67 MiB**, left by the 10-07 M30 runs | still 67 MiB after the OnePlus `a5f10ae` run — no new leak; then restored |
+| D3L1EXFAT | **98 MiB** (Pixel) | < 1 MiB (Pixel, M30) |
+| D3L4EXFAT | **2190 MiB**: the deleted 2.2 GB file; the next bigwrite hit ENOSPC at 459 MB (Pixel) | < 1 MiB, full 2.2 GB written (Pixel, M30) |
+| D4BLEXFAT | **60 MiB** from one run on a clean partition (Pixel) | < 1 MiB (OnePlus, M30) |
+
+Every old-code row was `fsck.exfat`-clean.
+
+### Completed runs
+
+Write / read-after-remount are the 2.2 GB `big.bin` figures in MB/s. "ro" = ext2/ext3/APFS,
+write sections SKIPPED by design. Every fixture set listed matched (ALL n MATCHED).
+
+| Device · Android | Drive · build · when | On the phone | Host |
+|---|---|---|---|
+| Huawei P20 Lite · 9 | D4: D4L1EXT2, D4VCEXT3, D4BLFAT32 · `8655eeb` · 10-07 10:58 | ro ×2; D4BLFAT32 all PASSED, 2.85 / 4.64 | D4 CLEAN (with the next row) |
+| Huawei P20 Lite · 9 | D4: L1EXT3, L2EXT2, L2EXT3, L4EXT2, L4EXT3, VCEXT2 · `8655eeb` · 10-07 19:08 | ro ×6, fixtures ALL | D4 ALL CLEAN (10-08 00:08) |
+| Pixel 7 Pro · 17 | D3: EXT2, EXT3, L1EXFAT, L1NTFS, L2FAT32, L2NTFS, L2EXT4, L4FAT32 · `2a6fe4f` · 10-07 19:01 | ro ×2; D3L1EXFAT tree PASSED but **big file SKIPPED** (free-space estimate, fixed in cfc9a64 — the leak was already eating its space); others all PASSED: L1NTFS 2.72 / 24.61, L2FAT32 5.43 / 17.97, L2NTFS 2.69 / 24.94, L2EXT4 0.85 / 26.63, L4FAT32 2.90 / 24.55 | fsck CLEAN; leak check later: **D3L1EXFAT 98 MiB FAILED** |
+| Pixel 7 Pro · 17 | D3: L4EXFAT, BLNTFS · `cfc9a64` · 10-08 00:10 | **D3L4EXFAT bigwrite FAILED**: `exFAT write failed at offset 458938459` (ENOSPC — the leak); D3BLNTFS all PASSED, 2.66 / 27.18 | fsck CLEAN; leak check: **D3L4EXFAT 2190 MiB FAILED** |
+| OnePlus 7 · 16 | D1, all 11 · `2a6fe4f` · 10-07 23:30 | EFI block reads only; APFS ×4 ro; FAT32 8.01 / 24.37; EXFAT 0.88 / 40.04; NTFS 3.11 / 47.66; EXT4 1.22 / 44.10; BLNTFS 3.04 / 28.76 — all PASSED; **D1BLEXFAT big file SKIPPED** (the M30's earlier run had left its 2.3 GB; free-space estimate) | 10 of 10 CLEAN; **D1EXFAT 101 MiB unowned** (measured by hand, df − du, before the leak check existed) |
+| Pixel 7 Pro · 17 | D4, all 10 · `cfc9a64` · 10-08 07:37 | ro ×8; D4BLFAT32 5.10 / 23.31, D4BLEXFAT 1.18 / 29.03, all PASSED | 9 of 10: **D4BLEXFAT 60 MiB FAILED** (old code; partition was clean before the run) |
+| OnePlus 7 · 16 | D2, all 10 · `a5f10ae` · 10-08 07:59 | all PASSED: VCFAT32 6.42 / 21.00, VCEXFAT 1.58 / 24.20, VCNTFS 2.85 / 26.02, VCEXT4 1.09 / 24.03, L1FAT32 5.95 / 19.89, L1EXT4 1.08 / 24.02, L2EXFAT 1.55 / 23.97, L4EXT4 1.08 / 24.13, L4NTFS 3.05 / 26.25, BLFAT32 5.90 / 22.15 | 9 of 10: D2L2EXFAT 67 MiB — the M30's, unchanged; D2VCEXFAT < 1 MiB |
+| Pixel 7 Pro · 17 | D1: EXFAT, BLEXFAT · `a5f10ae` · 10-08 09:07 | all PASSED: 1.46 / 39.46, 1.10 / 29.00 | ALL CLEAN; D1EXFAT 188,416 B (= fresh) |
+| Pixel 7 Pro · 17 | D3: L1EXFAT, L4EXFAT · `a5f10ae` · 10-08 10:54 | all PASSED: 1.14 / 27.88, 0.90 / 27.25 (L4EXFAT's full 2.2 GB this time) | ALL CLEAN, < 1 MiB each |
+| OnePlus 7 · 16 | D4: BLEXFAT · `a5f10ae` · 10-08 18:49 | all PASSED, 1.58 / 25.05 | ALL CLEAN, < 1 MiB |
+| Samsung M30 · 10 | D1, the 10 fixture partitions · `a5f10ae` · 10-08 18:38 | ro ×4; FAT32 4.59 / 10.02, EXFAT 1.21 / 12.34 (0.33 on 8655eeb), NTFS 2.22 / 16.40, EXT4 0.83 / 15.92, BLNTFS 1.96 / 12.09, BLEXFAT 0.88 / 9.92 — all PASSED | 9 of 10: **D1FAT32 FAILED — Samsung mounted it** (below); both exFAT < 1 MiB |
+| Samsung M30 · 10 | D3: 8 writable · `ae25575` · 10-09 08:19 | all PASSED: L1EXFAT 0.89 / 9.52, L1NTFS 1.97 / 10.89, L2FAT32 3.39 / 8.32, L2NTFS 1.90 / 11.12, L2EXT4 0.59 / 10.00, L4FAT32 2.10 / 8.48, L4EXFAT 0.68 / 10.04, BLNTFS 1.92 / 12.39 | ALL CLEAN, both exFAT < 1 MiB. D3EXT2/EXT3 ran on `a5f10ae` 10-09 00:18–00:28 (fixtures ALL 21821 / 21883) in the interrupted run below |
+| Samsung M30 · 10 | D4, all 10 · `ae25575` · 10-09 19:24 | ro ×8; D4BLFAT32 3.45 / 8.45, D4BLEXFAT 0.94 / 10.87, all PASSED | ALL CLEAN, D4BLEXFAT < 1 MiB |
+
+No PARTIAL, NOT VERIFIED or CONTAMINATED line in any of them.
+
+**D1FAT32 on the M30 (`a5f10ae`), host FAILED.** The same signature as the 10-07 M30 run:
+FAT32 dirty flag set (boot sector offset 65 = 01, backup 00) and the free count one cluster off.
+Only a kernel FAT driver writes offset 65; libaums never touches it. All 20,995 fixtures, the
+2.2 GB file and the 240-file tree verify. It happened when the run ended and the drive was
+pulled; Drives 3 and 4, unplugged later while the app still held the stick, came back clean.
+D1FAT32 was restored. Recorded as Android's mount, not the app's writes.
+
+### Not rows: runs that did not complete
+
+- **Samsung M30, Drive 2, attempts 2–4.** `8655eeb` 10-07 17:48 and 20:24; `ae25575` 10-09 23:04.
+  Each died on `MAX_RECOVERY_ATTEMPTS` with the transfer already stepped down to 16 KiB:
+  attempt 2 in D2VCEXT4's bigwrite (block 43,107,840), attempt 3 in D2VCEXT4 (43,794,176),
+  attempt 4 in D2VCFAT32's fixture hashing (2,643,624) after its writes had passed (3.96 / 7.34).
+  The same M30 ran Drives 1, 3 and 4 for hours without a drop, and the OnePlus ran all of
+  Drive 2; this stick and this phone do not hold a link. After attempt 3 the laptop found
+  D2VCEXT4 failing e2fsck ("end of extent exceeds allowed value" plus block-bitmap
+  differences — the shape an interrupted ext4 write leaves) and D2VCEXFAT failing its checks;
+  both were restored. After attempt 4, Drive 2 was ALL CLEAN.
+- **Pixel 7 Pro, Drive 2, `a5f10ae`, 10-08.** 18:32: the drive vanished before the first mount
+  ("no probed candidates"). 20:14: the powered hub dropped — every device on it detached in the
+  same millisecond — two minutes into D2VCFAT32's write test. D2VCFAT32 came back with 2080
+  orphaned clusters and a wrong FSInfo count (an interrupted FAT32 write; no journal); restored.
+- **Pixel 7 Pro, Drive 1 (8 partitions), `a5f10ae`, 10-09 01:12.** USB lost at 01:26 (direct
+  adapter): EFI and D1APFSCI done (fixtures ALL 22129), D1APFSCS fixtures failed mid-read, D1FAT32
+  unreadable, the rest skipped. Nothing written. Drive 1 CLEAN afterwards.
+- **Samsung M30, Drive 3, `a5f10ae`, 10-09 00:18.** Running slowly but alive; it was unplugged
+  around 07:10 on a wrong call that it had died (logcat had gone quiet and a debugger thread
+  dump missed the benchmark thread). Its report was never written; D3EXT2/EXT3 results come
+  from logcat. Drive 3 CLEAN afterwards. The per-partition save (`ae25575`) exists because of it.
+- **Pixel 7 Pro, Drive 4, `2a6fe4f`, 10-07 23:46:** no drive attached; empty report.
+- **Huawei P20 Lite, D4BLEXFAT, `8655eeb`, 10-07 20:31:** battery ran out mid-partition.
+
+---
+
 ## 2026-10-07 — the 0.4.1 release candidate, `8655eeb`
 
 **Commit hashes after the merge of #31.** The runs, `VENDOR_FIXES.md`, the issues and
