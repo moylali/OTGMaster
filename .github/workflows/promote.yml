@@ -1,11 +1,15 @@
 # Promotes the latest release on the internal track to production.
-# Trigger manually: gh workflow run promote.yml
+# Trigger manually: gh workflow run promote.yml -f version_code=47
 # or via GitHub UI: Actions → Promote to Production → Run workflow.
 
 name: Promote to Production
 
 on:
   workflow_dispatch:
+    inputs:
+      version_code:
+        description: "versionCode expected on the internal track (refuses to promote anything else)"
+        required: true
 
 permissions:
   contents: read
@@ -17,6 +21,7 @@ jobs:
       - name: Promote internal → production
         env:
           SERVICE_ACCOUNT_JSON: ${{ secrets.SERVICE_ACCOUNT_JSON }}
+          EXPECTED_VERSION_CODE: ${{ inputs.version_code }}
         run: |
           pip install google-auth requests --quiet
 
@@ -50,10 +55,22 @@ jobs:
           if not completed:
               raise SystemExit("No completed release found on internal track")
           release = completed[0]
-          print(f"Promoting versionCodes {release['versionCodes']} ({release.get('name','')})")
+          expected = os.environ["EXPECTED_VERSION_CODE"].strip()
+          if expected not in [str(v) for v in release["versionCodes"]]:
+              raise SystemExit(f"Internal track holds {release['versionCodes']}, not {expected}; nothing promoted")
+          notes = release.get("releaseNotes", [])
+          print(f"Promoting versionCodes {release['versionCodes']} ({release.get('name','')}), "
+                f"release notes in {[n.get('language') for n in notes]}")
 
-          # 3. Update production track
-          prod_body = {"releases": [{"versionCodes": release["versionCodes"], "status": "completed"}]}
+          # 3. Update production track. The release notes and name are carried over:
+          # without them the production release had no "What's new" at all, although
+          # release.yml had uploaded them (distribution/whatsnew) with the internal one.
+          prod_release = {"versionCodes": release["versionCodes"], "status": "completed"}
+          if notes:
+              prod_release["releaseNotes"] = notes
+          if release.get("name"):
+              prod_release["name"] = release["name"]
+          prod_body = {"releases": [prod_release]}
           r = requests.put(f"{BASE}/{PACKAGE}/edits/{edit_id}/tracks/production",
                            headers=headers, json=prod_body)
           r.raise_for_status()
