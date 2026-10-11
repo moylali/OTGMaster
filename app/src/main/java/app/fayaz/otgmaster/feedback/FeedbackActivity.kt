@@ -5,16 +5,19 @@ package app.fayaz.otgmaster.feedback
 import android.os.Bundle
 import androidx.activity.ComponentActivity
 import androidx.activity.compose.setContent
+import androidx.activity.enableEdgeToEdge
 import app.fayaz.otgmaster.applySystemBarAppearance
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
+import androidx.compose.foundation.layout.consumeWindowInsets
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.heightIn
+import androidx.compose.foundation.layout.imePadding
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.verticalScroll
@@ -58,6 +61,9 @@ class FeedbackActivity : ComponentActivity() {
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
+        // Before the first frame, so it is laid out edge-to-edge from the start; the
+        // icon colours follow the theme below.
+        enableEdgeToEdge()
         setContent {
             // MainActivity applies MaterialTheme inline rather than exposing a named
             // theme composable, so match it here and read the same preference — a
@@ -119,6 +125,8 @@ class FeedbackActivity : ComponentActivity() {
                 modifier = Modifier
                     .fillMaxSize()
                     .padding(inner)
+                    .consumeWindowInsets(inner)
+                    .imePadding()
                     .padding(horizontal = 16.dp)
                     .verticalScroll(rememberScrollState())
             ) {

@@ -15,6 +15,7 @@ import android.util.Log
 import androidx.appcompat.app.AppCompatActivity
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.compose.setContent
+import androidx.activity.enableEdgeToEdge
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.lifecycle.lifecycleScope
 import androidx.compose.animation.AnimatedVisibility
@@ -318,6 +319,9 @@ class MainActivity : AppCompatActivity() {
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
+        // Before the first frame, so it is laid out edge-to-edge from the start; the icon
+        // colours follow the in-app theme once it is read (applySystemBarAppearance).
+        enableEdgeToEdge()
         
         FileSystemFactory.registerFileSystem(ExFatFileSystemCreator(), 1)
         FileSystemFactory.registerFileSystem(app.fayaz.otgmaster.ext4.Ext4FileSystemCreator(), 2)
@@ -2034,6 +2038,8 @@ fun OtgMasterApp(
                 .fillMaxSize()
                 .semantics { testTagsAsResourceId = true }
                 .padding(paddingValues)
+                .consumeWindowInsets(paddingValues)
+                .imePadding()
                 .padding(16.dp)
                 .verticalScroll(scrollState),
             verticalArrangement = Arrangement.spacedBy(16.dp)
@@ -2256,6 +2262,7 @@ fun OtgMasterApp(
         exit = slideOutVertically(targetOffsetY = { it }),
         modifier = Modifier
             .align(Alignment.BottomCenter)
+            .navigationBarsPadding()
             .padding(16.dp)
     ) {
         toastMessage?.let { msg ->
@@ -2798,6 +2805,8 @@ fun SettingsDrawer(
                 Column(
                     modifier = Modifier
                         .fillMaxSize()
+                        .windowInsetsPadding(WindowInsets.safeDrawing.only(
+                            WindowInsetsSides.Vertical + WindowInsetsSides.End))
                         .padding(16.dp)
                 ) {
                     Row(
