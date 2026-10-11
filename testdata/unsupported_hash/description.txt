@@ -1,0 +1,1 @@
+AES/SHA-512 FAT32 VeraCrypt volume, but the UI hash picker is set to Whirlpool, which is not implemented. The app must refuse immediately with 'Cannot mount: Whirlpool is not yet supported' — no key derivation, no I/O on the volume data.

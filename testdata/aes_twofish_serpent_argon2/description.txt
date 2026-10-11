@@ -1,0 +1,1 @@
+AES replaced by AES-Twofish-Serpent cipher; otherwise identical to the base fat32 case. Header key from Argon2 (PIM 1), not PBKDF2-SHA-512.
