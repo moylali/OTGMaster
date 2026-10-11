@@ -81,6 +81,42 @@ android {
                 signingConfig = signingConfigs.getByName("release")
             }
         }
+        // The benchmark APK: release code plus the harness. Two things the debug APK
+        // it replaces got wrong for measuring:
+        //  - It measured code no user runs. A debuggable build compiles the native
+        //    side as CMake "Debug", which passes no -O flag at all, so the crypto,
+        //    libexfat and the other C code ran at -O0 against -O2 -DNDEBUG in release.
+        //    initWith(release) keeps it non-debuggable and RelWithDebInfo.
+        //  - It shared the store app's package, so installing it meant uninstalling
+        //    the real app (and its saved drives) first. The suffix lets both coexist.
+        // Debug stays as it was: E2E (run_e2e_tests.sh) installs and drives that APK.
+        create("benchmark") {
+            initWith(getByName("release"))
+            applicationIdSuffix = ".bench"
+            versionNameSuffix = "-bench"
+            // Installable from any machine, like debug; never the release key.
+            signingConfig = signingConfigs.getByName("debug")
+            matchingFallbacks += listOf("release")
+            buildConfigField("String", "GIT_COMMIT", "\"${gitCommit()}${if (gitDirty()) "-dirty" else ""}\"")
+            // The harness reads the libexfat I/O counters, so they are compiled in here
+            // too. They cost a counter increment per pread/pwrite.
+            externalNativeBuild {
+                cmake {
+                    arguments += "-DOTG_IO_STATS=ON"
+                }
+            }
+        }
+    }
+
+    sourceSets {
+        // The harness (BenchmarkReceiver, the E2E and dump receivers, ExFatIoStats) stays
+        // in src/debug, and the benchmark build type compiles the same sources and
+        // manifest. Release still contains none of it.
+        getByName("benchmark") {
+            java.srcDir("src/debug/java")
+            aidl.srcDir("src/debug/aidl")
+            manifest.srcFile("src/debug/AndroidManifest.xml")
+        }
     }
 
     compileOptions {

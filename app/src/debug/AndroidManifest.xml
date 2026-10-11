@@ -2,8 +2,9 @@
 
     <application>
         <!--
-          Debug-only benchmark trigger. Declared in the debug source set alone, so
-          release builds contain neither this entry nor the classes behind it.
+          Benchmark trigger. Declared in the debug source set, which the debug and
+          benchmark build types compile (app/build.gradle.kts), so release builds
+          contain neither this entry nor the classes behind it.
 
           The broadcast must name this component explicitly: since Android 8,
           manifest-declared receivers do not receive implicit broadcasts, so an

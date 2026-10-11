@@ -2,6 +2,7 @@ package app.fayaz.otgmaster.extension
 
 import android.content.Context
 import android.content.Intent
+import app.fayaz.otgmaster.BuildConfig
 import app.fayaz.otgmaster.MountedDrive
 import java.security.MessageDigest
 
@@ -30,7 +31,10 @@ import java.security.MessageDigest
 object ExtensionContract {
     const val API_VERSION = 1
 
-    const val AUTHORITY = "app.fayaz.otgmaster.documents"
+    // "app.fayaz.otgmaster.documents" in the store build. Derived rather than written
+    // out so the benchmark build (".bench" suffix) can be installed beside it: two
+    // packages declaring one authority cannot both be installed.
+    const val AUTHORITY = BuildConfig.APPLICATION_ID + ".documents"
 
     const val ACTION_VOLUME_MOUNTED = "app.fayaz.otgmaster.action.VOLUME_MOUNTED"
     const val ACTION_VOLUME_UNMOUNTED = "app.fayaz.otgmaster.action.VOLUME_UNMOUNTED"

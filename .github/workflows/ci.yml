@@ -36,6 +36,12 @@ jobs:
       - name: Build debug APK
         run: ./gradlew assembleDebug
 
+      - name: Build benchmark APK
+        # Release code plus the harness (see "Which APK to measure" in
+        # docs/RUNNING_BENCHMARKS.md). Built here so a change that breaks only this
+        # variant is caught before someone needs it for a run.
+        run: ./gradlew assembleBenchmark
+
       - name: Upload debug APK
         uses: actions/upload-artifact@v4
         with:

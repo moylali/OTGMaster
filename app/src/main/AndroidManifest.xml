@@ -56,7 +56,7 @@
 
         <provider
             android:name=".provider.VeraCryptDocumentProvider"
-            android:authorities="app.fayaz.otgmaster.documents"
+            android:authorities="${applicationId}.documents"
             android:exported="true"
             android:grantUriPermissions="true"
             android:permission="android.permission.MANAGE_DOCUMENTS">

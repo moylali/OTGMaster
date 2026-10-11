@@ -312,6 +312,11 @@ each device merely agreeing with itself.
    fixtures hid a 2 GiB overflow, single-threaded tests hid a lock shipped wrong, and a
    no-op remount produced eleven meaningless passes. When a fix lands, confirm the new
    test **fails on the old code**.
+6. **Same build type.** Every figure in this document came from a debug APK, whose
+   native code (crypto, libexfat) is compiled with no `-O` flag. The benchmark build
+   type is release code at `-O2`, and its reports say `build: <version>-bench`. Do not
+   compare a `-bench` figure with anything here; re-take the reference on the
+   benchmark build first. See "Which APK to measure" in `RUNNING_BENCHMARKS.md`.
 
 ## 7. Provenance
 

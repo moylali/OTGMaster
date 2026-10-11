@@ -13,7 +13,13 @@ partition on the host.
 ```sh
 ADB=/home/fayaz/android-sdk-local/platform-tools/adb
 A=192.168.1.9:33057        # from `adb devices -l`
+PKG=app.fayaz.otgmaster.bench
 ```
+
+`PKG` is the **benchmark build**, not the store app: see [Which APK to
+measure](#which-apk-to-measure). Its components are written out in full
+(`$PKG/app.fayaz.otgmaster.MainActivity`) because the package is not the
+classes' package, so the `/.MainActivity` shorthand would not resolve.
 
 ### 1. Before the run — drive on the host
 
@@ -35,13 +41,14 @@ device **every time**, whether or not it looks current.
 
 ```sh
 git status --porcelain                                  # must be empty
-./gradlew :app:assembleDebug -q
-$ADB -s $A install -r app/build/outputs/apk/debug/app-debug.apk
+./gradlew :app:assembleBenchmark -q
+$ADB -s $A install -r app/build/outputs/apk/benchmark/app-benchmark.apk
 ```
 
-A signature mismatch (`INSTALL_FAILED_UPDATE_INCOMPATIBLE`) means a debug build
-from another keystore is installed. `adb uninstall app.fayaz.otgmaster` first;
-only cached test credentials are lost.
+It installs beside the store app and leaves it alone. A signature mismatch
+(`INSTALL_FAILED_UPDATE_INCOMPATIBLE`) means a benchmark build from another
+keystore is installed. `adb uninstall $PKG` first; only cached test credentials
+are lost.
 
 ### 3. Prepare the device
 
@@ -49,7 +56,7 @@ Plug the drive into the phone, then:
 
 ```sh
 $ADB -s $A shell input keyevent KEYCODE_WAKEUP
-$ADB -s $A shell am start -n app.fayaz.otgmaster/.MainActivity
+$ADB -s $A shell am start -n $PKG/app.fayaz.otgmaster.MainActivity
 $ADB -s $A shell settings put system screen_off_timeout 86400000
 $ADB -s $A shell dumpsys deviceidle disable
 $ADB -s $A shell dumpsys battery | grep -E 'level|powered'
@@ -71,7 +78,7 @@ Check three things before going on:
 ```sh
 $ADB -s $A logcat -c
 $ADB -s $A shell am broadcast -a app.fayaz.otgmaster.RUN_BENCHMARK \
-    -n app.fayaz.otgmaster/.bench.BenchmarkReceiver \
+    -n $PKG/app.fayaz.otgmaster.bench.BenchmarkReceiver \
     --es password password123 --es pim 1 --es cipher AES --es hash SHA-512 \
     --es tests "free,block,dir,path,seq,random,opens,write,unaligned,correct,fixtures" \
     --es cache default --es remount true
@@ -123,7 +130,7 @@ The run is done when `=== benchmark finished ===` appears.
 
 ```sh
 $ADB -s $A exec-out cat \
-  /storage/emulated/0/Android/data/app.fayaz.otgmaster/files/benchmark.txt
+  /storage/emulated/0/Android/data/$PKG/files/benchmark.txt
 ```
 
 Read the verdict lines: `write verify`, `unaligned`, `correctness`, `fixtures`,
@@ -151,9 +158,9 @@ The structural checks can run on the drive's own bytes without unplugging it:
 
 ```sh
 $ADB -s $A shell am broadcast -a app.fayaz.otgmaster.DUMP_VOLUME \
-    -n app.fayaz.otgmaster/.bench.VolumeDumpReceiver --es drive NTFSPLAIN
+    -n $PKG/app.fayaz.otgmaster.bench.VolumeDumpReceiver --es drive NTFSPLAIN
 $ADB -s $A logcat -d | grep 'OTGDump.*done'
-$ADB -s $A pull /storage/emulated/0/Android/data/app.fayaz.otgmaster/files/NTFSPLAIN.otgdump
+$ADB -s $A pull /storage/emulated/0/Android/data/$PKG/files/NTFSPLAIN.otgdump
 python3 scripts/undump_volume.py NTFSPLAIN.otgdump ntfs.img
 python3 scripts/ntfs_check.py ntfs.img && ntfsfix -n ntfs.img
 ```
@@ -174,14 +181,44 @@ verdict, the `fsck` result, and the comparison result. Update the cell in
 `docs/test-reports/COVERAGE.md`. A completed run is recorded whatever it says; a
 run that produced no result can be dropped.
 
+## Which APK to measure
+
+Measure the **benchmark build** (`./gradlew :app:assembleBenchmark`,
+`app.fayaz.otgmaster.bench`, label *OTG Master Bench*). It is the release build
+type with the harness added: not debuggable, native code at `-O2 -DNDEBUG`,
+signed with the debug key, and installed under its own package so the store app
+on the same phone is left alone.
+
+Before it existed, runs used the debug APK, and that measured code no user runs.
+A debuggable build compiles the native side as CMake `Debug`, which passes **no
+`-O` flag at all**: the AES/XTS and SHA code, libexfat and the other C ran at
+`-O0`, and ART runs a debuggable app's Kotlin — libaums' FAT32 among it — without
+the optimisations a release install gets.
+
+**So debug-build and benchmark-build figures are not comparable.** The report says
+which it was: a benchmark build prints `build: 0.4.1-bench (…)`, a debug build has
+no suffix. Every figure in `BENCHMARK_RESULTS.md`, and every row of
+`BENCHMARK_RUNS.md` before this build type existed, came from a debug build.
+Compare a benchmark-build run only with benchmark-build runs, and re-take the
+reference figures on it before using them as a baseline. Correctness verdicts
+(`write verify`, `correctness`, `fixtures`, the host `fsck`) carry across both:
+they judge what is on the drive, not how fast it got there.
+
+The debug build is still what E2E installs and drives (`run_e2e_tests.sh`), and
+`run_benchmark.sh` can measure it with `PKG=app.fayaz.otgmaster`.
+
+If both the store app and the benchmark build are installed, attaching a drive
+asks which one to open. Pick *OTG Master Bench* with **Always**, or the USB
+permission is never granted to the build doing the run.
+
 ## Two ways to trigger a run
 
 ### Over adb (preferred)
 
 ```sh
-adb shell am start -n app.fayaz.otgmaster/.MainActivity
+adb shell am start -n app.fayaz.otgmaster.bench/app.fayaz.otgmaster.MainActivity
 adb shell am broadcast -a app.fayaz.otgmaster.RUN_BENCHMARK \
-    -n app.fayaz.otgmaster/.bench.BenchmarkReceiver \
+    -n app.fayaz.otgmaster.bench/app.fayaz.otgmaster.bench.BenchmarkReceiver \
     --es password password123 --es pim 1 --es cipher AES --es hash SHA-512 \
     --es tests "unaligned,correct" --es cache default --es remount true
 ```
@@ -229,8 +266,8 @@ For phones where adb over wifi is unavailable — Android 9 and earlier have no
 Wireless Debugging, and legacy `adb tcpip` does not survive losing the USB
 transport, which is the transport the drive needs.
 
-1. Attach the drive, open **OTG Master**, unlock it there.
-2. Open **OTG Bench** (its own launcher icon, debug builds only) and tap a section.
+1. Attach the drive, open **OTG Master Bench**, unlock it there.
+2. Open **OTG Bench** (its own launcher icon, benchmark and debug builds only) and tap a section.
 
 Order matters: the bench screen holds the foreground to keep the display on, which
 leaves MainActivity unable to show a USB permission dialog. It detects an unmounted
@@ -249,7 +286,7 @@ Every run writes three copies, and runs accumulate rather than overwrite:
 |---|---|
 | `BENCH/reports/otgbench-<model>-<stamp>.txt` on the drive | Travels with the drive; plus an appended `INDEX.txt`, one line per run |
 | `Documents/` via MediaStore | MTP-visible. **API 29+ only** — below that a MediaStore insert needs `WRITE_EXTERNAL_STORAGE` |
-| `Android/data/app.fayaz.otgmaster/files/` | `adb pull`, and MTP-readable before Android 11 |
+| `Android/data/app.fayaz.otgmaster.bench/files/` | `adb pull`, and MTP-readable before Android 11 |
 
 `INDEX.txt` carries the model, Android version, commit, awake/DOZED and the
 correctness and fixtures verdicts, so a set of runs can be read without opening each.
@@ -371,8 +408,9 @@ session — one inside `ScsiBlockDevice.init`, one at USB enumeration — both c
 a replug with no code change. That is the discriminating test for transport faults.
 
 **Release builds contain no harness.** `BenchmarkReceiver`, `BenchLauncherActivity`
-and the native I/O counters are debug-only, so a Play-signed install cannot run any of
-this — and a debug APK cannot replace it without uninstalling first.
+and the native I/O counters are in the debug and benchmark builds only, so a
+Play-signed install cannot run any of this. The benchmark build installs beside it
+under its own package instead of replacing it.
 
 **Watch for crashes as the run goes.** The runner clears the crash buffer, polls every
 three seconds, and aborts immediately with the trace. It previously only noticed a

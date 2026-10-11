@@ -1113,7 +1113,7 @@ class MainActivity : AppCompatActivity() {
                     withContext(Dispatchers.Main) { appendLog("${mountedDrive.name} is read-only: $reason") }
                 }
                 contentResolver.notifyChange(
-                    android.provider.DocumentsContract.buildRootsUri("app.fayaz.otgmaster.documents"), null
+                    android.provider.DocumentsContract.buildRootsUri(app.fayaz.otgmaster.provider.VeraCryptDocumentProvider.AUTHORITY), null
                 )
                 app.fayaz.otgmaster.extension.ExtensionContract.notifyCompanions(
                     applicationContext, app.fayaz.otgmaster.extension.ExtensionContract.ACTION_VOLUME_MOUNTED, mountedDrive)
@@ -1226,7 +1226,7 @@ class MainActivity : AppCompatActivity() {
         OtgMasterState.removeDrive(drive.id)
         val tRemoved = System.currentTimeMillis()
         contentResolver.notifyChange(
-            android.provider.DocumentsContract.buildRootsUri("app.fayaz.otgmaster.documents"), null
+            android.provider.DocumentsContract.buildRootsUri(app.fayaz.otgmaster.provider.VeraCryptDocumentProvider.AUTHORITY), null
         )
         app.fayaz.otgmaster.extension.ExtensionContract.notifyCompanions(
             applicationContext, app.fayaz.otgmaster.extension.ExtensionContract.ACTION_VOLUME_UNMOUNTED, drive)
@@ -1418,7 +1418,7 @@ class MainActivity : AppCompatActivity() {
                     withContext(Dispatchers.Main) { appendLog("${mountedDrive.name} is read-only: $reason") }
                 }
                 contentResolver.notifyChange(
-                    android.provider.DocumentsContract.buildRootsUri("app.fayaz.otgmaster.documents"), null
+                    android.provider.DocumentsContract.buildRootsUri(app.fayaz.otgmaster.provider.VeraCryptDocumentProvider.AUTHORITY), null
                 )
                 app.fayaz.otgmaster.extension.ExtensionContract.notifyCompanions(
                     applicationContext, app.fayaz.otgmaster.extension.ExtensionContract.ACTION_VOLUME_MOUNTED, mountedDrive)
