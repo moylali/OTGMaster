@@ -21,6 +21,7 @@ testdata/**/pim.txt
 testdata/**/expects_error.txt
 testdata/**/expected_fs.txt
 testdata/**/cipher.txt
+testdata/**/hash.txt
 
 # Test run artifacts
 logcat_*.txt

@@ -101,15 +101,17 @@ files out of each directory. Only the first three are mandatory:
 | `password.txt` | **yes** | Volume password |
 | `pim.txt` | **yes** | PIM, as a bare integer |
 | `cipher.txt` | no | Which cipher the **UI picker** selects — not necessarily the volume's real cipher |
+| `hash.txt` | no | Which header KDF the **UI picker** selects (`SHA-512` if absent) — likewise independent of the volume |
 | `description.txt` | no | Printed in the run log; this is what a later reader has to understand the case from |
 | `test.key` | no | Keyfile; required by convention for any case named `*_keyfile` |
 | `expects_error.txt` | no | Presence means the case **must fail to mount** |
 | `write_test.txt` | no | Presence runs the create/persist/delete/persist lifecycle |
 
-`cipher.txt` being independent of the volume is the mechanism behind the
-`unsupported_cipher` case: the image is ordinary AES-FAT32, but the picker is set to
-`Twofish`, so the app must refuse before touching volume data. That is the shape to
-copy for any new unsupported cipher.
+`cipher.txt` and `hash.txt` being independent of the volume is the mechanism behind
+the `unsupported_hash` case: the image is ordinary AES/SHA-512 FAT32, but the picker is
+set to `Whirlpool`, so the app must refuse before touching volume data. That is the
+shape to copy for anything unsupported. (It was `unsupported_cipher`, with Twofish,
+until every cipher in the picker was implemented.)
 
 **One trap.** `ensure_testdata()` validates a **hardcoded list** of case names
 (`run_e2e_tests.sh:48`) while the run loop iterates the directory. A new case you add
@@ -138,7 +140,7 @@ only ever a rejection case.
 
    The name must be what `veracrypt --encryption=` accepts. Add the directory to the
    `mkdir -p` block at the top and to `ensure_testdata`'s list.
-5. **Rejection fixture**, if it is *not* implemented — copy the `unsupported_cipher`
+5. **Rejection fixture**, if it is *not* implemented — copy the `unsupported_hash`
    pattern: a working AES volume plus a `cipher.txt` naming the new cipher and an
    `expects_error.txt`. This is the more valuable of the two cases, because a cipher
    that is silently mis-decrypted looks like a corrupt drive to the user.
@@ -156,23 +158,19 @@ a passing E2E case, is not the same as measured.
 
 ## 4. Adding a new hash
 
-This one needs a script change first, which the cipher path does not.
+1. Implement it natively — a `KDF_*` id in `app/src/main/cpp/VeraCryptNative.cpp` — and
+   set the same id as `kdfNativeId` on its `VeraCryptHash` entry.
+2. Give it VeraCrypt's PIM rule in `KdfParams.forVolume`, from
+   `get_pkcs5_iteration_count` (or `get_argon2_params`) in VeraCrypt's
+   `src/Common/Pkcs5.c`. Check the default: a hash whose no-PIM cost differs from the
+   others is silently wrong if it falls into the `else`.
+3. Add it to `scripts/make_veracrypt_fixtures.sh` (§1.1); `VeraCryptCascadeTest` then
+   opens every cipher with it.
+4. For E2E, pass it as `create_fat32_volume`'s fifth argument; it is written to
+   `hash.txt`, which `run_e2e_tests.sh` passes to the picker.
 
-`generate_testdata.sh` hardcodes `--hash=SHA-512` at every call site, and there is no
-`hash.txt` in the per-case contract. To add a hash:
-
-1. Implement it natively and flip `isSupported` on `VeraCryptHash`.
-2. Add the iteration count to the `when (hash)` block in `VeraCryptUnlocker` — note
-   every current branch returns `500000`, so a hash with a different default will be
-   silently wrong if you rely on the `else`.
-3. Parameterise the generator: add a `HASH` argument to `create_fat32_volume`, pass it
-   to `--hash=`, and write it to `hash.txt`.
-4. Teach `run_e2e_tests.sh` to read `hash.txt` and pass it through, following how
-   `cipher.txt` is handled at line 213.
-5. Only then generate the fixture.
-
-Skipping step 4 produces a fixture that mounts because the app *defaults* to SHA-512
-and the volume happens to be SHA-512 — a pass that proves nothing.
+A fixture without `hash.txt` mounts because the app *defaults* to SHA-512 and the volume
+happens to be SHA-512 — a pass that proves nothing about the new hash.
 
 ## 5. Adding a new filesystem
 

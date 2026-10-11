@@ -98,6 +98,7 @@ class E2EAutomatedTest {
         val expectMount = arguments.getString("expect_mount", "true") == "true"
         val expectedFs = arguments.getString("expected_fs", "")
         val cipher = arguments.getString("cipher", "")
+        val hash = arguments.getString("hash", "")
         // A plain volume (no container) is auto-mounted on scan: there is no form.
         val plainMount = arguments.getString("plain_mount", "false") == "true"
 
@@ -221,16 +222,8 @@ class E2EAutomatedTest {
                 android.os.SystemClock.sleep(500)
             }
 
-            if (cipher.isNotEmpty() && cipher != "AES") {
-                val cipherPicker = device.wait(Until.findObject(By.descContains("cipher_picker")), timeout)
-                assertTrue("Cipher picker not found", cipherPicker != null)
-                cipherPicker?.click()
-                android.os.SystemClock.sleep(500)
-                val cipherOption = device.wait(Until.findObject(By.textContains(cipher)), timeout)
-                assertTrue("Cipher option '$cipher' not found in picker", cipherOption != null)
-                cipherOption?.click()
-                android.os.SystemClock.sleep(500)
-            }
+            if (cipher.isNotEmpty() && cipher != "AES") pickOption("cipher_picker", cipher)
+            if (hash.isNotEmpty() && hash != "SHA-512") pickOption("hash_picker", hash)
 
             // Click Mount
             val clicked = clickMountButton()
@@ -768,6 +761,23 @@ class E2EAutomatedTest {
      * failed with StaleObjectException on `isEnabled` while the form was being
      * re-offered — and a stale handle says nothing about the app.
      */
+    /**
+     * Opens the dropdown [pickerDesc] and picks [label]. Exact text first: "Twofish" is a
+     * substring of four cascade names. An unsupported option reads "<name> (not yet supported)",
+     * so a prefix match is the fallback that still finds those.
+     */
+    private fun pickOption(pickerDesc: String, label: String) {
+        val picker = device.wait(Until.findObject(By.descContains(pickerDesc)), timeout)
+        assertTrue("$pickerDesc not found", picker != null)
+        picker?.click()
+        android.os.SystemClock.sleep(500)
+        val option = device.wait(Until.findObject(By.text(label)), 3000L)
+            ?: device.wait(Until.findObject(By.textStartsWith("$label ")), timeout)
+        assertTrue("Option '$label' not found in $pickerDesc", option != null)
+        option?.click()
+        android.os.SystemClock.sleep(500)
+    }
+
     private fun clickMountButton(): MountClick {
         repeat(3) {
             val button = findMountButton() ?: return MountClick.NOT_FOUND

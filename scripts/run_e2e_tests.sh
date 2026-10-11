@@ -61,7 +61,7 @@ ensure_testdata() {
         exit 1
     fi
 
-    for case_name in fat32 fat32_keyfile fat32_keyfile_pim exfat exfat_keyfile exfat_write fat16 serpent unsupported_cipher partitioned_mbr fat32_write; do
+    for case_name in fat32 fat32_keyfile fat32_keyfile_pim exfat exfat_keyfile exfat_write fat16 serpent twofish serpent_aes aes_twofish_serpent_argon2 unsupported_hash partitioned_mbr fat32_write; do
         local dir="$TESTDATA_DIR/$case_name"
         if [ ! -f "$dir/test.img" ] || [ ! -f "$dir/password.txt" ] || [ ! -f "$dir/pim.txt" ]; then
             echo "Missing artifacts for test case: $case_name (test.img / password.txt / pim.txt)"
@@ -285,6 +285,14 @@ for test_dir in "$TESTDATA_DIR"/*/; do
         CIPHER_ARG="-e cipher $CIPHER"
     fi
 
+    # The header KDF the UI picker selects ("SHA-512" when absent), like cipher.txt.
+    HASH_ARG=""
+    HASH="SHA-512"
+    if [ -f "$test_dir/hash.txt" ]; then
+        HASH=$(cat "$test_dir/hash.txt")
+        HASH_ARG="-e hash $HASH"
+    fi
+
     REMOUNT_ARG=""
     if [ "$TEST_NAME" = "fat32" ]; then
         REMOUNT_ARG="-e remount_test true"
@@ -325,9 +333,9 @@ for test_dir in "$TESTDATA_DIR"/*/; do
     echo "Running Test Case: $TEST_NAME"
     echo "Image: $IMG_FILE"
     if [ -f "$test_dir/expects_error.txt" ]; then
-        echo "Expects: error (filesystem: $EXPECTED_FS, cipher: $CIPHER)"
+        echo "Expects: error (filesystem: $EXPECTED_FS, cipher: $CIPHER, hash: $HASH)"
     else
-        echo "Expects: successful mount (cipher: $CIPHER)"
+        echo "Expects: successful mount (cipher: $CIPHER, hash: $HASH)"
     fi
     [ -n "$DESCRIPTION" ] && echo "Description: $DESCRIPTION"
     echo "=================================================="
@@ -372,6 +380,7 @@ for test_dir in "$TESTDATA_DIR"/*/; do
             $EXPECT_MOUNT_ARG \
             $EXPECTED_FS_ARG \
             $CIPHER_ARG \
+            $HASH_ARG \
             $REMOUNT_ARG \
             $WRITE_TEST_ARG \
             $RECOVERY_ARG \

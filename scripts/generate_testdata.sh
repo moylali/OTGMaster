@@ -11,6 +11,9 @@ mkdir -p testdata/serpent
 
 
 PASSWORD="password123"
+# VeraCrypt refuses PIM 1 with Argon2 unless the password is at least 20 characters,
+# and PIM 12 would ask the emulator for 416 MiB. docs/TEST_DATA.md §1.
+LONG_PASSWORD="otgmaster-test-password-2026"
 
 populate_complex_files() {
     local MNT=$1
@@ -31,16 +34,21 @@ create_fat32_volume() {
     HAS_KEYFILE=$2
     CIPHER=${3:-AES}
     PIM_VAL=${4:-1}
+    HASH=${5:-SHA-512}
     IMG_FILE="$DIR/test.img"
+    local PASSWORD="$PASSWORD"
+    [ "$HASH" = "Argon2" ] && PASSWORD="$LONG_PASSWORD"
 
     echo "$PASSWORD" > "$DIR/password.txt"
     echo "$PIM_VAL" > "$DIR/pim.txt"
     echo "$CIPHER" > "$DIR/cipher.txt"
+    echo "$HASH" > "$DIR/hash.txt"
 
     local desc="AES-encrypted VeraCrypt volume (10 MB) formatted as FAT32, PIM=${PIM_VAL}."
     [ "$HAS_KEYFILE" = "true" ] && desc="$desc Requires a keyfile (test.key) in addition to the password."
     [ "$PIM_VAL" != "1" ] && desc="$desc Custom PIM tests that the key-derivation iteration count is honoured."
     [ "$CIPHER" != "AES" ] && desc="AES replaced by $CIPHER cipher; otherwise identical to the base fat32 case."
+    [ "$HASH" != "SHA-512" ] && desc="$desc Header key from $HASH (PIM $PIM_VAL), not PBKDF2-SHA-512."
     echo "$desc" > "$DIR/description.txt"
 
     KEY_ARG=""
@@ -52,7 +60,7 @@ create_fat32_volume() {
     # Create container without filesystem
     echo "Creating $IMG_FILE (fs: fat32, cipher=$CIPHER, pim=$PIM_VAL)..."
     touch "$IMG_FILE" && chmod 666 "$IMG_FILE" && sudo veracrypt -t -c --volume-type=normal "$IMG_FILE" --size="10M" --password="$PASSWORD" \
-        --encryption=$CIPHER --hash=SHA-512 --filesystem=none --pim=$PIM_VAL $KEY_ARG \
+        --encryption=$CIPHER --hash=$HASH --filesystem=none --pim=$PIM_VAL $KEY_ARG \
         --random-source=/dev/urandom --non-interactive
 
     # Mount it to format manually.
@@ -217,16 +225,24 @@ create_fat32_volume "testdata/fat32" "false"
 create_fat32_volume "testdata/fat32_keyfile" "true"
 create_fat32_volume "testdata/fat32_keyfile_pim" "true" "AES" "123"
 create_fat32_volume "testdata/serpent" "false" "Serpent"
+# Twofish alone, a two-cipher cascade, and a three-cipher cascade whose header key is
+# Argon2id: between them every stage, both cascade lengths and both KDFs.
+mkdir -p testdata/twofish testdata/serpent_aes testdata/aes_twofish_serpent_argon2
+create_fat32_volume "testdata/twofish" "false" "Twofish"
+create_fat32_volume "testdata/serpent_aes" "false" "Serpent-AES"
+create_fat32_volume "testdata/aes_twofish_serpent_argon2" "false" "AES-Twofish-Serpent" "1" "Argon2"
 
 create_partitioned_volume "testdata/partitioned_mbr"
 
-# Unsupported-cipher case: a normal AES volume, but the test selects "Twofish" in the
-# cipher picker, so the app must reject it before ever touching the device.
-mkdir -p testdata/unsupported_cipher
-create_fat32_volume "testdata/unsupported_cipher" "false"
-echo "Twofish" > "testdata/unsupported_cipher/cipher.txt"
-echo "true" > "testdata/unsupported_cipher/expects_error.txt"
-echo "AES-encrypted FAT32 VeraCrypt volume, but the UI cipher picker is set to Twofish before mounting. The app must reject the attempt immediately (header cannot be decrypted) and show 'Cannot mount' — no I/O on the actual volume data occurs." > "testdata/unsupported_cipher/description.txt"
+# Unsupported-hash case: a normal AES/SHA-512 volume, but the test selects "Whirlpool" in
+# the hash picker, so the app must refuse before deriving anything. Every cipher in the
+# picker is implemented now, so the rejection is exercised through the hash instead
+# (this was unsupported_cipher, with Twofish, until Twofish was implemented).
+mkdir -p testdata/unsupported_hash
+create_fat32_volume "testdata/unsupported_hash" "false"
+echo "Whirlpool" > "testdata/unsupported_hash/hash.txt"
+echo "true" > "testdata/unsupported_hash/expects_error.txt"
+echo "AES/SHA-512 FAT32 VeraCrypt volume, but the UI hash picker is set to Whirlpool, which is not implemented. The app must refuse immediately with 'Cannot mount: Whirlpool is not yet supported' — no key derivation, no I/O on the volume data." > "testdata/unsupported_hash/description.txt"
 
 create_exfat_volume "testdata/exfat" "false"
 create_exfat_volume "testdata/exfat_keyfile" "true"
