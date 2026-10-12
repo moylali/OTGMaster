@@ -76,6 +76,24 @@ p9 is the case no host tool could check before: cryptsetup has no Argon2 for Ver
 `VeraCryptVolumeCreatorTest` opens Argon2 volumes only with the app's own reader. Desktop
 VeraCrypt opening the app's Argon2 cascade volume is the independent check.
 
+**Commit hashes after the merge of #46** (rebase-merge, so new hashes). The rows here and
+the PR cite the branch hashes:
+
+| On the branch (cited here) | On `main` | Commit |
+|---|---|---|
+| `b6d779e` | `803a187` | feat: VeraCrypt cascades, Twofish and Argon2id header keys |
+| `d2b741e` | `1ef531a` | test(e2e): Twofish, cascade and Argon2 cases; a hash.txt per case |
+| `1be5522` | `9bbf103` | test(e2e): generate_testdata.sh fails on VeraCrypt 1.26; use a 20+ character password |
+| `f5f6188` | `3193ea1` | test(e2e): regenerated case files for the new password and cases |
+| `4714961` | `7ae83af` | build: R8 shrinking and obfuscation for the release build |
+| `241b903` | `dcb8356` | ui: edge-to-edge on every Android version, with insets handled |
+| `f182d29` | `d73b019` | test(e2e): the minified run never started a test; a dead runner counted as a pass |
+| `95f0e82` | `6f5c8bb` | feat: FAT32 and exFAT formatters, and VeraCrypt volume creation |
+| `70b95ec` | `cbd1e26` | feat(ui): More actions menu with Format and Encrypt; two-pane tablet layout |
+| `cafdf24` | `0a4dc4b` | store: 7" and 10" tablet screenshots for the two-pane layout and the More menu |
+| `d7265e5` | `d8c45f0` | test(e2e): keep the Kotlin standard library in the minified build type |
+| `32b3b2b` | `b6f5b86` | docs: Drive 5 runs on the Pixel — cascades, Argon2, Format and Encrypt; phone screenshots |
+
 ### Not rows: runs that did not complete
 
 - **p1, 13:20 (`241b903`).** The phone was locked; the unlock waited 39 min for USB
