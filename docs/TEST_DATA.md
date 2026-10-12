@@ -1103,3 +1103,58 @@ that counted. First, the host's `/usr/bin/dd` is uutils coreutils, whose
 (`gnudd`). Second, both drives running at once shared one udev rule file; it is now
 one per disk.
 
+
+### 16.6 Drive 5 — VeraCrypt cascades and Argon2, Format and Encrypt (0.4.2)
+
+Stick `071C48F5FB0EF449` (once LUKS Drive A). Unlike Drives 1–4 it is not a build image
+written with `write_matrix_drive.sh`: desktop VeraCrypt makes its volumes in place, so
+the volumes are VeraCrypt's own — the point of a cipher test. Password for every volume
+`otgmaster-test-password-2026` (VeraCrypt 1.26 refuses PIM 1 under 20 characters).
+
+| Part | GPT name | Size | Contents |
+|---|---|---|---|
+| 1 | `VC_ATS_ARGON_PIM0` | 8 GiB | VeraCrypt AES-Twofish-Serpent / Argon2 / default PIM, FAT |
+| 2 | `VC_STA_ARGON_PIM1` | 8 GiB | Serpent-Twofish-AES / Argon2 / 1, exFAT |
+| 3 | `VC_TWO_SHA512_PIM0` | 8 GiB | Twofish / SHA-512 / default, NTFS |
+| 4 | `VC_AT_ARGON_PIM1` | 8 GiB | AES-Twofish / Argon2 / 1, exFAT |
+| 5 | `VC_SA_SHA512_PIM1` | 8 GiB | Serpent-AES / SHA-512 / 1, FAT |
+| 6 | `VC_TS_ARGON_PIM31` | 8 GiB | Twofish-Serpent / Argon2 / 31 (1 GiB, 13 passes), exFAT |
+| 7 | `FMT_EXFAT` | 2 GiB | plain exFAT — for Format |
+| 8 | `FMT_FAT32` | 2 GiB | plain FAT32 — for Format |
+| 9 | `ENC_TO_EXFAT` | 2 GiB | plain FAT32 — for Encrypt (to exFAT) |
+| 10 | `ENC_TO_FAT32` | 2 GiB | plain exFAT — for Encrypt (to FAT32) |
+
+The partition table (GPT, ten Microsoft basic data partitions, the sizes above) is made
+with `sfdisk`; the last four were appended later with `sfdisk --append`. Each VeraCrypt
+volume, then its fixture tree (seed = GPT name, manifest kept on the laptop):
+
+```sh
+sudo veracrypt --text --non-interactive --create /dev/sdX1 --volume-type=normal \
+    --encryption=AES-Twofish-Serpent --hash=Argon2 --filesystem=fat --pim=0 \
+    --password=otgmaster-test-password-2026 --quick --random-source=/dev/urandom
+sudo veracrypt --text --non-interactive --mount /dev/sdX1 /tmp/vcx1 \
+    --password=otgmaster-test-password-2026 --pim=0 --hash=Argon2 --protect-hidden=no \
+    --keyfiles= --fs-options="uid=$(id -u),gid=$(id -g),utf8"
+python3 scripts/make_fixture_tree.py /tmp/vcx1 --seed VC_ATS_ARGON_PIM0 \
+    --size 5e8 --manifest-out matrix/vcx/VC_ATS_ARGON_PIM0.MANIFEST.txt
+sudo veracrypt --text --non-interactive --dismount /dev/sdX1
+```
+
+The plain partitions: `mkfs.exfat -L <name>` or `mkfs.vfat -F 32 -n <name>`, mounted
+with the same options, filled with `make_fixture_tree.py … --size 3e8 --large-mib 64
+--dense 2000` (the default 2,100 MiB `large/` file does not fit in 2 GiB).
+
+Two traps met building it:
+
+- **FAT and non-BMP names.** Mounted with `iocharset=utf8`, Linux's vfat refuses the
+  fixture tree's emoji file name (EINVAL) and the fill stops. The `utf8` mount option
+  stores it as a UTF-16 surrogate pair, as Windows does. exFAT takes `iocharset=utf8`.
+- **The plain partitions need their filesystem made before the fill**, and a failed
+  `mkfs` leaves the partition with none — the app then has no card for it, so neither
+  Format nor Encrypt can reach it. Partition 10 ended up that way and sat out the
+  first run.
+
+After a phone run, `verify_volume.sh /dev/sdXN otgmaster-test-password-2026 <pim>` (PIM 0
+for VeraCrypt's default) opens each volume in desktop VeraCrypt and runs its checker —
+which, for partitions the app has encrypted, is also the check that VeraCrypt reads what
+the app wrote.

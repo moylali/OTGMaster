@@ -33,6 +33,62 @@ to a row here.
 
 ---
 
+## 2026-10-11 — 0.4.2 on `cafdf24`: VeraCrypt cascades and Argon2, Format and Encrypt (Drive 5)
+
+Drive 5 is stick `071C48F5FB0EF449` (TEST_DATA.md §16.6): six VeraCrypt volumes made by
+desktop VeraCrypt 1.26 — one per cipher/KDF shape the release adds — and four plain
+partitions for Format and Encrypt. The APK is `cafdf24` (the PR's code; the commits after
+it are tests, docs and screenshots), installed on the Pixel 7 Pro before the runs; every
+report's `build:` line says `0.4.2 (48) commit cafdf24`.
+
+**Scope, set by the user:** cipher and KDF correctness, not bulk transfer. Sections
+`free,block,dir,path,write,unaligned,correct` — no `seq`, `random`, `opens`, `bigwrite`,
+and no `fixtures` (it hashes the 2.1 GB `large/` files, at 0.07 MB/s through the USB-C
+multiport adapter the stick hung off: one p1 attempt spent 83 min there). Content
+correctness is `write verify` on all three passes, `unaligned` and `correctness`; the
+fixture trees were checked instead by the laptop's fsck after the run. Throughput figures
+are the adapter's, not the app's (0.07–8.45 MB/s on the same stick, minutes apart), and
+are not comparable with anything.
+
+| Device · Android | Partition · cipher / KDF / PIM · FS · start | On the phone | Host (20:16, `verify_volume.sh`) |
+|---|---|---|---|
+| Pixel 7 Pro · 17 | p1 · AES-Twofish-Serpent / Argon2 / default (416 MiB, 6 passes) · FAT32 · 17:34 | write verify ALL PASSED (3 passes), unaligned A+B PASS, correctness ALL PASSED | VeraCrypt opens it; vfat CLEAN |
+| Pixel 7 Pro · 17 | p2 · Serpent-Twofish-AES / Argon2 / 1 · exFAT · 18:04 | all PASSED | exfat CLEAN, 20,966 files |
+| Pixel 7 Pro · 17 | p3 · Twofish / SHA-512 / default · NTFS · 18:26 | all PASSED | ntfs CLEAN |
+| Pixel 7 Pro · 17 | p4 · AES-Twofish / Argon2 / 1 · exFAT · 18:28 | all PASSED | exfat CLEAN, 20,951 files |
+| Pixel 7 Pro · 17 | p5 · Serpent-AES / SHA-512 / 1 · FAT32 · 18:30 | all PASSED | vfat CLEAN |
+| Pixel 7 Pro · 17 | p6 · Twofish-Serpent / Argon2 / 31 (1 GiB, 13 passes) · exFAT · 18:49 | all PASSED (76 min; the KDF itself is ~1 min of it) | exfat CLEAN, 20,985 files |
+
+No PARTIAL, NOT VERIFIED or CONTAMINATED line in any of them.
+
+**Format and Encrypt through the UI**, 20:06–20:11, driven by tapping the app as a user
+would (the card's ⋮ menu, the confirmation screen checked to name the right partition,
+ERASE typed): all four quick, because at the 0.92 MB/s the link gave then a full 2 GiB
+overwrite would have taken ~40 min — full is covered by the E2E cases and host tests.
+
+| Partition · before | Action | On the phone | Host |
+|---|---|---|---|
+| p7 · plain exFAT, 0.3 GB of files | Format | "Formatted as exFAT and mounted", 4 s | exfat CLEAN, 0 files |
+| p8 · plain FAT32, 0.3 GB of files | Format, then Encrypt: Twofish / SHA-512 / default, FAT32 inside | 4 s, then "Encrypted (Twofish, SHA-512) with FAT32 inside, and mounted", 22 s | **desktop VeraCrypt opens the app-made volume**; vfat CLEAN |
+| p9 · plain FAT32, 0.3 GB of files | Encrypt: AES-Twofish-Serpent / Argon2 / default, exFAT inside | "Encrypted (AES-Twofish-Serpent, Argon2) with exFAT inside, and mounted", 57 s | **desktop VeraCrypt opens it**; exfat CLEAN, 0 files |
+
+p9 is the case no host tool could check before: cryptsetup has no Argon2 for VeraCrypt, so
+`VeraCryptVolumeCreatorTest` opens Argon2 volumes only with the app's own reader. Desktop
+VeraCrypt opening the app's Argon2 cascade volume is the independent check.
+
+### Not rows: runs that did not complete
+
+- **p1, 13:20 (`241b903`).** The phone was locked; the unlock waited 39 min for USB
+  permission and the benchmark gave up at its 600 s mount timeout. No result.
+- **p1, 14:00, and p2, 14:02 (`241b903`).** p1 lost the drive in its block-layer section
+  (`MAX_RECOVERY_ATTEMPTS Exceeded`) while the multiport adapter re-enumerated its own audio
+  and network interfaces; p2 then read at 0.09 MB/s and was stopped. No result.
+- **p1, 15:40 (`241b903`).** Passed write verify, unaligned and correctness and matched all
+  20,000 listing entries, then spent 83 min hashing the 2.1 GB fixture file and was stopped
+  when the scope dropped `fixtures`. Not a result; p1 was re-run on `cafdf24` (above).
+
+---
+
 ## 2026-10-10 to 10-11 — 0.4.1 on `ae25575`, completing the matrix
 
 Every run here is `ae25575` (the release app code plus the per-partition report save; see
