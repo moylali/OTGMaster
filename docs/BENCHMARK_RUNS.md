@@ -33,6 +33,27 @@ to a row here.
 
 ---
 
+## 2026-10-14 — PR #53, disconnected cards: no benchmark rows
+
+PR #53 (a drive that drops while mounted stays on screen as a DISCONNECTED card) changed no
+I/O path, so no benchmark ran and there are no rows. It was checked by hand on the OnePlus 7
+(Android 16) with the debug build of `29675dc`: Drive 5's plain exFAT partition 7 pulled
+from a powered hub and plugged back in; the record is in the PR description. Its E2E runs
+(`5452716`, 55/55) and the minified `disconnect` runs are recorded there as well.
+
+**Commit hashes after the merge of #53** (rebase-merge, so new hashes). The PR and the
+commit messages cite the branch hashes:
+
+| On the branch (cited) | On `main` | Commit |
+|---|---|---|
+| `d36a78b` | `2ac5d84` | feat(ui): a drive that drops stays on screen, with advice; help when a scan finds none |
+| `29675dc` | `4ed3fa8` | test(e2e): pull the drive out from under a mount, twice (disconnect case) |
+| `1c11590` | `03db824` | test(e2e): run the disconnect case from testMountUsbDrive, not its own @Test |
+| `44707e3` | `f57c67e` | store: add 6_disconnected, a drive's card after it was pulled while mounted |
+| `4d362a6` | `aaf1e3e` | test(e2e): keep OtgMasterState for the minified test APK |
+| `47bda5c` | `109e456` | test(e2e): keep MountedDrive.getSourceDeviceName for the minified test APK |
+| `5452716` | `48451c5` | test(e2e): find the history line again at the click, and scroll to its entries |
+
 ## 2026-10-11 — 0.4.2 on `cafdf24`: VeraCrypt cascades and Argon2, Format and Encrypt (Drive 5)
 
 Drive 5 is stick `071C48F5FB0EF449` (TEST_DATA.md §16.6): six VeraCrypt volumes made by
