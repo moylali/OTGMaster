@@ -280,3 +280,56 @@ private fun HelpDialog(title: Int, onDismiss: () -> Unit, sections: List<HelpSec
         },
     )
 }
+
+/**
+ * Asks before replaying an ext4 journal (Ext4FileSystem.replayJournal). Shown when a drive
+ * mounts read-only because its journal needs recovery, and from the card's Repair button.
+ */
+@Composable
+fun JournalRepairDialog(driveTitle: String, onRepair: () -> Unit, onDismiss: () -> Unit) {
+    AlertDialog(
+        onDismissRequest = onDismiss,
+        icon = { Icon(Icons.Filled.Warning, contentDescription = null) },
+        title = { Text(stringResource(R.string.journal_repair_title)) },
+        text = {
+            Column(modifier = Modifier.verticalScroll(rememberScrollState())) {
+                Text(driveTitle, style = MaterialTheme.typography.titleSmall)
+                Spacer(modifier = Modifier.height(8.dp))
+                Text(stringResource(R.string.journal_repair_body), style = MaterialTheme.typography.bodyMedium)
+                Spacer(modifier = Modifier.height(8.dp))
+                Text(stringResource(R.string.journal_repair_what), style = MaterialTheme.typography.bodyMedium)
+                Spacer(modifier = Modifier.height(8.dp))
+                Text(stringResource(R.string.journal_repair_safety), style = MaterialTheme.typography.bodyMedium)
+            }
+        },
+        confirmButton = {
+            TextButton(
+                onClick = onRepair,
+                modifier = Modifier.semantics { contentDescription = "journal_repair_confirm" },
+            ) { Text(stringResource(R.string.journal_repair_confirm)) }
+        },
+        dismissButton = {
+            TextButton(onClick = onDismiss) { Text(stringResource(R.string.journal_repair_keep)) }
+        },
+    )
+}
+
+/** The line and button a card shows while its ext4 journal waits to be replayed. */
+@Composable
+fun JournalRepairNotice(onRepair: () -> Unit) {
+    Row(verticalAlignment = Alignment.CenterVertically, modifier = Modifier.fillMaxWidth()) {
+        Icon(Icons.Filled.Warning, contentDescription = null,
+            tint = MaterialTheme.colorScheme.error, modifier = Modifier.size(16.dp))
+        Spacer(modifier = Modifier.width(6.dp))
+        Text(
+            text = stringResource(R.string.journal_repair_notice),
+            style = MaterialTheme.typography.bodySmall,
+            color = MaterialTheme.colorScheme.error,
+            modifier = Modifier.weight(1f),
+        )
+        OutlinedButton(
+            onClick = onRepair,
+            modifier = Modifier.semantics { contentDescription = "journal_repair_button" },
+        ) { Text(stringResource(R.string.journal_repair_button)) }
+    }
+}

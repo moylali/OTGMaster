@@ -168,6 +168,12 @@ ensure_testdata() {
         fi
     done
 
+    # An ext4 drive whose journal needs recovery (scripts/make_journal_fixture.py, no root).
+    if [ ! -f "$TESTDATA_DIR/ext4_journal/test.img" ]; then
+        echo "Generating the journal-repair fixture..."
+        python3 scripts/make_journal_fixture.py || { echo "Journal fixture generation failed!"; exit 1; }
+    fi
+
     # The support matrix: every filesystem in every container (scripts/make_e2e_matrix.py).
     if [ ! -f "$TESTDATA_DIR/m_bitlocker_ntfs/test.img" ] || [ ! -f "$TESTDATA_DIR/m_luks2_ext2/test.img" ]; then
         echo "Generating the support-matrix fixtures..."
@@ -389,6 +395,8 @@ for test_dir in "$TESTDATA_DIR"/*/; do
     [ -f "$test_dir/plain.txt" ] && PLAIN_ARG="-e plain_mount true"
     DISCONNECT_ARG=""
     [ -f "$test_dir/disconnect.txt" ] && DISCONNECT_ARG="-e disconnect_test true"
+    JOURNAL_ARG=""
+    [ -f "$test_dir/journal.txt" ] && JOURNAL_ARG="-e journal_repair true"
     CASE_ARG=""
     [ -f "$test_dir/case_sensitive.txt" ] && CASE_ARG="-e expect_case_sensitive $(cat "$test_dir/case_sensitive.txt")"
     FLOWER_ARG=""
@@ -495,6 +503,7 @@ for test_dir in "$TESTDATA_DIR"/*/; do
             $PLAIN_ARG \
             $CASE_ARG \
             $DISCONNECT_ARG \
+            $JOURNAL_ARG \
             -e class app.fayaz.otgmaster.E2EAutomatedTest \
             $PACKAGE_NAME.test/androidx.test.runner.AndroidJUnitRunner)
 
@@ -525,7 +534,7 @@ for test_dir in "$TESTDATA_DIR"/*/; do
         # with the kernel's driver and checks every file the case left behind. The
         # in-app checks above only read the writes back through the same code.
         HOST_CHECK=""
-        if [ $TEST_EXIT_CODE -eq 0 ] && { [ -f "$test_dir/write_test.txt" ] || [ -f "$test_dir/erase.txt" ]; }; then
+        if [ $TEST_EXIT_CODE -eq 0 ] && { [ -f "$test_dir/write_test.txt" ] || [ -f "$test_dir/erase.txt" ] || [ -f "$test_dir/journal.txt" ]; }; then
             HOST_OUT=$(python3 scripts/verify_e2e_volume.py "$SLOT_FILE" "$test_dir" 2>&1)
             echo "$HOST_OUT"
             if echo "$HOST_OUT" | grep -q "^HOST CHECK OK"; then

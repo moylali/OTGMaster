@@ -313,6 +313,40 @@ be seen taking Open, Unmount and More away. Its `disconnect.txt` runs
 - **Before every case** the runner plugs the drive back in if it is missing, so a
   disconnect case that fails half-way does not take the cases after it down too.
 
+## 6e. An ext4 drive whose journal needs recovery (E2E, no root)
+
+The `ext4_journal` case is plain ext4, 64 MiB with 4 KiB blocks and the usual mount
+tree plus `journal_replayed.txt` ("REPLAYED: no "), flagged `needs_recovery` with three
+committed transactions in a checksummed (CSUM_V3) journal — the format the kernel writes
+on a `metadata_csum` volume:
+
+1. the block of `journal_replayed.txt`, holding "REPLAYED: yes";
+2. a free block (the last one) filled with a pattern;
+3. a revoke of that free block.
+
+```sh
+python3 scripts/make_journal_fixture.py    # writes test.img, password.txt, journal_blocks.txt
+```
+
+- **How it is made.** `mkfs.ext4 -d`, then debugfs writes the transactions
+  (`jo -c` / `jw` / `jc`) without the kernel. debugfs uses e2fsprogs' copy of
+  `recovery.c`, the code the kernel and e2fsck replay with. This is the state a phone
+  leaves a plain ext4 drive in when Android has mounted it and OTG Master then claims
+  the USB device.
+- **What it checks.** `journal.txt` runs `E2EAutomatedTest.runJournalRepairCase`. The
+  drive mounts read-only and the repair dialog opens on its own. Before the repair,
+  `journal_replayed.txt` reads "no" and a create fails. "Keep read-only" leaves a Repair
+  button on the card. After the repair, the same file reads "yes", through the block cache
+  that already held the old block, and `after_repair.txt` is written and read back.
+- **Host check.** `scripts/verify_e2e_volume.py` (it sees `journal.txt`) runs e2fsck and
+  checks that `needs_recovery` is cleared and the journal is empty. It reads both files
+  with debugfs and confirms the revoked block is still zero, so a replay that ignores
+  revokes fails it.
+- **The replay itself** is checked on the host by `Ext4JournalReplayTest`. Each case
+  there replays one journal with debugfs (`jr`) and with the app's code, and requires
+  the two images to match block for block, with checksums and without, revokes and
+  uncommitted transactions included.
+
 ## 6b. APFS (E2E images, macOS)
 
 `scripts/make_apfs_images_macos.sh` builds four raw images, each a GPT disk with one

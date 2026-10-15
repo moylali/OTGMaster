@@ -45,6 +45,13 @@ class Ext4FileSystem private constructor(
     /** CRC32c running state used as the base seed for all checksum computations. */
     internal val csumSeed: Int,
     internal val hasMetadataCsum: Boolean,
+    readOnlyReason: String?,
+    /** The user mounted this partition read-only, which no repair overrides. */
+    private val mountedReadOnly: Boolean,
+    /** ext4 extents are present; without them (ext2/ext3) the volume stays read-only. */
+    private val hasExtents: Boolean,
+) : FileSystem {
+
     /**
      * Why this volume must not be written, or null if it may be.
      *
@@ -52,19 +59,48 @@ class Ext4FileSystem private constructor(
      * `needs_recovery`). This driver bypasses the journal, so writing here puts
      * new metadata underneath older journalled metadata, and the next Linux mount
      * replays the journal over it. Linux refuses to write such a volume without
-     * replaying it first; this driver cannot replay a journal, so it refuses to
-     * write at all.
+     * replaying it first, and so does this driver until [replayJournal] has run.
      *
      * Observed on a OnePlus 7 (Android 16): Android mounts ext4 USB volumes itself,
      * and when OTG Master claimed the USB interface a second later, that mount was
      * cut off with the flag still set. The app then wrote to the volume, and a
      * laptop's read-only mount replayed the stale journal on top of those writes.
      */
-    val readOnlyReason: String?,
-) : FileSystem {
+    @Volatile var readOnlyReason: String? = readOnlyReason
+        private set
 
     /** True when every write is refused; see [readOnlyReason]. */
     val isReadOnly: Boolean get() = readOnlyReason != null
+
+    /** True when the only thing keeping this volume read-only is an unreplayed journal. */
+    val needsJournalRecovery: Boolean
+        get() = readOnlyReason == NEEDS_RECOVERY && !mountedReadOnly
+
+    /**
+     * Replay the journal, then make the volume writable.
+     *
+     * Applies every committed transaction the way the kernel and e2fsck do (see
+     * [Ext4Journal]), marks the journal empty and clears `needs_recovery`. Refuses,
+     * having written nothing, when the journal is one this driver does not replay
+     * (external, fast-commit) or when a committed transaction fails its checksum;
+     * the volume then stays read-only and wants e2fsck on a computer.
+     */
+    @Synchronized
+    fun replayJournal(): Ext4Journal.Result {
+        check(needsJournalRecovery) { "the journal does not need replaying" }
+        val result = Ext4Journal.recover(this)
+        readOnlyReason = if (hasExtents) null else NO_EXTENTS
+        return result
+    }
+
+    /** Device-level traffic this driver has issued, for the benchmark's I/O lines. */
+    class IoCounters {
+        @Volatile var writeCommands = 0L
+        @Volatile var writeBytes = 0L
+        @Volatile var readCommands = 0L
+        fun reset() { writeCommands = 0; writeBytes = 0; readCommands = 0 }
+    }
+    val io = IoCounters()
 
     private fun checkWritable() {
         readOnlyReason?.let { throw IOException("ext4 volume is read-only: $it") }
@@ -88,14 +124,37 @@ class Ext4FileSystem private constructor(
 
     internal fun readBlock(blockNum: Long): ByteArray {
         val sectorsPerBlock = blockSize / device.blockSize
+        io.readCommands++
         return device.readBlocks(blockNum * sectorsPerBlock, sectorsPerBlock)
     }
 
     internal fun writeBlock(blockNum: Long, data: ByteArray) {
-        checkWritable()
         require(data.size == blockSize) { "writeBlock: data must be exactly $blockSize bytes" }
+        writeBlocks(blockNum, data)
+    }
+
+    /**
+     * Write whole blocks from [startBlock] in one device command. The layers below
+     * split it at their own transfer limit (120 KiB over USB), so a 1 MiB run costs
+     * nine transfers rather than the 256 it took one block at a time (#36).
+     */
+    internal fun writeBlocks(startBlock: Long, data: ByteArray) {
+        checkWritable()
+        writeBlocksUnchecked(startBlock, data)
+    }
+
+    /** [writeBlocks] without the read-only check: journal replay only, see [Ext4Journal]. */
+    internal fun writeBlocksUnchecked(startBlock: Long, data: ByteArray) {
+        require(data.isNotEmpty() && data.size % blockSize == 0) {
+            "writeBlocks: ${data.size} bytes is not a whole number of $blockSize-byte blocks"
+        }
+        require(startBlock >= 0 && startBlock + data.size / blockSize <= totalBlocks) {
+            "writeBlocks: ${data.size / blockSize} blocks at $startBlock run past the volume ($totalBlocks blocks)"
+        }
         val sectorsPerBlock = blockSize / device.blockSize
-        device.writeBlocks(blockNum * sectorsPerBlock, data)
+        io.writeCommands++
+        io.writeBytes += data.size
+        device.writeBlocks(startBlock * sectorsPerBlock, data)
     }
 
     // -----------------------------------------------------------------------
@@ -134,6 +193,8 @@ class Ext4FileSystem private constructor(
         val sectors = device.readBlocks(startSector, sectorCount).copyOf()
         val off = (inodeByteOffset % sectorSize).toInt()
         System.arraycopy(data, 0, sectors, off, inodeSize)
+        io.writeCommands++
+        io.writeBytes += sectors.size
         device.writeBlocks(startSector, sectors)
     }
 
@@ -158,8 +219,8 @@ class Ext4FileSystem private constructor(
         return sectors.copyOfRange(off, (off + 1024).coerceAtMost(sectors.size))
     }
 
-    internal fun writeSuperblockBytes(sb: ByteArray) {
-        checkWritable()
+    internal fun writeSuperblockBytes(sb: ByteArray, recovering: Boolean = false) {
+        if (!recovering) checkWritable()
         // s_checksum (0x3FC = 1020) is crc32c(~0, sb[0..1019]) — a running
         // state, not inverted, and it does not use s_checksum_seed.  Every
         // superblock write has to refresh it or the primary superblock is
@@ -174,23 +235,47 @@ class Ext4FileSystem private constructor(
         val sectorCount = ((offInSector + 1024 + sectorSize - 1) / sectorSize).toInt()
         val sectors = device.readBlocks(startSector, sectorCount).copyOf()
         System.arraycopy(sb, 0, sectors, offInSector, sb.size.coerceAtMost(sectors.size - offInSector))
+        io.writeCommands++
+        io.writeBytes += sectors.size
         device.writeBlocks(startSector, sectors)
     }
 
+    /**
+     * True while this driver has the volume marked not-clean on disk. Kept in
+     * memory so that a stream of writes flips the flag once, not on every call:
+     * the superblock read-modify-write before and after each write() was two of
+     * the ~11 commands every call paid whatever its size (#36).
+     */
+    @Volatile private var markedDirty = false
+
     /** Mark the filesystem as needing fsck (clears EXT2_VALID_FS in s_state). */
+    @Synchronized
     fun markDirty() {
+        if (markedDirty) return
         val sb = readSuperblockBytes()
         ByteBuffer.wrap(sb).order(ByteOrder.LITTLE_ENDIAN)
             .putShort(58, (ByteBuffer.wrap(sb).order(ByteOrder.LITTLE_ENDIAN).getShort(58).toInt() and 0xFFFE).toShort())
         writeSuperblockBytes(sb)
+        markedDirty = true
     }
 
-    /** Mark the filesystem as clean after a successful write sequence. */
+    /**
+     * Mark the filesystem as clean after a successful write sequence: a file's
+     * flush or close, the end of a directory operation, or the unmount.
+     */
+    @Synchronized
     fun markClean() {
+        if (!markedDirty) return
         val sb = readSuperblockBytes()
         ByteBuffer.wrap(sb).order(ByteOrder.LITTLE_ENDIAN)
             .putShort(58, (ByteBuffer.wrap(sb).order(ByteOrder.LITTLE_ENDIAN).getShort(58).toInt() or 0x0001).toShort())
         writeSuperblockBytes(sb)
+        markedDirty = false
+    }
+
+    /** Leave the volume marked clean if a write left it otherwise. */
+    fun unmount() {
+        if (!isReadOnly) markClean()
     }
 
     /** Read current free block count from the superblock. */
@@ -301,10 +386,14 @@ class Ext4FileSystem private constructor(
     companion object {
         private const val EXT4_SUPER_MAGIC = 0xEF53
         /** s_feature_incompat bit for a journal that needs replaying (`needs_recovery`). */
-        private const val INCOMPAT_RECOVER = 0x4
+        internal const val INCOMPAT_RECOVER = 0x4
         /** s_feature_incompat bit for extent trees; ext2/ext3 volumes do not have it. */
         private const val INCOMPAT_EXTENTS = 0x40
         const val MOUNTED_READ_ONLY = "it was mounted read-only"
+        private const val NO_EXTENTS = "it is ext2/ext3 (no extents), which this app reads but cannot " +
+            "yet write without creating files Linux would report as damaged."
+        const val NEEDS_RECOVERY = "its journal needs recovery — it was not unmounted cleanly. " +
+            "Repair it from the drive's card, or check it on a computer (e2fsck)."
 
         /** @param readOnly the user chose to mount this partition read-only. */
         fun create(device: RawBlockDevice, readOnly: Boolean = false): Ext4FileSystem {
@@ -394,10 +483,10 @@ class Ext4FileSystem private constructor(
                 totalInodes     = totalInodes,
                 csumSeed        = csumSeed,
                 hasMetadataCsum = hasMetadataCsum,
+                mountedReadOnly = readOnly,
+                hasExtents      = (featIncompat and INCOMPAT_EXTENTS) != 0,
                 readOnlyReason  = when {
-                    (featIncompat and INCOMPAT_RECOVER) != 0 ->
-                        "its journal needs recovery — it was not unmounted cleanly. " +
-                            "Check it on a computer (e2fsck) before writing to it."
+                    (featIncompat and INCOMPAT_RECOVER) != 0 -> NEEDS_RECOVERY
                     // Every inode this driver creates uses an extent tree, and it
                     // cannot allocate the indirect block maps ext2/ext3 use instead.
                     // Writing such a volume made files that e2fsck reports as
@@ -406,9 +495,7 @@ class Ext4FileSystem private constructor(
                     // read — while this driver, which reads extents everywhere,
                     // read them back perfectly. Found by the E2E host check
                     // (scripts/verify_e2e_volume.py) on m_*_ext2 and m_*_ext3.
-                    (featIncompat and INCOMPAT_EXTENTS) == 0 ->
-                        "it is ext2/ext3 (no extents), which this app reads but cannot " +
-                            "yet write without creating files Linux would report as damaged."
+                    (featIncompat and INCOMPAT_EXTENTS) == 0 -> NO_EXTENTS
                     readOnly -> MOUNTED_READ_ONLY
                     else -> null
                 },

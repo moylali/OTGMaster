@@ -28,6 +28,7 @@ logcat_*.txt
 test_out.log
 session_summary.txt
 testdata/**/password.txt
+testdata/**/journal_blocks.txt
 testdata/**/boot.txt
 r*.log
 test.img

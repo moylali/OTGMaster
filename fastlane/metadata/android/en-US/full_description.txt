@@ -7,6 +7,7 @@ FEATURES
 • Broad File System Support — read and write files on FAT32, exFAT, NTFS and ext4 partitions
 • Mac Drives — read APFS drives, unencrypted or encrypted with a password, case-sensitive or not
 • Read-Only Mode — optionally mount partitions safely without risking accidental modifications
+• ext4 Repair — a drive that wasn't unmounted cleanly opens read-only; one tap replays its journal, as Linux would, and makes it writable again
 • Auto Mount — automatically unlocks known drives on connect using biometric authentication
 • Hub Support — multiple USB drives connected via a hub are all prompted in a single biometric step
 • Keyfile Support — use a keyfile in addition to or instead of a password

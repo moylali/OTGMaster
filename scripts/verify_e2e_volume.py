@@ -24,6 +24,10 @@ A case with erase.txt (Format/Encrypt from a mounted card) is checked differentl
 fsck clean, flower.jpg gone, after_erase.txt as the test wrote it, the label kept on a
 Format, and — for a full erase — no byte of the old flower.jpg left on the raw drive.
 
+A case with journal.txt (an ext4 drive repaired by replaying its journal) is plain
+ext4: e2fsck clean, needs_recovery cleared and the journal empty, journal_replayed.txt
+replayed, the block the journal revoked still zero, after_repair.txt as the test wrote it.
+
 Exit 0 when everything holds; the problems are printed otherwise.
 """
 import hashlib
@@ -299,12 +303,50 @@ def erase_main(slot, case_dir):
     print(f"HOST CHECK OK {name} ({action}): " + "; ".join(what))
 
 
+def journal_main(slot, case_dir):
+    """After the journal repair (E2EAutomatedTest.runJournalRepairCase)."""
+    name = os.path.basename(os.path.normpath(case_dir))
+    blocks = dict(l.strip().split("=", 1) for l in open(os.path.join(case_dir, "journal_blocks.txt")) if "=" in l)
+    problems = []
+    with tempfile.TemporaryDirectory() as work:
+        img = os.path.join(work, "slot.img")
+        with open(slot, "rb") as src, open(img, "wb") as dst:   # a stable copy
+            while chunk := src.read(1 << 20):
+                dst.write(chunk)
+        problems += check_structure("ext4", img)
+        header = run("dumpe2fs", "-h", img).stdout
+        if "needs_recovery" in header:
+            problems.append("needs_recovery is still set")
+        start = re.search(r"^Journal start:\s+(\d+)", header, re.M)
+        if not start or start.group(1) != "0":
+            problems.append(f"the journal is not empty (Journal start: {start.group(1) if start else '?'})")
+        cat = lambda path: subprocess.run(["debugfs", "-R", f"cat {path}", img], capture_output=True).stdout
+        if cat("/journal_replayed.txt") != b"REPLAYED: yes\n":
+            problems.append(f"journal_replayed.txt reads {cat('/journal_replayed.txt')!r}, not the replayed block")
+        want = b"OTGMaster wrote this after the journal repair"
+        if cat("/after_repair.txt") != want:
+            problems.append(f"after_repair.txt reads {cat('/after_repair.txt')!r}")
+        with open(img, "rb") as f:
+            f.seek(int(blocks["revoked"]) * 4096)
+            if any(f.read(4096)):
+                problems.append(f"block {blocks['revoked']} was written: the journal revoked it")
+    if problems:
+        print(f"HOST CHECK FAILED {name} (plain, ext4):")
+        for p in problems:
+            print(f"  - {p}")
+        sys.exit(1)
+    print(f"HOST CHECK OK {name} (plain, ext4): e2fsck clean, journal replayed and empty, "
+          f"revoked block untouched, after_repair.txt present")
+
+
 def main():
     if len(sys.argv) != 3:
         raise SystemExit(__doc__)
     slot, case_dir = sys.argv[1:]
     if os.path.exists(os.path.join(case_dir, "erase.txt")):
         return erase_main(slot, case_dir)
+    if os.path.exists(os.path.join(case_dir, "journal.txt")):
+        return journal_main(slot, case_dir)
     with tempfile.TemporaryDirectory() as work:
         snapshot = os.path.join(work, "slot.img")
         with open(slot, "rb") as src, open(snapshot, "wb") as dst:   # a stable copy

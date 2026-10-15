@@ -13,15 +13,27 @@ import java.nio.ByteOrder
  *  - the BGD checksum (CRC32c or none, depending on fs features)
  *  - the superblock free counts
  *
- * Allocation is first-fit within block groups.  No attempt is made to keep
- * extents contiguous across groups — that optimisation matters for
- * performance on spinning disks and is irrelevant for USB flash media.
+ * Each group touched costs one bitmap write and one descriptor write: the
+ * descriptor's counts, flags and bitmap checksum are edited together and written
+ * once ([updateBgd]). They used to be written field by field, four writes of the
+ * same descriptor block per allocation (#36).
+ *
+ * Block allocation starts at a goal — just past the file's last block, or past the
+ * previous allocation for a file that has none — so a file written in many calls
+ * stays contiguous and its extents merge. It used to be first-fit from group 0 on
+ * every call, which re-scanned the bitmaps of every part-used group at the front of
+ * the volume and scattered a file into whatever holes they had.
  */
 internal class Ext4Allocator(private val fs: Ext4FileSystem) {
 
     private companion object {
         /** bg_flags lives at BGD offset 18. */
         const val BGD_FLAGS = 18
+        const val BGD_FREE_BLOCKS = 12
+        const val BGD_FREE_INODES = 14
+        const val BGD_USED_DIRS = 16
+        const val BGD_ITABLE_UNUSED = 28
+        const val BGD_CHECKSUM = 30
         const val EXT4_BG_INODE_UNINIT = 0x1
         const val EXT4_BG_BLOCK_UNINIT = 0x2
     }
@@ -34,6 +46,12 @@ internal class Ext4Allocator(private val fs: Ext4FileSystem) {
         ByteBuffer.wrap(fs.readSuperblockBytes()).order(ByteOrder.LITTLE_ENDIAN)
             .getInt(20).toLong() and 0xFFFFFFFFL
     }
+
+    /**
+     * Where the next allocation with no goal of its own starts: just past the last
+     * run handed out. Kept in memory only; a fresh mount starts from the front.
+     */
+    @Volatile private var streamGoal: Long = -1L
 
     /**
      * True when this group's on-disk bitmap block still holds no meaningful data.
@@ -107,10 +125,12 @@ internal class Ext4Allocator(private val fs: Ext4FileSystem) {
             for (i in fs.inodesPerGroup until fs.blockSize * 8) {
                 bm[i / 8] = (bm[i / 8].toInt() or (1 shl (i % 8))).toByte()
             }
-            writeBitmap(readBgd64(g, 4, 36), bm, g, isBitmap = false)
-            writeBgdShort(g, 14, fs.inodesPerGroup.toShort())
-            writeBgdShort(g, BGD_FLAGS,
-                (readBgdShort(g, BGD_FLAGS) and EXT4_BG_INODE_UNINIT.inv()).toShort())
+            fs.writeBlock(readBgd64(g, 4, 36), bm)
+            updateBgd(g) { d ->
+                setInodeBitmapCsum(d, bm)
+                d.putShort(BGD_FREE_INODES, fs.inodesPerGroup.toShort())
+                d.putShort(BGD_FLAGS, (d.getShort(BGD_FLAGS).toInt() and EXT4_BG_INODE_UNINIT.inv()).toShort())
+            }
         }
 
         if ((flags0 and EXT4_BG_BLOCK_UNINIT) != 0) {
@@ -147,105 +167,117 @@ internal class Ext4Allocator(private val fs: Ext4FileSystem) {
             var b = fs.totalBlocks
             while (b < groupStart + fs.blocksPerGroup) { mark(b); b++ }
 
-            writeBitmap(readBgd64(g, 0, 32), bm, g, isBitmap = true)
-            writeBgdShort(g, 12, (fs.blocksPerGroup - used).toShort())
-            writeBgdShort(g, BGD_FLAGS,
-                (readBgdShort(g, BGD_FLAGS) and EXT4_BG_BLOCK_UNINIT.inv()).toShort())
+            fs.writeBlock(readBgd64(g, 0, 32), bm)
+            updateBgd(g) { d ->
+                setBlockBitmapCsum(d, bm)
+                d.putShort(BGD_FREE_BLOCKS, (fs.blocksPerGroup - used).toShort())
+                d.putShort(BGD_FLAGS, (d.getShort(BGD_FLAGS).toInt() and EXT4_BG_BLOCK_UNINIT.inv()).toShort())
+            }
         }
-        writeBgdChecksum(g)
     }
 
     // -----------------------------------------------------------------------
     // Block allocation / free
     // -----------------------------------------------------------------------
 
+    /** Allocate [count] blocks, one by one in the order handed out. See [allocateRuns]. */
+    fun allocateBlocks(count: Int, goal: Long = -1L): List<Long> {
+        val out = ArrayList<Long>(count)
+        for (r in allocateRuns(count, goal)) for (k in 0 until r[1]) out += r[0] + k
+        return out
+    }
+
     /**
-     * Allocate [count] blocks.  Returns physical block numbers.
-     * Throws [IOException] if there is not enough free space.
+     * Allocate [count] blocks as runs of (start, length), in the order handed out.
+     * Throws [IOException], having allocated nothing, if there is not enough space.
      *
-     * Blocks are allocated group-by-group; within each group they are
-     * contiguous where possible but the returned list may span groups.
+     * The search starts at [goal] (or just past the previous allocation when there
+     * is none), runs to the end of the volume, then wraps round to the front. Full
+     * groups are skipped on their descriptor's free count without reading the
+     * bitmap. Within a group each free bit found is taken, so a run breaks only
+     * where something already holds the block.
      */
-    fun allocateBlocks(count: Int): List<Long> {
-        val result = mutableListOf<Long>()
-        for (g in 0 until numGroups) {
-            if (result.size == count) break
+    fun allocateRuns(count: Int, goal: Long = -1L): List<LongArray> {
+        require(count >= 0)
+        val runs = mutableListOf<LongArray>()
+        if (count == 0) return runs
+        val start = when {
+            goal in firstDataBlock until fs.totalBlocks -> goal
+            streamGoal in firstDataBlock until fs.totalBlocks -> streamGoal
+            else -> firstDataBlock
+        }
+        val g0 = ((start - firstDataBlock) / fs.blocksPerGroup).toInt()
+        val off0 = ((start - firstDataBlock) % fs.blocksPerGroup).toInt()
+        var need = count
+
+        // The goal's group from the goal on, every later group, every earlier one,
+        // and finally the part of the goal's group before the goal.
+        fun scan(g: Int, from: Int, until: Int) {
+            if (need == 0 || from >= until) return
             initialiseGroup(g)
-            val free = readBgdShort(g, 12)
-            if (free == 0) continue
-            if (groupUninit(g, forBlocks = true)) continue
+            val free = readBgdShort(g, BGD_FREE_BLOCKS)
+            if (free == 0) return
+            if (groupUninit(g, forBlocks = true)) return
 
             val bitmapBlock = readBgd64(g, 0, 32)
             val bitmap = fs.readBlock(bitmapBlock).copyOf()
             val groupStart = firstDataBlock + g.toLong() * fs.blocksPerGroup
-
-            var changed = false
-            outer@ for (byteIdx in bitmap.indices) {
-                if (result.size == count) break
-                val b = bitmap[byteIdx].toInt() and 0xFF
-                if (b == 0xFF) continue
-                for (bitIdx in 0..7) {
-                    if (result.size == count) break@outer
-                    if ((b and (1 shl bitIdx)) == 0) {
-                        val blockInGroup = byteIdx * 8 + bitIdx
-                        val blockNum = groupStart + blockInGroup
-                        if (blockNum >= fs.totalBlocks) break@outer
-                        bitmap[byteIdx] = (bitmap[byteIdx].toInt() or (1 shl bitIdx)).toByte()
-                        result.add(blockNum)
-                        changed = true
-                    }
+            val end = minOf(until, fs.blocksPerGroup, bitmap.size * 8)
+            var taken = 0
+            var bit = from
+            while (bit < end && need > 0) {
+                val byteIdx = bit ushr 3
+                if ((bit and 7) == 0 && bitmap[byteIdx] == 0xFF.toByte()) { bit += 8; continue }
+                val mask = 1 shl (bit and 7)
+                if ((bitmap[byteIdx].toInt() and mask) == 0) {
+                    val blockNum = groupStart + bit
+                    if (blockNum >= fs.totalBlocks) break
+                    bitmap[byteIdx] = (bitmap[byteIdx].toInt() or mask).toByte()
+                    val last = runs.lastOrNull()
+                    if (last != null && last[0] + last[1] == blockNum) last[1]++
+                    else runs += longArrayOf(blockNum, 1)
+                    taken++
+                    need--
                 }
+                bit++
             }
-
-            if (changed) {
-                val allocated = result.count {
-                    (it - firstDataBlock) / fs.blocksPerGroup == g.toLong()
+            if (taken > 0) {
+                fs.writeBlock(bitmapBlock, bitmap)
+                updateBgd(g) { d ->
+                    setBlockBitmapCsum(d, bitmap)
+                    d.putShort(BGD_FREE_BLOCKS, (free - taken).coerceAtLeast(0).toShort())
                 }
-                writeBitmap(bitmapBlock, bitmap, g, isBitmap = true)
-                writeBgdShort(g, 12, (free - allocated).coerceAtLeast(0).toShort())
-                writeBgdChecksum(g)
             }
         }
 
-        if (result.size < count) {
+        scan(g0, off0, fs.blocksPerGroup)
+        for (g in g0 + 1 until numGroups) scan(g, 0, fs.blocksPerGroup)
+        for (g in 0 until g0) scan(g, 0, fs.blocksPerGroup)
+        scan(g0, 0, off0)
+
+        if (need > 0) {
             // Not enough space — roll back what we allocated.
-            result.forEach { freeBlock(it) }
+            freeRuns(runs, updateSuperblock = false)
             throw IOException(
-                "Ext4: out of usable blocks — need $count, got ${result.size}. " +
+                "Ext4: out of usable blocks — need $count, got ${count - need}. " +
                 "Groups still flagged BLOCK_UNINIT are skipped because their " +
                 "on-disk bitmap is not initialised, so the volume's reported " +
                 "free space is not all reachable yet."
             )
         }
         fs.updateSuperblockFreeBlocks(-count)
-        return result
+        runs.last().let { streamGoal = it[0] + it[1] }
+        return runs
     }
-
-    fun freeBlock(blockNum: Long) {
-        val g = ((blockNum - firstDataBlock) / fs.blocksPerGroup).toInt()
-        val blockInGroup = ((blockNum - firstDataBlock) % fs.blocksPerGroup).toInt()
-        val bitmapBlock = readBgd64(g, 0, 32)
-        val bitmap = fs.readBlock(bitmapBlock).copyOf()
-        val byteIdx = blockInGroup / 8
-        val bitIdx = blockInGroup % 8
-        if ((bitmap[byteIdx].toInt() and (1 shl bitIdx)) == 0) return  // already free
-        bitmap[byteIdx] = (bitmap[byteIdx].toInt() and (1 shl bitIdx).inv()).toByte()
-        writeBitmap(bitmapBlock, bitmap, g, isBitmap = true)
-        writeBgdShort(g, 12, (readBgdShort(g, 12) + 1).toShort())
-        writeBgdChecksum(g)
-        fs.updateSuperblockFreeBlocks(+1)
-    }
-
-    fun freeBlocks(blocks: Iterable<Long>) = freeRuns(blocks.map { longArrayOf(it, 1) })
 
     /**
      * Free every run of (start, count) blocks in [runs], one block group at a time:
      * one bitmap write, one group-descriptor update and one superblock update per
-     * group touched. [freeBlock] costs all of those per block, so deleting a 2.2 GB
-     * file was ~537,000 rounds of them, and still running after 77 minutes on a
-     * Huawei P20 Lite (#33). Blocks already free are skipped, as [freeBlock] does.
+     * group touched. Freeing a block at a time cost all of those per block, so
+     * deleting a 2.2 GB file was ~537,000 rounds of them, and still running after
+     * 77 minutes on a Huawei P20 Lite (#33). Blocks already free are skipped.
      */
-    fun freeRuns(runs: List<LongArray>) {
+    fun freeRuns(runs: List<LongArray>, updateSuperblock: Boolean = true) {
         val byGroup = sortedMapOf<Int, MutableList<Int>>()
         for (r in runs) {
             for (blockNum in r[0] until r[0] + r[1]) {
@@ -267,12 +299,14 @@ internal class Ext4Allocator(private val fs: Ext4FileSystem) {
                 n++
             }
             if (n == 0) continue
-            writeBitmap(bitmapBlock, bitmap, g, isBitmap = true)
-            writeBgdShort(g, 12, (readBgdShort(g, 12) + n).toShort())
-            writeBgdChecksum(g)
+            fs.writeBlock(bitmapBlock, bitmap)
+            updateBgd(g) { d ->
+                setBlockBitmapCsum(d, bitmap)
+                d.putShort(BGD_FREE_BLOCKS, ((d.getShort(BGD_FREE_BLOCKS).toInt() and 0xFFFF) + n).toShort())
+            }
             total += n
         }
-        if (total > 0) fs.updateSuperblockFreeBlocks(+total)
+        if (total > 0 && updateSuperblock) fs.updateSuperblockFreeBlocks(+total)
     }
 
     // -----------------------------------------------------------------------
@@ -287,7 +321,7 @@ internal class Ext4Allocator(private val fs: Ext4FileSystem) {
         val totalInodes = fs.totalInodes
         for (g in 0 until numGroups) {
             initialiseGroup(g)
-            val free = readBgdShort(g, 14)
+            val free = readBgdShort(g, BGD_FREE_INODES)
             if (free == 0) continue
             if (groupUninit(g, forBlocks = false)) continue
 
@@ -308,20 +342,23 @@ internal class Ext4Allocator(private val fs: Ext4FileSystem) {
                         val inodeNum = g.toLong() * fs.inodesPerGroup + inodeInGroup + 1
                         if (inodeNum > totalInodes) continue
                         bitmap[byteIdx] = (bitmap[byteIdx].toInt() or (1 shl bitIdx)).toByte()
-                        writeBitmap(bitmapBlock, bitmap, g, isBitmap = false)
-                        writeBgdShort(g, 14, (free - 1).toShort())
-                        if (isDir) writeBgdShort(g, 16, (readBgdShort(g, 16) + 1).toShort())
-                        // bg_itable_unused counts never-used inodes at the END of
-                        // the table.  Allocating an inode inside that region
-                        // without shrinking it makes e2fsck treat the inode as
-                        // unused and clear the directory entry pointing at it:
-                        // "references inode 13 found in group 0's unused inodes
-                        // area".  Keep it no larger than what follows this inode.
-                        val maxUnused = fs.inodesPerGroup - (inodeInGroup + 1)
-                        if (readBgdShort(g, 28) > maxUnused) {
-                            writeBgdShort(g, 28, maxUnused.toShort())
+                        fs.writeBlock(bitmapBlock, bitmap)
+                        updateBgd(g) { d ->
+                            setInodeBitmapCsum(d, bitmap)
+                            d.putShort(BGD_FREE_INODES, (free - 1).toShort())
+                            if (isDir) d.putShort(BGD_USED_DIRS,
+                                ((d.getShort(BGD_USED_DIRS).toInt() and 0xFFFF) + 1).toShort())
+                            // bg_itable_unused counts never-used inodes at the END of
+                            // the table.  Allocating an inode inside that region
+                            // without shrinking it makes e2fsck treat the inode as
+                            // unused and clear the directory entry pointing at it:
+                            // "references inode 13 found in group 0's unused inodes
+                            // area".  Keep it no larger than what follows this inode.
+                            val maxUnused = fs.inodesPerGroup - (inodeInGroup + 1)
+                            if ((d.getShort(BGD_ITABLE_UNUSED).toInt() and 0xFFFF) > maxUnused) {
+                                d.putShort(BGD_ITABLE_UNUSED, maxUnused.toShort())
+                            }
                         }
-                        writeBgdChecksum(g)
                         fs.updateSuperblockFreeInodes(-1)
                         return inodeNum
                     }
@@ -340,10 +377,13 @@ internal class Ext4Allocator(private val fs: Ext4FileSystem) {
         val bitIdx = inodeInGroup % 8
         if ((bitmap[byteIdx].toInt() and (1 shl bitIdx)) == 0) return
         bitmap[byteIdx] = (bitmap[byteIdx].toInt() and (1 shl bitIdx).inv()).toByte()
-        writeBitmap(bitmapBlock, bitmap, g, isBitmap = false)
-        writeBgdShort(g, 14, (readBgdShort(g, 14) + 1).toShort())
-        if (isDir) writeBgdShort(g, 16, (readBgdShort(g, 16) - 1).coerceAtLeast(0).toShort())
-        writeBgdChecksum(g)
+        fs.writeBlock(bitmapBlock, bitmap)
+        updateBgd(g) { d ->
+            setInodeBitmapCsum(d, bitmap)
+            d.putShort(BGD_FREE_INODES, ((d.getShort(BGD_FREE_INODES).toInt() and 0xFFFF) + 1).toShort())
+            if (isDir) d.putShort(BGD_USED_DIRS,
+                ((d.getShort(BGD_USED_DIRS).toInt() and 0xFFFF) - 1).coerceAtLeast(0).toShort())
+        }
         fs.updateSuperblockFreeInodes(+1)
     }
 
@@ -370,39 +410,25 @@ internal class Ext4Allocator(private val fs: Ext4FileSystem) {
             .getShort(offInBlock + fieldOffset).toInt() and 0xFFFF
     }
 
-    private fun writeBgdInt(groupIdx: Int, fieldOffset: Int, value: Int) {
+    /**
+     * Edit group [groupIdx]'s descriptor in one write: [edit] gets a buffer over the
+     * descriptor alone (offsets are field offsets), and the descriptor checksum is
+     * refreshed over the result before the block goes back to disk.
+     */
+    private inline fun updateBgd(groupIdx: Int, edit: (ByteBuffer) -> Unit) {
         val byteOff = fs.bgdTableBlock * fs.blockSize + groupIdx.toLong() * fs.groupDescSize
         val blockNum = byteOff / fs.blockSize
         val offInBlock = (byteOff % fs.blockSize).toInt()
         val data = fs.readBlock(blockNum).copyOf()
-        ByteBuffer.wrap(data).order(ByteOrder.LITTLE_ENDIAN).putInt(offInBlock + fieldOffset, value)
-        fs.writeBlock(blockNum, data)
-    }
-
-    internal fun writeBgdShort(groupIdx: Int, fieldOffset: Int, value: Short) {
-        val byteOff = fs.bgdTableBlock * fs.blockSize + groupIdx.toLong() * fs.groupDescSize
-        val blockNum = byteOff / fs.blockSize
-        val offInBlock = (byteOff % fs.blockSize).toInt()
-        val data = fs.readBlock(blockNum).copyOf()
-        ByteBuffer.wrap(data).order(ByteOrder.LITTLE_ENDIAN).putShort(offInBlock + fieldOffset, value)
-        fs.writeBlock(blockNum, data)
-    }
-
-    /** Read a complete BGD as a raw ByteArray of length [fs.groupDescSize]. */
-    private fun readBgdRaw(groupIdx: Int): ByteArray {
-        val byteOff = fs.bgdTableBlock * fs.blockSize + groupIdx.toLong() * fs.groupDescSize
-        val blockNum = byteOff / fs.blockSize
-        val offInBlock = (byteOff % fs.blockSize).toInt()
-        val data = fs.readBlock(blockNum)
-        return data.copyOfRange(offInBlock, offInBlock + fs.groupDescSize)
-    }
-
-    private fun writeBgdRaw(groupIdx: Int, bgd: ByteArray) {
-        val byteOff = fs.bgdTableBlock * fs.blockSize + groupIdx.toLong() * fs.groupDescSize
-        val blockNum = byteOff / fs.blockSize
-        val offInBlock = (byteOff % fs.blockSize).toInt()
-        val data = fs.readBlock(blockNum).copyOf()
-        System.arraycopy(bgd, 0, data, offInBlock, bgd.size)
+        val desc = ByteBuffer.wrap(data, offInBlock, fs.groupDescSize).slice()
+            .order(ByteOrder.LITTLE_ENDIAN)
+        edit(desc)
+        if (fs.hasMetadataCsum) {
+            desc.putShort(BGD_CHECKSUM, 0)
+            val bgd = data.copyOfRange(offInBlock, offInBlock + fs.groupDescSize)
+            val csum = Ext4Crc.update(Ext4Crc.update(fs.csumSeed, Ext4Crc.leInt(groupIdx)), bgd)
+            desc.putShort(BGD_CHECKSUM, (csum and 0xFFFF).toShort())
+        }
         fs.writeBlock(blockNum, data)
     }
 
@@ -410,50 +436,29 @@ internal class Ext4Allocator(private val fs: Ext4FileSystem) {
     // Checksum helpers
     // -----------------------------------------------------------------------
 
-    /**
-     * Write bitmap block [bitmapBlock] with updated checksum stored in the BGD.
+    /*
+     * A bitmap's checksum lives in its group descriptor, so it is set inside the
+     * same [updateBgd] as the counts it goes with.
      *
-     * [isBitmap] true = block bitmap (BGD offsets 24/60); false = inode bitmap
-     * (BGD offsets 26/62).
+     * The checksum covers only the bytes the group actually uses, not the whole
+     * block: blocksPerGroup/8 for the block bitmap and (inodesPerGroup+7)/8 for the
+     * inode bitmap.  Hashing the full 4 KiB block made every inode bitmap checksum
+     * wrong, because a group has 8192 inodes = 1024 bytes, not 4096.  Unlike the
+     * group descriptor checksum, a bitmap checksum does NOT fold in the group number
+     * — it is crc32c(s_csum_seed, bitmap[0..sz]).  bg_block_bitmap_csum_hi is at
+     * 0x38 = 56 and bg_inode_bitmap_csum_hi at 0x3A = 58 — not 60/62.
      */
-    private fun writeBitmap(bitmapBlock: Long, bitmap: ByteArray, groupIdx: Int, isBitmap: Boolean) {
-        fs.writeBlock(bitmapBlock, bitmap)
-        if (!fs.hasMetadataCsum) return
-        // The bitmap checksum covers only the bytes the group actually uses,
-        // not the whole block: blocksPerGroup/8 for the block bitmap and
-        // (inodesPerGroup+7)/8 for the inode bitmap.  Hashing the full 4 KiB
-        // block made every inode bitmap checksum wrong, because a group has
-        // 8192 inodes = 1024 bytes, not 4096.
-        val csumLen =
-            if (isBitmap) minOf(bitmap.size, fs.blocksPerGroup / 8)
-            else minOf(bitmap.size, (fs.inodesPerGroup + 7) / 8)
-        // Unlike the group descriptor checksum, a bitmap checksum does NOT fold
-        // in the group number — it is crc32c(s_csum_seed, bitmap[0..sz]).
-        val csum = Ext4Crc.update(fs.csumSeed, bitmap.copyOfRange(0, csumLen))
-        val lo = (csum and 0xFFFF).toShort()
-        val hi = (csum ushr 16 and 0xFFFF).toShort()
-        // bg_block_bitmap_csum_hi is at 0x38 = 56 and bg_inode_bitmap_csum_hi
-        // at 0x3A = 58 — not 60/62.
-        if (isBitmap) {
-            writeBgdShort(groupIdx, 24, lo)
-            if (fs.groupDescSize >= 64) writeBgdShort(groupIdx, 56, hi)
-        } else {
-            writeBgdShort(groupIdx, 26, lo)
-            if (fs.groupDescSize >= 64) writeBgdShort(groupIdx, 58, hi)
-        }
-    }
 
-    /** Recompute and write the BGD checksum for [groupIdx]. */
-    fun writeBgdChecksum(groupIdx: Int) {
+    private fun setBlockBitmapCsum(desc: ByteBuffer, bitmap: ByteArray) =
+        setBitmapCsum(desc, bitmap, minOf(bitmap.size, fs.blocksPerGroup / 8), loOff = 24, hiOff = 56)
+
+    private fun setInodeBitmapCsum(desc: ByteBuffer, bitmap: ByteArray) =
+        setBitmapCsum(desc, bitmap, minOf(bitmap.size, (fs.inodesPerGroup + 7) / 8), loOff = 26, hiOff = 58)
+
+    private fun setBitmapCsum(desc: ByteBuffer, bitmap: ByteArray, len: Int, loOff: Int, hiOff: Int) {
         if (!fs.hasMetadataCsum) return
-        val bgd = readBgdRaw(groupIdx)
-        // Zero the checksum field at offset 30 before computing.
-        bgd[30] = 0; bgd[31] = 0
-        val csum = Ext4Crc.update(
-            Ext4Crc.update(fs.csumSeed, Ext4Crc.leInt(groupIdx)), bgd
-        )
-        ByteBuffer.wrap(bgd).order(ByteOrder.LITTLE_ENDIAN)
-            .putShort(30, (csum and 0xFFFF).toShort())
-        writeBgdRaw(groupIdx, bgd)
+        val csum = Ext4Crc.update(fs.csumSeed, bitmap.copyOfRange(0, len))
+        desc.putShort(loOff, (csum and 0xFFFF).toShort())
+        if (fs.groupDescSize >= 64) desc.putShort(hiOff, (csum ushr 16 and 0xFFFF).toShort())
     }
 }
