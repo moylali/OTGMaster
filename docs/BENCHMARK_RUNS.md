@@ -52,10 +52,14 @@ Linux mount pulled out:
 |---|---|---|---|
 | OnePlus 7 · 16 | D1EXT4 · 09:14, build `a2202be` | Mounted read-only with the repair dialog: **"3 journal transaction(s) replayed, 97 block(s) written. It is writable now."** Then `free,write,unaligned,correct`: write verify ALL PASSED (0.91 MB/s), unaligned A+B PASS, correctness A–G ALL PASSED | e2fsck exit 0, but "Free blocks count wrong (60314, counted=57259)", "Free inodes count wrong (337846, counted=337643)" — stale superblock totals from the pull, fixed in `83e318f` by recounting after the replay; "orphan_present is set but orphan file is clean" (a note, Linux clears it). All 202 files written before the pull matched their hashes |
 
+| OnePlus 7 · 16 | D1EXT4 · 09:59, build `87d26f2` | Dialog, then **"3 journal transaction(s) replayed, 79 block(s) written. It is writable now."** Then `free,write,unaligned,correct`: write verify ALL PASSED (0.91 MB/s), unaligned A+B PASS, correctness A–G ALL PASSED | e2fsck -fn clean with **no wrong totals**: the recount works. Only the orphan_present note remains. All 261 files written before the second pull matched, and so did the 91 first-cycle files left after its deletes |
+
 How the state was made: on the laptop, `udisksctl mount` of D1EXT4 (kernel ext4,
-no root), 202 files written into `BENCH/reports/journal_test/` over two syncs (12
-blobs of 150 KB–1.8 MB, 300 small files with 111 deleted, a rename), then the stick
-pulled without unmounting. Plugged into the OnePlus, the partition mounted read-only
+no root), files written over two syncs, then the stick pulled without unmounting.
+Cycle 1 wrote 202 files into `BENCH/reports/journal_test/`: 12 blobs of 150 KB–1.8 MB,
+and 300 small files with 111 deleted, plus a rename. Cycle 2 wrote 261 into
+`journal_test2/` (10 blobs to 2.1 MB, 250 small files, a rename) and deleted 111
+from cycle 1's. Plugged into the OnePlus, the partition mounted read-only
 with `needs_recovery` and the dialog opened by itself.
 
 **D1FAT32, NOT CLEAN, from before the ext4 run.** fsck.fat: dirty bit set, the
