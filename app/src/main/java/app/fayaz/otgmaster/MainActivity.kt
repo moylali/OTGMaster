@@ -1147,10 +1147,7 @@ class MainActivity : AppCompatActivity() {
 
                 OtgMasterState.addDrive(mountedDrive)
                 mountedDrive.readOnlyReason?.let { reason ->
-                    withContext(Dispatchers.Main) {
-                        appendLog("${mountedDrive.name} is read-only: $reason")
-                        promptJournalRepairIfNeeded(mountedDrive)
-                    }
+                    withContext(Dispatchers.Main) { appendLog("${mountedDrive.name} is read-only: $reason") }
                 }
                 contentResolver.notifyChange(
                     android.provider.DocumentsContract.buildRootsUri("app.fayaz.otgmaster.documents"), null
@@ -1739,10 +1736,7 @@ class MainActivity : AppCompatActivity() {
                 )
                 OtgMasterState.addDrive(mountedDrive)
                 mountedDrive.readOnlyReason?.let { reason ->
-                    withContext(Dispatchers.Main) {
-                        appendLog("${mountedDrive.name} is read-only: $reason")
-                        promptJournalRepairIfNeeded(mountedDrive)
-                    }
+                    withContext(Dispatchers.Main) { appendLog("${mountedDrive.name} is read-only: $reason") }
                 }
                 contentResolver.notifyChange(
                     android.provider.DocumentsContract.buildRootsUri("app.fayaz.otgmaster.documents"), null
@@ -1915,10 +1909,23 @@ class MainActivity : AppCompatActivity() {
         }
     }
 
-    /** Opens the repair dialog for a drive that mounted with its ext4 journal unreplayed. */
-    private fun promptJournalRepairIfNeeded(drive: MountedDrive) {
-        if ((drive.fileSystem as? app.fayaz.otgmaster.ext4.Ext4FileSystem)?.needsJournalRecovery == true) {
-            journalRepairPrompt.value = drive.id
+    /** Drives whose repair dialog has been shown once since they mounted. */
+    private val journalRepairOffered = mutableSetOf<String>()
+
+    /**
+     * Opens the repair dialog, once, for a drive that mounted with its ext4 journal
+     * unreplayed. Called from [updateMountedDrives], which every mount path reaches:
+     * hooking the mount paths themselves missed the whole-device one.
+     */
+    private fun offerJournalRepair(drives: List<MountedDrive>) {
+        journalRepairOffered.retainAll(drives.map { it.id }.toSet())
+        if (journalRepairPrompt.value != null) return
+        drives.firstOrNull {
+            it.id !in journalRepairOffered &&
+                (it.fileSystem as? app.fayaz.otgmaster.ext4.Ext4FileSystem)?.needsJournalRecovery == true
+        }?.let {
+            journalRepairOffered += it.id
+            journalRepairPrompt.value = it.id
         }
     }
 
@@ -1954,6 +1961,7 @@ class MainActivity : AppCompatActivity() {
     private fun updateMountedDrives() {
         mountedDrivesState.value = OtgMasterState.mountedDrives.toList()
         OtgMasterState.clearDisconnectedFor(mountedDrivesState.value)
+        offerJournalRepair(mountedDrivesState.value)
     }
 
     private fun openFilesApp(drive: MountedDrive) {
