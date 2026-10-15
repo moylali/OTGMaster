@@ -895,12 +895,17 @@ class E2EAutomatedTest {
         assertNotNull("no disconnect history on the mounted card", summary)
         assertNotNull("history does not say ${count}×",
             device.findObject(By.text("Disconnected unexpectedly ${count}× this session")))
-        summary!!.click()
-        assertNotNull("expanded history does not list '$latest'",
-            device.wait(Until.findObject(By.textContains(latest)), timeout))
+        // Found again at the click: the card can recompose just after a mount (free space
+        // filled in), and the minified run once expanded nothing, its click on a stale
+        // handle lost. The expanded lines can also sit below the fold, so they are
+        // scrolled to.
+        assertTrue("disconnect history could not be clicked", clickByDesc("disconnect_history"))
+        val line = findScrolling(By.textContains(latest), text = latest)
+        if (line == null) captureScreen("history_not_expanded")
+        assertNotNull("expanded history does not list '$latest'", line)
         assertEquals("expanded history lists the wrong number of drops", count,
             device.findObjects(By.textContains(" · on ")).size)
-        device.findObject(By.desc("disconnect_history"))?.click()
+        clickByDesc("disconnect_history")
     }
 
     /** Every document id in the first root's top directory. */
