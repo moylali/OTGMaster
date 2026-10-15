@@ -12,7 +12,7 @@ testEraseOperations), without root:
                        FAT32 inside, full. No host tool decrypts Argon2 VeraCrypt; the
                        host check is that no byte of the old files is left on the drive.
   disconnect           the fat32 case's VeraCrypt AES/SHA-512 FAT32 volume (10 MB), for
-                       E2EAutomatedTest.testDisconnect: not an erase case, but built the same
+                       E2EAutomatedTest.runDisconnectCase: not an erase case, but built the same
                        way as format_vc_exfat, so here too. Encrypted, because a plain card
                        has no Unmount, and the disconnected card must take it away.
 

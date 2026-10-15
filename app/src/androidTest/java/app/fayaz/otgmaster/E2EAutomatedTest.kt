@@ -88,7 +88,9 @@ class E2EAutomatedTest {
         val arguments = InstrumentationRegistry.getArguments()
         if (arguments.getString("write_test", "false") == "true") return
         if (arguments.getString("erase_action", "").isNotEmpty()) return
-        if (arguments.getString("disconnect_test", "false") == "true") return
+        // Run from here rather than as its own @Test: every @Test relaunches the app in
+        // @Before, and a fourth method cost every case about 13 s doing nothing.
+        if (arguments.getString("disconnect_test", "false") == "true") return runDisconnectCase()
         val password = arguments.getString("password", "password123")
         val testCase = arguments.getString("testCase", "exfat")
 
@@ -739,11 +741,10 @@ class E2EAutomatedTest {
      * Two drops: the first on battery (42%), checked in full — card, banner, the advice
      * that leads with power, Dismiss, the no-drive help — and the second on external
      * power, cleared by mounting the same partition again rather than by Dismiss.
+     * Called from [testMountUsbDrive] when the case has disconnect.txt.
      */
-    @Test
-    fun testDisconnect() {
+    private fun runDisconnectCase() {
         val arguments = InstrumentationRegistry.getArguments()
-        if (arguments.getString("disconnect_test", "false") != "true") return
         val password = arguments.getString("password", "password123")
         val pim = arguments.getString("pim", "")
         val testCase = arguments.getString("testCase", "disconnect")
