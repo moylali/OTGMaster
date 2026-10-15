@@ -101,6 +101,8 @@ class Ext4JournalReplayTest {
     private fun assertFsckClean(stage: String) {
         val (rc, out) = run("e2fsck", "-fn", img.absolutePath)
         assertTrue("e2fsck reported problems after $stage (rc=$rc):\n$out", rc == 0)
+        // e2fsck exits 0 on wrong superblock totals, which it only offers to fix.
+        assertFalse("e2fsck found wrong totals after $stage:\n$out", out.contains("count wrong"))
     }
 
     private fun sha256(f: File): String {
@@ -143,7 +145,11 @@ class Ext4JournalReplayTest {
                             (1024 + 0x40 until 1024 + 0x44) +                                         // s_lastcheck
                             (1024 + 0x274 until 1024 + 0x275) +                                       // s_wtime_hi
                             (1024 + 0x277 until 1024 + 0x278) +                                       // s_lastcheck_hi
-                            (1024 + 0x3FC until 1024 + 0x400)                                          // s_checksum
+                            (1024 + 0x3FC until 1024 + 0x400) +                                        // s_checksum
+                            // Free totals: this driver recounts them from the group
+                            // descriptors after a replay, as the kernel does at mount;
+                            // debugfs leaves the journalled copy's stale ones.
+                            (1024 + 12 until 1024 + 20) + (1024 + 0x158 until 1024 + 0x15C)
                         val diff = x.indices.filter { x[it] != y[it] && it !in stamped }
                         assertTrue("superblock differs from debugfs' replay at offsets $diff", diff.isEmpty())
                         continue

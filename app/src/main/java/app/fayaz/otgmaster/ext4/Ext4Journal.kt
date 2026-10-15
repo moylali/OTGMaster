@@ -281,11 +281,16 @@ object Ext4Journal {
         return Result(committed.size, replayed, revokedCount)
     }
 
-    /** Clear `needs_recovery`, re-reading the superblock in case the replay rewrote it. */
+    /**
+     * Clear `needs_recovery`, re-reading the superblock in case the replay rewrote it,
+     * and recount its free totals from the group descriptors as the kernel does at
+     * mount ([Ext4FileSystem.recountFreeTotals]).
+     */
     private fun clearNeedsRecovery(fs: Ext4FileSystem) {
         val sb = fs.readSuperblockBytes()
         val bb = ByteBuffer.wrap(sb).order(ByteOrder.LITTLE_ENDIAN)
         bb.putInt(96, bb.getInt(96) and Ext4FileSystem.INCOMPAT_RECOVER.inv())
+        fs.recountFreeTotals(sb)
         fs.writeSuperblockBytes(sb, recovering = true)
     }
 }

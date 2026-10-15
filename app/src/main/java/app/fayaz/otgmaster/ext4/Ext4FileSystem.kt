@@ -283,7 +283,7 @@ class Ext4FileSystem private constructor(
         val sb = readSuperblockBytes()
         val bb = ByteBuffer.wrap(sb).order(ByteOrder.LITTLE_ENDIAN)
         val lo = bb.getInt(12).toLong() and 0xFFFFFFFFL
-        val hi = if (sb.size >= 344) (bb.getInt(340).toLong() and 0xFFFFFFFFL) else 0L
+        val hi = bb.getInt(SB_FREE_BLOCKS_HI).toLong() and 0xFFFFFFFFL
         return (hi shl 32) or lo
     }
 
@@ -291,12 +291,41 @@ class Ext4FileSystem private constructor(
         val sb = readSuperblockBytes()
         val bb = ByteBuffer.wrap(sb).order(ByteOrder.LITTLE_ENDIAN)
         val lo = bb.getInt(12).toLong() and 0xFFFFFFFFL
-        val hi = if (sb.size >= 344) (bb.getInt(340).toLong() and 0xFFFFFFFFL) else 0L
+        val hi = bb.getInt(SB_FREE_BLOCKS_HI).toLong() and 0xFFFFFFFFL
         val current = (hi shl 32) or lo
         val updated = (current + delta).coerceAtLeast(0L)
         bb.putInt(12, (updated and 0xFFFFFFFFL).toInt())
-        if (sb.size >= 344) bb.putInt(340, (updated ushr 32 and 0xFFFFFFFFL).toInt())
+        bb.putInt(SB_FREE_BLOCKS_HI, (updated ushr 32 and 0xFFFFFFFFL).toInt())
         writeSuperblockBytes(sb)
+    }
+
+    /**
+     * Set the superblock's free block and inode totals to the sum of the group
+     * descriptors' counts, which are what ext4 actually allocates from. Linux keeps
+     * the superblock's totals current only loosely while mounted, so a volume pulled
+     * mid-session carries stale ones, and so does any copy of the superblock in its
+     * journal: on Drive 1 after a pull and a replay, e2fsck reported "Free blocks count
+     * wrong (60314, counted=57259)". The kernel recounts from the descriptors at mount;
+     * the journal replay does the same, into [sb].
+     */
+    internal fun recountFreeTotals(sb: ByteArray) {
+        val groups = ((totalBlocks + blocksPerGroup - 1) / blocksPerGroup).toInt()
+        var freeBlocks = 0L
+        var freeInodes = 0L
+        for (g in 0 until groups) {
+            val byteOff = bgdTableBlock * blockSize + g.toLong() * groupDescSize
+            val o = (byteOff % blockSize).toInt()
+            val d = ByteBuffer.wrap(readBlock(byteOff / blockSize)).order(ByteOrder.LITTLE_ENDIAN)
+            val wide = groupDescSize >= 64
+            freeBlocks += (d.getShort(o + 12).toLong() and 0xFFFF) or
+                (if (wide) (d.getShort(o + 0x2C).toLong() and 0xFFFF) shl 16 else 0L)
+            freeInodes += (d.getShort(o + 14).toLong() and 0xFFFF) or
+                (if (wide) (d.getShort(o + 0x2E).toLong() and 0xFFFF) shl 16 else 0L)
+        }
+        val bb = ByteBuffer.wrap(sb).order(ByteOrder.LITTLE_ENDIAN)
+        bb.putInt(12, (freeBlocks and 0xFFFFFFFFL).toInt())
+        bb.putInt(SB_FREE_BLOCKS_HI, (freeBlocks ushr 32).toInt())
+        bb.putInt(16, freeInodes.toInt())
     }
 
     internal fun updateSuperblockFreeInodes(delta: Int) {
@@ -387,6 +416,11 @@ class Ext4FileSystem private constructor(
         private const val EXT4_SUPER_MAGIC = 0xEF53
         /** s_feature_incompat bit for a journal that needs replaying (`needs_recovery`). */
         internal const val INCOMPAT_RECOVER = 0x4
+        /**
+         * s_free_blocks_hi, 0x158. It was read and written at 0x154, which is
+         * s_r_blocks_count_hi: harmless below 2^32 free blocks, where both are zero.
+         */
+        internal const val SB_FREE_BLOCKS_HI = 0x158
         /** s_feature_incompat bit for extent trees; ext2/ext3 volumes do not have it. */
         private const val INCOMPAT_EXTENTS = 0x40
         const val MOUNTED_READ_ONLY = "it was mounted read-only"
