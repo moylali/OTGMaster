@@ -108,7 +108,7 @@ files out of each directory. Only the first three are mandatory:
 | `test.key` | no | Keyfile; required by convention for any case named `*_keyfile` |
 | `expects_error.txt` | no | Presence means the case **must fail to mount** |
 | `write_test.txt` | no | Presence runs the create/persist/delete/persist lifecycle |
-| `disconnect.txt` | no | Presence runs `testDisconnect`: the drive is pulled while mounted (§6d) |
+| `disconnect.txt` | no | Presence runs the disconnect case (`E2EAutomatedTest.runDisconnectCase`): the drive is pulled while mounted (§6d) |
 
 `cipher.txt` and `hash.txt` being independent of the volume is the mechanism behind
 the `unsupported_hash` case: the image is ordinary AES/SHA-512 FAT32, but the picker is
@@ -291,7 +291,7 @@ The `disconnect` case is a copy of the `fat32` case (VeraCrypt AES/SHA-512, FAT3
 10 MB), made by `scripts/make_erase_fixtures.py` beside the Format/Encrypt cases. It is
 encrypted because a plain volume's card has no Unmount, and the disconnected card has to
 be seen taking Open, Unmount and More away. Its `disconnect.txt` runs
-`E2EAutomatedTest.testDisconnect`, which pulls the drive out while it is mounted, twice:
+`E2EAutomatedTest.runDisconnectCase` (from `testMountUsbDrive`), which pulls the drive out while it is mounted, twice:
 
 - **Pulling it.** Every emulator starts with a QEMU monitor socket
   (`/tmp/otg_qmon_<port>.sock`). The test touches `/data/local/tmp/otg_e2e_unplug` or

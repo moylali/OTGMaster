@@ -99,7 +99,7 @@ usb_replug() {
     # A new node, with the kernel's default permissions again.
     $CMD_ADB -s $SERIAL shell "su 0 chmod 666 /dev/block/sda"
 }
-# For E2EAutomatedTest.testDisconnect: the test touches $USB_REQUEST_DIR/otg_e2e_unplug
+# For E2EAutomatedTest.runDisconnectCase: the test touches $USB_REQUEST_DIR/otg_e2e_unplug
 # or otg_e2e_replug, and waits for the file to go once it has been done.
 usb_request_watcher() {
     while true; do
