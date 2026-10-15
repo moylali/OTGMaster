@@ -33,6 +33,59 @@ to a row here.
 
 ---
 
+## 2026-10-15 — ext4 writes in runs (#36), journal repair: D1EXT4 on the OnePlus 7
+
+One run, on the build of `e32a6b3` (clean tree; the report's header reads `commit e32a6b3`),
+`--es drive D1EXT4`, password123, cache default, remount true. Sections, all named:
+`free,block,dir,path,seq,random,opens,write,unaligned,correct,bigwrite,fixtures`. Phone on
+USB power, 100%, interactive, no power save, at start and end. Report
+`BENCH/reports/otgbench-GM1901-20261015-082354.txt` on the drive.
+
+| Device · Android | Drive · when | On the phone | Host |
+|---|---|---|---|
+| OnePlus 7 · 16 | D1: EXT4 (plain) · 10-15 08:10–08:24 | write verify ALL PASSED (cached, cache dropped, remounted), 16 MiB at 0.82 MB/s; unaligned A+B PASS; correctness A–G ALL PASSED; **bigwrite 6.09 / 17.74**, ALL PASSED after remount (244 tree files); fixtures ALL 20854 MATCHED | D1EXT4 CLEAN: e2fsck -fn on `/dev/sda9` clean, 0.1% non-contiguous; matrix verify (08:58): fixtures 20854/20854, big.bin 2,200,000,000 B OK, tree 244/244 OK, 8 reports. **Drive 1: 1 of 10 NOT CLEAN — D1FAT32**, see below |
+
+Then the journal repair, on the same drive and phone, in two cycles, each one a
+Linux mount pulled out:
+
+| Device · Android | Drive · when | On the phone | Host |
+|---|---|---|---|
+| OnePlus 7 · 16 | D1EXT4 · 09:14, build `a2202be` | Mounted read-only with the repair dialog: **"3 journal transaction(s) replayed, 97 block(s) written. It is writable now."** Then `free,write,unaligned,correct`: write verify ALL PASSED (0.91 MB/s), unaligned A+B PASS, correctness A–G ALL PASSED | e2fsck exit 0, but "Free blocks count wrong (60314, counted=57259)", "Free inodes count wrong (337846, counted=337643)" — stale superblock totals from the pull, fixed in `83e318f` by recounting after the replay; "orphan_present is set but orphan file is clean" (a note, Linux clears it). All 202 files written before the pull matched their hashes |
+
+How the state was made: on the laptop, `udisksctl mount` of D1EXT4 (kernel ext4,
+no root), 202 files written into `BENCH/reports/journal_test/` over two syncs (12
+blobs of 150 KB–1.8 MB, 300 small files with 111 deleted, a rename), then the stick
+pulled without unmounting. Plugged into the OnePlus, the partition mounted read-only
+with `needs_recovery` and the dialog opened by itself.
+
+**D1FAT32, NOT CLEAN, from before the ext4 run.** fsck.fat: dirty bit set, the
+backup boot sector differs at offset 65 (01/00), FATs differ, and the free-cluster
+summary is off by one. This change does not touch FAT32, and today's run did not
+name it. When D1 was plugged into the OnePlus at 08:05, vold ran `fsck_msdos` on it,
+which it does before mounting a FAT volume itself; the app then claimed the drive
+and cut that mount off. It was last CLEAN on 10-10 (21:49). Not restored yet.
+
+What changed against the same drive, phone and section on earlier builds:
+
+| | bigwrite write MB/s | ext4 write commands per MiB |
+|---|---|---|
+| 10-07, `2a6fe4f` | 1.22 | not counted |
+| 10-10 (0.4.1 matrix) | 1.21 | not counted |
+| **10-15, `e32a6b3`** | **6.09** | **5.0** (10,532 for 2,127.7 MiB) |
+| FAT32 on D1, same phone, 10-07 / 10-10 | 8.01 / 7.73 | — |
+
+About 5× faster, and 76–79% of FAT32 on the same drive. FAT32 sets the practical
+ceiling: the same USB layer with no metadata of its own to write. Issue #36's target
+was ≥80% of the measured ceiling and never below FAT32. That target is close, but
+not met.
+
+The 64 KiB-chunk `write` section did not improve: 0.82 MB/s against 0.73–0.82 on
+earlier ext4 rows. A 64 KiB call now costs one data command plus the bitmap,
+descriptor, superblock count and inode, about 77 ms in all at ~15 ms per USB command.
+That fixed cost per call is what #36's phase 4 (a write-back window for metadata)
+would amortise, and it was left undone pending a decision, because it weakens the
+crash-safety guarantee #33 depends on.
+
 ## 2026-10-14 — PR #53, disconnected cards: no benchmark rows
 
 PR #53 (a drive that drops while mounted stays on screen as a DISCONNECTED card) changed no
