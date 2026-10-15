@@ -113,8 +113,20 @@ These apply to every commit, without being asked.
    report too. A missing keep rule passes every debug test and fails on the first
    mount of that format in the release.
 
-   A PR that touches no app code, test scripts or test data (docs, the site,
-   store metadata) says `E2E not run: no app, test or test-data changes` instead.
+   **A docs-only PR merges without E2E or device testing.** Docs-only means
+   every changed file is documentation: `docs/` (the site included),
+   `README.md`, `AGENTS.md`, and store metadata (`fastlane/metadata/`,
+   `distribution/whatsnew/`). Such a PR says `E2E not run: docs only` in its
+   description, and merges once CI passes.
+
+   Any other change runs the tests: the E2E run above, plus the physical-device
+   rule under "Benchmarking and verification" where it applies. That covers
+   app code (`app/src/main`, native code, Gradle and ProGuard files), test
+   code (unit tests, `androidTest`, the `scripts/run_e2e_*.sh` runners, CI
+   workflows), test data and the scripts that make it, and benchmark code
+   (`app/src/debug/…/bench/`, `scripts/run_benchmark.sh`). One code file in an
+   otherwise docs-only PR means the whole PR runs the tests. Decide from
+   `git diff --name-only origin/main...HEAD`, not from memory of what changed.
 
 ## Benchmarking and verification
 
