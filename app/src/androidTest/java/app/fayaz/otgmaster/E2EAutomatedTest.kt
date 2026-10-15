@@ -88,6 +88,7 @@ class E2EAutomatedTest {
         val arguments = InstrumentationRegistry.getArguments()
         if (arguments.getString("write_test", "false") == "true") return
         if (arguments.getString("erase_action", "").isNotEmpty()) return
+        if (arguments.getString("disconnect_test", "false") == "true") return
         val password = arguments.getString("password", "password123")
         val testCase = arguments.getString("testCase", "exfat")
 
@@ -727,6 +728,178 @@ class E2EAutomatedTest {
                     ?.use { it.readBytes().toString(Charsets.UTF_8) })
             doUnmount()
         }
+    }
+
+    /**
+     * A drive that goes away while mounted (issue #50). The runner removes the emulator's
+     * USB drive with QEMU's device_del when asked, so the volume's I/O really fails; the
+     * app is then told through [OtgMasterState.detachRequest], because the emulator's
+     * drive is read through /dev/block/sda and Android broadcasts no detach for it.
+     *
+     * Two drops: the first on battery (42%), checked in full — card, banner, the advice
+     * that leads with power, Dismiss, the no-drive help — and the second on external
+     * power, cleared by mounting the same partition again rather than by Dismiss.
+     */
+    @Test
+    fun testDisconnect() {
+        val arguments = InstrumentationRegistry.getArguments()
+        if (arguments.getString("disconnect_test", "false") != "true") return
+        val password = arguments.getString("password", "password123")
+        val pim = arguments.getString("pim", "")
+        val testCase = arguments.getString("testCase", "disconnect")
+        android.os.SystemClock.sleep(1000)
+        try {
+            scanAndMount(password, pim, testCase, "before the first drop")
+
+            // ── Drop 1, on battery ───────────────────────────────────────────────
+            device.executeShellCommand("dumpsys battery unplug")
+            device.executeShellCommand("dumpsys battery set level 42")
+            dropMountedDrive(banner = "may need more power")
+            assertDisconnectedCard("on battery, 42%")
+
+            clickScrolling("see_recommendations", "See recommendations link missing on the disconnected card")
+            assertDialog("Why drives disconnect", "The phone was on battery")
+
+            clickScrolling("dismiss_disconnected_button", "Dismiss missing on the disconnected card")
+            assertTrue("Dismiss did not remove the disconnected card",
+                device.wait(Until.gone(By.desc("disconnected_card")), timeout))
+
+            // A Scan with nothing attached offers the no-drive help.
+            findScanButton()!!.click()
+            assertNotNull("'No USB drives available' not shown after a scan with the drive out",
+                device.wait(Until.findObject(By.textContains("No USB drives available")), 15000L))
+            clickScrolling("see_recommendations", "See recommendations link missing under 'No USB drives available'")
+            assertDialog("Drive not showing up?", "OTG adapter")
+
+            requestUsb("replug")
+            scanAndMount(password, pim, testCase, "after the first drop")
+            assertHistory(1, "on battery, 42%")
+
+            // ── Drop 2, on external power ───────────────────────────────────────
+            device.executeShellCommand("dumpsys battery set ac 1")
+            dropMountedDrive(banner = "Check the cable")
+            assertDisconnectedCard("on external power")
+            clickScrolling("see_recommendations", "See recommendations link missing on the second disconnected card")
+            assertDialog("Why drives disconnect", "The phone was on external power")
+
+            requestUsb("replug")
+            scanAndMount(password, pim, testCase, "after the second drop")
+            if (!device.wait(Until.gone(By.desc("disconnected_card")), 10000L)) captureScreen("card_not_cleared")
+            assertNull("mounting the partition again did not clear its disconnected card",
+                device.findObject(By.desc("disconnected_card")))
+            assertHistory(2, "on external power")
+
+            doUnmount()
+        } finally {
+            device.executeShellCommand("dumpsys battery reset")
+        }
+    }
+
+    private fun clickScrolling(desc: String, missing: String) {
+        val obj = findScrolling(By.desc(desc), desc = desc)
+        assertNotNull(missing, obj)
+        obj!!.click()
+    }
+
+    /** Taps Scan and unlocks and mounts the volume. */
+    private fun scanAndMount(password: String, pim: String, testCase: String, context: String) {
+        val scan = findScanButton()
+        assertNotNull("Scan button not found ($context)", scan)
+        scan!!.click()
+        device.wait(Until.findObject(By.text(java.util.regex.Pattern.compile("(?i)Allow|OK"))), 3000L)?.click()
+        assertTrue("the volume did not mount $context", doMount(password, pim, testCase, clearFields = true))
+    }
+
+    /**
+     * Pulls the drive out from under its mount, then tells the app it has gone, and
+     * watches the banner while the card goes: the warning containing [banner] must show,
+     * and the unmount that follows must not replace it with a green "Unmounted", which
+     * reads as success. The banner lasts 2.5 s, so it is watched throughout rather than
+     * looked for afterwards.
+     */
+    private fun dropMountedDrive(banner: String) {
+        val key = OtgMasterState.mountedDrives.firstOrNull()?.sourceDeviceName
+        assertNotNull("no mounted drive to drop", key)
+        // On screen, or its going below would be seen at once.
+        val unmount = findScrolling(By.descContains("unmount_button"), desc = "unmount_button")
+        if (unmount == null) captureScreen("no_unmount_before_drop")
+        assertNotNull("Unmount not on screen before the drop", unmount)
+        requestUsb("unplug")
+        val detach = OtgMasterState.detachRequest
+        assertNotNull("no detach handler installed — is MainActivity running?", detach)
+        detach!!(key!!)
+        var sawWarning = false
+        var sawUnmounted = false
+        var goneAt = 0L
+        val deadline = android.os.SystemClock.uptimeMillis() + UNMOUNT_WAIT_MS
+        while (android.os.SystemClock.uptimeMillis() < deadline) {
+            if (device.findObject(By.textContains(banner)) != null) sawWarning = true
+            if (device.findObject(By.textStartsWith("Unmounted:")) != null) sawUnmounted = true
+            if (goneAt == 0L && device.findObject(By.descContains("unmount_button")) == null) {
+                goneAt = android.os.SystemClock.uptimeMillis()
+            }
+            // Past the card going, long enough for a late "Unmounted" to have shown.
+            if (goneAt != 0L && android.os.SystemClock.uptimeMillis() - goneAt > 2000) break
+            android.os.SystemClock.sleep(200)
+        }
+        if (goneAt == 0L || !sawWarning || sawUnmounted) captureScreen("drop")
+        assertTrue("the mounted card did not go when its drive was pulled", goneAt != 0L)
+        assertTrue("disconnect warning '$banner' not shown", sawWarning)
+        assertFalse("a green 'Unmounted' banner replaced the disconnect warning", sawUnmounted)
+    }
+
+    /** Asks the runner to unplug or replug the USB drive, and waits until it has. */
+    private fun requestUsb(action: String) {
+        val name = "otg_e2e_$action"
+        device.executeShellCommand("touch /data/local/tmp/$name")
+        val deadline = android.os.SystemClock.uptimeMillis() + 60_000
+        while (android.os.SystemClock.uptimeMillis() < deadline) {
+            // executeShellCommand returns stdout only, so a missing file reads as an
+            // empty listing rather than an error message.
+            if (name !in device.executeShellCommand("ls /data/local/tmp")) return
+            android.os.SystemClock.sleep(500)
+        }
+        fail("the runner did not $action the USB drive within 60 s (is run_e2e_tests.sh watching?)")
+    }
+
+    private fun assertDisconnectedCard(powerLine: String) {
+        val card = findScrolling(By.desc("disconnected_card"), desc = "disconnected_card")
+        if (card == null) captureScreen("no_disconnected_card")
+        assertNotNull("no disconnected card after the drive was pulled", card)
+        assertNotNull("DISCONNECTED tag missing", device.findObject(By.text("DISCONNECTED")))
+        assertNotNull("power line '$powerLine' missing on the card",
+            findScrolling(By.textContains(powerLine), text = powerLine))
+        // Nothing is behind the card any more: no Open, Unmount or More.
+        assertNull("Unmount offered on a disconnected card", device.findObject(By.descContains("unmount_button")))
+        assertNull("More actions offered on a disconnected card", device.findObject(By.desc("more_actions_button")))
+        assertNull("Open Files App offered on a disconnected card", device.findObject(By.text("Open Files App")))
+        assertNotNull("Dismiss missing on the disconnected card",
+            findScrolling(By.desc("dismiss_disconnected_button"), desc = "dismiss_disconnected_button"))
+    }
+
+    /** The dialog titled [title] is up and says [expected]; closes it with OK. */
+    private fun assertDialog(title: String, expected: String) {
+        val heading = device.wait(Until.findObject(By.text(title)), timeout)
+        if (heading == null) captureScreen("no_dialog")
+        assertNotNull("'$title' dialog did not open", heading)
+        assertNotNull("'$title' dialog does not say '$expected'", device.findObject(By.textContains(expected)))
+        device.findObject(By.text("OK"))!!.click()
+        assertTrue("'$title' dialog did not close", device.wait(Until.gone(By.text(title)), timeout))
+    }
+
+    /** The mounted card counts [count] drops this session; the newest reads [latest]. */
+    private fun assertHistory(count: Int, latest: String) {
+        val summary = findScrolling(By.desc("disconnect_history"), desc = "disconnect_history")
+        if (summary == null) captureScreen("no_disconnect_history")
+        assertNotNull("no disconnect history on the mounted card", summary)
+        assertNotNull("history does not say ${count}×",
+            device.findObject(By.text("Disconnected unexpectedly ${count}× this session")))
+        summary!!.click()
+        assertNotNull("expanded history does not list '$latest'",
+            device.wait(Until.findObject(By.textContains(latest)), timeout))
+        assertEquals("expanded history lists the wrong number of drops", count,
+            device.findObjects(By.textContains(" · on ")).size)
+        device.findObject(By.desc("disconnect_history"))?.click()
     }
 
     /** Every document id in the first root's top directory. */

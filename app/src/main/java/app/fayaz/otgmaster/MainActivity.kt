@@ -303,28 +303,8 @@ class MainActivity : AppCompatActivity() {
                                 UsbDeviceDescriber.stableKey(it, false),
                             ) }
                             .toSet()
-                        val matchesDetached = { key: String ->
+                        handleDetach { key ->
                             UsbDeviceDescriber.matchesDetached(key, detachedKeys, vendorProduct, stillAttachedKeys)
-                        }
-                        // Clear suppression flags so the next plug-in triggers auto-mount again.
-                        manuallyUnmountedDevices.removeAll { matchesDetached(it) }
-                        autoMountAttempted.removeAll { matchesDetached(it) }
-                        sessionPlaintextCreds.keys.filter { matchesDetached(it) }.forEach { sessionPlaintextCreds.remove(it) }
-                        saveManuallyUnmountedDevices()
-                        // Unmount any mounted drives from this device. A drive still mounted
-                        // here was not unmounted first: pulled out, or dropped by itself, which
-                        // on bus-powered SSD enclosures is usually the phone's port browning out
-                        // under load (issue #50). Its card stays, marked disconnected.
-                        val lost = OtgMasterState.mountedDrives
-                            .filter { it.sourceDeviceName?.let(matchesDetached) == true }
-                        if (lost.isNotEmpty()) recordDisconnect(lost)
-                        lost.forEach { unmountDrive(it, disconnected = true) }
-                        // Close and discard any probed-but-not-yet-mounted block handles.
-                        val keysToClose = openedDevices.keys.filter { matchesDetached(it) }
-                        val toClose = keysToClose.mapNotNull { openedDevices.remove(it) }
-                        _deviceCandidates.value = _deviceCandidates.value.filterNot { matchesDetached(it.deviceName) }
-                        if (toClose.isNotEmpty()) {
-                            lifecycleScope.launch(Dispatchers.IO) { toClose.forEach { runCatching { it.close() } } }
                         }
                     }
                     appendLog(getString(R.string.log_usb_device_detached))
@@ -375,6 +355,14 @@ class MainActivity : AppCompatActivity() {
             }
         }
         OtgMasterState.unmountAllRequest = installedUnmountAll
+        installedDetachRequest = { deviceKey ->
+            runOnUiThread {
+                handleDetach { it == deviceKey }
+                appendLog(getString(R.string.log_usb_device_detached))
+                refreshDevices()
+            }
+        }
+        OtgMasterState.detachRequest = installedDetachRequest
 
         installedMountRequest = OtgMasterState.MountRequest { pw, pim, cipherName, hashName, readOnly ->
             // Open and probe every attached drive not already held, whether or not
@@ -548,6 +536,7 @@ class MainActivity : AppCompatActivity() {
     // successor's. See onDestroy.
     private var installedMountRequest: OtgMasterState.MountRequest? = null
     private var installedUnmountAll: (() -> Unit)? = null
+    private var installedDetachRequest: ((String) -> Unit)? = null
     private var installedLogSink: ((String) -> Unit)? = null
 
     override fun onDestroy() {
@@ -561,9 +550,11 @@ class MainActivity : AppCompatActivity() {
         if (OtgMasterState.logSink === installedLogSink) OtgMasterState.logSink = null
         if (OtgMasterState.mountRequest === installedMountRequest) OtgMasterState.mountRequest = null
         if (OtgMasterState.unmountAllRequest === installedUnmountAll) OtgMasterState.unmountAllRequest = null
+        if (OtgMasterState.detachRequest === installedDetachRequest) OtgMasterState.detachRequest = null
         installedLogSink = null
         installedMountRequest = null
         installedUnmountAll = null
+        installedDetachRequest = null
         closeOpenedDevices()
         unregisterReceiver(usbReceiver)
         super.onDestroy()
@@ -1245,6 +1236,34 @@ class MainActivity : AppCompatActivity() {
 
     private fun saveManuallyUnmountedDevices() {
         sharedPreferences.edit().putStringSet(PREF_MANUALLY_UNMOUNTED, manuallyUnmountedDevices.toSet()).apply()
+    }
+
+    /**
+     * Everything a USB device going away undoes, for the devices whose stored keys
+     * [matchesDetached] accepts: suppression flags, session credentials, mounted
+     * partitions (left as disconnected cards) and probed handles.
+     */
+    private fun handleDetach(matchesDetached: (String) -> Boolean) {
+        // Clear suppression flags so the next plug-in triggers auto-mount again.
+        manuallyUnmountedDevices.removeAll { matchesDetached(it) }
+        autoMountAttempted.removeAll { matchesDetached(it) }
+        sessionPlaintextCreds.keys.filter { matchesDetached(it) }.forEach { sessionPlaintextCreds.remove(it) }
+        saveManuallyUnmountedDevices()
+        // Unmount any mounted drives from this device. A drive still mounted
+        // here was not unmounted first: pulled out, or dropped by itself, which
+        // on bus-powered SSD enclosures is usually the phone's port browning out
+        // under load (issue #50). Its card stays, marked disconnected.
+        val lost = OtgMasterState.mountedDrives
+            .filter { it.sourceDeviceName?.let(matchesDetached) == true }
+        if (lost.isNotEmpty()) recordDisconnect(lost)
+        lost.forEach { unmountDrive(it, disconnected = true) }
+        // Close and discard any probed-but-not-yet-mounted block handles.
+        val keysToClose = openedDevices.keys.filter { matchesDetached(it) }
+        val toClose = keysToClose.mapNotNull { openedDevices.remove(it) }
+        _deviceCandidates.value = _deviceCandidates.value.filterNot { matchesDetached(it.deviceName) }
+        if (toClose.isNotEmpty()) {
+            lifecycleScope.launch(Dispatchers.IO) { toClose.forEach { runCatching { it.close() } } }
+        }
     }
 
     /**

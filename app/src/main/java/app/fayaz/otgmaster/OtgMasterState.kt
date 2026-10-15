@@ -214,6 +214,15 @@ object OtgMasterState {
     var unmountAllRequest: (() -> Unit)? = null
 
     /**
+     * Handles the USB device with this key going away, as Android's detach broadcast
+     * would. For the E2E suite: the emulator's drive is read through /dev/block/sda, not
+     * as a UsbDevice, so when QEMU removes it Android sends no broadcast at all.
+     * Installed by MainActivity while it is alive.
+     */
+    @Volatile
+    var detachRequest: ((deviceKey: String) -> Unit)? = null
+
+    /**
      * Block-cache configuration applied at mount time; null uses the
      * per-filesystem default.
      *

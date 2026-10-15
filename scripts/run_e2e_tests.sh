@@ -52,6 +52,68 @@ done
 
 SERIAL="emulator-$PORT"
 
+# QEMU's monitor, for unplugging and re-plugging the USB drive (the disconnect case).
+QMON_SOCK="/tmp/otg_qmon_$PORT.sock"
+USB_REQUEST_DIR="/data/local/tmp"
+qmon() {
+    python3 - "$QMON_SOCK" "$1" <<'PY'
+import socket, sys, time
+s = socket.socket(socket.AF_UNIX)
+s.connect(sys.argv[1])
+s.settimeout(2)
+def read():
+    out = b""
+    try:
+        while not out.rstrip().endswith(b"(qemu)"):
+            chunk = s.recv(4096)
+            if not chunk:
+                break
+            out += chunk
+    except socket.timeout:
+        pass
+    return out.decode(errors="replace")
+read()
+s.sendall((sys.argv[2] + "\n").encode())
+time.sleep(0.5)
+print(read())
+PY
+}
+usb_present() { qmon "info usb" | grep -q "ID: usbdev0"; }
+# Waits for /dev/block/sda in the guest to be present (1) or gone (0).
+wait_sda() {
+    for _ in $(seq 1 30); do
+        if $CMD_ADB -s $SERIAL shell "[ -e /dev/block/sda ] && echo 1 || echo 0" | tr -d '\r' | grep -qx "$1"; then
+            return 0
+        fi
+        sleep 0.5
+    done
+    return 1
+}
+usb_unplug() {
+    qmon "device_del usbdev0" >/dev/null
+    wait_sda 0 || echo "WARNING: /dev/block/sda still present after device_del"
+}
+usb_replug() {
+    qmon "device_add usb-storage,bus=xhci.0,drive=slot_dev,id=usbdev0,removable=on" >/dev/null
+    wait_sda 1 || echo "WARNING: /dev/block/sda did not come back after device_add"
+    # A new node, with the kernel's default permissions again.
+    $CMD_ADB -s $SERIAL shell "su 0 chmod 666 /dev/block/sda"
+}
+# For E2EAutomatedTest.testDisconnect: the test touches $USB_REQUEST_DIR/otg_e2e_unplug
+# or otg_e2e_replug, and waits for the file to go once it has been done.
+usb_request_watcher() {
+    while true; do
+        for action in unplug replug; do
+            if $CMD_ADB -s $SERIAL shell "[ -e $USB_REQUEST_DIR/otg_e2e_$action ] && echo yes" | grep -q yes; then
+                echo "Test asked to $action the USB drive"
+                if [ $action = unplug ]; then usb_unplug; else usb_replug; fi
+                $CMD_ADB -s $SERIAL shell rm -f "$USB_REQUEST_DIR/otg_e2e_$action"
+            fi
+        done
+        sleep 1
+    done
+}
+
 if [ ! -d "$TESTDATA_DIR" ]; then
     echo "Error: $TESTDATA_DIR directory not found."
     exit 1
@@ -98,7 +160,7 @@ ensure_testdata() {
 
     # Format and Encrypt from a mounted card (scripts/make_erase_fixtures.py, no root;
     # format_vc_exfat is a copy of the exfat case, so this runs after it exists).
-    for case_name in format_vc_exfat format_plain_fat32 encrypt_plain_fat32 encrypt_plain_exfat; do
+    for case_name in format_vc_exfat format_plain_fat32 encrypt_plain_fat32 encrypt_plain_exfat disconnect; do
         if [ ! -f "$TESTDATA_DIR/$case_name/test.img" ]; then
             echo "Generating the Format/Encrypt fixtures..."
             python3 scripts/make_erase_fixtures.py || { echo "Format/Encrypt fixture generation failed!"; exit 1; }
@@ -176,7 +238,9 @@ echo "Launching Emulator with Multi-Drive support..."
 QEMU_USB_FLAGS="-qemu -usb -device qemu-xhci,id=xhci \
   -blockdev driver=file,node-name=slot_file,filename=$SLOT_FILE \
   -blockdev driver=raw,node-name=slot_dev,file=slot_file \
-  -device usb-storage,bus=xhci.0,drive=slot_dev,id=usbdev0,removable=on"
+  -device usb-storage,bus=xhci.0,drive=slot_dev,id=usbdev0,removable=on \
+  -monitor unix:$QMON_SOCK,server,nowait"
+rm -f "$QMON_SOCK"
 
 # -read-only gives each instance its own throwaway overlay, which is what lets
 # several shards boot the same AVD; -wipe-data would write to the shared one.
@@ -323,6 +387,8 @@ for test_dir in "$TESTDATA_DIR"/*/; do
     [ -f "$test_dir/read_only.txt" ] && READ_ONLY_ARG="-e expect_read_only true"
     PLAIN_ARG=""
     [ -f "$test_dir/plain.txt" ] && PLAIN_ARG="-e plain_mount true"
+    DISCONNECT_ARG=""
+    [ -f "$test_dir/disconnect.txt" ] && DISCONNECT_ARG="-e disconnect_test true"
     CASE_ARG=""
     [ -f "$test_dir/case_sensitive.txt" ] && CASE_ARG="-e expect_case_sensitive $(cat "$test_dir/case_sensitive.txt")"
     FLOWER_ARG=""
@@ -388,6 +454,11 @@ for test_dir in "$TESTDATA_DIR"/*/; do
     ATTEMPT=1
     FLAKY=false
     while true; do
+        # A disconnect case that failed half-way can leave the drive unplugged.
+        if [ -S "$QMON_SOCK" ] && ! usb_present; then
+            echo "USB drive is unplugged; plugging it back in"
+            usb_replug
+        fi
         # Overwrite the slot device with the specific test image
         echo "Writing test image: ./testdata/${TEST_NAME}/test.img to /dev/block/sda"
         $CMD_ADB -s $SERIAL shell "su 0 dd if=/data/local/tmp/testdata/${TEST_NAME}/test.img of=/dev/block/sda bs=1M conv=fsync"
@@ -396,6 +467,12 @@ for test_dir in "$TESTDATA_DIR"/*/; do
         sleep 2
 
         echo "Running UI Automator Test..."
+        WATCHER_PID=""
+        if [ -n "$DISCONNECT_ARG" ]; then
+            $CMD_ADB -s $SERIAL shell rm -f "$USB_REQUEST_DIR/otg_e2e_unplug" "$USB_REQUEST_DIR/otg_e2e_replug"
+            usb_request_watcher &
+            WATCHER_PID=$!
+        fi
         # Bounded: when the test runner itself dies before the test starts (a class R8
         # stripped from the app, for one), `am instrument -w` never returns, and the
         # minified run once sat four hours on its first case.
@@ -417,8 +494,11 @@ for test_dir in "$TESTDATA_DIR"/*/; do
             $READ_ONLY_ARG \
             $PLAIN_ARG \
             $CASE_ARG \
+            $DISCONNECT_ARG \
             -e class app.fayaz.otgmaster.E2EAutomatedTest \
             $PACKAGE_NAME.test/androidx.test.runner.AndroidJUnitRunner)
+
+        [ -n "$WATCHER_PID" ] && { kill "$WATCHER_PID" 2>/dev/null; wait "$WATCHER_PID" 2>/dev/null; }
 
         echo "$TEST_OUT"
 

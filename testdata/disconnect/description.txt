@@ -1,0 +1,1 @@
+VeraCrypt AES/SHA-512 FAT32 (a copy of the fat32 case) pulled while mounted (QEMU device_del): DISCONNECTED card without Open/Unmount/More, warning banner and no green Unmounted, recommendations on battery and on external power, Dismiss, the no-drive help after a scan, and re-mounting clears the card and keeps the session history.

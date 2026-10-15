@@ -11,6 +11,10 @@ testEraseOperations), without root:
   encrypt_plain_exfat  plain exFAT, 64 MiB -> VeraCrypt Serpent-Twofish-AES / Argon2, PIM 1,
                        FAT32 inside, full. No host tool decrypts Argon2 VeraCrypt; the
                        host check is that no byte of the old files is left on the drive.
+  disconnect           the fat32 case's VeraCrypt AES/SHA-512 FAT32 volume (10 MB), for
+                       E2EAutomatedTest.testDisconnect: not an erase case, but built the same
+                       way as format_vc_exfat, so here too. Encrypted, because a plain card
+                       has no Unmount, and the disconnected card must take it away.
 
 Each starts holding the usual mount tree (flower.jpg and friends), so the test can see
 the old files go. 64 MiB is the emulator's USB slot, and enough for FAT32 (which needs
@@ -18,7 +22,7 @@ the old files go. 64 MiB is the emulator's USB slot, and enough for FAT32 (which
 them, as it should).
 
 description.txt, erase.txt and plain.txt are committed; this writes the gitignored
-rest — test.img, password.txt, and pim.txt for format_vc_exfat.
+rest — test.img, password.txt, and pim.txt for format_vc_exfat and disconnect.
 
     python3 scripts/make_erase_fixtures.py
 """
@@ -38,18 +42,18 @@ SLOT_BYTES = 64 << 20
 
 def main():
     td = os.path.join(ROOT, "testdata")
-    src = os.path.join(td, "exfat", "test.img")
-    if not os.path.exists(src):
-        raise SystemExit("testdata/exfat/test.img missing: generate the VeraCrypt fixtures first")
-    shutil.copyfile(src, os.path.join(td, "format_vc_exfat", "test.img"))
+    for source in ("exfat", "fat32"):
+        if not os.path.exists(os.path.join(td, source, "test.img")):
+            raise SystemExit(f"testdata/{source}/test.img missing: generate the VeraCrypt fixtures first")
     # password.txt and pim.txt are generated with the image (gitignored), so they travel with it.
-    for name in ("password.txt", "pim.txt"):
-        shutil.copyfile(os.path.join(td, "exfat", name), os.path.join(td, "format_vc_exfat", name))
+    for case, source in (("format_vc_exfat", "exfat"), ("disconnect", "fat32")):
+        for name in ("test.img", "password.txt", "pim.txt"):
+            shutil.copyfile(os.path.join(td, source, name), os.path.join(td, case, name))
+        print(f"{case}: copy of the {source} case")
     # The plain cases have no password; the runner still reads the file.
     for case in ("format_plain_fat32", "encrypt_plain_fat32", "encrypt_plain_exfat"):
         with open(os.path.join(td, case, "password.txt"), "w") as f:
             f.write("unused\n")
-    print("format_vc_exfat: copy of the exfat case")
     with tempfile.TemporaryDirectory() as work:
         for case, fs in (("format_plain_fat32", "fat32"), ("encrypt_plain_fat32", "fat32"),
                          ("encrypt_plain_exfat", "exfat")):
