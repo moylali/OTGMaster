@@ -108,6 +108,7 @@ files out of each directory. Only the first three are mandatory:
 | `test.key` | no | Keyfile; required by convention for any case named `*_keyfile` |
 | `expects_error.txt` | no | Presence means the case **must fail to mount** |
 | `write_test.txt` | no | Presence runs the create/persist/delete/persist lifecycle |
+| `disconnect.txt` | no | Presence runs `testDisconnect`: the drive is pulled while mounted (§6d) |
 
 `cipher.txt` and `hash.txt` being independent of the volume is the mechanism behind
 the `unsupported_hash` case: the image is ordinary AES/SHA-512 FAT32, but the picker is
@@ -266,7 +267,7 @@ spaces.txt`, …) so the test can see the old files go:
 | `encrypt_plain_exfat` | plain exFAT, 64 MiB | Encrypt: Serpent-Twofish-AES / Argon2, PIM 1, FAT32 inside, full | no plaintext left, and the drive no longer reads as a filesystem |
 
 ```sh
-python3 scripts/make_erase_fixtures.py      # writes test.img and password.txt (+ pim.txt for format_vc_exfat)
+python3 scripts/make_erase_fixtures.py      # writes test.img and password.txt (+ pim.txt for format_vc_exfat, disconnect)
 ```
 
 - **The case files.** `erase.txt` holds `key=value` lines — `action` (format/encrypt),
@@ -283,6 +284,34 @@ python3 scripts/make_erase_fixtures.py      # writes test.img and password.txt (
   then judges the drive without the app. No host tool decrypts Argon2 VeraCrypt volumes
   (cryptsetup has no Argon2 for TCRYPT, and libsodium's Argon2 takes only 16-byte salts),
   so the Argon2 cascade is opened in desktop VeraCrypt on Drive 5 (§16) instead.
+
+## 6d. A drive pulled while mounted (E2E, no root)
+
+The `disconnect` case is a copy of the `fat32` case (VeraCrypt AES/SHA-512, FAT32,
+10 MB), made by `scripts/make_erase_fixtures.py` beside the Format/Encrypt cases. It is
+encrypted because a plain volume's card has no Unmount, and the disconnected card has to
+be seen taking Open, Unmount and More away. Its `disconnect.txt` runs
+`E2EAutomatedTest.testDisconnect`, which pulls the drive out while it is mounted, twice:
+
+- **Pulling it.** Every emulator starts with a QEMU monitor socket
+  (`/tmp/otg_qmon_<port>.sock`). The test touches `/data/local/tmp/otg_e2e_unplug` or
+  `…_replug`; `run_e2e_tests.sh` watches for those files during the case, runs
+  `device_del` / `device_add` on the USB drive, and removes the file once
+  `/dev/block/sda` has gone or come back. So the mounted volume's I/O really fails, as on
+  a phone.
+- **Telling the app.** The emulator has no USB host feature: the app reads the drive
+  through `/dev/block/sda`, not as a `UsbDevice`, and Android broadcasts no detach for it.
+  The test calls `OtgMasterState.detachRequest`, which runs the same handling as the
+  broadcast. The vendor:product matching in front of it is not exercised here, since the
+  emulator has one drive; `DetachMatchTest` covers that on the host.
+- **What it checks.** The first drop is on battery (`dumpsys battery`, 42%): the
+  DISCONNECTED card with no Open, Unmount or More, the warning banner and no green "Unmounted",
+  the recommendations leading with power, Dismiss, and the no-drive help after a Scan with
+  the drive out. The second is on external power: the advice leads with the cable, and
+  unlocking and mounting the volume again clears the card. After each re-mount the card's history
+  reads 1×, then 2×. `dumpsys battery reset` runs at the end, pass or fail.
+- **Before every case** the runner plugs the drive back in if it is missing, so a
+  disconnect case that fails half-way does not take the cases after it down too.
 
 ## 6b. APFS (E2E images, macOS)
 
