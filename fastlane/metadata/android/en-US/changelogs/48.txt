@@ -1,9 +1,10 @@
-• New: encrypt a USB partition as a new VeraCrypt volume
-• New: format FAT32/exFAT partitions, keeping their encryption
-• New: VeraCrypt Twofish and all five cascades
-• New: VeraCrypt Argon2id volumes, with PIM
-• New: More actions menu on mounted drives
-• New: tablet layout, drives beside the unlock form
-• New: a drive that drops stays listed, with advice on why
-• New: help when no drive is found, and what the app opens
+• New: encrypt a partition as a new VeraCrypt volume
+• New: format FAT32/exFAT, keeping the encryption
+• New: VeraCrypt Twofish, cascades and Argon2id
+• New: tablet layout and a More actions menu
+• New: a drive that drops stays listed, with advice
+• New: help when no drive is found
+• New: repair ext4 drives left needing recovery
+• Fixed: ext4 writes 5–7× slower than FAT32
+• Fixed: new ext4 files could show old deleted data
 • Fixed: screens drawn under the system bars

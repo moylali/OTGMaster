@@ -1706,6 +1706,8 @@ object Benchmark {
             val sizes = intArrayOf(1 shl 20, (1 shl 20) + 4097, 65535, 3 shl 20, 777_777)
             var off = 0L
             var i = 0
+            val ext4 = drive.fileSystem as? app.fayaz.otgmaster.ext4.Ext4FileSystem
+            ext4?.io?.reset()
             val ns = measureNanoTime {
                 while (off < BIG_BYTES) {
                     val n = minOf(sizes[i++ % sizes.size].toLong(), BIG_BYTES - off).toInt()
@@ -1716,6 +1718,13 @@ object Benchmark {
             }
             f.close()
             emit("bigwrite      : $BIG_DIR/$bigPath ${BIG_BYTES} bytes written -> ${mbps(BIG_BYTES, ns)}")
+            // The ext4 driver's own command count: one per contiguous run plus a few
+            // metadata writes per call, against ~265 per MiB block at a time (#36).
+            ext4?.io?.let { io ->
+                val mib = BIG_BYTES / 1048576.0
+                emit("    io: ext4 %d write commands, %.1f MiB (%.1f per MiB written), %d block reads"
+                    .format(io.writeCommands, io.writeBytes / 1048576.0, io.writeCommands / mib, io.readCommands))
+            }
             bigOk = false
         }
 

@@ -91,6 +91,7 @@ class E2EAutomatedTest {
         // Run from here rather than as its own @Test: every @Test relaunches the app in
         // @Before, and a fourth method cost every case about 13 s doing nothing.
         if (arguments.getString("disconnect_test", "false") == "true") return runDisconnectCase()
+        if (arguments.getString("journal_repair", "false") == "true") return runJournalRepairCase()
         val password = arguments.getString("password", "password123")
         val testCase = arguments.getString("testCase", "exfat")
 
@@ -794,6 +795,63 @@ class E2EAutomatedTest {
         } finally {
             device.executeShellCommand("dumpsys battery reset")
         }
+    }
+
+    /**
+     * An ext4 drive whose journal needs recovery (testdata/ext4_journal, made by
+     * scripts/make_journal_fixture.py; docs/TEST_DATA.md §6e). It mounts read-only and the
+     * repair dialog opens on its own. Before the repair, journal_replayed.txt reads "no"
+     * and nothing can be created; "Keep read-only" leaves a Repair button on the card;
+     * after the repair the same file reads "yes" — through the block cache that already
+     * held the old block — and a new file goes in and reads back. The host then checks
+     * the drive (scripts/verify_e2e_volume.py, which sees journal.txt).
+     */
+    private fun runJournalRepairCase() {
+        val context = ApplicationProvider.getApplicationContext<Context>()
+        android.os.SystemClock.sleep(1000)
+        (device.wait(Until.findObject(By.desc("scan_button").clickable(true)), timeout) ?: findScanButton())?.click()
+        device.wait(Until.findObject(By.text(java.util.regex.Pattern.compile("(?i)OK|ALLOW"))), timeout)?.click()
+
+        val title = "Repair this drive?"
+        if (device.wait(Until.findObject(By.text(title)), 60000L) == null) captureScreen("no_repair_dialog")
+        assertNotNull("the repair dialog did not open for a drive whose journal needs recovery",
+            device.findObject(By.text(title)))
+
+        assertEquals("journal_replayed.txt before the repair", "REPLAYED: no \n",
+            readRootFile(context, "journal_replayed.txt"))
+        val rootUri = DocumentsContract.buildDocumentUri(AUTHORITY, getRootDocId(context)!!)
+        assertNull("a file was created on the volume before its journal was replayed",
+            runCatching { DocumentsContract.createDocument(context.contentResolver, rootUri, "text/plain", "must_not_exist.txt") }
+                .getOrNull())
+
+        // Declining keeps it read-only, with the repair still on the card.
+        device.findObject(By.text("Keep read-only"))!!.click()
+        assertTrue("the repair dialog did not close", device.wait(Until.gone(By.text(title)), timeout))
+        assertNotNull("READ-ONLY tag missing before the repair", device.wait(Until.findObject(By.text("READ-ONLY")), timeout))
+        clickScrolling("journal_repair_button", "no Repair button on the card of a drive that needs one")
+        assertNotNull("the Repair button did not open the dialog", device.wait(Until.findObject(By.text(title)), timeout))
+        assertTrue("Repair could not be confirmed", clickByDesc("journal_repair_confirm"))
+
+        if (!device.wait(Until.gone(By.text("READ-ONLY")), 60000L)) captureScreen("still_read_only")
+        assertNull("READ-ONLY tag still shown after the repair", device.findObject(By.text("READ-ONLY")))
+        assertNull("Repair still offered after the repair", device.findObject(By.desc("journal_repair_button")))
+        assertEquals("journal_replayed.txt after the repair", "REPLAYED: yes\n",
+            readRootFile(context, "journal_replayed.txt"))
+
+        val content = "OTGMaster wrote this after the journal repair"
+        val uri = DocumentsContract.createDocument(context.contentResolver, rootUri, "text/plain", "after_repair.txt")
+        assertNotNull("createDocument(after_repair.txt) failed after the repair", uri)
+        context.contentResolver.openOutputStream(uri!!)?.use { it.write(content.toByteArray()) }
+            ?: fail("openOutputStream(after_repair.txt) returned null")
+        assertEquals(content, context.contentResolver.openInputStream(uri)?.use { it.readBytes().toString(Charsets.UTF_8) })
+    }
+
+    /** The text of [name] in the first root, read through the provider. */
+    private fun readRootFile(context: Context, name: String): String {
+        val id = listRoot(context).firstOrNull { it.endsWith("/$name") || it.endsWith(name) }
+        assertNotNull("$name missing from the root: ${listRoot(context)}", id)
+        return context.contentResolver.openInputStream(DocumentsContract.buildDocumentUri(AUTHORITY, id!!))
+            ?.use { it.readBytes().toString(Charsets.UTF_8) } ?: ""
     }
 
     private fun clickScrolling(desc: String, missing: String) {

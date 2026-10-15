@@ -134,6 +134,11 @@ class MainActivity : AppCompatActivity() {
      */
     private val deviceMutex = kotlinx.coroutines.sync.Mutex()
 
+    /** Drive id whose journal-repair dialog is up, or null. */
+    private val journalRepairPrompt = mutableStateOf<String?>(null)
+    /** Bumped after each repair, so cards re-read a volume's read-only state. */
+    private val journalRepairs = mutableIntStateOf(0)
+
     /**
      * In-flight unmounts per USB device, so the shared connection is closed by
      * the last one rather than the first.
@@ -455,6 +460,11 @@ class MainActivity : AppCompatActivity() {
                         },
                         onUnmount = { drive -> unmountDrive(drive, isManual = true) },
                         onOpenFilesApp = { drive -> openFilesApp(drive) },
+                        journalRepairPrompt = journalRepairPrompt.value,
+                        journalRepairs = journalRepairs.intValue,
+                        onRequestJournalRepair = { drive -> journalRepairPrompt.value = drive.id },
+                        onJournalRepair = { drive -> repairJournal(drive) },
+                        onJournalRepairDismiss = { journalRepairPrompt.value = null },
                         onClearLogs = { clearLogs() },
                         onCopyText = { text, label -> copyText(text, label) },
                         onThemeChange = { newMode ->
@@ -1137,7 +1147,10 @@ class MainActivity : AppCompatActivity() {
 
                 OtgMasterState.addDrive(mountedDrive)
                 mountedDrive.readOnlyReason?.let { reason ->
-                    withContext(Dispatchers.Main) { appendLog("${mountedDrive.name} is read-only: $reason") }
+                    withContext(Dispatchers.Main) {
+                        appendLog("${mountedDrive.name} is read-only: $reason")
+                        promptJournalRepairIfNeeded(mountedDrive)
+                    }
                 }
                 contentResolver.notifyChange(
                     android.provider.DocumentsContract.buildRootsUri("app.fayaz.otgmaster.documents"), null
@@ -1356,6 +1369,8 @@ class MainActivity : AppCompatActivity() {
                     is app.fayaz.otgmaster.exfat.ExFatFileSystem -> fs.unmount()
                     is app.fayaz.otgmaster.ntfs.NtfsFileSystem -> fs.unmount()
                     is app.fayaz.otgmaster.apfs.ApfsFileSystem -> fs.unmount()
+                    // Leaves the clean flag set; a stream of writes keeps it clear (#36).
+                    is app.fayaz.otgmaster.ext4.Ext4FileSystem -> fs.unmount()
                 }
                 // drive.blockDevice is either NativeDecryptedBlockDevice (close zeros the key but
                 // does NOT close the underlying USB connection) or RawBlockDeviceAdapter (noop close).
@@ -1724,7 +1739,10 @@ class MainActivity : AppCompatActivity() {
                 )
                 OtgMasterState.addDrive(mountedDrive)
                 mountedDrive.readOnlyReason?.let { reason ->
-                    withContext(Dispatchers.Main) { appendLog("${mountedDrive.name} is read-only: $reason") }
+                    withContext(Dispatchers.Main) {
+                        appendLog("${mountedDrive.name} is read-only: $reason")
+                        promptJournalRepairIfNeeded(mountedDrive)
+                    }
                 }
                 contentResolver.notifyChange(
                     android.provider.DocumentsContract.buildRootsUri("app.fayaz.otgmaster.documents"), null
@@ -1893,6 +1911,42 @@ class MainActivity : AppCompatActivity() {
                     device.deviceName, candidate, password, pim,
                     emptyList(), cipher, hash, readOnlyOverride = readOnly,
                 ) { OtgMasterState.unlocksInFlight.decrementAndGet() }
+            }
+        }
+    }
+
+    /** Opens the repair dialog for a drive that mounted with its ext4 journal unreplayed. */
+    private fun promptJournalRepairIfNeeded(drive: MountedDrive) {
+        if ((drive.fileSystem as? app.fayaz.otgmaster.ext4.Ext4FileSystem)?.needsJournalRecovery == true) {
+            journalRepairPrompt.value = drive.id
+        }
+    }
+
+    /**
+     * Replays [drive]'s ext4 journal, after which it takes writes. Device work is
+     * serialised with mounts and unmounts, which share the USB connection.
+     */
+    private fun repairJournal(drive: MountedDrive) {
+        journalRepairPrompt.value = null
+        val fs = drive.fileSystem as? app.fayaz.otgmaster.ext4.Ext4FileSystem ?: return
+        appendLog(getString(R.string.log_journal_repair_started, drive.name))
+        lifecycleScope.launch(Dispatchers.IO) {
+            val result = runCatching { deviceMutex.withLock { fs.replayJournal() } }
+            withContext(Dispatchers.Main) {
+                result.onSuccess { r ->
+                    appendLog(getString(R.string.log_journal_repaired, drive.name, r.transactions, r.blocksReplayed))
+                    toastState.value = Pair(getString(R.string.toast_journal_repaired), true)
+                }.onFailure { e ->
+                    android.util.Log.e("OTGMaster", "journal repair failed", e)
+                    appendLog(getString(R.string.log_journal_repair_failed, drive.name, e.message ?: e.javaClass.simpleName))
+                    toastState.value = Pair(getString(R.string.toast_journal_repair_failed), false)
+                }
+                journalRepairs.intValue++
+                updateMountedDrives()
+                // The provider's root loses or gains FLAG_SUPPORTS_CREATE with it.
+                contentResolver.notifyChange(
+                    android.provider.DocumentsContract.buildRootsUri("app.fayaz.otgmaster.documents"), null
+                )
             }
         }
     }
@@ -2310,6 +2364,11 @@ fun OtgMasterApp(
     onUnlock: (String, VolumeCandidate, String, Int?, List<Uri>, app.fayaz.otgmaster.veracrypt.VeraCryptCipher, app.fayaz.otgmaster.veracrypt.VeraCryptHash, () -> Unit) -> Unit,
     onUnmount: (MountedDrive) -> Unit,
     onOpenFilesApp: (MountedDrive) -> Unit,
+    journalRepairPrompt: String? = null,
+    journalRepairs: Int = 0,
+    onRequestJournalRepair: (MountedDrive) -> Unit = {},
+    onJournalRepair: (MountedDrive) -> Unit = {},
+    onJournalRepairDismiss: () -> Unit = {},
     onClearLogs: () -> Unit,
     onCopyText: (String, String) -> Unit,
     onThemeChange: (ThemeMode) -> Unit,
@@ -2357,6 +2416,13 @@ fun OtgMasterApp(
         }
     }
     driveOperation?.let { app.fayaz.otgmaster.ui.DriveOperationDialog(it, onDriveOperationClose) }
+    journalRepairPrompt?.let { id -> mountedDrives.firstOrNull { it.id == id } }?.let { target ->
+        app.fayaz.otgmaster.ui.JournalRepairDialog(
+            driveTitle = driveTitle(target),
+            onRepair = { onJournalRepair(target) },
+            onDismiss = onJournalRepairDismiss,
+        )
+    }
     var isVeraCryptExpanded by remember { mutableStateOf(true) }
     val scrollState = rememberScrollState()
     val mountedScrollState = rememberScrollState()
@@ -2450,6 +2516,15 @@ fun OtgMasterApp(
                                 if (drive.isReadOnly) {
                                     DriveTag(label = "READ-ONLY", color = Color(0xFFC62828))
                                 }
+                            }
+                            // journalRepairs is read so the card recomposes after a repair:
+                            // the volume changes underneath an unchanged MountedDrive.
+                            val needsRepair = remember(drive.id, journalRepairs) {
+                                (drive.fileSystem as? app.fayaz.otgmaster.ext4.Ext4FileSystem)?.needsJournalRecovery == true
+                            }
+                            if (needsRepair) {
+                                Spacer(modifier = Modifier.height(6.dp))
+                                app.fayaz.otgmaster.ui.JournalRepairNotice(onRepair = { onRequestJournalRepair(drive) })
                             }
 
                             Spacer(modifier = Modifier.height(4.dp))

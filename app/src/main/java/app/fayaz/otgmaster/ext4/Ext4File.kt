@@ -54,6 +54,8 @@ class Ext4File private constructor(
         private const val EXTENT_MAGIC       = 0xF30A
         /** Max blocks in an initialised extent; above this ee_len flags it uninitialised. */
         private const val MAX_INIT_EXTENT_LEN = 32768
+        /** Largest single device write: bounds the copy made for a partial run. */
+        private const val MAX_RUN_BYTES = 4L * 1024 * 1024
         private const val S_IFDIR            = 0x4000
         private const val S_IFLNK            = 0xA000
         private const val S_IFREG            = 0x8000
@@ -240,6 +242,13 @@ class Ext4File private constructor(
      * Write [source] into the file at [offset].  Allocates new blocks as
      * needed and grows the extent tree.  Only extent-tree files are supported;
      * inline-data and legacy block-map files throw.
+     *
+     * The data goes to the device one contiguous physical run at a time, not one
+     * block at a time: a 1 MiB call into a contiguous file is one write command,
+     * which the layers below split at their own transfer limit. Only a partial
+     * first or last block is read first, and only when it already held data — a
+     * block allocated by this call starts as zeros. One block per command made
+     * ext4 writes 5–7× slower than FAT32 through the same USB and crypto stack (#36).
      */
     @Throws(IOException::class)
     override fun write(offset: Long, source: ByteBuffer) {
@@ -249,24 +258,26 @@ class Ext4File private constructor(
             throw UnsupportedOperationException("Write not supported for legacy block-map inodes")
         if (flags and EXT4_INLINE_DATA_FL != 0)
             throw UnsupportedOperationException("Write not supported for inline-data inodes")
+        if (!source.hasRemaining()) return
 
         fs.markDirty()
 
         val data = ByteArray(source.remaining()).also { source.get(it) }
+        val bs = fs.blockSize
+        val firstLb = offset / bs
+        val lastLb = (offset + data.size - 1) / bs
 
-        // Pre-scan: find every logical block that needs a fresh physical allocation.
-        // Batch-allocating all of them at once lets the allocator return a contiguous
-        // run of physical blocks, which can then be registered as a single extent
-        // entry instead of one entry per block — keeping the extent tree shallow.
-        val endOff = offset + data.size
-        val newLogical = mutableListOf<Long>()
-        var scanPos = offset
-        while (scanPos < endOff) {
-            val lb = scanPos / fs.blockSize
-            val mapped = resolveBlock(lb, mappedOnly = true)
-            if (mapped == null) {
-                newLogical.add(lb)
-            } else if (resolveBlock(lb) == null) {
+        // Which logical blocks have nothing behind them yet, as (start, count) runs.
+        // Allocating them in one call lets the allocator hand back contiguous space,
+        // registered as one extent rather than one per block.
+        val fresh = mutableListOf<LongArray>()
+        var lb = firstLb
+        while (lb <= lastLb) {
+            val m = mapRun(lb)
+            val n = minOf(m.length, lastLb - lb + 1)
+            if (m.phys < 0) {
+                fresh += longArrayOf(lb, n)
+            } else if (m.uninitialised) {
                 // Mapped but not readable means the extent is flagged
                 // uninitialised — fallocate'd space. Writing into it would put
                 // real bytes on the medium while the extent still says
@@ -280,60 +291,36 @@ class Ext4File private constructor(
                     "is not supported"
                 )
             }
-            scanPos = (lb + 1) * fs.blockSize
+            lb += n
         }
-        if (newLogical.isNotEmpty()) {
-            val physBlocks = fs.allocator.allocateBlocks(newLogical.size)
-            // Group consecutive (logical, physical) pairs into single extents.
-            var i = 0
-            while (i < newLogical.size) {
-                val logStart  = newLogical[i]
-                val physStart = physBlocks[i]
-                // ee_len above 32768 marks an *uninitialized* extent of
-                // (len - 32768) blocks, so a longer run must be split rather
-                // than written as one entry — otherwise the tail of it is
-                // invisible to every later walk of the tree, including the one
-                // that frees blocks on delete.
-                //
-                // Deliberately untested. Reaching it needs one write() call
-                // allocating a contiguous run past 32768 blocks, and this
-                // allocator cannot produce one on a small image: runs break at
-                // every group carrying a sparse_super backup (0, 1, 3, 5, 7,
-                // …), so a 40960-block request on a 1 GiB image measured a
-                // longest run of 28457 — exactly 32768 minus group 0's
-                // metadata. Two adjacent groups without a backup are needed,
-                // the first pair being 10/11, which means filling ~1.25 GiB
-                // first. A test written against 1 KiB blocks passed with this
-                // cap removed, i.e. proved nothing, and was dropped rather than
-                // left to imply coverage it did not have.
-                var run = 1
-                while (i + run < newLogical.size &&
-                       newLogical[i + run] == logStart + run &&
-                       physBlocks[i + run] == physStart + run &&
-                       run < MAX_INIT_EXTENT_LEN) run++
-                appendExtent(logStart, physStart, run)
-                i += run
-            }
-        }
+        if (fresh.isNotEmpty()) mapFreshBlocks(fresh, goalBefore(firstLb))
+        fun isFresh(block: Long) = fresh.any { block >= it[0] && block < it[0] + it[1] }
 
-        // Write the data block-by-block.  All needed blocks are now allocated.
         var written = 0
-        var pos     = offset
+        var pos = offset
         while (written < data.size) {
-            val logicalBlock = pos / fs.blockSize
-            val blockOff     = (pos % fs.blockSize).toInt()
-            val phys         = resolveBlock(logicalBlock, mappedOnly = true)!!
-            val toCopy       = minOf(data.size - written, fs.blockSize - blockOff)
-
-            if (blockOff == 0 && toCopy == fs.blockSize) {
-                fs.writeBlock(phys, data.copyOfRange(written, written + toCopy))
+            val runLb = pos / bs
+            val m = mapRun(runLb)
+            check(m.phys >= 0) { "block $runLb of '$entryName' unmapped after allocation" }
+            val blockOff = (pos % bs).toInt()
+            val n = minOf((data.size - written).toLong(), m.length * bs - blockOff, MAX_RUN_BYTES).toInt()
+            val nBlocks = (blockOff + n + bs - 1) / bs
+            val buf = if (blockOff == 0 && n % bs == 0) {
+                if (written == 0 && n == data.size) data else data.copyOfRange(written, written + n)
             } else {
-                val block = fs.readBlock(phys).copyOf()
-                System.arraycopy(data, written, block, blockOff, toCopy)
-                fs.writeBlock(phys, block)
+                val b = ByteArray(nBlocks * bs)
+                if (blockOff != 0 && !isFresh(runLb)) fs.readBlock(m.phys).copyInto(b)
+                val tailLb = runLb + nBlocks - 1
+                val tailPartial = (blockOff + n) % bs != 0
+                if (tailPartial && (nBlocks > 1 || blockOff == 0) && !isFresh(tailLb)) {
+                    fs.readBlock(m.phys + nBlocks - 1).copyInto(b, (nBlocks - 1) * bs)
+                }
+                System.arraycopy(data, written, b, blockOff, n)
+                b
             }
-            written += toCopy
-            pos     += toCopy
+            fs.writeBlocks(m.phys, buf)
+            written += n
+            pos += n
         }
 
         val endPos = offset + data.size
@@ -343,24 +330,70 @@ class Ext4File private constructor(
         }
         touchMtime()
         dirty = true
-        // The bitmap and superblock were updated synchronously by allocateBlocks,
+        // The bitmap and superblock were updated synchronously by the allocator,
         // and the data blocks are already on the medium; only the inode still
         // knows where those blocks belong.  Leaving it dirty in memory means a
         // caller that never closes the file — or a drive pulled mid-write —
         // leaves blocks marked allocated that no inode claims, which is exactly
         // what e2fsck reports as a leak.  Metadata has to land with the data it
         // describes, not at the caller's convenience.
-        flush()
+        //
+        // The volume's clean flag is another matter: it stays "not clean" until
+        // the file is flushed or closed, so a stream of writes sets it once (#36).
+        sync()
     }
 
-    @Throws(IOException::class)
-    override fun flush() {
+    /**
+     * Allocate and map the logical runs in [fresh], each (start, count), starting
+     * the search at [goal]. Extents are capped at [MAX_INIT_EXTENT_LEN].
+     *
+     * ee_len above 32768 marks an *uninitialized* extent of (len - 32768) blocks,
+     * so a longer run must be split rather than written as one entry — otherwise
+     * the tail of it is invisible to every later walk of the tree, including the
+     * one that frees blocks on delete.
+     */
+    private fun mapFreshBlocks(fresh: List<LongArray>, goal: Long) {
+        val total = fresh.sumOf { it[1] }
+        val runs = fs.allocator.allocateRuns(total.toInt(), goal)
+        var ri = 0
+        var used = 0L
+        for (h in fresh) {
+            var logical = h[0]
+            var left = h[1]
+            while (left > 0) {
+                val r = runs[ri]
+                val n = minOf(left, r[1] - used, MAX_INIT_EXTENT_LEN.toLong())
+                appendExtent(logical, r[0] + used, n.toInt())
+                logical += n; left -= n; used += n
+                if (used == r[1]) { ri++; used = 0 }
+            }
+        }
+    }
+
+    /**
+     * Where to look for blocks for logical block [lb]: just past the physical block
+     * behind [lb] - 1, so a file grown by appends stays contiguous; -1 (the
+     * allocator's own position) when nothing precedes it.
+     */
+    private fun goalBefore(lb: Long): Long {
+        if (lb == 0L) return -1L
+        val m = mapRun(lb - 1)
+        return if (m.phys >= 0) m.phys + 1 else -1L
+    }
+
+    /** Write the inode back if it changed, leaving the volume's clean flag alone. */
+    private fun sync() {
         if (!dirty) return
         val bb = ByteBuffer.wrap(inode).order(ByteOrder.LITTLE_ENDIAN)
         val nowSec = (System.currentTimeMillis() / 1000L).toInt()
         bb.putInt(12, nowSec)  // i_ctime
         fs.writeInode(inodeNum, inode)
         dirty = false
+    }
+
+    @Throws(IOException::class)
+    override fun flush() {
+        sync()
         fs.markClean()
     }
 
@@ -379,24 +412,32 @@ class Ext4File private constructor(
         var toFree: List<LongArray> = emptyList()
 
         if (newLength > currentSize) {
-            // Grow: allocate blocks to cover the new tail.  The bytes are already
-            // zero (allocateBlocks zeroes new block bitmaps; the on-disk data of
-            // freshly-allocated blocks is whatever was there before, but the caller
-            // is expected to write before reading, which is the normal truncate-up
-            // contract for empty pre-allocation).
-            var pos = currentSize
-            while (pos < newLength) {
-                val logicalBlock = pos / fs.blockSize
-                // mappedOnly: an uninitialised extent is already allocated, so
-                // treating it as absent here would allocate over it and strand
-                // the blocks it holds.
-                if (resolveBlock(logicalBlock, mappedOnly = true) == null) {
-                    val phys = fs.allocator.allocateBlocks(1)[0]
-                    appendExtent(logicalBlock, phys, 1)
-                    // Zero the newly-allocated block.
-                    fs.writeBlock(phys, ByteArray(fs.blockSize))
+            // Grow: allocate and zero blocks to cover the new tail, a run at a time.
+            // An uninitialised extent counts as allocated (mapRun reports it), so
+            // its blocks are not allocated over and stranded.
+            val bs = fs.blockSize
+            val firstLb = currentSize / bs
+            val lastLb = (newLength - 1) / bs
+            val fresh = mutableListOf<LongArray>()
+            var lb = firstLb
+            while (lb <= lastLb) {
+                val m = mapRun(lb)
+                val n = minOf(m.length, lastLb - lb + 1)
+                if (m.phys < 0) fresh += longArrayOf(lb, n)
+                lb += n
+            }
+            if (fresh.isNotEmpty()) {
+                mapFreshBlocks(fresh, goalBefore(firstLb))
+                for (h in fresh) {
+                    var at = h[0]
+                    val end = h[0] + h[1]
+                    while (at < end) {
+                        val m = mapRun(at)
+                        val n = minOf(m.length, end - at, MAX_RUN_BYTES / bs)
+                        fs.writeBlocks(m.phys, ByteArray((n * bs).toInt()))
+                        at += n
+                    }
                 }
-                pos += fs.blockSize
             }
         } else if (newLength < currentSize) {
             // Shrink: drop the extents beyond the new end. Their blocks are freed
@@ -412,23 +453,13 @@ class Ext4File private constructor(
         dirty = true
         // Growing: the bitmap is already durable, so this inode only maps blocks
         // already marked used. Shrinking: the inode stops mapping the tail first,
-        // and the tail is freed only after it (#33).
-        flush()
-        freeAfterUnmapping(toFree)
-    }
-
-    /**
-     * Free [runs] (start, count) once nothing on disk maps them any more.
-     *
-     * Interrupted here, the volume only leaks blocks, which fsck reclaims safely.
-     * Freeing first, as the driver used to, left a live inode pointing at blocks the
-     * bitmap called free: issue #33, found on a Huawei P20 Lite stopped partway
-     * through deleting a 2.2 GB file.
-     */
-    private fun freeAfterUnmapping(runs: List<LongArray>) {
-        if (runs.isEmpty()) return
-        fs.markDirty()
-        fs.allocator.freeRuns(runs)
+        // and the tail is freed only after it (#33). Interrupted in between, the
+        // volume only leaks blocks, which fsck reclaims safely. Freeing first, as
+        // the driver used to, left a live inode pointing at blocks the bitmap
+        // called free: issue #33, found on a Huawei P20 Lite stopped partway
+        // through deleting a 2.2 GB file.
+        sync()
+        if (toFree.isNotEmpty()) fs.allocator.freeRuns(toFree)
         fs.markClean()
     }
 
@@ -542,11 +573,12 @@ class Ext4File private constructor(
         fs.markDirty()
         val child = createNew(fs, name, this, isDirectory = false)
         addDirEntry(child.inodeNum, name, FT_REG_FILE)
-        child.flush()
+        child.sync()
         incrLinkCount(0)  // parent mtime update only
         touchMtime()
         dirty = true
-        flush()  // the parent's own inode (size, i_blocks, mtime) must reach disk too
+        sync()  // the parent's own inode (size, i_blocks, mtime) must reach disk too
+        fs.markClean()
         return child
     }
 
@@ -598,7 +630,7 @@ class Ext4File private constructor(
 
         child.currentSize = fs.blockSize.toLong()
         child.updateInodeSize(fs.blockSize.toLong())
-        child.flush()
+        child.sync()
 
         addDirEntry(child.inodeNum, name, FT_DIR)
         incrLinkCount(+1)  // parent link count +1 for the ".." back-reference
@@ -606,7 +638,8 @@ class Ext4File private constructor(
         dirty = true
         // Without this the bumped link count stays in memory and e2fsck reports
         // "Inode 2 ref count is 3, should be 4" for every directory created.
-        flush()
+        sync()
+        fs.markClean()
         return child
     }
 
@@ -634,9 +667,8 @@ class Ext4File private constructor(
         (p as? Ext4File)?.run {  // receiver is the parent: use the captured child values
             removeDirEntry(childInode, childName)
             if (wasDir) incrLinkCount(-1)  // the ".." entry pointed at the parent
-            touchMtime(); dirty = true; flush()
+            touchMtime(); dirty = true; sync()
         }
-        fs.markDirty()  // the parent's flush marked the volume clean
 
         // 2. Clear the inode. Cut off after this, its blocks are only leaked.
         inode.fill(0)
@@ -674,7 +706,12 @@ class Ext4File private constructor(
         parent = dst
         touchMtime()
         dirty = true
-        flush()
+        sync()
+        // A moved directory changes both parents' link counts, which only reach
+        // disk if their inodes are written too.
+        src.sync()
+        dst.sync()
+        fs.markClean()
     }
 
     // -----------------------------------------------------------------------
@@ -1132,15 +1169,85 @@ class Ext4File private constructor(
         entryName = newName
         touchMtime()
         dirty = true
-        flush()
+        sync()
         p.touchMtime()
         p.dirty = true
-        p.flush()
+        p.sync()
+        fs.markClean()
     }
 
     // -----------------------------------------------------------------------
     // Block resolution: extent tree or legacy block map (read, unchanged)
     // -----------------------------------------------------------------------
+
+    /**
+     * What lies behind logical block [logical] and how far it continues unchanged:
+     * a mapped run (physical start, blocks left in its extent, whether the extent is
+     * uninitialised), or a hole ([phys] -1) and the blocks until the next mapping.
+     *
+     * One tree walk per run rather than per block: the write path used to resolve
+     * every 4 KiB block twice before writing it and once more to write it (#36).
+     */
+    private class Mapping(val phys: Long, val length: Long, val uninitialised: Boolean)
+
+    private fun mapRun(logical: Long): Mapping {
+        if (inodesFlags() and EXT4_EXTENTS_FL == 0) {
+            val p = blockMapLookup(logical)
+            return Mapping(p ?: -1L, 1, false)
+        }
+        return extentMap(inode, 40, logical, Long.MAX_VALUE)
+    }
+
+    /** [mapRun] over the extent node at [offset] in [data]; [limit] bounds a trailing hole. */
+    private fun extentMap(data: ByteArray, offset: Int, target: Long, limit: Long): Mapping {
+        val bb      = ByteBuffer.wrap(data).order(ByteOrder.LITTLE_ENDIAN)
+        val magic   = bb.getShort(offset).toInt() and 0xFFFF
+        if (magic != EXTENT_MAGIC) throw IOException(
+            "Bad extent header magic 0x${magic.toString(16)} in inode $inodeNum"
+        )
+        val entries = bb.getShort(offset + 2).toInt() and 0xFFFF
+        val depth   = bb.getShort(offset + 6).toInt() and 0xFFFF
+
+        if (depth == 0) {
+            for (i in 0 until entries) {
+                val e      = offset + 12 + i * 12
+                val eBlock = bb.getInt(e).toLong() and 0xFFFFFFFFL
+                val eLen   = bb.getShort(e + 4).toInt() and 0xFFFF
+                val uninit = eLen > MAX_INIT_EXTENT_LEN
+                val count  = if (uninit) eLen - MAX_INIT_EXTENT_LEN else eLen
+                if (target < eBlock) return Mapping(-1L, minOf(eBlock, limit) - target, false)
+                if (target < eBlock + count) {
+                    val startHi = (bb.getShort(e + 6).toInt() and 0xFFFF).toLong()
+                    val startLo = bb.getInt(e + 8).toLong() and 0xFFFFFFFFL
+                    val phys = ((startHi shl 32) or startLo) + (target - eBlock)
+                    return Mapping(phys, eBlock + count - target, uninit)
+                }
+            }
+            return Mapping(-1L, if (limit == Long.MAX_VALUE) Long.MAX_VALUE else limit - target, false)
+        }
+
+        var child = -1
+        for (i in 0 until entries) {
+            val ixBlock = bb.getInt(offset + 12 + i * 12).toLong() and 0xFFFFFFFFL
+            if (ixBlock > target) {
+                if (child < 0) return Mapping(-1L, minOf(ixBlock, limit) - target, false)
+                break
+            }
+            child = i
+        }
+        if (child < 0) {
+            return Mapping(-1L, if (limit == Long.MAX_VALUE) Long.MAX_VALUE else limit - target, false)
+        }
+        val ix = offset + 12 + child * 12
+        val childLimit = if (child + 1 < entries)
+            minOf(bb.getInt(ix + 12).toLong() and 0xFFFFFFFFL, limit) else limit
+        val leafLo = bb.getInt(ix + 4).toLong() and 0xFFFFFFFFL
+        val leafHi = (bb.getShort(ix + 8).toInt() and 0xFFFF).toLong()
+        return extentMap(fs.readBlock((leafHi shl 32) or leafLo), 0, target, childLimit)
+    }
+
+    /** Physical block behind [logical], allocated or not yet initialised; for the journal replay. */
+    internal fun physicalBlock(logical: Long): Long? = resolveBlock(logical, mappedOnly = true)
 
     /**
      * Physical block backing [logicalBlock], or null if nothing does.
