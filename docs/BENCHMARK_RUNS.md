@@ -90,6 +90,20 @@ That fixed cost per call is what #36's phase 4 (a write-back window for metadata
 would amortise, and it was left undone pending a decision, because it weakens the
 crash-safety guarantee #33 depends on.
 
+**Commit hashes after the merge of #61** (rebase-merge, so new hashes). The rows above,
+the PR and the commit messages cite the branch hashes:
+
+| On the branch (cited) | On `main` | Commit |
+|---|---|---|
+| `e32a6b3` | `c01036e` | ext4: write in runs from a goal block; repair a journal needing recovery |
+| `a2202be` | `11c37f0` | ext4 repair: replay block 0; offer the dialog from every mount path |
+| `83e318f` | `ae74882` | ext4 repair: recount free totals after a replay; s_free_blocks_hi at 0x158 |
+| `87d26f2` | `0058dd0` | docs: record the D1EXT4 ext4 run and the first on-device journal repair |
+| `3235849` | `150c17b` | docs: record the second on-device journal repair (87d26f2) |
+
+The tree of `150c17b` is identical to `3235849`, the commit the parallel E2E run (56/56)
+and CI passed on.
+
 ## 2026-10-14 — PR #53, disconnected cards: no benchmark rows
 
 PR #53 (a drive that drops while mounted stays on screen as a DISCONNECTED card) changed no
