@@ -241,7 +241,9 @@ object Ext4Journal {
         var revokedCount = 0
         for (t in committed) for (tag in t.tags) {
             if (isRevoked(tag.fsBlock, t.sequence)) { revokedCount++; continue }
-            if (tag.fsBlock <= 0 || tag.fsBlock >= fs.totalBlocks)
+            // Block 0 is legitimate: on a 4 KiB-block volume it holds the superblock,
+            // which the kernel journals in nearly every transaction.
+            if (tag.fsBlock < 0 || tag.fsBlock >= fs.totalBlocks)
                 throw NotReplayableException("journal transaction ${t.sequence} logs block ${tag.fsBlock}, outside the volume")
             if (hasCsum) {
                 val data = read(tag.logBlock)

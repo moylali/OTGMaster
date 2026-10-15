@@ -284,6 +284,22 @@ class Ext4JournalReplayTest {
         } finally { dev.close() }
     }
 
+    /**
+     * A journal the Linux kernel wrote, rather than debugfs: an image copied while it
+     * was mounted (scripts/make_kernel_journal_image.sh builds one without root, through
+     * a udisks loop mount). Opt-in, since it needs that image:
+     * OTG_EXT4_JOURNAL_IMAGE=/path/to/snap.img ./gradlew :app:testDebugUnitTest
+     */
+    @Test
+    fun replaysAKernelWrittenJournal() {
+        val path = System.getenv("OTG_EXT4_JOURNAL_IMAGE")
+        assumeTrue("set OTG_EXT4_JOURNAL_IMAGE to an ext4 image that needs recovery", path != null)
+        File(path!!).copyTo(img, overwrite = true)
+        val r = replayAndCompare()
+        assertTrue("the kernel's journal had nothing committed to replay", r.transactions > 0)
+        assertWritableAfterwards()
+    }
+
     /** Physical block of journal block [n], via debugfs' block map of inode 8. */
     private fun journalPhysical(n: Int): Long {
         val out = run("debugfs", "-R", "bmap <8> $n", img.absolutePath).second

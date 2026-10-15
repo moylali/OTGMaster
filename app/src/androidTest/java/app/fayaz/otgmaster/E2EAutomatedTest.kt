@@ -808,11 +808,13 @@ class E2EAutomatedTest {
      */
     private fun runJournalRepairCase() {
         val context = ApplicationProvider.getApplicationContext<Context>()
-        android.os.SystemClock.sleep(1000)
-        (device.wait(Until.findObject(By.desc("scan_button").clickable(true)), timeout) ?: findScanButton())?.click()
-        device.wait(Until.findObject(By.text(java.util.regex.Pattern.compile("(?i)OK|ALLOW"))), timeout)?.click()
-
         val title = "Repair this drive?"
+        // A plain drive mounts when the app starts, and the dialog with it. Scan only if
+        // it has not: a tap on Scan behind the dialog lands outside it and dismisses it.
+        if (device.wait(Until.findObject(By.text(title)), 20000L) == null) {
+            (device.wait(Until.findObject(By.desc("scan_button").clickable(true)), timeout) ?: findScanButton())?.click()
+            device.wait(Until.findObject(By.text(java.util.regex.Pattern.compile("(?i)OK|ALLOW"))), 5000L)?.click()
+        }
         if (device.wait(Until.findObject(By.text(title)), 60000L) == null) captureScreen("no_repair_dialog")
         assertNotNull("the repair dialog did not open for a drive whose journal needs recovery",
             device.findObject(By.text(title)))
