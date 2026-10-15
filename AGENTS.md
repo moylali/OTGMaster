@@ -55,7 +55,8 @@ These apply to every commit, without being asked.
    The current set, 1080×2340 (a OnePlus 7 matches that size):
    `1_light` the unlock form in light theme · `2_dark` the unlock form in dark
    theme · `3_settings` the Settings drawer · `4_mounted` mounted drive cards ·
-   `5_actions` a card's More actions menu (Format…, Encrypt…).
+   `5_actions` a card's More actions menu (Format…, Encrypt…) ·
+   `6_disconnected` a drive's card after it was pulled while mounted.
    Keep the names and the size; add a shot rather than overloading one.
 
    How to take them without clutter:
