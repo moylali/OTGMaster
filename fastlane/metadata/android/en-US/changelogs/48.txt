@@ -4,4 +4,6 @@
 • New: VeraCrypt Argon2id volumes, with PIM
 • New: More actions menu on mounted drives
 • New: tablet layout, drives beside the unlock form
+• New: a drive that drops stays listed, with advice on why
+• New: help when no drive is found, and what the app opens
 • Fixed: screens drawn under the system bars
