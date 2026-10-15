@@ -5,6 +5,26 @@ import android.hardware.usb.UsbDevice
 
 object UsbDeviceDescriber {
     /**
+     * Whether a stored device [key] belongs to the device that just detached.
+     *
+     * At detach time the serial often cannot be read, so the detached device's own keys
+     * ([detachedKeys]) may be only its bus-path form while [key] was stored with the serial.
+     * Matching on vendor:product covers that — but on its own it also matches every other
+     * stick of the same model, so pulling one of several identical sticks unmounted all of
+     * them. Android has already removed the detached device from its list when the
+     * broadcast arrives, so a key that still belongs to an attached device
+     * ([stillAttachedKeys]) is not the one that went.
+     */
+    fun matchesDetached(
+        key: String,
+        detachedKeys: Set<String>,
+        vendorProduct: String,
+        stillAttachedKeys: Set<String>,
+    ): Boolean =
+        key in detachedKeys ||
+            (key.startsWith("$vendorProduct:") && key !in stillAttachedKeys)
+
+    /**
      * A device identity that survives USB re-enumeration. [UsbDevice.deviceName] is just the
      * current bus path (e.g. "/dev/bus/usb/001/003") and gets reassigned to a new value if the
      * device detaches/reattaches — which can happen mid-mount on OTG-powered drives from a

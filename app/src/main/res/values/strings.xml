@@ -17,7 +17,7 @@
 
     <!-- Encrypted drive mount section -->
     <string name="mount_veracrypt_drive">Mount Encrypted Drive</string>
-    <string name="no_candidates_found">No VeraCrypt or LUKS encrypted volumes found on this device.</string>
+    <string name="no_candidates_found">No encrypted volume this app can open was found on this device.</string>
     <string name="label_password">Password</string>
     <string name="label_bitlocker_password">Password or recovery key</string>
     <string name="label_apfs_password">APFS volume password</string>
@@ -102,6 +102,37 @@
     <string name="log_usb_permission_denied">USB permission denied.</string>
     <string name="log_usb_device_attached">USB device attached.</string>
     <string name="log_usb_device_detached">USB device detached.</string>
+    <string name="drive_disconnected_power_hint">%1$s disconnected while mounted. If it drops during transfers, it may need more power than the phone can supply. Try a powered USB hub or an enclosure with its own power supply.</string>
+    <string name="drive_disconnected_unexpectedly">%1$s disconnected while mounted. Check the cable and connections.</string>
+    <string name="disconnected_tag">DISCONNECTED</string>
+    <string name="disconnected_card_body">Disconnected while mounted.</string>
+    <string name="see_recommendations">See recommendations</string>
+    <string name="recommendations_title">Why drives disconnect</string>
+    <string name="recommendations_intro_power">The phone was on battery when this drive dropped. The most common cause is power: SSDs and hard drives in bus-powered enclosures can draw more than a phone\'s USB port supplies, especially during long transfers.</string>
+    <string name="recommendations_intro_external">The phone was on external power when this drive dropped, so a weak power supply is less likely. Start with the connection.</string>
+    <string name="recommendation_hub">Use a USB hub with its own power supply: plug the hub into the wall, the drive into the hub, and the hub into the phone.</string>
+    <string name="recommendation_enclosure">Or use an enclosure with its own power input.</string>
+    <string name="recommendation_cable">Use a short, direct USB-C cable. Avoid loose adapters, and make sure each plug is fully seated.</string>
+    <string name="recommendation_battery">Keep the phone charged. Some phones limit USB power when the battery is low.</string>
+    <string name="recommendation_check_drive">If files were being written when it dropped, check the drive on a computer before writing to it again (chkdsk on Windows, fsck.exfat or e2fsck on Linux). An ext4 drive may mount read-only until then. Reading it is safe.</string>
+    <string name="recommendation_replug">Plug the drive back in to mount it again. Its disconnects stay listed on its card until the app closes.</string>
+    <string name="no_drive_help_title">Drive not showing up?</string>
+    <string name="no_drive_help_replug">Unplug the drive and plug it back in. When Android asks whether OTG Master may access it, tap Allow.</string>
+    <string name="no_drive_help_adapter">Connect it with an OTG adapter, or a USB-C drive directly. Some cables only charge and carry no data.</string>
+    <string name="no_drive_help_otg_switch">Some phones, including OnePlus, Oppo, Realme and Vivo, read USB drives only while OTG is switched on in Settings (search Settings for \"OTG\"). It switches itself off after a few minutes unused.</string>
+    <string name="no_drive_help_charging">Some phones cannot read a drive while charging through the same port. If the drive appears only with the charger unplugged, connect it directly with an OTG adapter.</string>
+    <string name="no_drive_help_power">SSDs and hard drives may need more power than the phone can supply. If the drive\'s light stays off, or it disconnects shortly after appearing, try a USB hub with its own power supply, on a phone that can read drives through one.</string>
+    <string name="no_drive_help_hardware_lock">Drives locked by their own hardware, such as WD\'s password lock, must be unlocked with the maker\'s software first.</string>
+    <string name="no_drive_help_rescan">Then tap Scan USB devices.</string>
+    <string name="supported_heading">What OTG Master can open</string>
+    <string name="supported_encryption">Encryption: VeraCrypt (AES, Serpent, Twofish and their cascades), LUKS1, LUKS2, BitLocker, and encrypted APFS.</string>
+    <string name="supported_filesystems">File systems: FAT32, exFAT, NTFS and ext4, read and write; APFS, read-only.</string>
+    <string name="supported_plain">Unencrypted drives with these file systems open on their own when plugged in.</string>
+    <string name="disconnect_history_summary">Disconnected unexpectedly %1$d× this session</string>
+    <string name="disconnect_power_external">on external power</string>
+    <string name="disconnect_power_battery_pct">on battery, %1$d%%</string>
+    <string name="disconnect_power_battery">on battery</string>
+    <string name="dismiss">Dismiss</string>
     <string name="log_found_usb_devices">Found %1$d USB devices.</string>
     <string name="log_reoffered_locked_partitions">%1$d locked partition(s) on %2$s, beside one already mounted.</string>
     <string name="log_found_candidates_qemu">Found %1$d VeraCrypt volume candidates on QEMU disk.</string>

@@ -158,6 +158,8 @@ class MainActivity : AppCompatActivity() {
     private val logsState = mutableStateListOf<String>()
     private val toastState = mutableStateOf<Pair<String, Boolean>?>(null) // message to isSuccess
     private val newlyMountedDriveIds = mutableStateOf<Set<String>>(emptySet())
+    /** A Scan tap found no USB drive, so the "no drives" message offers its help link. */
+    private val scanFoundNoDrive = mutableStateOf(false)
     private val pendingToastMountNames = mutableListOf<String>()
     private val toastMountHandler = android.os.Handler(android.os.Looper.getMainLooper())
     private val toastMountRunnable = Runnable {
@@ -278,6 +280,7 @@ class MainActivity : AppCompatActivity() {
                     }
                 }
                 UsbManager.ACTION_USB_DEVICE_ATTACHED -> {
+                    scanFoundNoDrive.value = false
                     appendLog(getString(R.string.log_usb_device_attached))
                     refreshDevices()
                 }
@@ -286,22 +289,36 @@ class MainActivity : AppCompatActivity() {
                     if (detached != null) {
                         // At detach time, device.serialNumber often throws (device is gone), so
                         // stableKey falls back to the bus path. Keys stored at mount time likely
-                        // used the serial. Match by vendorId:productId prefix as a reliable anchor.
-                        val keyWithPerm = UsbDeviceDescriber.stableKey(detached, true)
-                        val keyWithoutPerm = UsbDeviceDescriber.stableKey(detached, false)
-                        val idPrefix = "${detached.vendorId}:${detached.productId}:"
+                        // used the serial. Match by vendorId:productId, minus the devices of the
+                        // same model that are still attached — see matchesDetached.
+                        val detachedKeys = setOf(
+                            UsbDeviceDescriber.stableKey(detached, true),
+                            UsbDeviceDescriber.stableKey(detached, false),
+                        )
+                        val vendorProduct = "${detached.vendorId}:${detached.productId}"
+                        val stillAttachedKeys = usbDeviceProvider.getDevices()
+                            .filter { it.deviceName != detached.deviceName }
+                            .flatMap { listOf(
+                                UsbDeviceDescriber.stableKey(it, usbDeviceProvider.hasPermission(it)),
+                                UsbDeviceDescriber.stableKey(it, false),
+                            ) }
+                            .toSet()
                         val matchesDetached = { key: String ->
-                            key == keyWithPerm || key == keyWithoutPerm || key.startsWith(idPrefix)
+                            UsbDeviceDescriber.matchesDetached(key, detachedKeys, vendorProduct, stillAttachedKeys)
                         }
                         // Clear suppression flags so the next plug-in triggers auto-mount again.
                         manuallyUnmountedDevices.removeAll { matchesDetached(it) }
                         autoMountAttempted.removeAll { matchesDetached(it) }
                         sessionPlaintextCreds.keys.filter { matchesDetached(it) }.forEach { sessionPlaintextCreds.remove(it) }
                         saveManuallyUnmountedDevices()
-                        // Unmount any mounted drives from this device.
-                        OtgMasterState.mountedDrives
+                        // Unmount any mounted drives from this device. A drive still mounted
+                        // here was not unmounted first: pulled out, or dropped by itself, which
+                        // on bus-powered SSD enclosures is usually the phone's port browning out
+                        // under load (issue #50). Its card stays, marked disconnected.
+                        val lost = OtgMasterState.mountedDrives
                             .filter { it.sourceDeviceName?.let(matchesDetached) == true }
-                            .forEach { unmountDrive(it) }
+                        if (lost.isNotEmpty()) recordDisconnect(lost)
+                        lost.forEach { unmountDrive(it, disconnected = true) }
                         // Close and discard any probed-but-not-yet-mounted block handles.
                         val keysToClose = openedDevices.keys.filter { matchesDetached(it) }
                         val toClose = keysToClose.mapNotNull { openedDevices.remove(it) }
@@ -439,7 +456,12 @@ class MainActivity : AppCompatActivity() {
                         },
                         isPartitionReadOnly = { deviceKey, startBlock -> isPartitionReadOnly(deviceKey, startBlock) },
                         onSetPartitionReadOnly = { deviceKey, startBlock, ro -> setPartitionReadOnly(deviceKey, startBlock, ro) },
-                        onRefreshDevices = { refreshDevices() },
+                        onRefreshDevices = {
+                            refreshDevices()
+                            scanFoundNoDrive.value = usbDeviceProvider.getDevices()
+                                .none { UsbDeviceDescriber.isMassStorageDevice(it) }
+                        },
+                        showNoDriveHelp = scanFoundNoDrive.value,
                         onUnlock = { deviceName, candidate, pwd, pim, keyfiles, cipher, hash, onComplete ->
                             attemptUnlock(deviceName, candidate, pwd, pim, keyfiles, cipher, hash, onComplete = onComplete)
                         },
@@ -489,6 +511,9 @@ class MainActivity : AppCompatActivity() {
                         onEncrypt = { drive, req -> encryptDrive(drive, req) },
                         driveOperation = driveOperation.value,
                         onDriveOperationClose = { driveOperation.value = null },
+                        disconnectedDrives = OtgMasterState.disconnectedDrives.value,
+                        disconnectHistory = OtgMasterState.disconnectHistory.value,
+                        onDismissDisconnected = { OtgMasterState.dismissDisconnected(it) },
                     )
                 }
             }
@@ -1222,7 +1247,46 @@ class MainActivity : AppCompatActivity() {
         sharedPreferences.edit().putStringSet(PREF_MANUALLY_UNMOUNTED, manuallyUnmountedDevices.toSet()).apply()
     }
 
-    private fun unmountDrive(drive: MountedDrive, isManual: Boolean = false) {
+    /**
+     * Leaves a disconnected card for each of [lost] and says why it may have happened.
+     *
+     * Only the battery is readable here: Android gives apps no view of a hub, or of how
+     * much current the port supplies. A phone plugged into power was most likely feeding
+     * the drive through a powered hub, so it does not get the power advice.
+     */
+    private fun recordDisconnect(lost: List<MountedDrive>) {
+        val battery = registerReceiver(null, IntentFilter(Intent.ACTION_BATTERY_CHANGED))
+        val level = battery?.getIntExtra(android.os.BatteryManager.EXTRA_LEVEL, -1) ?: -1
+        val scale = battery?.getIntExtra(android.os.BatteryManager.EXTRA_SCALE, -1) ?: -1
+        val event = DisconnectEvent(
+            atMillis = System.currentTimeMillis(),
+            batteryPercent = if (level >= 0 && scale > 0) level * 100 / scale else null,
+            externalPower = (battery?.getIntExtra(android.os.BatteryManager.EXTRA_PLUGGED, 0) ?: 0) != 0,
+        )
+        lost.forEach { drive ->
+            OtgMasterState.recordDisconnect(DisconnectedDrive(
+                partitionKey = drive.partitionKey,
+                title = driveTitle(drive),
+                filesystemName = drive.filesystemName,
+                containerType = drive.sourceVolumeCandidate?.containerType,
+                event = event,
+            ))
+        }
+        val names = lost.joinToString { driveTitle(it) }
+        val message = getString(
+            if (event.externalPower) R.string.drive_disconnected_unexpectedly
+            else R.string.drive_disconnected_power_hint,
+            names)
+        appendLog(message)
+        toastState.value = Pair(message, false)
+        // The in-app banner is invisible to someone copying in Files, which is where a
+        // drop mid-transfer happens.
+        if (!lifecycle.currentState.isAtLeast(androidx.lifecycle.Lifecycle.State.RESUMED)) {
+            android.widget.Toast.makeText(this, message, android.widget.Toast.LENGTH_LONG).show()
+        }
+    }
+
+    private fun unmountDrive(drive: MountedDrive, isManual: Boolean = false, disconnected: Boolean = false) {
         if (isManual) {
             drive.sourceDeviceName?.let {
                 manuallyUnmountedDevices.add(it)
@@ -1280,7 +1344,8 @@ class MainActivity : AppCompatActivity() {
                 drive.blockDevice?.close()
             }
             withContext(Dispatchers.Main) {
-                toastState.value = Pair("Unmounted: ${drive.name}", true)
+                // A green "Unmounted" would overwrite the disconnect warning with good news.
+                if (!disconnected) toastState.value = Pair("Unmounted: ${drive.name}", true)
                 appendLog(getString(R.string.log_drive_unmounted, drive.name))
 
                 val sourceKey = drive.sourceDeviceName
@@ -1815,6 +1880,7 @@ class MainActivity : AppCompatActivity() {
 
     private fun updateMountedDrives() {
         mountedDrivesState.value = OtgMasterState.mountedDrives.toList()
+        OtgMasterState.clearDisconnectedFor(mountedDrivesState.value)
     }
 
     private fun openFilesApp(drive: MountedDrive) {
@@ -2186,6 +2252,15 @@ fun DriveTag(label: String, color: Color) {
     }
 }
 
+/** The card header: the USB device's name, then the partition. */
+fun driveTitle(drive: MountedDrive): String = buildString {
+    append(drive.sourceDeviceDisplayName ?: drive.name)
+    if (drive.partitionLabel.isNotEmpty()) {
+        append(" · ")
+        append(drive.partitionLabel)
+    }
+}
+
 fun formatSize(bytes: Long): String {
     if (bytes <= 0) return "0 B"
     val units = arrayOf("B", "KB", "MB", "GB", "TB")
@@ -2212,6 +2287,7 @@ fun OtgMasterApp(
     isPartitionReadOnly: (String, Long) -> Boolean,
     onSetPartitionReadOnly: (String, Long, Boolean) -> Unit,
     onRefreshDevices: () -> Unit,
+    showNoDriveHelp: Boolean = false,
     onUnlock: (String, VolumeCandidate, String, Int?, List<Uri>, app.fayaz.otgmaster.veracrypt.VeraCryptCipher, app.fayaz.otgmaster.veracrypt.VeraCryptHash, () -> Unit) -> Unit,
     onUnmount: (MountedDrive) -> Unit,
     onOpenFilesApp: (MountedDrive) -> Unit,
@@ -2235,6 +2311,9 @@ fun OtgMasterApp(
     onEncrypt: (MountedDrive, app.fayaz.otgmaster.ui.EncryptRequest) -> Unit = { _, _ -> },
     driveOperation: app.fayaz.otgmaster.ui.DriveOperation? = null,
     onDriveOperationClose: () -> Unit = {},
+    disconnectedDrives: List<DisconnectedDrive> = emptyList(),
+    disconnectHistory: Map<String, List<DisconnectEvent>> = emptyMap(),
+    onDismissDisconnected: (String) -> Unit = {},
 ) {
     var showSettings by remember { mutableStateOf(false) }
     var formatTarget by remember { mutableStateOf<MountedDrive?>(null) }
@@ -2295,10 +2374,10 @@ fun OtgMasterApp(
             }
         }
         val mountedSection: @Composable (alwaysShowTitle: Boolean) -> Unit = { alwaysShowTitle ->
-            if (mountedDrives.isNotEmpty() || alwaysShowTitle) {
+            if (mountedDrives.isNotEmpty() || disconnectedDrives.isNotEmpty() || alwaysShowTitle) {
                 Text(stringResource(R.string.mounted_devices), style = MaterialTheme.typography.titleLarge)
             }
-            if (mountedDrives.isEmpty() && alwaysShowTitle) {
+            if (mountedDrives.isEmpty() && disconnectedDrives.isEmpty() && alwaysShowTitle) {
                 Text(stringResource(R.string.no_drives_mounted), style = MaterialTheme.typography.bodyMedium,
                     color = MaterialTheme.colorScheme.onSurfaceVariant)
             }
@@ -2327,14 +2406,7 @@ fun OtgMasterApp(
                             val usedSpace = totalSpace - freeSpace
                             val progress = if (totalSpace > 0) usedSpace.toFloat() / totalSpace.toFloat() else 0f
 
-                            val deviceTitle = buildString {
-                                append(drive.sourceDeviceDisplayName ?: drive.name)
-                                if (drive.partitionLabel.isNotEmpty()) {
-                                    append(" · ")
-                                    append(drive.partitionLabel)
-                                }
-                            }
-                            Text(text = deviceTitle, style = MaterialTheme.typography.titleMedium)
+                            Text(text = driveTitle(drive), style = MaterialTheme.typography.titleMedium)
 
                             Spacer(modifier = Modifier.height(6.dp))
 
@@ -2379,6 +2451,10 @@ fun OtgMasterApp(
                                 Text(text = stringResource(R.string.used_label, formatSize(usedSpace)), style = MaterialTheme.typography.bodySmall)
                                 Text(text = stringResource(R.string.free_label, formatSize(freeSpace)), style = MaterialTheme.typography.bodySmall)
                             }
+                            disconnectHistory[drive.partitionKey]?.let { events ->
+                                Spacer(modifier = Modifier.height(8.dp))
+                                app.fayaz.otgmaster.ui.DisconnectHistory(events)
+                            }
 
                             Spacer(modifier = Modifier.height(16.dp))
                             @OptIn(androidx.compose.foundation.layout.ExperimentalLayoutApi::class)
@@ -2412,6 +2488,11 @@ fun OtgMasterApp(
                     }
                     } // key(drive.id)
                 }
+                disconnectedDrives.forEach { gone ->
+                    key(gone.partitionKey) {
+                        app.fayaz.otgmaster.ui.DisconnectedDriveCard(gone, onDismiss = { onDismissDisconnected(gone.partitionKey) })
+                    }
+                }
         }
         val unlockSection: @Composable () -> Unit = {
             Card(modifier = Modifier.fillMaxWidth()) {
@@ -2433,6 +2514,7 @@ fun OtgMasterApp(
                     AnimatedVisibility(visible = isVeraCryptExpanded) {
                         key(formResetKey) {
                             VeraCryptMountSection(
+                                showNoDriveHelp = showNoDriveHelp,
                                 deviceCandidates = deviceCandidates,
                                 onUnlock = onUnlock,
                                 autoMountEnabled = autoMountEnabled,
@@ -2586,6 +2668,7 @@ fun OtgMasterApp(
 @Composable
 fun VeraCryptMountSection(
     deviceCandidates: List<UsbDeviceCandidate>,
+    showNoDriveHelp: Boolean = false,
     onUnlock: (String, VolumeCandidate, String, Int?, List<Uri>, app.fayaz.otgmaster.veracrypt.VeraCryptCipher, app.fayaz.otgmaster.veracrypt.VeraCryptHash, () -> Unit) -> Unit,
     autoMountEnabled: Boolean = false,
     sessionCredentials: Map<String, app.fayaz.otgmaster.security.CredentialStore.Credentials> = emptyMap(),
@@ -2655,6 +2738,7 @@ fun VeraCryptMountSection(
     ) {
         if (deviceCandidates.isEmpty()) {
             Text(stringResource(R.string.no_devices_available), color = MaterialTheme.colorScheme.error)
+            if (showNoDriveHelp) app.fayaz.otgmaster.ui.NoDriveHelpLink()
         } else {
             if (deviceCandidates.size == 1) {
                 Text(

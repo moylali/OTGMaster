@@ -45,10 +45,77 @@ data class MountedDrive(
             ?: if (mountedReadOnly) app.fayaz.otgmaster.ext4.Ext4FileSystem.MOUNTED_READ_ONLY else null
 
     val isReadOnly: Boolean get() = readOnlyReason != null
+
+    /**
+     * The partition's identity across a re-plug, which a fresh mount does not keep in [id].
+     * [sourceDeviceName] carries the serial (it is taken with permission held), so two sticks
+     * of the same model do not share it; a stick with no serial falls back to its bus path,
+     * which changes on re-plug, and then its history simply does not carry over.
+     */
+    val partitionKey: String
+        get() = "${sourceDeviceName ?: id}#${partitionStartBlock ?: partitionLabel}"
 }
+
+/** A mounted partition's USB device went away without being unmounted (issue #50). */
+data class DisconnectEvent(
+    val atMillis: Long,
+    /** Battery level at the moment of the drop, or null if the phone did not report it. */
+    val batteryPercent: Int?,
+    /**
+     * The phone was plugged into power: a charger or a powered hub. Android shows apps
+     * neither the hub nor the port's current, so this is the one sign the drive was not
+     * running off the phone's battery.
+     */
+    val externalPower: Boolean,
+)
+
+/**
+ * The card left behind by a partition that dropped while mounted. It holds no file system
+ * or block device: those belong to a device that is gone, and touching them would be I/O
+ * against a dead handle.
+ */
+data class DisconnectedDrive(
+    val partitionKey: String,
+    val title: String,
+    val filesystemName: String,
+    val containerType: app.fayaz.otgmaster.veracrypt.ContainerType?,
+    val event: DisconnectEvent,
+)
 
 object OtgMasterState {
     val mountedDrives = CopyOnWriteArrayList<MountedDrive>()
+
+    /**
+     * Partitions that dropped while mounted, shown as cards until the same partition
+     * mounts again or the user dismisses them. Process-wide rather than in the activity,
+     * so a rotation does not lose them; nothing is persisted, so a restart does.
+     */
+    val disconnectedDrives = mutableStateOf<List<DisconnectedDrive>>(emptyList())
+
+    /** Every unexpected disconnect this session, by [MountedDrive.partitionKey], newest first. */
+    val disconnectHistory = mutableStateOf<Map<String, List<DisconnectEvent>>>(emptyMap())
+
+    private const val HISTORY_PER_PARTITION = 10
+
+    fun recordDisconnect(drive: DisconnectedDrive) {
+        disconnectedDrives.value =
+            disconnectedDrives.value.filterNot { it.partitionKey == drive.partitionKey } + drive
+        val history = disconnectHistory.value
+        disconnectHistory.value = history + (drive.partitionKey to
+            (listOf(drive.event) + history[drive.partitionKey].orEmpty()).take(HISTORY_PER_PARTITION))
+    }
+
+    fun dismissDisconnected(partitionKey: String) {
+        disconnectedDrives.value = disconnectedDrives.value.filterNot { it.partitionKey == partitionKey }
+    }
+
+    /** A partition mounting again closes its disconnected card; its history stays. */
+    fun clearDisconnectedFor(mounted: Collection<MountedDrive>) {
+        val keys = mounted.map { it.partitionKey }.toSet()
+        if (disconnectedDrives.value.any { it.partitionKey in keys }) {
+            disconnectedDrives.value = disconnectedDrives.value.filterNot { it.partitionKey in keys }
+        }
+    }
 
     /**
      * The recent log lines, mirrored here so another activity can read them.
