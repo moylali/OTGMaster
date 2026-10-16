@@ -236,7 +236,7 @@ pre-dates this registry (see the note under the index).
 | Area | Patch | Commit |
 |---|---|---|
 | `io.c` | E1 — `exfat_pread`/`exfat_pwrite` check `NewByteArray` and the Kotlin callback for a pending exception, and return -1 instead of making the next JNI call with it pending, which aborts the app (seen on the emulator: an `OutOfMemoryError` during a benchmark write became SIGABRT in `SetByteArrayRegion`) | the commit adding this row |
-| `io.c` | E2 — `exfat_generic_pwrite` writes each run of consecutive clusters (up to 1 MiB) in one `exfat_pwrite` instead of one per cluster. Each call is a JNI upcall and a device command, so at 4 KiB clusters a 1 MiB write was 256 commands; `ExFatWriteRunsTest` counts 1.0 per MiB after. exFAT wrote at 0.7–0.8 MB/s on every matrix partition against FAT32's 6–8 | the commit adding this row |
+| `io.c` | E2 — `exfat_generic_pwrite` writes each run of consecutive clusters (up to 1 MiB) in one `exfat_pwrite` instead of one per cluster. Each call is a JNI upcall and a device command, so at 4 KiB clusters a 1 MiB write was 256 commands; `ExFatWriteRunsTest` counts 1.0 per MiB after. exFAT wrote at 0.7–1.8 MB/s on every matrix partition against FAT32's 6–8; 8.95 on D1EXFAT after (OnePlus, `BENCHMARK_RUNS.md` 2026-10-16) | the commit adding this row |
 
 ---
 
@@ -293,6 +293,13 @@ contiguous chain to its end on every call.
 
 The laptop writes these sticks at 19.4 MB/s (`dd`, 16 MiB blocks, restoring
 D1FAT32), so FAT32's 8.45 MB/s on the OnePlus was not the drive's limit.
+
+**It did not make FAT32 faster.** On the OnePlus, D1FAT32's bigwrite was 7.79 MB/s
+on `3971906` against 7.73–8.45 before (`BENCHMARK_RUNS.md`, 2026-10-16). The commands it
+removes were cheap: sequential 16 KiB writes on the stick, at most about 1.8 ms each.
+The patch stays because it is correct, `fsck.vfat`-clean and sends a tenth of the
+commands, which may matter where a command costs more. FAT32's real limit is not
+measured.
 
 ## V15 — moves left duplicate short names and a stale `..`
 
