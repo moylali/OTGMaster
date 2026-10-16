@@ -28,7 +28,7 @@ import java.nio.ByteBuffer
  * that way: moved into one copy of `d2/e2`, then a delete through an older handle wrote
  * the other copy, without it. fsck.fat found its 355 clusters allocated to nothing.
  *
- * The test clears the cache by reflection, which is what a GC does to it.
+ * The test forces a real collection between taking the old handle and the lookup.
  */
 class Fat32HandleAliasTest {
 
@@ -62,11 +62,18 @@ class Fat32HandleAliasTest {
         } finally { dev.close() }
     }
 
-    /** What a GC does to the handle cache: every entry gone, every object still alive. */
-    private fun Fat32FileSystem.dropHandleCache() {
-        val f = Fat32FileSystem::class.java.getDeclaredField("fileCache")
-        f.isAccessible = true
-        (f.get(this) as MutableMap<*, *>).clear()
+    /**
+     * A full collection, waited for: until an object nothing references is gone. Whatever
+     * libaums keeps only weakly is gone too, and whatever is still referenced survives.
+     */
+    private fun collectGarbage() {
+        val sentinel = java.lang.ref.WeakReference(Any())
+        val deadline = System.currentTimeMillis() + 10_000
+        while (sentinel.get() != null) {
+            check(System.currentTimeMillis() < deadline) { "the JVM did not collect in 10 s" }
+            System.gc(); Thread.sleep(20)
+        }
+        System.gc(); Thread.sleep(20)
     }
 
     private fun assertFsckClean(stage: String) {
@@ -88,7 +95,7 @@ class Fat32HandleAliasTest {
         withFs { fs ->
             // A handle taken now holds this copy of d/e as its parent.
             val old = fs.rootDirectory.search("d/e/old.bin")!!
-            fs.dropHandleCache()
+            collectGarbage()
             // The next lookup of d/e reads it again; the move goes into that copy.
             fs.rootDirectory.search("src/moved.bin")!!.moveTo(fs.rootDirectory.search("d/e")!!)
             // The delete goes through the first copy, which has never seen moved.bin.
@@ -99,5 +106,47 @@ class Fat32HandleAliasTest {
             assertNotNull("d/e/keep.bin was lost", fs.rootDirectory.search("d/e/keep.bin"))
         }
         assertFsckClean("a move and a delete through two copies of one directory")
+    }
+
+    /**
+     * A file kept open while other files are created: closing it rewrites its parent,
+     * which must still list the files created through a later lookup of the directory.
+     */
+    @Test
+    fun aFileCreatedThroughAFreshLookupSurvivesAWriteThroughAnOlderHandle() {
+        withFs { fs -> fs.rootDirectory.createDirectory("d").createFile("open.bin") }
+        withFs { fs ->
+            val open = fs.rootDirectory.search("d/open.bin")!!
+            collectGarbage()
+            for (i in 0 until 5) fs.rootDirectory.search("d")!!.createFile("new$i.bin")
+            open.write(0, ByteBuffer.wrap(ByteArray(50_000) { 3 }))
+            open.close()
+        }
+        withFs { fs ->
+            for (i in 0 until 5) assertNotNull("d/new$i.bin was lost", fs.rootDirectory.search("d/new$i.bin"))
+            assertNotNull(fs.rootDirectory.search("d/open.bin"))
+        }
+        assertFsckClean("creates through a fresh lookup, then a write through an older handle")
+    }
+
+    /**
+     * A directory renamed through one lookup, then written through an older handle of it.
+     * This passes on the old code too (a rename rewrites the parent, which was never
+     * duplicated); it covers V20 keeping the handle map keyed through a rename.
+     */
+    @Test
+    fun aRenamedDirectoryKeepsFilesCreatedThroughAnOlderHandle() {
+        withFs { fs -> fs.rootDirectory.createDirectory("a").createFile("first.bin") }
+        withFs { fs ->
+            val older = fs.rootDirectory.search("a")!!
+            collectGarbage()
+            fs.rootDirectory.search("a")!!.name = "b"
+            older.createFile("second.bin")
+        }
+        withFs { fs ->
+            assertNotNull(fs.rootDirectory.search("b/first.bin"))
+            assertNotNull("b/second.bin was lost", fs.rootDirectory.search("b/second.bin"))
+        }
+        assertFsckClean("a rename and a create through two lookups of one directory")
     }
 }

@@ -272,8 +272,43 @@ Vendored fork of [magnusja/libaums](https://github.com/magnusja/libaums).
 | `FAT` | V14 — allocation wraps at the last data cluster instead of running into the table's padding | see below |
 | `FatDirectory` | V15 — a move gives the entry a short name unique in its new directory, and a moved directory's `..` names its new parent | see below |
 | `FatDirectory` | V16 — a new file owns no cluster until it is written | see below |
-| `FatDirectory` | V17 — `listFiles` reads the weak handle cache once, so a GC cannot null it mid-listing | see below |
+| `FatDirectory` | V17 — `listFiles` reads the weak handle cache once, so a GC cannot null it mid-listing. Superseded by V20, which removes that cache | see below |
 | `Fat32BootSector` | V18 — the 16-bit total-sectors field is used when set (volumes under 32 MiB) | see below |
+| `FatDirectory`, `Fat32FileSystem` | V20 — one live handle per directory entry, so a GC cannot leave two copies of a directory that overwrite each other's entries | see below |
+
+## V20 — a GC left two copies of a directory, and one wrote over the other
+
+Every `FatDirectory` holds its entry list as read from disk and writes the whole list
+back on each change. Two live objects for one directory therefore lose each other's
+changes: whichever writes last wins, and the other's creates, moves and deletes are
+gone from disk while their clusters stay allocated.
+
+Upstream knew this. `Fat32FileSystem.fileCache` existed to stop it ("they can get
+out of sync and only the one which is written latest will actually be persisted",
+issue 215). But it was a `WeakHashMap<String, UsbFile>` keyed by path strings that nothing
+else holds, so any garbage collection emptied it, even while the objects it pointed to were
+still referenced. A file handle keeps its `parent` directory alive. After a GC, the next
+lookup of that directory read a second copy.
+
+On the OnePlus (D1FAT32, `BENCHMARK_RUNS.md` 2026-10-16), bigwrite's tree moved
+`f71.bin` into one copy of `d2/e2`. A delete through an older handle then wrote the other
+copy. After remount the file was missing, and fsck.fat reclaimed its 355 clusters.
+The run's build read 1 GB it did not need to, which kept the collector busy. The bug itself
+is in every release since the first commit.
+
+Each `FatDirectory` now keeps an `IdentityHashMap` from its entry objects to weak
+references to their handles. `listFiles`, `createFile` and `createDirectory` go through it,
+and moves carry the handle to the destination's map. A weak reference only clears once
+nothing holds the handle. A live handle holds its parent, which holds the map, and so on
+up to the root, which the file system holds. So while any handle is live, every lookup
+returns that same object. A new one is made only when no other exists, so there is no
+copy to diverge from. `fileCache` is removed, and with it V17's code (V17 fixed how that
+cache was read).
+
+`Fat32HandleAliasTest` forces a real collection between taking a handle and looking
+the directory up again. On the old code a move into the directory followed by a delete
+through the older handle loses the moved file, and creates followed by a write through an
+older file handle lose the created files. Both pass now, and `fsck.vfat -n` is clean.
 
 ## V15 — moves left duplicate short names and a stale `..`
 

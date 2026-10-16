@@ -92,6 +92,35 @@ internal constructor(
     private var hasBeenInited: Boolean = false
 
     /**
+     * LOCAL PATCH (docs/VENDOR_FIXES.md V20): the handle for each entry, held weakly,
+     * keyed by the entry object.
+     *
+     * Every FatDirectory holds its entries as read from disk and writes the whole list
+     * back on each change, so two live objects for one directory lose each other's
+     * changes. Upstream looked handles up in `fs.fileCache`, a WeakHashMap keyed by path
+     * strings nothing else holds, and any GC emptied it while the objects themselves were
+     * still referenced — a file handle's [parent] for one. The next lookup read a second
+     * copy: on the OnePlus a file moved into one copy of a directory was written over by
+     * a delete through the other (BENCHMARK_RUNS.md 2026-10-16, `Fat32HandleAliasTest`).
+     *
+     * Here a weak reference can only clear once nothing holds the handle, and a live
+     * handle holds its parent, which holds this map. So while any handle is live, every
+     * lookup returns that same object; a new one is made only when no other exists.
+     */
+    private val children = IdentityHashMap<FatLfnDirectoryEntry, java.lang.ref.WeakReference<UsbFile>>()
+
+    /** See [children]. Caller has called [init]. */
+    private fun childFor(entry: FatLfnDirectoryEntry): UsbFile {
+        children[entry]?.get()?.let { return it }
+        val file: UsbFile = if (entry.isDirectory)
+            FatDirectory(fs, blockDevice, fat, bootSector, entry, this)
+        else
+            FatFile(blockDevice, fat, bootSector, entry, this)
+        children[entry] = java.lang.ref.WeakReference(file)
+        return file
+    }
+
+    /**
      *
      * @return True if this directory is the root directory.
      */
@@ -238,6 +267,7 @@ internal constructor(
      */
     internal fun removeEntry(lfnEntry: FatLfnDirectoryEntry?) {
         entries!!.remove(lfnEntry)
+        children.remove(lfnEntry)   // LOCAL PATCH (docs/VENDOR_FIXES.md V20)
         lfnMap.remove(lfnEntry!!.name.toLowerCase(Locale.getDefault()))
         shortNameMap.remove(lfnEntry.actualEntry.shortName)
     }
@@ -334,7 +364,7 @@ internal constructor(
         write()
 
         val file = FatFile(blockDevice, fat, bootSector, entry, this)
-        fs.fileCache[file.absolutePath] = file
+        children[entry] = java.lang.ref.WeakReference(file)   // LOCAL PATCH (docs/VENDOR_FIXES.md V20)
         return file
     }
 
@@ -382,7 +412,7 @@ internal constructor(
         // write changes immediately to disk
         result.write()
 
-        fs.fileCache[result.absolutePath] = result
+        children[entry] = java.lang.ref.WeakReference(result)   // LOCAL PATCH (docs/VENDOR_FIXES.md V20)
         return result
     }
 
@@ -424,23 +454,10 @@ internal constructor(
             if (name == "." || name == "..")
                 continue
 
-            val entryAbsolutePath = if (isRoot) {
-                UsbFile.separator + entry.name
-            } else {
-                absolutePath + UsbFile.separator + entry.name
-            }
-
-            // LOCAL PATCH (docs/VENDOR_FIXES.md V17): read the cache once. It is a
-            // WeakHashMap keyed by a path string nothing else holds, so a GC between
-            // upstream's `!= null` check and its `!!` read made the second read null.
-            val cached = fs.fileCache[entryAbsolutePath]
-            val file = when {
-                cached != null -> cached
-                entry.isDirectory -> FatDirectory(fs, blockDevice, fat, bootSector, entry, this)
-                else -> FatFile(blockDevice, fat, bootSector, entry, this)
-            }
-
-            fs.fileCache[entryAbsolutePath] = file
+            // LOCAL PATCH (docs/VENDOR_FIXES.md V20): one live handle per entry, see
+            // [children]. This replaces upstream's path-keyed WeakHashMap and V17's fix
+            // to how it was read.
+            val file = childFor(entry)
             list.add(file)
         }
 
@@ -485,6 +502,8 @@ internal constructor(
         // now the actual magic happens!
         parent!!.removeEntry(entry)
         destination.adoptEntry(entry!!)   // LOCAL PATCH (docs/VENDOR_FIXES.md V15)
+        // LOCAL PATCH (docs/VENDOR_FIXES.md V20): this object stays the handle for the entry.
+        destination.children[entry!!] = java.lang.ref.WeakReference(this)
 
         parent!!.write()
         destination.write()
@@ -532,8 +551,11 @@ internal constructor(
         destination.init()
 
         // now the actual magic happens!
+        // LOCAL PATCH (docs/VENDOR_FIXES.md V20): the file's handle moves with its entry.
+        val handle = children[entry]
         removeEntry(entry)
         destination.adoptEntry(entry)   // LOCAL PATCH (docs/VENDOR_FIXES.md V15)
+        if (handle != null) destination.children[entry] = handle
 
         write()
         destination.write()

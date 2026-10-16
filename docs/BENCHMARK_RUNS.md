@@ -129,6 +129,15 @@ The 10-15 ext4 run on the same phone showed the same drop (17.74 against 40–44
 this branch existed. So the drop comes from the phone or the drive on these days, not
 from this change. Its cause is not known.
 
+**Commit hashes after the merge of #66** (rebase-merge, so new hashes). The rows above,
+the PR and the commit messages cite the branch hashes:
+
+| On the branch (cited) | On `main` | Commit |
+|---|---|---|
+| `3971906` | `b0f0385` | perf: exFAT and FAT32 write in runs of consecutive clusters |
+| `51f8b5a` | `fba5a05` | docs: record the D1 run of the exFAT/FAT32 write runs; FAT32 did not speed up |
+| `e49ee6b` | `e45a0d1` | libaums: drop V19, keep upstream's four-cluster FAT32 writes |
+
 ## 2026-10-15 — ext4 writes in runs (#36), journal repair: D1EXT4 on the OnePlus 7
 
 One run, on the build of `e32a6b3` (clean tree; the report's header reads `commit e32a6b3`),
