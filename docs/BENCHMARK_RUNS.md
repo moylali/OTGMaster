@@ -33,6 +33,49 @@ to a row here.
 
 ---
 
+## 2026-10-16 (later) — where FAT32's write time goes: D1FAT32 on the OnePlus 7, three runs
+
+These runs were for measurement. They used builds from `perf/fat32-writes`, which time the USB layer inside
+`bigwrite` (commands, bytes, ms inside `driver.write`). Each run: `--es tests free,bigwrite
+--es drive D1FAT32`, password123, cache default, remount true. Phone on USB power, 100%, interactive.
+Each header names its commit (clean tree).
+
+| Build · when | Report | bigwrite write / read after remount | USB layer during the write | Verdict |
+|---|---|---|---|---|
+| `b26241c` (upstream four-cluster writes) · 08:47–08:58 | `…-085819.txt` | 5.62 / 15.68 | 120 KiB limit; 149,684 write commands, **71.3 per MiB**; 88.1% of the time inside them, 6.71 MB/s there; 12.3 MiB read | ALL PASSED after remount (240 tree files) |
+| `9092017` (V19's runs put back) · 08:59–09:08 | `…-090809.txt` | 7.31 / 16.22 | 120 KiB; 33,199 write commands, **15.8 per MiB**; 76.3%, 10.09 MB/s inside; **1017.9 MiB read** | ALL PASSED after remount (240 tree files) |
+| `9092017`, `--es xfer 1048576` · 09:08–09:16 | `…-091653.txt` | 7.11 / 17.32 | **still 120 KiB**: the override did not apply, because the open USB device was reused; 33,200 commands, 77.1%, 9.71 MB/s inside, 1016.7 MiB read | **FAILED — `d2/e2/f71.bin` missing** after remount; big file verified |
+
+Host after the failed run: **D1FAT32 NOT CLEAN**. `verify_volume.sh` on `/dev/sda6` →
+fsck.fat "Reclaimed 355 unused clusters (1454080 bytes)", "Free cluster summary wrong
+(83611 vs. really 83966)". The file's data is still allocated, but its directory entry is gone.
+`fsck.vfat -l` on the read-back image lists neither `d2/e2/f71.bin` nor `d3/e1/f71.bin`.
+
+**Cause: two in-memory copies of one directory, found by `Fat32HandleAliasTest`, on main's
+libaums code.** Every FatDirectory holds its entry list as read from disk and writes the whole
+list back on each change. libaums finds handles again through `fs.fileCache`, a
+`WeakHashMap<String, UsbFile>` keyed by path strings nothing else holds. Any GC
+empties it while the directory objects are still referenced, for example by a file handle's `parent`.
+The next lookup then reads a second copy. Here `f71.bin` was moved into one copy of
+`d2/e2`. A delete through an older handle then wrote the other copy, which had never seen
+f71. The test clears the cache by reflection, as a GC does, and fails with
+`d/e/moved.bin was lost`.
+`FatDirectory.kt` and `Fat32FileSystem.kt` are identical on main (`53d2b6d`), and the test fails
+there too, so this is not V19. It is GC-timed. The V19 builds read 1 GB more than they needed
+(below), and allocating that much keeps the collector busy, which made the window likely.
+The same build passed the same tree 10 minutes earlier.
+
+**What the numbers say:**
+- FAT32 writes are bound by USB time. 76–88% of the wall clock is inside SCSI commands,
+  about 2.2 ms per command at 71 per MiB.
+- Merging runs (V19) raised the rate inside USB from 6.7 to 10.1 MB/s, as commands went from
+  71 to 16 per MiB. A new cost ate the gain: 1 GB of reads.
+- The reads come from `ByteBlockDevice.write` (V1). When a write ends partway through a
+  sector it reads the **whole** span before overlaying, not just its last sector. That was cheap at
+  16 KiB and costs a 1 MiB read at V19's run size.
+- The 1 MiB transfer comparison did not happen and has to be rerun. The override must take
+  effect when the USB device is opened.
+
 ## 2026-10-16 — exFAT and FAT32 write in runs (E2, V19): D1 on the OnePlus 7
 
 One run, on the build of `3971906` (clean tree; the report's header reads `commit 3971906`),
