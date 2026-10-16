@@ -236,6 +236,7 @@ pre-dates this registry (see the note under the index).
 | Area | Patch | Commit |
 |---|---|---|
 | `io.c` | E1 — `exfat_pread`/`exfat_pwrite` check `NewByteArray` and the Kotlin callback for a pending exception, and return -1 instead of making the next JNI call with it pending, which aborts the app (seen on the emulator: an `OutOfMemoryError` during a benchmark write became SIGABRT in `SetByteArrayRegion`) | the commit adding this row |
+| `io.c` | E2 — `exfat_generic_pwrite` writes each run of consecutive clusters (up to 1 MiB) in one `exfat_pwrite` instead of one per cluster. Each call is a JNI upcall and a device command, so at 4 KiB clusters a 1 MiB write was 256 commands; `ExFatWriteRunsTest` counts 1.0 per MiB after. exFAT wrote at 0.7–0.8 MB/s on every matrix partition against FAT32's 6–8 | the commit adding this row |
 
 ---
 
@@ -273,6 +274,25 @@ Vendored fork of [magnusja/libaums](https://github.com/magnusja/libaums).
 | `FatDirectory` | V16 — a new file owns no cluster until it is written | see below |
 | `FatDirectory` | V17 — `listFiles` reads the weak handle cache once, so a GC cannot null it mid-listing | see below |
 | `Fat32BootSector` | V18 — the 16-bit total-sectors field is used when set (volumes under 32 MiB) | see below |
+| `ClusterChain` | V19 — write runs of consecutive clusters up to 1 MiB, not four clusters | see below |
+
+## V19 — `ClusterChain.write` stopped at four clusters
+
+Upstream wrote at most four consecutive clusters per command, with the comment "Set
+this value too high may cause problems": 16 KiB at the 4 KiB clusters of the matrix
+drives, so a 1 MiB write was 64 commands, plus the FAT updates — 69.1 per MiB in
+`Fat32WriteRunsTest`, against 6.1 after.
+
+The problem the cap guarded against was an oversized span reaching the USB stack as
+one request. `LibaumsRawBlockDevice` now splits every write into 120 KiB transfers
+(halving them on a device that refuses even that, issue #29), which is what V6
+relied on to lift the same cap for reads. So the cap is now 1 MiB, in bytes rather
+than clusters so it means the same at any cluster size. A run still ends wherever the
+chain jumps, and the scan for the run stops at the cap rather than walking a long
+contiguous chain to its end on every call.
+
+The laptop writes these sticks at 19.4 MB/s (`dd`, 16 MiB blocks, restoring
+D1FAT32), so FAT32's 8.45 MB/s on the OnePlus was not the drive's limit.
 
 ## V15 — moves left duplicate short names and a stale `..`
 

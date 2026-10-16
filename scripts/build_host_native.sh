@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# Builds the app's native code — libntfs-3g, libfsapfs, bitlocker_crypto and the VeraCrypt/LUKS
+# Builds the app's native code — libntfs-3g, libexfat, libfsapfs, bitlocker_crypto and the VeraCrypt/LUKS
 # sector crypto (VeraCryptNative, Serpent) over mbedtls, each with its JNI bridge —
 # for the host JVM,
 # so the unit tests drive the same native code the app ships against loopback
@@ -10,7 +10,8 @@ set -euo pipefail
 cd "$(dirname "$0")/.."
 out="${1:-app/build/host-native/libotg-host.so}"
 cpp=app/src/main/cpp
-srcs=("$cpp"/ntfs-3g/libntfs-3g/*.c "$cpp"/ntfs/NtfsNative.cpp
+srcs=("$cpp"/ntfs-3g/libntfs-3g/*.c "$cpp"/ntfs/NtfsNative.cpp "$cpp"/exfat/*.c "$cpp"/exfat/*.h
+      "$cpp"/exfat/ExFatNative.cpp
       "$cpp"/bitlocker/*.c "$cpp"/bitlocker/*.cpp "$cpp"/mbedtls/library/*.c
       "$cpp"/VeraCryptNative.cpp "$cpp"/vc_cascade.cpp "$cpp"/vc_cascade.h "$cpp"/serpent/*.c
       "$cpp"/libtomcrypt/src/ciphers/twofish/*.c "$cpp"/libtomcrypt/src/misc/*.c
@@ -56,6 +57,20 @@ for f in "$cpp"/argon2/src/*.c "$cpp"/argon2/src/blake2/*.c; do
     gcc -c -fPIC -O2 -w -DARGON2_NO_THREADS -I"$cpp/argon2/include" "$f" -o "$o" & pids+=($!)
     objs+=("$o")
 done
+# libexfat with the defines app/src/main/cpp/CMakeLists.txt gives it. io.c holds the
+# JNI_OnLoad, as it does in the app's library. Two differences from the NDK's clang:
+# the desktop jni.h types AttachCurrentThread's env as void** (gcc 14 makes that an
+# error), and g++ has no _Static_assert in C++, which exfat.h uses via compiler.h.
+exfat=(-fPIC -O1 -g -w -D_FILE_OFFSET_BITS=64 -DPACKAGE='"exfat"' -DVERSION='"1.4.0"'
+       -I"$cpp/exfat" -Iapp/src/test/cpp -I"$java_home/include" -I"$java_home/include/linux")
+for f in "$cpp"/exfat/*.c; do
+    o="$obj/exfat_$(basename "$f" .c).o"
+    gcc -c "${exfat[@]}" -Wno-error=incompatible-pointer-types "$f" -o "$o" & pids+=($!)
+    objs+=("$o")
+done
+g++ -c -std=c++17 "${exfat[@]}" -D_Static_assert=static_assert "$cpp/exfat/ExFatNative.cpp" \
+    -o "$obj/ExFatNative.o" & pids+=($!)
+objs+=("$obj/ExFatNative.o")
 # libfsapfs and its libyal dependencies, with the configure-generated headers in
 # common/ and include/ (docs/VENDOR_FIXES.md).
 apfs_inc=(-DHAVE_CONFIG_H -I"$cpp/libfsapfs/common" -I"$cpp/libfsapfs/include")

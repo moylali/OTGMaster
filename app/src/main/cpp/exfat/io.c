@@ -22,6 +22,11 @@ struct exfat_dev {
 #include <stdio.h>
 #include <stdlib.h>
 
+/* LOCAL PATCH (docs/VENDOR_FIXES.md E2): the most exfat_generic_pwrite hands to one
+   exfat_pwrite. It bounds the Java array each call allocates; the USB layer splits
+   further at its own 120 KiB transfer limit. */
+#define OTG_MAX_WRITE_RUN (1 << 20)
+
 #define LOG_TAG "exfat-jni"
 #define LOGE(...) __android_log_print(ANDROID_LOG_ERROR, LOG_TAG, __VA_ARGS__)
 
@@ -284,23 +289,37 @@ ssize_t exfat_generic_pwrite(struct exfat* ef, struct exfat_node* node,
 	remainder = size;
 	while (remainder > 0)
 	{
+		cluster_t first, next;
+
 		if (CLUSTER_INVALID(*ef->sb, cluster))
 		{
 			exfat_error("invalid cluster 0x%x while writing", cluster);
 			return -EIO;
 		}
 		lsize = MIN(CLUSTER_SIZE(*ef->sb) - loffset, remainder);
-		if (exfat_pwrite(ef->dev, bufp, lsize,
-				exfat_c2o(ef, cluster) + loffset) < 0)
+		/* LOCAL PATCH (docs/VENDOR_FIXES.md E2): one write per run of consecutive
+		   clusters, not one per cluster. Each exfat_pwrite here is a JNI upcall and
+		   a device command, so at 4 KiB clusters a 1 MiB write cost 256 of them. */
+		first = cluster;
+		next = exfat_next_cluster(ef, node, cluster);
+		while (lsize < remainder && lsize < OTG_MAX_WRITE_RUN
+				&& !CLUSTER_INVALID(*ef->sb, next) && next == cluster + 1)
 		{
-			exfat_error("failed to write cluster %#x", cluster);
+			cluster = next;
+			lsize += MIN(CLUSTER_SIZE(*ef->sb), remainder - lsize);
+			next = exfat_next_cluster(ef, node, cluster);
+		}
+		if (exfat_pwrite(ef->dev, bufp, lsize,
+				exfat_c2o(ef, first) + loffset) < 0)
+		{
+			exfat_error("failed to write clusters %#x-%#x", first, cluster);
 			return -EIO;
 		}
 		bufp += lsize;
 		loffset = 0;
 		remainder -= lsize;
 		node->valid_size = MAX(node->valid_size, uoffset + size - remainder);
-		cluster = exfat_next_cluster(ef, node, cluster);
+		cluster = next;
 	}
 	if (!(node->attrib & EXFAT_ATTRIB_DIR))
 		/* directory's mtime should be updated by the caller only when it
