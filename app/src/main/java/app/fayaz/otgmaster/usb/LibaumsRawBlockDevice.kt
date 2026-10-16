@@ -42,7 +42,7 @@ class LibaumsRawBlockDevice(
      * transfer, and the same bytes go to the same blocks.
      */
     @Volatile private var maxTransferBlocks: Int =
-        (MAX_TRANSFER_BYTES / blockSize).coerceAtLeast(1)
+        ((transferBytesOverride ?: MAX_TRANSFER_BYTES) / blockSize).coerceAtLeast(1)
 
     /** The floor for [maxTransferBlocks]: 16 KiB, the bulk transfer size every Android release has accepted. */
     private val minTransferBlocks: Int =
@@ -111,7 +111,11 @@ class LibaumsRawBlockDevice(
                     // a transfer could start against a communication that was closed
                     // while this thread waited.
                     checkOpen()
+                    val t0 = System.nanoTime()
                     driver.read(startBlock + done, view)
+                    io.readNanos += System.nanoTime() - t0
+                    io.readCommands++
+                    io.readBytes += chunk.toLong() * blockSize
                 }
             } catch (e: Exception) {
                 if (stepDown(chunk, e, "read", startBlock + done)) continue
@@ -143,7 +147,11 @@ class LibaumsRawBlockDevice(
             try {
                 synchronized(transferLock) {
                     checkOpen()
+                    val t0 = System.nanoTime()
                     driver.write(startBlock + done, view)
+                    io.writeNanos += System.nanoTime() - t0
+                    io.writeCommands++
+                    io.writeBytes += chunk.toLong() * blockSize
                 }
             } catch (e: Exception) {
                 if (stepDown(chunk, e, "write", startBlock + done)) continue
@@ -170,7 +178,24 @@ class LibaumsRawBlockDevice(
         }
     }
 
+    /** SCSI commands this device sent and the time spent inside them, for the benchmark. */
+    class Io {
+        @Volatile var writeCommands = 0L
+        @Volatile var writeBytes = 0L
+        @Volatile var writeNanos = 0L
+        @Volatile var readCommands = 0L
+        @Volatile var readBytes = 0L
+        @Volatile var readNanos = 0L
+        fun reset() { writeCommands = 0; writeBytes = 0; writeNanos = 0; readCommands = 0; readBytes = 0; readNanos = 0 }
+    }
+    val io = Io()
+
+    /** The transfer size in use now, after any step-down. */
+    val transferBytes: Int get() = maxTransferBlocks * blockSize
+
     companion object {
+        /** Debug builds' benchmark sets this to try other transfer sizes; null in the app. */
+        @Volatile var transferBytesOverride: Int? = null
         /** See [maxTransferBlocks]. 120 KiB, matching Linux usb-storage max_sectors. */
         const val MAX_TRANSFER_BYTES = 120 * 1024
         /** See [minTransferBlocks]. */
