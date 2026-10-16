@@ -3,7 +3,7 @@
 [![CI](https://github.com/moylali/OTGMaster/actions/workflows/ci.yml/badge.svg)](https://github.com/moylali/OTGMaster/actions/workflows/ci.yml)
 [![License: GPL v3 or later](https://img.shields.io/badge/license-GPL--3.0--or--later-blue.svg)](LICENSE)
 
-Android app to open encrypted USB mass-storage devices for read/write without root. Supports **VeraCrypt**, **LUKS1**, **LUKS2** and **BitLocker** encrypted volumes with **FAT32**, **exFAT**, **NTFS** and **ext4** filesystems, and reads Mac **APFS** drives, plain or encrypted. It can also **format** a FAT32 or exFAT partition, or **encrypt** one into a new VeraCrypt volume.
+Android app to open encrypted USB mass-storage devices for read/write without root. Supports **VeraCrypt**, **LUKS1**, **LUKS2** and **BitLocker** encrypted volumes with **FAT32**, **exFAT**, **NTFS** and **ext4** filesystems, and reads Mac **APFS** drives, plain or encrypted. From 0.4.2 it can also **format** a FAT32 or exFAT partition, or **encrypt** one into a new VeraCrypt volume. Features marked *from 0.4.2* are not in a released build yet; 0.4.2 is expected on 1 November 2026.
 
 <p align="center">
   <a href="https://f-droid.org/packages/app.fayaz.otgmaster/">
@@ -31,14 +31,14 @@ The app cannot perform a kernel mount on non-rooted Android. Instead it:
 2. Reads raw sectors through a userspace USB Mass Storage adapter ([libaums](libaums/)).
 3. Probes MBR/GPT partitions and detects the encryption type (VeraCrypt, LUKS1, LUKS2, BitLocker or encrypted APFS) on each.
 4. Unlocks the volume header and exposes a decrypted block-device wrapper:
-   - **VeraCrypt**: AES, Serpent or Twofish, and the cascades AES-Twofish, AES-Twofish-Serpent, Serpent-AES, Serpent-Twofish-AES and Twofish-Serpent; SHA-512 or Argon2id header KDF
+   - **VeraCrypt**: AES or Serpent, SHA-512 header KDF; *from 0.4.2*, also Twofish, the cascades AES-Twofish, AES-Twofish-Serpent, Serpent-AES, Serpent-Twofish-AES and Twofish-Serpent, and the Argon2id header KDF
    - **LUKS1**: PBKDF2-based KDF, AES-XTS bulk decryption
    - **LUKS2**: Argon2id-based KDF, AES-XTS bulk decryption
    - **BitLocker**: password or recovery key; XTS-AES and AES-CBC, with or without the Elephant diffuser
    - **APFS (Encrypted)**: the password goes to the filesystem reader, which unwraps the volume key itself
 5. Feeds the decrypted block device into a userspace filesystem reader (FAT32 via libaums, exFAT via a vendored native `libexfat`, ext4 via a pure-Kotlin driver, NTFS via a vendored `libntfs-3g`, and APFS, read-only, via a vendored `libfsapfs`).
 6. Surfaces files through the app UI and a `DocumentsProvider`, so other apps (Files, Gallery, etc.) can browse the unlocked volume.
-7. Formats and encrypts from a mounted drive's **More actions** menu, after the user types ERASE:
+7. *From 0.4.2*, formats and encrypts from a mounted drive's **More actions** menu, after the user types ERASE:
    - **Format** writes an empty FAT32 or exFAT of the same size, cluster size and label; a volume inside an encrypted container stays in it, with the same password
    - **Encrypt** erases the partition and creates a new VeraCrypt volume — any of the ciphers and cascades above, SHA-512 or Argon2id, optional PIM — holding a new FAT32 or exFAT
    - both overwrite every sector by default; **Quick** writes only the filesystem structures, and the old data stays on the drive until overwritten
@@ -46,7 +46,7 @@ The app cannot perform a kernel mount on non-rooted Android. Instead it:
 ### Roadmap
 
 - **APFS** — write support. APFS is read-only today, plain or encrypted.
-- **Format and encrypt** — NTFS and ext4 formatting, and LUKS2 as an encryption choice. Format and Encrypt cover FAT32 and exFAT, with VeraCrypt, today.
+- **Format and encrypt** — NTFS and ext4 formatting, and LUKS2 as an encryption choice. Format and Encrypt cover FAT32 and exFAT, with VeraCrypt, from 0.4.2.
 
 ### Known limitations
 
