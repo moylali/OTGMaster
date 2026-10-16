@@ -54,15 +54,10 @@ private constructor(blockDevice: BlockDeviceDriver, first512Bytes: ByteBuffer) :
     private val fat: FAT
     private val fsInfoStructure: FsInfoStructure
     override val rootDirectory: FatDirectory
-    /**
-     * Caches UsbFile instances returned by list files method. If we do not do
-     * that we will get a new instance when searching for the same file.
-     * Depending on what you do with the two different instances they can get out
-     * of sync and only the one which is written latest will actually be persisted on
-     * disk. This is especially problematic if you create files on different directory
-     * instances.. See also issue 215.
-     */
-    internal val fileCache = WeakHashMap<String, UsbFile>()
+    // LOCAL PATCH (docs/VENDOR_FIXES.md V20): upstream's `fileCache`, a WeakHashMap keyed
+    // by path, is gone. Its own comment named the hazard (two instances of one directory,
+    // issue 215), but a GC emptied it while the instances were still live. Each
+    // FatDirectory now keeps a weak handle per entry instead.
 
     override val volumeLabel: String
         get() {
