@@ -65,6 +65,10 @@ class BenchmarkReceiver : BroadcastReceiver() {
                 readAheadBytes = readAheadArg,
             )
         }
+        // USB transfer size in bytes, for measuring it; the USB device must be reopened
+        // to take it, which a remount of every partition on the drive does.
+        app.fayaz.otgmaster.usb.LibaumsRawBlockDevice.transferBytesOverride =
+            intent.getStringExtra("xfer")?.toIntOrNull()
         val remount = intent.getStringExtra("remount")?.equals("true", true) == true ||
             cacheArg != null || readAheadArg != null
 

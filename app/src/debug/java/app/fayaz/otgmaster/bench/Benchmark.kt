@@ -1708,6 +1708,8 @@ object Benchmark {
             var i = 0
             val ext4 = drive.fileSystem as? app.fayaz.otgmaster.ext4.Ext4FileSystem
             ext4?.io?.reset()
+            val usb = drive.rawBlockDevice as? app.fayaz.otgmaster.usb.LibaumsRawBlockDevice
+            usb?.io?.reset()
             val ns = measureNanoTime {
                 while (off < BIG_BYTES) {
                     val n = minOf(sizes[i++ % sizes.size].toLong(), BIG_BYTES - off).toInt()
@@ -1724,6 +1726,17 @@ object Benchmark {
                 val mib = BIG_BYTES / 1048576.0
                 emit("    io: ext4 %d write commands, %.1f MiB (%.1f per MiB written), %d block reads"
                     .format(io.writeCommands, io.writeBytes / 1048576.0, io.writeCommands / mib, io.readCommands))
+            }
+            // What the USB link itself cost: commands, bytes and time inside them. The
+            // rest of the wall-clock time is spent above the USB layer.
+            usb?.io?.let { io ->
+                val mib = BIG_BYTES / 1048576.0
+                emit(("    usb: %d KiB transfers; %d write commands, %.1f MiB, %.0f ms (%.1f%% of the write, " +
+                    "%.2f MB/s inside them); %d reads, %.1f MiB, %.0f ms")
+                    .format(usb.transferBytes / 1024, io.writeCommands, io.writeBytes / 1048576.0, io.writeNanos / 1e6,
+                        100.0 * io.writeNanos / ns, io.writeBytes / (io.writeNanos / 1e9) / 1e6,
+                        io.readCommands, io.readBytes / 1048576.0, io.readNanos / 1e6))
+                emit("    usb: %.1f write commands per MiB written".format(io.writeCommands / mib))
             }
             bigOk = false
         }
