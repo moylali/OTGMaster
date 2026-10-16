@@ -219,31 +219,46 @@ internal constructor(startCluster: Long, private val blockDevice: BlockDeviceDri
             length -= size
         }
 
-        // LOCAL PATCH (docs/VENDOR_FIXES.md V19): runs of up to MAX_WRITE_BYTES, not
-        // four clusters.
-        //
-        // Upstream capped a write at four consecutive clusters ("Set this value too
-        // high may cause problems"), 16 KiB at 4 KiB clusters, so a 1 MiB write was
-        // 64 commands. The problem was oversized spans reaching the USB stack as one
-        // request; LibaumsRawBlockDevice now splits every write into 120 KiB transfers
-        // of its own, as V6 relied on for reads. The scan stops at the cap, so a long
-        // contiguous chain is not walked to its end on every call.
-        val maxClusters = Math.max(1L, MAX_WRITE_BYTES / clusterSize).toInt()
+        var remainingClusters = length / clusterSize
+
+        // now we can proceed reading the clusters without an offset in the
+        // cluster
         while (length > 0) {
-            var consecutive = 1
+            val size: Int
+            var numberOfClusters = 1
+
+            // We can only write consecutive clusters, see tests failing in
+            // https://github.com/magnusja/libaums/pull/236/commits/a4cfe0c57401f922beec849e706b68d94cad3248
+            var maxConsecutiveClusters = 1
             for (i in chainIndex until chain.size - 1) {
-                if (consecutive >= maxClusters || chain[i] + 1 != chain[i + 1]) break
-                consecutive++
+                if (chain[i] + 1 == chain[i + 1]) {
+                    maxConsecutiveClusters++
+                } else {
+                    break
+                }
+            }
+            // we write multiple clusters at a time, to speed up the write performance enormously
+            // currently only 4 or fewer clusters are written at the same time. Set this value too high may cause problems
+            maxConsecutiveClusters = min(maxConsecutiveClusters, 4)
+            when {
+                remainingClusters > maxConsecutiveClusters -> {
+                    size = (clusterSize * maxConsecutiveClusters).toInt()
+                    numberOfClusters = maxConsecutiveClusters
+                    remainingClusters -= maxConsecutiveClusters
+                }
+                remainingClusters > 0 -> {
+                    size = (clusterSize * min(remainingClusters.toInt(), maxConsecutiveClusters)).toInt()
+                    numberOfClusters = min(remainingClusters.toInt(), maxConsecutiveClusters)
+                    remainingClusters -= numberOfClusters
+                }
+                else -> size = length
             }
 
-            val clustersLeft = ((length + clusterSize - 1) / clusterSize).toInt()
-            val clusters = Math.min(consecutive, clustersLeft)
-            val size = Math.min(clusterSize * clusters, length.toLong()).toInt()
             source.limit(source.position() + size)
 
             blockDevice.write(getFileSystemOffset(chain[chainIndex], 0), source)
 
-            chainIndex += clusters
+            chainIndex += numberOfClusters
             length -= size
         }
     }
@@ -270,12 +285,6 @@ internal constructor(startCluster: Long, private val blockDevice: BlockDeviceDri
          * 4 KiB, ~14 MB/s at 64 KiB, ~19.6 MB/s at 512 KiB).
          */
         private const val MAX_READ_CLUSTERS = 32
-
-        /**
-         * Bytes coalesced into one write at most (V19). It bounds the span handed down
-         * in one call; LibaumsRawBlockDevice splits it into 120 KiB transfers.
-         */
-        private const val MAX_WRITE_BYTES = 1L shl 20
 
 
         private val TAG = ClusterChain::class.java.simpleName
