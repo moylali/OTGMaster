@@ -33,6 +33,57 @@ to a row here.
 
 ---
 
+## 2026-10-16 — exFAT and FAT32 write in runs (E2, V19): D1 on the OnePlus 7
+
+One run, on the build of `3971906` (clean tree; the report's header reads `commit 3971906`),
+`--es drive D1FAT32,D1EXFAT,D1BLEXFAT`, password123, cache default, remount true.
+Sections, all named: `free,block,dir,path,seq,random,opens,write,unaligned,correct,bigwrite,fixtures`.
+Phone on USB power, 100%, interactive, no power save, at start and end. Started
+04:51:03 and ended about 05:34. Report `BENCH/reports/otgbench-GM1901-20261016-053441.txt`
+on the drive.
+
+D1FAT32 had been restored from the build images the day before (19.4 MB/s raw write
+over the laptop's USB, fsck CLEAN, 21051 files). This time vold's `fsck_msdos` at
+plug-in did not leave it dirty.
+
+| Device · Android | Drive · when | On the phone | Host |
+|---|---|---|---|
+| OnePlus 7 · 16 | D1: FAT32, EXFAT, BLEXFAT (BitLocker XTS-256) · 10-16 04:51–05:34 | All three: write verify ALL PASSED, unaligned A+B PASS, correctness ALL PASSED (F skipped on D1EXFAT: no cache in the stack), bigwrite ALL PASSED after remount, fixtures ALL MATCHED (20995 / 20963 / 20898). **bigwrite: FAT32 7.79 / 14.76, EXFAT 8.95 / 18.68, BLEXFAT 5.66 / 12.74**. 16 MiB `write`: 1.90 / 0.47 / 0.50 MB/s | `verify_volume.sh`: `/dev/sda6` fsck.fat CLEAN (21316 files), `/dev/sda7` fsck.exfat CLEAN (21219 files). Read-back and `verify_matrix_drive.py` (07:29, laptop clock): **Drive 1: ALL CLEAN**, all 10 partitions. D1BLEXFAT bitlocker/exfat clean, big.bin 2,200,000,000 B OK, tree 248/248 |
+
+bigwrite write MB/s against the same phone and drive on earlier builds:
+
+| | D1EXFAT | D1BLEXFAT | D1FAT32 |
+|---|---|---|---|
+| 10-04, `23480de` (run 7) | 0.78 | 0.71 | 8.45 |
+| 10-07, `2a6fe4f` | 0.88 | skipped | 8.01 |
+| 10-10, `ae25575` (0.4.1) | 1.76 | 1.53 | 7.73 |
+| **10-16, `3971906`** | **8.95** | **5.66** | **7.79** |
+
+Write commands per MiB on the host (`ExFatWriteRunsTest`, `Fat32WriteRunsTest`, 16 MiB
+in 1 MiB calls, 4 KiB clusters): exFAT 256 → 1.0, FAT32 69.1 → 6.1.
+
+**exFAT: 5.1× the 0.4.1 figure, and now faster than FAT32 on this drive.** BitLocker
+exFAT 3.7×. libexfat used to make one device call per cluster, 256 per MiB, each one
+a JNI upcall. That cost about 5 ms per call at 0.78–1.76 MB/s.
+
+**FAT32: no change.** 7.79 lies inside the 7.73–8.45 spread of the earlier rows.
+The 64 data commands per MiB it no longer sends were evidently cheap. At 8.45 MB/s
+they could have cost at most about 1.8 ms each, all sequential on the stick.
+What FAT32 spends its time on is not measured. At 7.79 MB/s one MiB takes
+about 128 ms, against about 52 ms at the stick's raw 19.4 MB/s. Possible causes,
+none tested: the FAT and FsInfo writes each call makes (about 5 per MiB, at the start
+of the partition), CPU work in libaums, or a lower USB ceiling on the phone than on
+the laptop. V19 stays in, because it is correct, fsck-clean and sends fewer commands.
+Its speed benefit is unproven.
+
+**Reads were slower on this day, including files this change never wrote.** The host-written
+`large/seq_2100m.bin` fixture read at 15.55 / 19.74 / 12.94 MB/s, against 27.73 /
+48.39 / 26.96 on 10-10. bigwrite's read after remount is down by about the same factor.
+The patches change only write paths (`exfat_generic_pwrite`, `ClusterChain.write`).
+The 10-15 ext4 run on the same phone showed the same drop (17.74 against 40–44) before
+this branch existed. So the drop comes from the phone or the drive on these days, not
+from this change. Its cause is not known.
+
 ## 2026-10-15 — ext4 writes in runs (#36), journal repair: D1EXT4 on the OnePlus 7
 
 One run, on the build of `e32a6b3` (clean tree; the report's header reads `commit e32a6b3`),
