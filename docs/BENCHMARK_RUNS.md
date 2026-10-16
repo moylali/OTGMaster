@@ -60,7 +60,7 @@ bigwrite write MB/s against the same phone and drive on earlier builds:
 | **10-16, `3971906`** | **8.95** | **5.66** | **7.79** |
 
 Write commands per MiB on the host (`ExFatWriteRunsTest`, `Fat32WriteRunsTest`, 16 MiB
-in 1 MiB calls, 4 KiB clusters): exFAT 256 → 1.0, FAT32 69.1 → 6.1.
+in 1 MiB calls, 4 KiB clusters): exFAT 256 → 1.0, FAT32 69.1 → 6.1 (the FAT32 test left with V19, below).
 
 **exFAT: 5.1× the 0.4.1 figure, and now faster than FAT32 on this drive.** BitLocker
 exFAT 3.7×. libexfat used to make one device call per cluster, 256 per MiB, each one
@@ -73,8 +73,10 @@ What FAT32 spends its time on is not measured. At 7.79 MB/s one MiB takes
 about 128 ms, against about 52 ms at the stick's raw 19.4 MB/s. Possible causes,
 none tested: the FAT and FsInfo writes each call makes (about 5 per MiB, at the start
 of the partition), CPU work in libaums, or a lower USB ceiling on the phone than on
-the laptop. V19 stays in, because it is correct, fsck-clean and sends fewer commands.
-Its speed benefit is unproven.
+the laptop. **V19 was dropped after this run**: no measured gain is not a reason to
+carry a vendored patch. The PR ships E2 only, and `ClusterChain.write` is upstream's
+again. The FAT32 row above measured `3971906`, which still contained V19. The exFAT
+rows measured the same `io.c` the PR ships.
 
 **Reads were slower on this day, including files this change never wrote.** The host-written
 `large/seq_2100m.bin` fixture read at 15.55 / 19.74 / 12.94 MB/s, against 27.73 /

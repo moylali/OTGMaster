@@ -274,32 +274,6 @@ Vendored fork of [magnusja/libaums](https://github.com/magnusja/libaums).
 | `FatDirectory` | V16 — a new file owns no cluster until it is written | see below |
 | `FatDirectory` | V17 — `listFiles` reads the weak handle cache once, so a GC cannot null it mid-listing | see below |
 | `Fat32BootSector` | V18 — the 16-bit total-sectors field is used when set (volumes under 32 MiB) | see below |
-| `ClusterChain` | V19 — write runs of consecutive clusters up to 1 MiB, not four clusters | see below |
-
-## V19 — `ClusterChain.write` stopped at four clusters
-
-Upstream wrote at most four consecutive clusters per command, with the comment "Set
-this value too high may cause problems": 16 KiB at the 4 KiB clusters of the matrix
-drives, so a 1 MiB write was 64 commands, plus the FAT updates — 69.1 per MiB in
-`Fat32WriteRunsTest`, against 6.1 after.
-
-The problem the cap guarded against was an oversized span reaching the USB stack as
-one request. `LibaumsRawBlockDevice` now splits every write into 120 KiB transfers
-(halving them on a device that refuses even that, issue #29), which is what V6
-relied on to lift the same cap for reads. So the cap is now 1 MiB, in bytes rather
-than clusters so it means the same at any cluster size. A run still ends wherever the
-chain jumps, and the scan for the run stops at the cap rather than walking a long
-contiguous chain to its end on every call.
-
-The laptop writes these sticks at 19.4 MB/s (`dd`, 16 MiB blocks, restoring
-D1FAT32), so FAT32's 8.45 MB/s on the OnePlus was not the drive's limit.
-
-**It did not make FAT32 faster.** On the OnePlus, D1FAT32's bigwrite was 7.79 MB/s
-on `3971906` against 7.73–8.45 before (`BENCHMARK_RUNS.md`, 2026-10-16). The commands it
-removes were cheap: sequential 16 KiB writes on the stick, at most about 1.8 ms each.
-The patch stays because it is correct, `fsck.vfat`-clean and sends a tenth of the
-commands, which may matter where a command costs more. FAT32's real limit is not
-measured.
 
 ## V15 — moves left duplicate short names and a stale `..`
 
