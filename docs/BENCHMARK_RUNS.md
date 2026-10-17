@@ -33,6 +33,42 @@ to a row here.
 
 ---
 
+## 2026-10-16 (night) — FAT32 write runs again (V19 + V21): D1FAT32 on the OnePlus 7, six runs
+
+Measurement runs for `perf/fat32-speed`. Each run: `--es tests free,bigwrite --es drive D1FAT32`,
+password123, cache default, remount true, and `--es xfer` named explicitly. Phone on USB power,
+100%, interactive, no power save, at start and end. Each header names its commit (clean
+tree). `2a79076` is V19 + V21 with the USB timing. `76d28be` is the same branch one commit
+earlier: V21 and the timing, upstream's four-cluster writes. The last four runs alternate the
+two builds, so the drive's state over the evening cannot favour either.
+
+| Run · build · transfer | Report | bigwrite write / read after remount | USB layer during the write | Verdict |
+|---|---|---|---|---|
+| `2a79076` · 120 KiB · 19:46 | `…-195430.txt` | **8.46** / 15.62 | 15.8 commands per MiB; 85.3% inside them, 10.45 MB/s there; 11.5 MiB read | ALL PASSED after remount (240 tree files) |
+| `2a79076` · 1 MiB · 19:54 | `…-200212.txt` | 7.96 / 21.14 | **1024 KiB transfers**, 7.9 per MiB; 86.3%, 9.72 MB/s; 11.5 MiB read | ALL PASSED after remount |
+| A1 `76d28be` · 120 KiB · 20:03 | `…-201349.txt` | **5.71** / 16.69 | 71.3 per MiB; 88.0%, 6.83 MB/s; 11.5 MiB read | ALL PASSED after remount |
+| B1 `2a79076` · 120 KiB · 20:14 | `…-202239.txt` | **7.80** / 17.22 | 15.8 per MiB; 86.7%, 9.47 MB/s; 11.2 MiB read | ALL PASSED after remount |
+| A2 `76d28be` · 120 KiB · 20:23 | `…-203352.txt` | **5.15** / 17.93 | 71.3 per MiB; 89.0%, 6.09 MB/s; 11.0 MiB read | ALL PASSED after remount |
+| B2 `2a79076` · 120 KiB · 20:34 | `…-204236.txt` | **7.66** / 18.63 | 15.8 per MiB; 87.1%, 9.26 MB/s; 10.7 MiB read | ALL PASSED after remount |
+
+Host after the six runs (laptop, `verify_volume.sh /dev/sda6`): **CLEAN**, `fsck.fat 4.2`
+read-only, 21322 files, 1347186/1430796 clusters. No baseline exists for D1FAT32, so there
+is no allocation-table compare.
+
+**V19 + V21 against upstream's writes, alternated: 7.80 and 7.66 MB/s against 5.71 and
+5.15, about 1.4×.** The tree step dropped from 57 s to 42–43 s. Without V21 the same V19
+read 1 GB more and measured 7.31 MB/s (`9092017`, the earlier entry).
+
+- **V21 works.** Reads during the write fell from 1017.9 MiB to 11.5 MiB.
+- **A larger transfer does not help.** At 1 MiB the rate inside USB commands was 9.72 MB/s
+  against 10.45 at 120 KiB. The link to this stick tops out at about 10 MB/s on this phone,
+  whatever the command size. The app keeps 120 KiB, and `xfer` stays a debug-only knob.
+- **What is left is metadata.** Of 15.8 commands per MiB, about 8 are data and the rest
+  are FAT and FsInfo updates at the start of the partition. Removing those means deferring
+  metadata writes, the trade-off already declined for ext4 (#36 phase 4).
+- **Earlier days' upstream figures (7.73–8.45) are not this baseline.** They come from
+  other sessions, and the alternated runs are the comparison.
+
 ## 2026-10-16 (evening) — V20, the FAT32 directory-copy fix: D1FAT32 on the OnePlus 7
 
 One run, on the build of `e2c8d10` (clean tree; the report's header reads `commit e2c8d10`),
@@ -49,6 +85,14 @@ restored from the build image after the failed run below (19.6 MB/s; fsck.fat CL
 A pass does not prove the fix: the failure needs a GC in a narrow window. `Fat32HandleAliasTest`
 is the proof. It forces the collection, fails on the old code and passes on this one. This run
 shows that V20 changes nothing else on the device's FAT32 path.
+
+**Commit hashes after the merge of #67** (rebase-merge):
+
+| On the branch (cited) | On `main` | Commit |
+|---|---|---|
+| `bc3f2a8` | `d8a7d17` | test: a GC can leave two copies of a FAT32 directory, and one loses entries |
+| `e2c8d10` | `23fc40b` | fix: a GC could leave two copies of a FAT32 directory, losing entries (V20) |
+| `5677c3a` | `8527f76` | docs: record V20's D1FAT32 run on the OnePlus |
 
 ## 2026-10-16 (later) — where FAT32's write time goes: D1FAT32 on the OnePlus 7, three runs
 
