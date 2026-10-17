@@ -33,6 +33,23 @@ to a row here.
 
 ---
 
+## 2026-10-16 (evening) — V20, the FAT32 directory-copy fix: D1FAT32 on the OnePlus 7
+
+One run, on the build of `e2c8d10` (clean tree; the report's header reads `commit e2c8d10`),
+`--es drive D1FAT32`, password123, cache default, remount true. Sections, all named:
+`free,block,dir,path,seq,random,opens,write,unaligned,correct,bigwrite,fixtures`. Phone on
+USB power, 100%, interactive, no power save, at start and end. Started 17:38:37 (phone clock).
+Report `BENCH/reports/otgbench-GM1901-20261016-175237.txt`. D1FAT32 had just been
+restored from the build image after the failed run below (19.6 MB/s; fsck.fat CLEAN, 21051 files).
+
+| Device · Android | Drive · when | On the phone | Host |
+|---|---|---|---|
+| OnePlus 7 · 16 | D1FAT32 (plain) · 10-16 17:38 | write verify ALL PASSED, 16 MiB at 2.29 MB/s; unaligned A+B PASS; correctness A–G ALL PASSED; bigwrite 6.03 / 14.86, ALL PASSED after remount (240 tree files); fixtures ALL 20995 MATCHED | `verify_volume.sh /dev/sda6`: fsck.fat **CLEAN**, 21316 files, 1347180/1430796 clusters |
+
+A pass does not prove the fix: the failure needs a GC in a narrow window. `Fat32HandleAliasTest`
+is the proof. It forces the collection, fails on the old code and passes on this one. This run
+shows that V20 changes nothing else on the device's FAT32 path.
+
 ## 2026-10-16 (later) — where FAT32's write time goes: D1FAT32 on the OnePlus 7, three runs
 
 These runs were for measurement. They used builds from `perf/fat32-writes`, which time the USB layer inside
@@ -61,7 +78,7 @@ The next lookup then reads a second copy. Here `f71.bin` was moved into one copy
 f71. The test clears the cache by reflection, as a GC does, and fails with
 `d/e/moved.bin was lost`.
 `FatDirectory.kt` and `Fat32FileSystem.kt` are identical on main (`53d2b6d`), and the test fails
-there too, so this is not V19. It is GC-timed. The V19 builds read 1 GB more than they needed
+there too, so this is not V19. Fixed by V20 (`e2c8d10`, the entry above). It is GC-timed. The V19 builds read 1 GB more than they needed
 (below), and allocating that much keeps the collector busy, which made the window likely.
 The same build passed the same tree 10 minutes earlier.
 
