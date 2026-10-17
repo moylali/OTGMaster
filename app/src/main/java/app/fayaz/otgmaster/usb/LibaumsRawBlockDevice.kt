@@ -193,6 +193,11 @@ class LibaumsRawBlockDevice(
     /** The transfer size in use now, after any step-down. */
     val transferBytes: Int get() = maxTransferBlocks * blockSize
 
+    /** For the benchmark: use [bytes] per transfer from now on (step-downs still apply). */
+    fun setTransferBytes(bytes: Int) {
+        synchronized(transferLock) { maxTransferBlocks = (bytes / blockSize).coerceAtLeast(minTransferBlocks) }
+    }
+
     companion object {
         /** Debug builds' benchmark sets this to try other transfer sizes; null in the app. */
         @Volatile var transferBytesOverride: Int? = null
