@@ -115,7 +115,15 @@ open class ByteBlockDevice @JvmOverloads constructor(private val targetBlockDevi
                 // The leading-partial branch above already does this; only the tail
                 // was missing it.
                 val remaining = src.remaining()
-                targetBlockDevice.read(devOffset, buffer)
+                // LOCAL PATCH (docs/VENDOR_FIXES.md V21): read the last sector only.
+                // V1 read the whole span, and every sector but the last is about to be
+                // overwritten: a 1 MiB write ending mid-sector read 1 MiB first.
+                val tail = ByteBuffer.allocate(blockSize)
+                targetBlockDevice.read(devOffset + rounded / blockSize - 1, tail)
+                tail.clear()
+                buffer.clear()
+                buffer.position(rounded - blockSize)
+                buffer.put(tail)
                 buffer.clear()
                 // See V5 above: no array() on either side.
                 val slice = src.slice()

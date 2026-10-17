@@ -275,6 +275,7 @@ Vendored fork of [magnusja/libaums](https://github.com/magnusja/libaums).
 | `FatDirectory` | V17 — `listFiles` reads the weak handle cache once, so a GC cannot null it mid-listing. Superseded by V20, which removes that cache | see below |
 | `Fat32BootSector` | V18 — the 16-bit total-sectors field is used when set (volumes under 32 MiB) | see below |
 | `FatDirectory`, `Fat32FileSystem` | V20 — one live handle per directory entry, so a GC cannot leave two copies of a directory that overwrite each other's entries | see below |
+| `ByteBlockDevice` | V21 — the trailing read-modify-write reads the last sector only. V1 read the whole span: a 1 MiB write ending mid-sector read 1 MiB first, 1 GB extra in a 2.2 GB FAT32 bigwrite with merged runs. `ByteBlockDeviceTailTest` counts the sectors read | the commit adding this row |
 
 ## V20 — a GC left two copies of a directory, and one wrote over the other
 
