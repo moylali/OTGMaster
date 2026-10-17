@@ -275,7 +275,28 @@ Vendored fork of [magnusja/libaums](https://github.com/magnusja/libaums).
 | `FatDirectory` | V17 — `listFiles` reads the weak handle cache once, so a GC cannot null it mid-listing. Superseded by V20, which removes that cache | see below |
 | `Fat32BootSector` | V18 — the 16-bit total-sectors field is used when set (volumes under 32 MiB) | see below |
 | `FatDirectory`, `Fat32FileSystem` | V20 — one live handle per directory entry, so a GC cannot leave two copies of a directory that overwrite each other's entries | see below |
+| `ClusterChain` | V19 — write runs of consecutive clusters up to 1 MiB, not four clusters | see below |
 | `ByteBlockDevice` | V21 — the trailing read-modify-write reads the last sector only. V1 read the whole span: a 1 MiB write ending mid-sector read 1 MiB first, 1 GB extra in a 2.2 GB FAT32 bigwrite with merged runs. `ByteBlockDeviceTailTest` counts the sectors read | the commit adding this row |
+
+## V19 — `ClusterChain.write` stopped at four clusters
+
+Upstream wrote at most four consecutive clusters per command, with the comment "Set
+this value too high may cause problems". At the 4 KiB clusters of the matrix drives that
+is 16 KiB, so a 1 MiB write was 64 commands plus the FAT updates: 69.1 per MiB in
+`Fat32WriteRunsTest`, against 6.1 after.
+
+The cap guarded against an oversized span reaching the USB stack as one request.
+`LibaumsRawBlockDevice` now splits every write into 120 KiB transfers (halving them on a
+device that refuses even that, issue #29), which is what V6 relied on to lift the same
+cap for reads. So the cap is now 1 MiB, in bytes rather than clusters so it means the same
+at any cluster size. A run still ends wherever the chain jumps, and the scan for the run
+stops at the cap rather than walking a long contiguous chain on every call.
+
+**History.** V19 was first written for #66 and dropped from it: on the OnePlus it measured
+7.79 MB/s against 7.73–8.45 for upstream on earlier days. That build also had V1 reading
+the whole span before a partial-sector tail, 1 GB extra per 2.2 GB, which V21 fixes. With
+V21, and alternating builds on one drive in one session, V19 measured 7.80 and 7.66 MB/s
+against upstream's 5.71 and 5.15 (`BENCHMARK_RUNS.md`, 2026-10-16 night).
 
 ## V20 — a GC left two copies of a directory, and one wrote over the other
 

@@ -5,7 +5,7 @@
 • New: a dropped drive stays listed
 • New: help when no drive is found
 • New: repair ext4 drives left needing recovery
-• Fixed: slow writes on ext4 and exFAT
+• Fixed: slow writes on ext4, exFAT and FAT32
 • Fixed: FAT32 files could go missing
-• Fixed: new ext4 files could show old deleted data
+• Fixed: new ext4 files showing old deleted data
 • Fixed: screens drawn under the system bars
