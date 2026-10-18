@@ -240,11 +240,20 @@ object OtgMasterState {
         return mountedDrives.find { it.id == id }
     }
     
+    /**
+     * Told the mounted list after every change, in mount order. MainActivity sets it to
+     * keep MountedDriveService in step; nothing else changes the list.
+     */
+    @Volatile
+    var onMountedChanged: ((List<MountedDrive>) -> Unit)? = null
+
     fun addDrive(drive: MountedDrive) {
         mountedDrives.add(drive)
+        onMountedChanged?.invoke(mountedDrives.toList())
     }
     
     fun removeDrive(id: String) {
         mountedDrives.removeIf { it.id == id }
+        onMountedChanged?.invoke(mountedDrives.toList())
     }
 }

@@ -11,7 +11,9 @@ sealed class DetectedFilesystem(val displayName: String) {
 object FilesystemDetector {
 
     fun detect(device: RawBlockDevice): DetectedFilesystem {
-        val count = minOf(4, device.blockCount.toInt())
+        // minOf on Long first: blockCount.toInt() wraps negative above 2^31 blocks (1 TiB
+        // of 512-byte sectors), the read then threw, and every such volume showed as Unknown.
+        val count = minOf(4L, device.blockCount).toInt()
         val data = try {
             device.readBlocks(0L, count)
         } catch (e: Exception) {

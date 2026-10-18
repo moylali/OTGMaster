@@ -287,6 +287,10 @@ fi
 echo "Installing App and Test APK..."
 $CMD_ADB -s $SERIAL install -t "app/build/outputs/apk/$E2E_BUILD_TYPE/app-$E2E_BUILD_TYPE.apk"
 $CMD_ADB -s $SERIAL install -t "app/build/outputs/apk/androidTest/$E2E_BUILD_TYPE/app-$E2E_BUILD_TYPE-androidTest.apk"
+# The app asks for notification permission at its first mount (MountedDriveService); a
+# prompt over the UI would sit in front of everything the tests tap. Granted up front, so
+# no prompt; harmless below Android 13, where the permission does not exist.
+$CMD_ADB -s $SERIAL shell pm grant app.fayaz.otgmaster android.permission.POST_NOTIFICATIONS 2>/dev/null || true
 
 echo "Starting E2E Tests..."
 
