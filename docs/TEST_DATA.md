@@ -92,6 +92,18 @@ It writes the VeraCrypt version used to `VERSION` beside them. Every run makes n
 so the fixtures change completely each time; nothing may depend on their bytes. For a
 new cipher or KDF, add it to the two lists at the top of the script.
 
+### 1.2 Keyfile fixtures for the host tests (no root)
+
+`app/src/test/resources/veracrypt/keyfiles/` holds three volumes VeraCrypt made with
+keyfiles, cut the same way: no password with two keyfiles (one past the 1 MiB VeraCrypt
+reads), a 40-character password (the 64-byte keyfile pool) and a 70-character one (the
+128-byte pool). The keyfiles are not stored; both the script and `VeraCryptKeyfilesTest`
+generate them from the same formula. Regenerate with:
+
+```sh
+scripts/make_veracrypt_keyfile_fixtures.sh   # veracrypt on PATH; no root
+```
+
 ## 2. The per-case contract (E2E images)
 
 `scripts/run_e2e_tests.sh` discovers cases by iterating `testdata/*/`, and reads these

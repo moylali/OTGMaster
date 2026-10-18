@@ -141,61 +141,11 @@ class VeraCryptUnlocker {
         var passwordBytes = String(password).toByteArray(Charsets.UTF_8)
         password.fill('\u0000')
 
-        // Process keyfiles
+        // Keyfiles, mixed as VeraCrypt does. An unreadable one is skipped, as it always was
+        // here, and the unlock then fails as a wrong password.
         if (!keyfiles.isNullOrEmpty() && contentResolver != null) {
-            val keyfilePool = ByteArray(64)
-            for (uri in keyfiles) {
-                try {
-                    contentResolver.openInputStream(uri)?.use { stream ->
-                        var crc = 0xFFFFFFFFL
-                        val buffer = ByteArray(65536)
-                        var writePos = 0
-                        var totalRead = 0
-                        while (totalRead < 1048576) {
-                            val toRead = Math.min(65536, 1048576 - totalRead)
-                            val read = stream.read(buffer, 0, toRead)
-                            if (read <= 0) break
-                            
-                            for (i in 0 until read) {
-                                val byteVal = buffer[i].toInt() and 0xFF
-                                // standard CRC32 update (polynomial 0xEDB88320)
-                                crc = crc xor byteVal.toLong()
-                                for (j in 0..7) {
-                                    crc = if ((crc and 1L) != 0L) {
-                                        (crc ushr 1) xor 0xEDB88320L
-                                    } else {
-                                        crc ushr 1
-                                    }
-                                }
-                                
-                                keyfilePool[writePos++] = (keyfilePool[writePos - 1].toInt() + ((crc ushr 24) and 0xFF).toInt()).toByte()
-                                if (writePos >= 64) writePos = 0
-                                keyfilePool[writePos++] = (keyfilePool[writePos - 1].toInt() + ((crc ushr 16) and 0xFF).toInt()).toByte()
-                                if (writePos >= 64) writePos = 0
-                                keyfilePool[writePos++] = (keyfilePool[writePos - 1].toInt() + ((crc ushr 8) and 0xFF).toInt()).toByte()
-                                if (writePos >= 64) writePos = 0
-                                keyfilePool[writePos++] = (keyfilePool[writePos - 1].toInt() + (crc and 0xFF).toInt()).toByte()
-                                if (writePos >= 64) writePos = 0
-                            }
-                            totalRead += read
-                        }
-                    }
-                } catch (e: Exception) {
-                    e.printStackTrace()
-                }
-            }
-            
-            // VeraCrypt adds the keyfile pool to the password byte-by-byte (modulo 256)
-            val combined = ByteArray(64)
-            for (i in 0 until 64) {
-                if (i < passwordBytes.size) {
-                    combined[i] = (passwordBytes[i].toInt() + keyfilePool[i].toInt()).toByte()
-                } else {
-                    combined[i] = keyfilePool[i]
-                }
-            }
-            passwordBytes.fill(0)
-            passwordBytes = combined
+            passwordBytes = VeraCryptKeyfiles.apply(passwordBytes,
+                keyfiles.map { uri -> { contentResolver.openInputStream(uri) } }, skipUnreadable = true)
         }
 
         val kdf = KdfParams.forVolume(hash, pim)

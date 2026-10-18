@@ -123,10 +123,10 @@
       </li>
       <li>Feeds the decrypted block device into a userspace filesystem reader (FAT32 via libaums, exFAT via a vendored native <code>libexfat</code>, ext4 via a pure-Kotlin driver, NTFS via a vendored <code>libntfs-3g</code>, and APFS, read-only, via a vendored <code>libfsapfs</code>).</li>
       <li>Surfaces files through the app UI and a <code>DocumentsProvider</code>, so other apps (Files, Gallery, etc.) can browse the unlocked volume.</li>
-      <li><em>From 0.4.2</em>, formats and encrypts from a mounted drive's <strong>More actions</strong> menu, after the user types ERASE:
+      <li><em>From 0.4.2</em>, formats and encrypts from a mounted drive's actions (on the card when they fit, else under <strong>More actions</strong>), after the user types ERASE:
         <ul>
-          <li><strong>Format</strong> writes an empty FAT32 or exFAT of the same size, cluster size and label; a volume inside an encrypted container stays in it, with the same password</li>
-          <li><strong>Encrypt</strong> erases the partition and creates a new VeraCrypt volume — any of the ciphers and cascades above, SHA-512 or Argon2id, optional PIM — holding a new FAT32 or exFAT</li>
+          <li><strong>Format</strong> writes an empty FAT32 or exFAT of the same size — the current one by default, or the other — with the label given; a volume inside an encrypted container stays in it, with the same password</li>
+          <li><strong>Encrypt</strong> erases the partition and creates a new VeraCrypt volume — any of the ciphers and cascades above, SHA-512 or Argon2id, optional PIM and keyfiles — holding a new FAT32 or exFAT</li>
           <li>both overwrite every sector by default; <strong>Quick</strong> writes only the filesystem structures, and the old data stays on the drive until overwritten</li>
         </ul>
       </li>

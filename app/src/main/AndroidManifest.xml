@@ -17,9 +17,14 @@
         android:label="@string/app_name"
         android:theme="@style/AppTheme"
         android:usesCleartextTraffic="false">
+        <!-- configChanges: rotating or resizing (a tablet, split screen) re-lays the Compose UI
+             out in place instead of recreating the activity, which threw away whatever screen
+             was open — a half-filled Format or Encrypt form went back to the main screen.
+             The layout reads its window size from BoxWithConstraints, so it still adapts. -->
         <activity
             android:name=".MainActivity"
             android:exported="true"
+            android:configChanges="orientation|screenSize|screenLayout|smallestScreenSize|keyboardHidden"
             android:launchMode="singleTop">
             <intent-filter>
                 <action android:name="android.intent.action.MAIN" />

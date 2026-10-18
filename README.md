@@ -38,9 +38,9 @@ The app cannot perform a kernel mount on non-rooted Android. Instead it:
    - **APFS (Encrypted)**: the password goes to the filesystem reader, which unwraps the volume key itself
 5. Feeds the decrypted block device into a userspace filesystem reader (FAT32 via libaums, exFAT via a vendored native `libexfat`, ext4 via a pure-Kotlin driver, NTFS via a vendored `libntfs-3g`, and APFS, read-only, via a vendored `libfsapfs`).
 6. Surfaces files through the app UI and a `DocumentsProvider`, so other apps (Files, Gallery, etc.) can browse the unlocked volume.
-7. *From 0.4.2*, formats and encrypts from a mounted drive's **More actions** menu, after the user types ERASE:
-   - **Format** writes an empty FAT32 or exFAT of the same size, cluster size and label; a volume inside an encrypted container stays in it, with the same password
-   - **Encrypt** erases the partition and creates a new VeraCrypt volume — any of the ciphers and cascades above, SHA-512 or Argon2id, optional PIM — holding a new FAT32 or exFAT
+7. *From 0.4.2*, formats and encrypts from a mounted drive's actions (on the card when they fit, else under **More actions**), after the user types ERASE:
+   - **Format** writes an empty FAT32 or exFAT of the same size — the current one by default, or the other — with the label given; a volume inside an encrypted container stays in it, with the same password
+   - **Encrypt** erases the partition and creates a new VeraCrypt volume — any of the ciphers and cascades above, SHA-512 or Argon2id, optional PIM and keyfiles — holding a new FAT32 or exFAT
    - both overwrite every sector by default; **Quick** writes only the filesystem structures, and the old data stays on the drive until overwritten
 
 ### Roadmap

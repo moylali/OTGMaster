@@ -505,7 +505,7 @@ class MainActivity : AppCompatActivity() {
                         formatUnavailable = { formatUnavailable(it) },
                         encryptUnavailable = { encryptUnavailable(it) },
                         driveSummary = { driveSummary(it) },
-                        onFormat = { drive, full -> formatDrive(drive, full) },
+                        onFormat = { drive, req -> formatDrive(drive, req) },
                         onEncrypt = { drive, req -> encryptDrive(drive, req) },
                         driveOperation = driveOperation.value,
                         onDriveOperationClose = { driveOperation.value = null },
@@ -1551,7 +1551,8 @@ class MainActivity : AppCompatActivity() {
      * Format: an empty filesystem of the same kind, size, cluster size and label, written
      * through the device the volume is mounted from, so a container stays as it is.
      */
-    private fun formatDrive(drive: MountedDrive, full: Boolean) {
+    private fun formatDrive(drive: MountedDrive, req: app.fayaz.otgmaster.ui.FormatRequest) {
+        val full = req.full
         val title = getString(R.string.operation_format_title, drive.partitionLabel.ifEmpty { drive.name })
         val device = drive.blockDevice ?: return
         driveOperation.value = app.fayaz.otgmaster.ui.DriveOperation(title, getString(R.string.operation_unmounting), null)
@@ -1565,19 +1566,20 @@ class MainActivity : AppCompatActivity() {
                 // again is refused with its files intact.
                 val existing = deviceMutex.withLock {
                     app.fayaz.otgmaster.format.DriveFormatter.readExisting(device, label)
-                }
+                }.copy(label = req.label)
+                val target = req.filesystem
                 detachForErase(drive)
                 deviceMutex.withLock {
-                    app.fayaz.otgmaster.format.DriveFormatter.reformat(device, existing, full, progressFor(title))
+                    app.fayaz.otgmaster.format.DriveFormatter.reformat(device, existing, full, progressFor(title), target)
                     (device as? app.fayaz.otgmaster.block.CachedBlockDevice)?.invalidate()
                 }
                 driveOperation.value = app.fayaz.otgmaster.ui.DriveOperation(title, getString(R.string.operation_mounting), null)
-                remountAfterErase(drive, device, existing.filesystem.displayName, drive.sourceVolumeCandidate, drive.isPlain)
+                remountAfterErase(drive, device, target.displayName, drive.sourceVolumeCandidate, drive.isPlain)
                 val secs = ((System.currentTimeMillis() - t0) / 1000).toInt()
                 withContext(Dispatchers.Main) {
-                    appendLog(getString(R.string.log_format_done, drive.name, existing.filesystem.displayName, secs))
+                    appendLog(getString(R.string.log_format_done, drive.name, target.displayName, secs))
                     driveOperation.value = app.fayaz.otgmaster.ui.DriveOperation(title,
-                        getString(R.string.operation_format_done, existing.filesystem.displayName), 1f, finished = true)
+                        getString(R.string.operation_format_done, target.displayName), 1f, finished = true)
                 }
             } catch (e: Exception) {
                 android.util.Log.e("OTGMaster", "format failed", e)
@@ -1620,7 +1622,8 @@ class MainActivity : AppCompatActivity() {
                 val partition = object : RawBlockDevice by slice { override fun close() {} }
                 val volume = deviceMutex.withLock {
                     app.fayaz.otgmaster.format.DriveFormatter.encrypt(partition, req.password, req.pim,
-                        req.cipher, req.hash, req.filesystem, req.label, req.full, progressFor(title))
+                        req.cipher, req.hash, req.filesystem, req.label, req.full, progressFor(title),
+                        keyfiles = req.keyfiles.map { uri -> { contentResolver.openInputStream(uri) } })
                 }
                 // Any credentials saved for the old volume would now only fail.
                 if (deviceKey != null) {
@@ -2349,6 +2352,18 @@ fun formatSize(bytes: Long): String {
     return String.format("%.1f %s", bytes / Math.pow(1024.0, digitGroups.toDouble()), units[digitGroups])
 }
 
+/**
+ * The label Format and Encrypt start with: the volume's own, else the partition's name when
+ * it is a real one rather than the "Partition N" this app makes up, else OTGMASTER. Cut to
+ * the 11 characters both filesystems allow; the formatter upper-cases it for FAT32.
+ */
+internal fun suggestedVolumeLabel(drive: MountedDrive): String {
+    val own = runCatching { drive.fileSystem.volumeLabel.trim() }.getOrDefault("")
+    val partition = drive.partitionLabel.trim().takeUnless { it.matches(Regex("(?i)partition \\d+")) }.orEmpty()
+    return own.ifEmpty { partition }.filter { it.code in 0x20..0x7E && it !in "\"*+,./:;<=>?[\\]|" }
+        .trim().take(11).ifEmpty { "OTGMASTER" }
+}
+
 @OptIn(ExperimentalMaterial3Api::class, ExperimentalComposeUiApi::class)
 @Composable
 fun OtgMasterApp(
@@ -2393,7 +2408,7 @@ fun OtgMasterApp(
     formatUnavailable: (MountedDrive) -> String? = { "" },
     encryptUnavailable: (MountedDrive) -> String? = { "" },
     driveSummary: (MountedDrive) -> app.fayaz.otgmaster.ui.DriveSummary? = { null },
-    onFormat: (MountedDrive, Boolean) -> Unit = { _, _ -> },
+    onFormat: (MountedDrive, app.fayaz.otgmaster.ui.FormatRequest) -> Unit = { _, _ -> },
     onEncrypt: (MountedDrive, app.fayaz.otgmaster.ui.EncryptRequest) -> Unit = { _, _ -> },
     driveOperation: app.fayaz.otgmaster.ui.DriveOperation? = null,
     onDriveOperationClose: () -> Unit = {},
@@ -2408,8 +2423,11 @@ fun OtgMasterApp(
         driveSummary(target)?.let { summary ->
             app.fayaz.otgmaster.ui.FormatScreen(
                 drive = summary,
+                current = app.fayaz.otgmaster.format.DriveFormatter.Filesystem.entries
+                    .firstOrNull { it.displayName.equals(target.filesystemName, ignoreCase = true) },
+                suggestedLabel = suggestedVolumeLabel(target),
                 insideContainer = !target.isPlain,
-                onConfirm = { full -> formatTarget = null; onFormat(target, full) },
+                onConfirm = { req -> formatTarget = null; onFormat(target, req) },
                 onDismiss = { formatTarget = null },
             )
         }
@@ -2418,6 +2436,7 @@ fun OtgMasterApp(
         driveSummary(target)?.let { summary ->
             app.fayaz.otgmaster.ui.EncryptScreen(
                 drive = summary,
+                suggestedLabel = suggestedVolumeLabel(target),
                 onConfirm = { req -> encryptTarget = null; onEncrypt(target, req) },
                 onDismiss = { encryptTarget = null },
             )
@@ -2559,33 +2578,29 @@ fun OtgMasterApp(
                             }
 
                             Spacer(modifier = Modifier.height(16.dp))
-                            @OptIn(androidx.compose.foundation.layout.ExperimentalLayoutApi::class)
-                            FlowRow(horizontalArrangement = Arrangement.spacedBy(8.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
-                                Button(onClick = { onOpenFilesApp(drive) }) {
-                                    Text(stringResource(R.string.open_files_app))
-                                }
-                                if (!drive.isPlain) {
-                                    Button(
-                                        onClick = { onUnmount(drive) },
-                                        modifier = Modifier.semantics { contentDescription = "unmount_button" }
-                                    ) {
-                                        Text(stringResource(R.string.unmount))
+                            val deviceKey = drive.sourceDeviceName
+                            // hasCachedCreds is keyed by device, not partition, so on a mixed
+                            // drive the unencrypted partition's card offered to clear the
+                            // *encrypted* partition's credentials.
+                            val canClearCredentials = !drive.isPlain && deviceKey != null && hasCachedCreds(deviceKey, null)
+                            app.fayaz.otgmaster.ui.DriveActionRow(
+                                primary = buildList {
+                                    add(app.fayaz.otgmaster.ui.DriveAction(null, stringResource(R.string.open_files_app)) { onOpenFilesApp(drive) })
+                                    if (!drive.isPlain) {
+                                        add(app.fayaz.otgmaster.ui.DriveAction("unmount_button", stringResource(R.string.unmount)) { onUnmount(drive) })
                                     }
-                                }
-                                val deviceKey = drive.sourceDeviceName
-                                // Everything but the two everyday actions lives in this menu.
-                                // hasCachedCreds is keyed by device, not partition, so on a
-                                // mixed drive the unencrypted partition's card offered to
-                                // clear the *encrypted* partition's credentials.
-                                app.fayaz.otgmaster.ui.DriveMoreMenu(
-                                    canClearCredentials = !drive.isPlain && deviceKey != null && hasCachedCreds(deviceKey, null),
-                                    onClearCredentials = { deviceKey?.let(onClearDeviceCreds) },
-                                    formatUnavailable = formatUnavailable(drive),
-                                    onFormat = { formatTarget = drive },
-                                    encryptUnavailable = encryptUnavailable(drive),
-                                    onEncrypt = { encryptTarget = drive },
-                                )
-                            }
+                                },
+                                secondary = buildList {
+                                    add(app.fayaz.otgmaster.ui.DriveAction("format_action", stringResource(R.string.format_drive_menu),
+                                        formatUnavailable(drive)) { formatTarget = drive })
+                                    add(app.fayaz.otgmaster.ui.DriveAction("encrypt_action", stringResource(R.string.encrypt_drive_menu),
+                                        encryptUnavailable(drive)) { encryptTarget = drive })
+                                    if (canClearCredentials) {
+                                        add(app.fayaz.otgmaster.ui.DriveAction("clear_credentials_action",
+                                            stringResource(R.string.clear_cached_credentials)) { deviceKey?.let(onClearDeviceCreds) })
+                                    }
+                                },
+                            )
                         }
                     }
                     } // key(drive.id)
@@ -2690,8 +2705,9 @@ fun OtgMasterApp(
                     modifier = Modifier.fillMaxSize().padding(16.dp),
                     horizontalArrangement = Arrangement.spacedBy(16.dp)
                 ) {
+                    // 65/35: the form needs the width; the mounted cards fit in a narrower pane.
                     Column(
-                        modifier = Modifier.weight(1f).fillMaxHeight().verticalScroll(scrollState),
+                        modifier = Modifier.weight(0.65f).fillMaxHeight().verticalScroll(scrollState),
                         verticalArrangement = Arrangement.spacedBy(16.dp)
                     ) {
                         scanButton()
@@ -2699,7 +2715,7 @@ fun OtgMasterApp(
                         logsSection()
                     }
                     Column(
-                        modifier = Modifier.weight(1f).fillMaxHeight().verticalScroll(mountedScrollState)
+                        modifier = Modifier.weight(0.35f).fillMaxHeight().verticalScroll(mountedScrollState)
                             .semantics { contentDescription = "mounted_pane" },
                         verticalArrangement = Arrangement.spacedBy(16.dp)
                     ) {
