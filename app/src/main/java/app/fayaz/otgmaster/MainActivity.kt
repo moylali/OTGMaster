@@ -695,6 +695,7 @@ class MainActivity : AppCompatActivity() {
             UsbHostDiagnosis.Hint.CONNECTED_TO_COMPUTER -> getString(R.string.log_hint_connected_to_computer)
             UsbHostDiagnosis.Hint.CHARGING_FROM_PORT -> getString(R.string.log_hint_charging_from_port)
             UsbHostDiagnosis.Hint.OTG_SWITCH -> getString(R.string.log_hint_otg_switch, state.manufacturer)
+            UsbHostDiagnosis.Hint.OTG_SWITCH_OFF -> getString(R.string.log_hint_otg_switch_off)
         })
     }
 

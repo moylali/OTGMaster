@@ -33,9 +33,11 @@ object UsbHostDiagnosis {
         /**
          * vivo, iQOO, OPPO, realme and OnePlus ship an OTG switch that is off by
          * default and turns itself off after a few minutes unused; while it is off
-         * the device list is empty.
+         * the device list is empty. Said when the switch cannot be read.
          */
         OTG_SWITCH,
+        /** The switch was read, and it is off: say so plainly. */
+        OTG_SWITCH_OFF,
     }
 
     data class PortState(
@@ -43,6 +45,8 @@ object UsbHostDiagnosis {
         val connectedToComputer: Boolean,
         val chargingFromPort: Boolean,
         val manufacturer: String,
+        /** The OTG switch as read ([OemOtgSwitch]): true on, false off, null not readable here. */
+        val otgSwitchOn: Boolean? = null,
     )
 
     private val OTG_SWITCH_BRANDS = setOf("vivo", "iqoo", "oppo", "realme", "oneplus")
@@ -55,7 +59,13 @@ object UsbHostDiagnosis {
         val out = mutableListOf<Hint>()
         if (s.connectedToComputer) out += Hint.CONNECTED_TO_COMPUTER
         else if (s.chargingFromPort) out += Hint.CHARGING_FROM_PORT
-        if (hasOtgSwitch(s.manufacturer)) out += Hint.OTG_SWITCH
+        // Read on ColorOS (OPPO, realme, OnePlus): only when it is off. Elsewhere, or where it
+        // cannot be read, the brand is all there is to go on.
+        when (s.otgSwitchOn) {
+            false -> out += Hint.OTG_SWITCH_OFF
+            true -> {}
+            null -> if (hasOtgSwitch(s.manufacturer)) out += Hint.OTG_SWITCH
+        }
         return out
     }
 
@@ -75,6 +85,7 @@ object UsbHostDiagnosis {
             connectedToComputer = usbState?.getBooleanExtra("connected", false) ?: false,
             chargingFromPort = plugged and (BatteryManager.BATTERY_PLUGGED_AC or BatteryManager.BATTERY_PLUGGED_USB) != 0,
             manufacturer = brand,
+            otgSwitchOn = OemOtgSwitch.isOn(context),
         )
     }
 }
