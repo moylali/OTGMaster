@@ -22,4 +22,16 @@ object OemOtgSwitch {
     } catch (_: Exception) {
         null
     }
+
+    /** Issue #71 test build, for the log: "on", "off", "absent" (not ColorOS), or "unreadable: <why>". */
+    fun describe(context: Context): String = try {
+        when (val v = Settings.Global.getString(context.contentResolver, KEY)) {
+            null -> "absent"
+            "1" -> "on"
+            "0" -> "off"
+            else -> "value $v"
+        }
+    } catch (e: Exception) {
+        "unreadable: ${e.javaClass.simpleName}: ${e.message}"
+    }
 }

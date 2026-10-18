@@ -44,7 +44,7 @@ class LibaumsRawBlockDevice(
     @Volatile private var maxTransferBlocks: Int =
         ((transferBytesOverride ?: MAX_TRANSFER_BYTES) / blockSize).coerceAtLeast(1)
 
-    /** The floor for [maxTransferBlocks]: 16 KiB, the bulk transfer size every Android release has accepted. */
+    /** The floor for [maxTransferBlocks]: [MIN_TRANSFER_BYTES]. */
     private val minTransferBlocks: Int =
         (MIN_TRANSFER_BYTES / blockSize).coerceAtLeast(1)
 
@@ -118,6 +118,7 @@ class LibaumsRawBlockDevice(
                     io.readBytes += chunk.toLong() * blockSize
                 }
             } catch (e: Exception) {
+                diagnose("read", chunk, startBlock + done, e)
                 if (stepDown(chunk, e, "read", startBlock + done)) continue
                 // Transfer failures here are otherwise reported with no indication of
                 // what was being read, which made a Pixel 10 Pro XL failure impossible
@@ -131,6 +132,7 @@ class LibaumsRawBlockDevice(
                     e,
                 )
             }
+            reportWorkingSize(chunk)
             done += chunk
         }
         return out
@@ -154,6 +156,7 @@ class LibaumsRawBlockDevice(
                     io.writeBytes += chunk.toLong() * blockSize
                 }
             } catch (e: Exception) {
+                diagnose("write", chunk, startBlock + done, e)
                 if (stepDown(chunk, e, "write", startBlock + done)) continue
                 throw java.io.IOException(
                     "write failed: chunk of $chunk blocks at ${startBlock + done} " +
@@ -163,8 +166,64 @@ class LibaumsRawBlockDevice(
                     e,
                 )
             }
+            reportWorkingSize(chunk)
             done += chunk
         }
+    }
+
+    // ── USB diagnostics (issue #71 test build) ────────────────────────────────────
+    // A transfer that fails is either refused for its size (the device still answers a
+    // one-block read) or has left the device stuck (it answers nothing). Only shrinking the
+    // transfer helps the first; the second needs the USB port reset, which libaums can do
+    // (USBDEVFS_RESET, then the interface claimed again) but nothing here used to call.
+    // Each step goes to the app's own log, which is what "Report issue" sends.
+
+    private var diagnosed = 0
+    @Volatile private var failedAtBytes = 0
+
+    private fun report(line: String) {
+        Log.w(TAG, line)
+        app.fayaz.otgmaster.OtgMasterState.log(line)
+    }
+
+    private fun causeChain(e: Throwable): String =
+        generateSequence(e) { it.cause }.take(4).joinToString(" <- ") { "${it.javaClass.simpleName}: ${it.message}" }
+
+    /** A one-block read at [at]: does the device answer at all? */
+    private fun probe(at: Long): Boolean = try {
+        synchronized(transferLock) { checkOpen(); driver.read(at, ByteBuffer.allocate(blockSize)) }
+        true
+    } catch (_: Exception) { false }
+
+    private fun diagnose(op: String, chunk: Int, at: Long, e: Exception) {
+        if (closed || diagnosed >= 12) return
+        diagnosed++
+        failedAtBytes = chunk * blockSize
+        report("USB: $op of ${chunk * blockSize / 1024} KiB at block $at failed: ${causeChain(e)}")
+        if (probe(at)) {
+            report("USB: a 1-block read there works - the device refused the size, it is not stuck")
+            return
+        }
+        report("USB: a 1-block read fails too - the device is stuck; resetting its USB port")
+        try {
+            synchronized(transferLock) {
+                checkOpen()
+                communication.resetDevice()
+                driver.init()
+            }
+            report("USB: port reset and drive re-initialised; a 1-block read now " +
+                if (probe(at)) "works" else "still fails")
+        } catch (r: Exception) {
+            report("USB: port reset failed: ${causeChain(r)}")
+        }
+    }
+
+    /** Once, after a step-down: the transfer size that worked. */
+    private fun reportWorkingSize(chunk: Int) {
+        val failed = failedAtBytes
+        if (failed == 0) return
+        failedAtBytes = 0
+        report("USB: ${chunk * blockSize / 1024} KiB transfers work (after a failure at ${failed / 1024} KiB)")
     }
 
     override fun close() {
@@ -204,7 +263,8 @@ class LibaumsRawBlockDevice(
         /** See [maxTransferBlocks]. 120 KiB, matching Linux usb-storage max_sectors. */
         const val MAX_TRANSFER_BYTES = 120 * 1024
         /** See [minTransferBlocks]. */
-        const val MIN_TRANSFER_BYTES = 16 * 1024
+        // 4 KiB for the issue #71 test build: a OnePlus 12R failed 64, 32 and 16 KiB in turn.
+        const val MIN_TRANSFER_BYTES = 4 * 1024
         private const val TAG = "LibaumsRawBlockDevice"
     }
 }

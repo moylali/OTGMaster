@@ -702,6 +702,8 @@ class MainActivity : AppCompatActivity() {
     private fun refreshDevices() {
         val devices = usbDeviceProvider.getDevices()
         appendLog(getString(R.string.log_found_usb_devices, devices.size))
+        // Issue #71 test build: whether the ColorOS OTG switch can be read, and what it says.
+        app.fayaz.otgmaster.usb.OemOtgSwitch.describe(this).let { if (it != "absent") appendLog("ColorOS OTG switch: $it") }
 
         val mountedDeviceKeys = OtgMasterState.mountedDrives.mapNotNull { it.sourceDeviceName }.toSet()
 

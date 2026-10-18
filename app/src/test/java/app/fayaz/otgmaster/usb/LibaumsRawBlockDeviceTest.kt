@@ -66,7 +66,9 @@ class LibaumsRawBlockDeviceTest {
             requestType: Int, request: Int, value: Int, index: Int,
             buffer: ByteArray, length: Int
         ) = throw NotImplementedError()
-        override fun resetDevice() = throw NotImplementedError()
+        var resets = 0
+        var onReset: () -> Unit = { throw NotImplementedError() }
+        override fun resetDevice() { resets++; onReset() }
         override fun clearFeatureHalt(endpoint: android.hardware.usb.UsbEndpoint) =
             throw NotImplementedError()
         override fun close() { closed = true }
@@ -263,15 +265,46 @@ class LibaumsRawBlockDeviceTest {
 
     @Test
     fun `stepping down stops at the floor and the error keeps its cause`() {
-        // Rejects everything above 8 blocks (4 KiB): below the 16 KiB floor.
-        val driver = LimitedDriver(limitBlocks = 8)
+        // Rejects everything above 4 blocks (2 KiB): below the 4 KiB floor.
+        val driver = LimitedDriver(limitBlocks = 4)
         val e = runCatching { LibaumsRawBlockDevice(driver, FakeCommunication()).readBlocks(2048, 512) }
             .exceptionOrNull()
         assertTrue("expected an IOException, got $e", e is java.io.IOException)
         val floor = LibaumsRawBlockDevice.MIN_TRANSFER_BYTES / 512
         assertTrue("the message names the floor: ${e!!.message}", e.message!!.contains("chunk limit $floor blocks"))
         assertTrue("the message carries the driver's reason: ${e.message}", e.message!!.contains("MAX_RECOVERY_ATTEMPTS"))
-        assertTrue("never below the floor", driver.accepted.isEmpty())
+        // Nothing below the floor but the one-block probes that tell "refused for its size"
+        // from "stuck" after each failure.
+        assertTrue("never below the floor except probes: ${driver.accepted}", driver.accepted.all { it == 1 })
+        assertTrue("each failure was probed", driver.accepted.isNotEmpty())
+    }
+
+    /**
+     * A drive that, after one large transfer fails, answers nothing - not even one block -
+     * until its USB port is reset and it is initialised again: the case that shrinking the
+     * transfer alone cannot help (issue #71: 64, 32 and 16 KiB all failed in turn).
+     */
+    private class JammingDriver(override val blockSize: Int = 512, override val blocks: Long = 240_328_704L) : BlockDeviceDriver {
+        var jammed = false
+        var inits = 0
+        override fun init() { inits++; jammed = false }
+        override fun read(deviceOffset: Long, buffer: ByteBuffer) {
+            if (jammed) throw java.io.IOException("MAX_RECOVERY_ATTEMPTS Exceeded (jammed)")
+            if (buffer.remaining() > 32 * blockSize) { jammed = true; throw java.io.IOException("MAX_RECOVERY_ATTEMPTS Exceeded") }
+            buffer.position(buffer.limit())
+        }
+        override fun write(deviceOffset: Long, buffer: ByteBuffer) = read(deviceOffset, buffer)
+    }
+
+    @Test
+    fun `a drive stuck after a failed transfer is reset and re-initialised, then read`() {
+        val driver = JammingDriver()
+        val comm = FakeCommunication().apply { onReset = {} }
+        // 64 KiB fails and jams it; reset; 32 KiB is still over the limit and jams it; reset;
+        // 16 KiB works. Without the reset every smaller retry would fail too.
+        LibaumsRawBlockDevice(driver, comm).readBlocks(2304, 128)
+        assertEquals("a USB port reset after each jam", 2, comm.resets)
+        assertEquals("the drive initialised again after each", 2, driver.inits)
     }
 
     /** Records the peak number of threads inside read/write simultaneously. */

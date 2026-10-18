@@ -67,6 +67,13 @@ class LibaumsRawBlockDeviceOpener(private val context: Context) {
                     Log.i(TAG, "Initializing LUN $lun")
                     driver.init()
                     Log.i(TAG, "Initialized LUN $lun: blockSize=${driver.blockSize}, blocks=${driver.blocks}")
+                    // Issue #71 test build: what the app's log carries for a USB report.
+                    app.fayaz.otgmaster.OtgMasterState.log(
+                        "USB: ${device.manufacturerName ?: "?"} ${device.productName ?: "?"} " +
+                        "%04x:%04x, LUN $lun of ${lunCount + 1}, ${driver.blocks} blocks of ${driver.blockSize} B; ".format(device.vendorId, device.productId) +
+                        "bulk in/out max packet ${candidate.inEndpoint.maxPacketSize}/${candidate.outEndpoint.maxPacketSize}; " +
+                        "${android.os.Build.MANUFACTURER} ${android.os.Build.MODEL}, Android ${android.os.Build.VERSION.RELEASE}, " +
+                        "kernel ${System.getProperty("os.version")}")
                     return LibaumsRawBlockDevice(driver, communication)
                 } catch (_: MediaNotInserted) {
                     Log.i(TAG, "No media inserted in LUN $lun")
