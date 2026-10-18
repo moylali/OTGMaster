@@ -15,7 +15,8 @@ See `AGENTS.md` for what a new entry must contain and how to record an upstream 
 | `app/src/main/cpp/ntfs-3g/` | [tuxera/ntfs-3g](https://github.com/tuxera/ntfs-3g) | `7f0f841` (2026.9.28) | see the section below |
 | `app/src/main/cpp/libfsapfs/` | [libyal/libfsapfs](https://github.com/libyal/libfsapfs) + 16 libyal libraries | `f63c83b` (20260921) | see the section below |
 | `app/src/test/resources/bitlk/bitlk-images.tar.xz` (test data) | [cryptsetup](https://gitlab.com/cryptsetup/cryptsetup) | `ca4cc7a` | see the section below |
-| `app/src/main/cpp/` (VeraCrypt primitives, mbedtls, Serpent) | VeraCrypt / Mbed-TLS | see note below | pre-dates this registry |
+| `app/src/main/cpp/` (VeraCrypt primitives, mbedtls) | VeraCrypt / Mbed-TLS | see note below | pre-dates this registry |
+| `app/src/main/cpp/serpent/serpent_generic.c` | [torvalds/linux](https://github.com/torvalds/linux) `crypto/serpent_generic.c` | `adc2186` (v6.12) | see the section below |
 | `app/src/main/cpp/libtomcrypt/` (Twofish only) | [libtom/libtomcrypt](https://github.com/libtom/libtomcrypt) | `7e7eb69` (v1.18.2) | see the section below |
 | `app/src/main/cpp/argon2/` | [P-H-C/phc-winner-argon2](https://github.com/P-H-C/phc-winner-argon2) | `f57e61e` | see the section below |
 
@@ -28,6 +29,40 @@ next time either is touched; until then an upstream pull cannot be done safely,
 because there is no baseline to diff against. This is precisely the gap the registry
 exists to prevent, and it is the reason the rule in `AGENTS.md` requires a full SHA
 before a vendoring commit lands.
+
+---
+
+# `app/src/main/cpp/serpent/serpent_generic.c`
+
+The Linux kernel's Serpent (Dag Arne Osvik's bitsliced implementation), for VeraCrypt's
+Serpent volumes and the cascades that include it (AES-Twofish-Serpent, Serpent-AES,
+Serpent-Twofish-AES, Twofish-Serpent). Driven through `serpent/serpent_adapter.c` and
+`serpent/xts_generic.c` by `app/src/main/cpp/vc_cascade.cpp`.
+
+- **Pinned upstream:** `adc218676eef25575469234709c2d87185ca223a`, the `v6.12` release
+  tag, pinned 2026-10-18.
+- **What was taken:** `crypto/serpent_generic.c` alone, byte for byte apart from the
+  patches below. Not `include/crypto/serpent.h`, which is GPL-2.0-only; the few names
+  the .c needs from it and from other kernel headers are supplied by new code,
+  `serpent/serpent_kernel_shim.h`.
+- **Why vendored rather than a dependency:** no Android package of a C Serpent exists to
+  depend on. **Why this one:** it replaces the 1998 NIST reference implementation, which
+  moved single bits through the permutations and S-boxes and ran at 0.94 MB/s on an
+  x86-64 host and about 0.08 MB/s on a phone (a 2.2 GB write ~7.5 h); this runs at
+  132 MB/s on the same host. cryptsetup opens VeraCrypt Serpent volumes with this same
+  code, so the byte order is known to be VeraCrypt's; `VeraCryptCascadeTest` checks it
+  against volumes VeraCrypt made, every cascade. VeraCrypt's own `SerpentFast.c` was not
+  used: its licence terms are VeraCrypt's, and this file's are plainly
+  GPL-2.0-or-later.
+- **Licence:** GPL-2.0-or-later (SPDX header), compatible with this project's
+  GPL-3.0-or-later; see the table in `README.md`.
+
+## Patches
+
+| Area | Patch | Commit |
+|---|---|---|
+| S1 | The kernel `#include`s are kept under `#ifdef __KERNEL__`; otherwise `serpent_kernel_shim.h` (u8/u32, `__le32`/`le32_to_cpu`, `rol32`/`ror32`, unaligned little-endian helpers, `noinline`, an empty `EXPORT_SYMBOL_GPL`, `struct serpent_ctx`, the three prototypes). | this branch |
+| S2 | The kernel crypto-API glue (`serpent_setkey`, the `crypto_tfm` wrappers, `srp_alg`, module init/exit and metadata) is wrapped in `#ifdef __KERNEL__`, so a future upstream diff stays readable. | this branch |
 
 ---
 

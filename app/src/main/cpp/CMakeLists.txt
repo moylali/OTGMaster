@@ -75,10 +75,10 @@ add_library(apfs-jni OBJECT apfs/ApfsNative.cpp)
 target_compile_definitions(apfs-jni PRIVATE HAVE_CONFIG_H)
 target_include_directories(apfs-jni PRIVATE ${APFS_INCS})
 
-# serpent (vendored public-domain reference implementation, see serpent/PROVENANCE.md)
+# serpent (the Linux kernel's bitsliced serpent_generic.c, GPL-2.0-or-later; see
+# serpent/PROVENANCE.md and docs/VENDOR_FIXES.md)
 add_library(serpent STATIC
-        serpent/serpent-reference.c
-        serpent/serpent-aux.c
+        serpent/serpent_generic.c
         serpent/serpent_adapter.c
         serpent/xts_generic.c)
 target_include_directories(serpent PUBLIC serpent)

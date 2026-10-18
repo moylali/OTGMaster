@@ -17,16 +17,16 @@ struct Stage {
         // mbedtls keeps the data-key schedule per direction, so AES holds both;
         // the tweak half of each is the same encryption schedule.
         struct { mbedtls_aes_xts_context enc, dec; } aes;
-        struct { keySchedule data, tweak; } serpent;
+        struct { serpent_key data, tweak; } serpent;
         struct { symmetric_key data, tweak; } twofish;
     } u;
 };
 
 void serpentEncrypt(void* ctx, const uint8_t in[16], uint8_t out[16]) {
-    serpent_encrypt_block(*(keySchedule*) ctx, in, out);
+    serpent_encrypt_block((const serpent_key*) ctx, in, out);
 }
 void serpentDecrypt(void* ctx, const uint8_t in[16], uint8_t out[16]) {
-    serpent_decrypt_block(*(keySchedule*) ctx, in, out);
+    serpent_decrypt_block((const serpent_key*) ctx, in, out);
 }
 void twofishEncrypt(void* ctx, const uint8_t in[16], uint8_t out[16]) {
     twofish_ecb_encrypt(in, out, (symmetric_key*) ctx);
@@ -57,8 +57,8 @@ bool stageInit(Stage* s, int id, const uint8_t* primary, const uint8_t* secondar
             return ok;
         }
         case VC_CIPHER_SERPENT:
-            serpent_set_key_256(primary, s->u.serpent.data);
-            serpent_set_key_256(secondary, s->u.serpent.tweak);
+            serpent_set_key_256(primary, &s->u.serpent.data);
+            serpent_set_key_256(secondary, &s->u.serpent.tweak);
             return true;
         case VC_CIPHER_TWOFISH:
             return twofish_setup(primary, 32, 0, &s->u.twofish.data) == CRYPT_OK &&
