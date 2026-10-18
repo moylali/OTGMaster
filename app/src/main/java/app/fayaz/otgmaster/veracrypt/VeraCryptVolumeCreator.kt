@@ -2,6 +2,7 @@ package app.fayaz.otgmaster.veracrypt
 
 import app.fayaz.otgmaster.block.RawBlockDevice
 import java.nio.ByteBuffer
+import java.io.InputStream
 import java.security.SecureRandom
 import java.util.zip.CRC32
 
@@ -41,13 +42,16 @@ object VeraCryptVolumeCreator {
 
     /**
      * Why VeraCrypt would refuse this password and PIM, or null if it would accept them.
-     * Checked before anything is written.
+     * Checked before anything is written. With keyfiles the password may be empty; the
+     * PIM rule for a short password still applies to one that is not, as VeraCrypt 1.26
+     * itself refuses "short" with PIM 1 and a keyfile.
      */
-    fun passwordProblem(password: CharArray, pim: Int?): String? {
+    fun passwordProblem(password: CharArray, pim: Int?, hasKeyfiles: Boolean = false): String? {
         val bytes = String(password).toByteArray(Charsets.UTF_8)
         try {
             return when {
-                password.isEmpty() -> "Enter a password."
+                password.isEmpty() && !hasKeyfiles -> "Enter a password, or add a keyfile."
+                password.isEmpty() -> if (pim != null && pim < 0) "The PIM cannot be negative." else null
                 bytes.size > MAX_PASSWORD_BYTES -> "VeraCrypt passwords are at most $MAX_PASSWORD_BYTES bytes."
                 pim != null && pim < 0 -> "The PIM cannot be negative."
                 pim != null && pim in 1 until MIN_PIM_FOR_SHORT_PASSWORD && password.size < SHORT_PASSWORD_CHARS ->
@@ -73,17 +77,20 @@ object VeraCryptVolumeCreator {
         cipher: VeraCryptCipher,
         hash: VeraCryptHash,
         random: SecureRandom = SecureRandom(),
+        keyfiles: List<() -> InputStream?> = emptyList(),
         progress: (String) -> Unit = {},
     ): RawBlockDevice {
         require(cipher.isSupported) { "${cipher.displayName} is not supported" }
         require(hash.isSupported) { "${hash.displayName} is not supported" }
         require(partition.blockSize == SECTOR) { "VeraCrypt volumes are created on 512-byte sectors only" }
-        passwordProblem(password, pim)?.let { password.fill('\u0000'); throw IllegalArgumentException(it) }
+        passwordProblem(password, pim, keyfiles.isNotEmpty())?.let { password.fill('\u0000'); throw IllegalArgumentException(it) }
         val hostBytes = partition.blockCount * SECTOR
         val dataBytes = dataBytes(partition.blockCount)
         require(dataBytes >= 1L shl 20) { "The partition is too small for a VeraCrypt volume." }
 
-        val passwordBytes = String(password).toByteArray(Charsets.UTF_8)
+        // Keyfiles are read before anything is written: one that cannot be read stops here,
+        // rather than leaving a volume that only the unreadable file would open.
+        val passwordBytes = VeraCryptKeyfiles.apply(String(password).toByteArray(Charsets.UTF_8), keyfiles)
         password.fill('\u0000')
         val keyArea = ByteArray(KEY_AREA_BYTES).also { random.nextBytes(it) }
         val plain = plainHeader(dataBytes, keyArea)

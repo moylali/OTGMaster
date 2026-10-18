@@ -11,9 +11,9 @@ import java.nio.ByteOrder
  * The two erasing operations a mounted card offers, independent of Android so host tests
  * drive exactly the code the app runs:
  *
- * - [reformat]: an empty filesystem of the same kind, size, cluster size and label, written
- *   through the device the volume was mounted from — so a volume inside a container stays
- *   in that container, with the same password.
+ * - [reformat]: an empty exFAT or FAT32 of the same size and label (and, for the same kind,
+ *   cluster size), written through the device the volume was mounted from — so a volume
+ *   inside a container stays in that container, with the same password.
  * - [encrypt]: a new VeraCrypt volume over the whole partition, holding a new exFAT or FAT32.
  *
  * Both erase. "Full" overwrites every sector of the volume first (through the container,
@@ -63,24 +63,36 @@ object DriveFormatter {
     }
 
     /**
-     * Writes an empty filesystem like [existing] over the first [Existing.totalSectors]
-     * sectors of [device]. The caller has unmounted the old filesystem and holds the device.
+     * Writes an empty [target] filesystem over the first [Existing.totalSectors] sectors of
+     * [device], with [existing]'s size, label and partition offset. The same filesystem keeps
+     * the cluster size too; a different one takes its own default for that size, since
+     * exFAT's and FAT32's ranges differ. The caller has unmounted the old filesystem and
+     * holds the device.
      */
-    fun reformat(device: RawBlockDevice, existing: Existing, full: Boolean, progress: Progress = Progress { _, _ -> }) {
+    fun reformat(
+        device: RawBlockDevice,
+        existing: Existing,
+        full: Boolean,
+        progress: Progress = Progress { _, _ -> },
+        target: Filesystem = existing.filesystem,
+    ) {
         require(existing.totalSectors <= device.blockCount) {
             "the volume claims ${existing.totalSectors} sectors on a device of ${device.blockCount}"
         }
+        val cluster = existing.clusterBytes.takeIf { target == existing.filesystem }
         // The layout is checked before anything is written, so a volume the formatter
-        // cannot lay out the same way is refused intact rather than half erased.
-        when (existing.filesystem) {
-            Filesystem.FAT32 -> Fat32Formatter.layout(device.blockSize, existing.totalSectors, existing.clusterBytes)
-            Filesystem.EXFAT -> ExFatFormatter.layout(device.blockSize, existing.totalSectors, existing.clusterBytes)
+        // cannot lay out (FAT32 under 33 MiB, say) is refused intact rather than half erased.
+        when (target) {
+            Filesystem.FAT32 -> if (cluster != null) Fat32Formatter.layout(device.blockSize, existing.totalSectors, cluster)
+                else Fat32Formatter.layout(device.blockSize, existing.totalSectors)
+            Filesystem.EXFAT -> if (cluster != null) ExFatFormatter.layout(device.blockSize, existing.totalSectors, cluster)
+                else ExFatFormatter.layout(device.blockSize, existing.totalSectors)
         }
         if (full) {
             ZeroWriter.zero(device, 0, existing.totalSectors) { progress.update("Overwriting", it) }
         }
-        writeFilesystem(device, existing.filesystem, existing.totalSectors, existing.label,
-            existing.clusterBytes, existing.partitionOffset, progress)
+        writeFilesystem(device, target, existing.totalSectors, existing.label,
+            cluster, existing.partitionOffset, progress)
     }
 
     /**
@@ -97,12 +109,13 @@ object DriveFormatter {
         label: String,
         full: Boolean,
         progress: Progress = Progress { _, _ -> },
+        keyfiles: List<() -> java.io.InputStream?> = emptyList(),
     ): RawBlockDevice {
         val dataSectors = VeraCryptVolumeCreator.dataBytes(partition.blockCount) / 512
         // Checked before the headers go on, so a size FAT32 cannot take leaves the drive alone.
         if (filesystem == Filesystem.FAT32) Fat32Formatter.layout(512, dataSectors)
         else ExFatFormatter.layout(512, dataSectors)
-        val volume = VeraCryptVolumeCreator.create(partition, password, pim, cipher, hash) {
+        val volume = VeraCryptVolumeCreator.create(partition, password, pim, cipher, hash, keyfiles = keyfiles) {
             progress.update(it, 0f)
         }
         if (full) {

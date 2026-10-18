@@ -177,6 +177,53 @@ class DriveFormatterTest {
         tool("exfatlabel")?.let { assertTrue(run(it, f.absolutePath).second.contains("KeepEx")) }
     }
 
+    @Test fun formattingFat32AsExFatGivesACleanExFatOfTheSameSizeAndLabel() {
+        val f = fat32WithFiles(300, 8, "SWAPME")
+        val before = ImageDevice(f).use { DriveFormatter.readExisting(it, "SWAPME") }
+        ImageDevice(f).use { DriveFormatter.reformat(it, before, full = false, target = DriveFormatter.Filesystem.EXFAT) }
+        assertExFatClean(f)
+        val after = ImageDevice(f).use { DriveFormatter.readExisting(it, "SWAPME") }
+        assertEquals(DriveFormatter.Filesystem.EXFAT, after.filesystem)
+        assertEquals(before.totalSectors, after.totalSectors)
+        assertEquals(before.partitionOffset, after.partitionOffset)
+        // exFAT's own default for 300 MiB, not FAT32's 4 KiB carried across.
+        assertEquals(ExFatFormatter.defaultClusterBytes(before.totalSectors * 512), after.clusterBytes)
+        tool("exfatlabel")?.let { assertTrue(run(it, f.absolutePath).second.contains("SWAPME")) }
+    }
+
+    @Test fun formattingExFatAsFat32GivesACleanFat32ThatListsNothing() {
+        val mkfs = tool("mkfs.exfat"); assumeTrue("mkfs.exfat not available", mkfs != null)
+        val f = image(300L shl 20)
+        val (rc, out) = run(mkfs!!, "-c", "128K", "-L", "toFat", f.absolutePath)
+        assumeTrue("mkfs.exfat failed: $out", rc == 0)
+        val before = ImageDevice(f).use { DriveFormatter.readExisting(it, "toFat") }
+        ImageDevice(f).use { DriveFormatter.reformat(it, before, full = true, target = DriveFormatter.Filesystem.FAT32) }
+        assertFat32Clean(f)
+        val after = ImageDevice(f).use { DriveFormatter.readExisting(it, "toFat") }
+        assertEquals(DriveFormatter.Filesystem.FAT32, after.filesystem)
+        assertEquals(before.totalSectors, after.totalSectors)
+        assertEquals(Fat32Formatter.defaultClusterBytes(before.totalSectors * 512), after.clusterBytes)
+        ImageDevice(f).use { dev ->
+            val fs = Fat32FileSystem.read(ByteBlockDevice(RawBlockDeviceAdapter(dev)))!!
+            assertEquals(0, fs.rootDirectory.listFiles().size)
+            assertEquals("TOFAT", fs.volumeLabel.trim())
+        }
+    }
+
+    @Test fun aVolumeFat32CannotHoldIsRefusedBeforeAnythingIsWritten() {
+        val mkfs = tool("mkfs.exfat"); assumeTrue("mkfs.exfat not available", mkfs != null)
+        val f = image(16L shl 20)
+        val (rc, out) = run(mkfs!!, "-L", "small", f.absolutePath)
+        assumeTrue("mkfs.exfat failed: $out", rc == 0)
+        val bytes = f.readBytes()
+        val before = ImageDevice(f).use { DriveFormatter.readExisting(it, "small") }
+        try {
+            ImageDevice(f).use { DriveFormatter.reformat(it, before, full = true, target = DriveFormatter.Filesystem.FAT32) }
+            throw AssertionError("a 16 MiB volume was formatted as FAT32")
+        } catch (_: IllegalArgumentException) {}
+        assertTrue("the refused format changed the volume", bytes.contentEquals(f.readBytes()))
+    }
+
     @Test fun onlyExFatAndFat32CanBeReformatted() {
         val f = image(64L shl 20)
         try {

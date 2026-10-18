@@ -643,13 +643,15 @@ class E2EAutomatedTest {
         }
         assertTrue("flower.jpg not on the volume before $action", listRoot(context).any { it.endsWith("flower.jpg") })
 
-        // ── The card's More menu ──────────────────────────────────────────────
-        val more = findScrolling(By.desc("more_actions_button"), desc = "more_actions_button")
-        assertNotNull("More actions button not found on the mounted card", more)
-        more!!.click()
-        val item = device.wait(Until.findObject(By.desc("${action}_menu_item")), timeout)
-        if (item == null) captureScreen("no_${action}_menu_item")
-        assertNotNull("$action not in the More menu", item)
+        // ── The card's action, as a button if it fits on the row, else in More actions ──
+        val item = device.findObject(By.desc("${action}_action")) ?: run {
+            val more = findScrolling(By.desc("more_actions_button"), desc = "more_actions_button")
+            assertNotNull("neither $action nor More actions is on the mounted card", more)
+            more!!.click()
+            device.wait(Until.findObject(By.desc("${action}_action")), timeout)
+        }
+        if (item == null) captureScreen("no_${action}_action")
+        assertNotNull("$action not on the card or in More actions", item)
         assertTrue("$action is disabled for this volume", item!!.isEnabled)
         item.click()
         android.os.SystemClock.sleep(1000)
@@ -669,19 +671,33 @@ class E2EAutomatedTest {
             if (newCipher != "AES") pickOption("encrypt_cipher", newCipher)
             if (newHash != "SHA-512") pickOption("encrypt_kdf", newHash)
             if (newPim.isNotEmpty()) { typeInto("encrypt_pim", newPim); hideKeyboard() }
-            clickInDialog("encrypt_fs_${arguments.getString("erase_fs", "exfat")}")
+            if (arguments.getString("erase_fs", "exfat") == "fat32") pickOption("encrypt_fs", "FAT32")
             arguments.getString("erase_label", "").takeIf { it.isNotEmpty() }?.let {
                 typeInto("encrypt_label", it); hideKeyboard()
             }
         }
         if (quick) clickInDialog("quick_checkbox")
-        typeInto("erase_confirm_field", "ERASE")
-        hideKeyboard()
         val confirm = findInDialog("${action}_confirm_button")
         assertNotNull("$action confirm button not found", confirm)
         if (!confirm!!.isEnabled) captureScreen("${action}_confirm_disabled")
-        assertTrue("$action confirm button stayed disabled after typing ERASE", confirm.isEnabled)
+        assertTrue("$action button disabled with the form filled in", confirm.isEnabled)
         confirm.click()
+        // The erase itself is confirmed in a dialog: nothing starts until ERASE is typed.
+        val eraseNow = device.wait(Until.findObject(By.desc("erase_dialog_confirm")), timeout)
+        assertNotNull("the ERASE confirmation dialog did not open", eraseNow)
+        // Tapped before ERASE is typed, it must do nothing. (Its isEnabled cannot say: the
+        // accessibility node uiautomator gets for the Compose button reads enabled either way.)
+        eraseNow!!.click()
+        android.os.SystemClock.sleep(1500)
+        assertNotNull("the confirmation dialog closed on Erase without ERASE typed",
+            device.findObject(By.desc("erase_confirm_field")))
+        assertNull("an erase started without ERASE typed", device.findObject(By.desc("operation_done_button")))
+        assertNull("an erase started without ERASE typed", device.findObject(By.text(context.getString(R.string.erase_keep_attached))))
+        typeInto("erase_confirm_field", "ERASE")
+        hideKeyboard()
+        val eraseEnabled = device.wait(Until.findObject(By.desc("erase_dialog_confirm")), timeout)
+        assertNotNull("the dialog's Erase button went away", eraseEnabled)
+        eraseEnabled!!.click()
         // The confirmation screen closes as the operation starts; if it is still up,
         // the click did not take, and waiting for the result would only time out.
         if (!device.wait(Until.gone(By.desc("${action}_confirm_button")), 15000L)) {
