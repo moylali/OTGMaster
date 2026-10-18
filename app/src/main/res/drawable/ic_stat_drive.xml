@@ -1,0 +1,11 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- Status-bar icon for the mounted-drive notification: a USB stick, one colour. -->
+<vector xmlns:android="http://schemas.android.com/apk/res/android"
+    android:width="24dp"
+    android:height="24dp"
+    android:viewportWidth="24"
+    android:viewportHeight="24">
+    <path
+        android:fillColor="#FFFFFFFF"
+        android:pathData="M9,2h6v5h-6zM10,3v3h1.2v-1.6h1.6v1.6h1.2v-3zM7,7h10v13a2,2 0,0 1,-2 2h-6a2,2 0,0 1,-2 -2z" />
+</vector>

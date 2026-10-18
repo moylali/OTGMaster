@@ -19,7 +19,68 @@ class VeraCryptDocumentProvider : DocumentsProvider() {
 
     companion object {
         const val AUTHORITY = "app.fayaz.otgmaster.documents"
-        
+
+        /**
+         * Every (package, document URI) [extendReadGrant] granted, to revoke exactly those.
+         * Also kept in [GRANTS_PREFS]: grants made with grantUriPermission outlive this
+         * process until reboot, so after a crash or a kill [revokeLeftoverGrants] finds them.
+         */
+        private val extendedGrants: MutableSet<Pair<String, android.net.Uri>> =
+            java.util.Collections.newSetFromMap(java.util.concurrent.ConcurrentHashMap())
+        private const val GRANTS_PREFS = "extended_grants"
+
+        private fun key(g: Pair<String, android.net.Uri>) = "${g.first} ${g.second}"
+
+        private fun remember(context: android.content.Context, g: Pair<String, android.net.Uri>, keep: Boolean) {
+            val prefs = context.getSharedPreferences(GRANTS_PREFS, android.content.Context.MODE_PRIVATE)
+            if (keep) prefs.edit().putBoolean(key(g), true).apply() else prefs.edit().remove(key(g)).apply()
+        }
+
+        private fun revoke(context: android.content.Context, g: Pair<String, android.net.Uri>) {
+            try {
+                // The per-package form revokes only what this app granted with
+                // grantUriPermission: grants other apps persisted via ACTION_OPEN_DOCUMENT stay.
+                context.revokeUriPermission(g.first, g.second, android.content.Intent.FLAG_GRANT_READ_URI_PERMISSION)
+            } catch (e: Exception) {
+                android.util.Log.w("OTGMaster", "could not revoke read access for ${g.first}: ${e.message}")
+            }
+            extendedGrants.remove(g)
+            remember(context, g, keep = false)
+        }
+
+        /**
+         * Revokes the grants for documents on drives not in [mountedDriveIds]. Called on every
+         * change to the mounted list, so a drive unmounted or unplugged loses its grants at
+         * once while the others keep theirs.
+         */
+        fun revokeExtendedGrants(context: android.content.Context, mountedDriveIds: Set<String>) {
+            for (g in extendedGrants.toList()) {
+                val docId = runCatching { DocumentsContract.getDocumentId(g.second) }.getOrNull()
+                if (docId == null || docId.substringBefore(':') !in mountedDriveIds) revoke(context, g)
+            }
+        }
+
+        /** At start-up, before anything mounts: grants a previous process made and never revoked. */
+        fun revokeLeftoverGrants(context: android.content.Context) {
+            val prefs = context.getSharedPreferences(GRANTS_PREFS, android.content.Context.MODE_PRIVATE)
+            for (k in prefs.all.keys) {
+                val uri = runCatching { android.net.Uri.parse(k.substringAfter(' ')) }.getOrNull() ?: continue
+                revoke(context, k.substringBefore(' ') to uri)
+            }
+            prefs.edit().clear().apply()
+        }
+
+        internal fun recordGrant(context: android.content.Context, g: Pair<String, android.net.Uri>): Boolean {
+            if (!extendedGrants.add(g)) return false
+            remember(context, g, keep = true)
+            return true
+        }
+
+        internal fun forgetGrant(context: android.content.Context, g: Pair<String, android.net.Uri>) {
+            extendedGrants.remove(g)
+            remember(context, g, keep = false)
+        }
+
         private val DEFAULT_DOCUMENT_PROJECTION = arrayOf(
             DocumentsContract.Document.COLUMN_DOCUMENT_ID,
             DocumentsContract.Document.COLUMN_MIME_TYPE,
@@ -191,6 +252,7 @@ class VeraCryptDocumentProvider : DocumentsProvider() {
         val file = getFileForDocId(documentId)
         if (file != null) {
             includeFile(result, documentId, file, projection)
+            if (!file.isDirectory) extendReadGrant(documentId)
         }
         return result
     }
@@ -220,12 +282,54 @@ class VeraCryptDocumentProvider : DocumentsProvider() {
         return result
     }
 
+    /**
+     * Gives the calling app read access to [documentId]'s URI with any query string on it,
+     * which is the same document it can already read.
+     *
+     * Google Drive's video viewer, opened from the Files app, re-requests the document as
+     * ".../document/<id>?cpn=<nonce>". The grant the Files app gave it covers the URI without
+     * the query, so Android refused the read before this provider ran ("Permission Denial ...
+     * requires that you obtain access using ACTION_OPEN_DOCUMENT") and videos would not play,
+     * while images, opened without a query, did. A prefix grant is matched on the path alone,
+     * so it covers the query variants. Only for apps that reached the document without
+     * MANAGE_DOCUMENTS (that is, through a grant), only read, only files — a prefix grant on
+     * a directory would also cover its children listing — and revoked when the last drive
+     * leaves ([revokeExtendedGrants]), or at the next start after a crash ([revokeLeftoverGrants]).
+     */
+    private fun extendReadGrant(documentId: String?) {
+        val ctx = context ?: return
+        val caller = callingPackage ?: return
+        if (documentId == null || caller == ctx.packageName) return
+        if (ctx.checkCallingPermission(android.Manifest.permission.MANAGE_DOCUMENTS) ==
+            android.content.pm.PackageManager.PERMISSION_GRANTED) return
+        val uri = DocumentsContract.buildDocumentUri(AUTHORITY, documentId)
+        if (!recordGrant(ctx, caller to uri)) return
+        try {
+            ctx.grantUriPermission(caller, uri,
+                android.content.Intent.FLAG_GRANT_READ_URI_PERMISSION or android.content.Intent.FLAG_GRANT_PREFIX_URI_PERMISSION)
+        } catch (e: Exception) {
+            forgetGrant(ctx, caller to uri)
+            android.util.Log.w("OTGMaster", "could not extend read access for $caller: ${e.message}")
+        }
+    }
+
+    /** Not supported; but the caller asking is a viewer that may come back with "?cpn=". */
+    override fun openDocumentThumbnail(
+        documentId: String?,
+        sizeHint: android.graphics.Point?,
+        signal: CancellationSignal?
+    ): android.content.res.AssetFileDescriptor {
+        extendReadGrant(documentId)
+        throw UnsupportedOperationException("Thumbnails not supported")
+    }
+
     override fun openDocument(
         documentId: String?,
         mode: String?,
         signal: CancellationSignal?
     ): ParcelFileDescriptor {
         val file = getFileForDocId(documentId) ?: throw FileNotFoundException("File not found")
+        if (!file.isDirectory) extendReadGrant(documentId)
         
         val isWrite = mode?.contains("w") == true || mode?.contains("a") == true || mode?.contains("t") == true
         if (isWrite) {

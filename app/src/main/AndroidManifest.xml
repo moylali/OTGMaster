@@ -4,6 +4,13 @@
         android:name="android.hardware.usb.host"
         android:required="true" />
 
+    <!-- MountedDriveService: keeps the process out of the cached-app freezer while a drive
+         is mounted, so other apps can keep reading its files. -->
+    <uses-permission android:name="android.permission.FOREGROUND_SERVICE" />
+    <uses-permission android:name="android.permission.FOREGROUND_SERVICE_CONNECTED_DEVICE" />
+    <!-- Only so that notification shows in the shade on Android 13+; asked once, at the first mount. -->
+    <uses-permission android:name="android.permission.POST_NOTIFICATIONS" />
+
     <!-- Companion apps (Backup Master) that want mount events; see ExtensionContract. -->
     <queries>
         <intent>
@@ -58,6 +65,11 @@
             android:label="@string/feedback_title"
             android:exported="false"
             android:parentActivityName=".MainActivity" />
+
+        <service
+            android:name=".MountedDriveService"
+            android:exported="false"
+            android:foregroundServiceType="connectedDevice" />
 
         <provider
             android:name=".provider.VeraCryptDocumentProvider"

@@ -180,6 +180,7 @@ class MainActivity : AppCompatActivity() {
         private const val QEMU_DEVICE_KEY = "qemu:/dev/block/sda"
         const val EXTRA_DRIVE_ID = "app.fayaz.otgmaster.EXTRA_DRIVE_ID"
         private const val SHARE_TARGET_CATEGORY = "app.fayaz.otgmaster.category.SHARE_TARGET"
+        private const val PREF_ASKED_NOTIFICATIONS = "asked_notification_permission"
         private const val PREF_MANUALLY_UNMOUNTED = "manually_unmounted_devices"
         private const val PREF_LAST_BOOT_TIME = "last_boot_time_ms"
         private const val PREF_READ_ONLY_DEFAULT = "read_only_default"
@@ -265,6 +266,25 @@ class MainActivity : AppCompatActivity() {
         copyFilesToTree(sources, treeUri)
     }
 
+    /**
+     * Android 13+ shows an app's notifications only after it has asked. Asked once, when the
+     * first drive mounts, so MountedDriveService's notification can appear in the shade;
+     * declining changes nothing else (the service runs either way).
+     */
+    private val notificationPermission = registerForActivityResult(
+        androidx.activity.result.contract.ActivityResultContracts.RequestPermission()
+    ) { granted -> android.util.Log.i("OTGMaster", "notification permission granted=$granted") }
+
+    private fun askForNotificationsOnce() {
+        if (Build.VERSION.SDK_INT < 33) return
+        if (checkSelfPermission(android.Manifest.permission.POST_NOTIFICATIONS) ==
+            android.content.pm.PackageManager.PERMISSION_GRANTED) return
+        val prefs = getSharedPreferences("otgmaster_prefs", Context.MODE_PRIVATE)
+        if (prefs.getBoolean(PREF_ASKED_NOTIFICATIONS, false)) return
+        prefs.edit().putBoolean(PREF_ASKED_NOTIFICATIONS, true).apply()
+        notificationPermission.launch(android.Manifest.permission.POST_NOTIFICATIONS)
+    }
+
     private val permissionIntent: PendingIntent by lazy {
         val flags = PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_MUTABLE
         val intent = Intent(REQUEST_USB_PERMISSION).apply { setPackage(packageName) }
@@ -329,7 +349,20 @@ class MainActivity : AppCompatActivity() {
         FileSystemFactory.registerFileSystem(app.fayaz.otgmaster.ext4.Ext4FileSystemCreator(), 2)
         FileSystemFactory.registerFileSystem(app.fayaz.otgmaster.ntfs.NtfsFileSystemCreator(), 2)
         FileSystemFactory.registerFileSystem(app.fayaz.otgmaster.apfs.ApfsFileSystemCreator(), 2)
-        
+
+        // Read grants a previous process extended and could not revoke (it crashed or was killed).
+        if (OtgMasterState.mountedDrives.isEmpty()) {
+            app.fayaz.otgmaster.provider.VeraCryptDocumentProvider.revokeLeftoverGrants(applicationContext)
+        }
+        // Keeps the process unfrozen while anything is mounted (MountedDriveService).
+        OtgMasterState.onMountedChanged = { drives ->
+            MountedDriveService.update(applicationContext, drives.map(::driveTitle))
+            if (drives.size == 1) runOnUiThread { if (!isFinishing) askForNotificationsOnce() }
+            app.fayaz.otgmaster.provider.VeraCryptDocumentProvider
+                .revokeExtendedGrants(applicationContext, drives.map { it.id }.toSet())
+        }
+        MountedDriveService.update(applicationContext, OtgMasterState.mountedDrives.map(::driveTitle))
+
         val usbMgr = getSystemService(Context.USB_SERVICE) as UsbManager
         usbDeviceProvider = RealUsbDeviceProvider(usbMgr, permissionIntent)
 

@@ -435,7 +435,9 @@ class Ext4FileSystem private constructor(
             // Our device block 0 is the first payload byte, so the superblock
             // is at sector 2 for 512-byte sectors.  Read the first 4 KiB to
             // be safe across all block sizes, then slice out the 1024-byte SB.
-            val sectors = minOf(8, device.blockCount.toInt())
+            // On Long first: blockCount.toInt() wraps negative above 2^31 blocks (1 TiB), and
+            // an ext4 volume that size failed to mount.
+            val sectors = minOf(8L, device.blockCount).toInt()
             val raw = device.readBlocks(0, sectors)
             require(raw.size >= 2048) { "Device too small to contain an ext superblock" }
 

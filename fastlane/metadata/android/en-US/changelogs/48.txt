@@ -1,11 +1,11 @@
 • New: encrypt with VeraCrypt, keyfiles too
 • New: format as FAT32/exFAT, keeping encryption
-• New: VeraCrypt Twofish, cascades and Argon2id
+• New: VeraCrypt Twofish, cascades, Argon2id
 • New: tablet layout; actions fit the width
-• New: a dropped drive stays listed
-• New: help when no drive is found
-• New: repair ext4 drives left needing recovery
-• Fixed: slow writes on ext4, exFAT and FAT32
+• New: dropped drives stay listed; no-drive help
+• New: repair ext4 needing recovery
+• Fixed: slow writes on ext4, exFAT, FAT32
 • Fixed: FAT32 files could go missing
-• Fixed: new ext4 files showed old deleted data
-• Fixed: screens under the system bars
+• Fixed: ext4 files showing deleted data
+• Fixed: drives over 1 TB not recognised
+• Fixed: videos stopping behind other apps
