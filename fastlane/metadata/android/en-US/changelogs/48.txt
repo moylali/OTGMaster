@@ -4,7 +4,7 @@
 • New: tablet layout; actions fit the width
 • New: dropped drives stay listed; no-drive help
 • New: repair ext4 needing recovery
-• Fixed: slow writes on ext4, exFAT, FAT32
+• Fixed: slow writes, and slow Serpent drives
 • Fixed: FAT32 files could go missing
 • Fixed: ext4 files showing deleted data
 • Fixed: drives over 1 TB not recognised
