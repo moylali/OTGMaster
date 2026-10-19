@@ -303,6 +303,10 @@ dump_metadata "$NEW/meta"
 echo
 
 CHANGED=0
+# Set by the contents comparison; zero when it is skipped. Under set -u the verdict's
+# ADDED + REMOVED + MODIFIED aborted every --metadata-only compare after it had printed
+# its findings ("ADDED: unbound variable"), so each one exited 1 as if it had failed.
+ADDED=0; REMOVED=0; MODIFIED=0
 
 if (( META_ONLY == 1 )); then
     echo "=== contents ==="
