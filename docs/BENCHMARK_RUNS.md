@@ -33,6 +33,207 @@ to a row here.
 
 ---
 
+## 2026-10-16 (night) to 2026-10-18 — the 0.4.2 release-candidate matrix on `325548b` / `b7810ee`, and three changes measured on top
+
+The first 0.4.2 matrix round. `325548b` and `b7810ee` are the same tree (#68 rebase-merged one onto
+`main` as the other), so their rows belong together. Every run below is one partition by
+`matrix/helpers/sequence_runs.sh` → `start_run.sh`: password123, PIM 1, AES/SHA-512 unless the
+partition says otherwise, cache default, remount true, and **`free,block,dir,path,seq,random,opens,write,unaligned,correct,bigwrite,fixtures`** ("full"). Read-only
+partitions (ext2/ext3, APFS) skip the write sections themselves (`writes SKIPPED(ro)`). Every
+report's `commit` line was checked against the build installed. After each drive's runs it went to
+the laptop: `read_matrix_drive.sh` + `verify_matrix_drive.py` (each partition's own checker,
+read-only, plus a byte compare against the drive's baseline), or for Drive 5 `verify_volume.sh` +
+`volume_baseline.sh compare`. Devices: **OnePlus 7** (GM1901, LineageOS 23.2, Android 16), **Samsung
+M30** (SM-M305F, Android 10), **realme 8** (RMX3085, Android 13).
+
+The round stopped on 2026-10-18 when PRs #74–#77 went into 0.4.2: the matrix restarts on the final
+`main`, and these rows stay as the record of `b7810ee`.
+
+### OnePlus 7 · Drive 2 (copy, …EF451) · 10-16 22:48 – 10-17 06:51
+
+| Partition | Report | Build | Sections | Block read 4 MiB (MB/s) | bigwrite write / read-back (MB/s) | Fixtures | Verdict |
+|---|---|---|---|---|---|---|---|
+| D2L1EXT4 | `…0052` | `325548b` | full | 21.99 | 5.31 / 12.89 | ALL 21024 MATCHED | write verify ✓; correctness ✓; bigwrite ✓ after remount |
+| D2L1FAT32 | `…0030` | `325548b` | full | 23.80 | 6.66 / 12.62 | ALL 20953 MATCHED | write verify ✓; correctness ✓; bigwrite ✓ after remount |
+| D2L2EXFAT | `…0115` | `325548b` | full | 18.48 | 6.14 / 12.60 | ALL 20942 MATCHED | write verify ✓; correctness ✓; bigwrite ✓ after remount |
+| D2L4EXT4 | `…0139` | `325548b` | full | 27.78 | 5.12 / 12.81 | ALL 20888 MATCHED | write verify ✓; correctness ✓; bigwrite ✓ after remount |
+| D2L4NTFS | `…0203` | `325548b` | full | 21.49 | 2.71 / 16.67 | ALL 20927 MATCHED | write verify ✓; correctness ✓; bigwrite ✓ after remount |
+| D2VCEXFAT | `…2311` | `325548b` | full | 23.49 | 6.14 / 12.68 | ALL 20974 MATCHED | write verify ✓; correctness ✓; bigwrite ✓ after remount |
+| D2VCEXT4 | `…0007` | `325548b` | full | 20.98 | 5.56 / 12.90 | ALL 21071 MATCHED | write verify ✓; correctness ✓; bigwrite ✓ after remount |
+| D2VCFAT32 | `…2248` | `325548b` | full | 19.62 | 5.65 / 13.22 | ALL 20958 MATCHED | write verify ✓; correctness ✓; bigwrite ✓ after remount |
+| D2VCNTFS | `…2336` | `325548b` | full | 21.42 | 2.74 / 16.80 | ALL 20919 MATCHED | write verify ✓; correctness ✓; bigwrite ✓ after remount |
+| D2BLFAT32 | `…0651` | `b7810ee` | full | 29.68 | 6.27 / 13.36 | ALL 20974 MATCHED | write verify ✓; correctness ✓; bigwrite ✓ after remount |
+
+Laptop after the ten runs: **ALL CLEAN**, every fixture present, each partition's checker clean.
+
+### OnePlus 7 · Drive 3 · 10-17 08:05 – 11:33
+
+| Partition | Report | Build | Sections | Block read 4 MiB (MB/s) | bigwrite write / read-back (MB/s) | Fixtures | Verdict |
+|---|---|---|---|---|---|---|---|
+| D3BLNTFS | `…1133` | `b7810ee` | full | 24.92 | 2.82 / 17.31 | ALL 21023 MATCHED | write verify ✓; correctness ✓; bigwrite ✓ after remount |
+| D3EXT2 | `…0805` | `b7810ee` | read-only (writes SKIPPED, ro) | 45.24 | — | ALL 21821 MATCHED | read sections ✓ |
+| D3EXT3 | `…0811` | `b7810ee` | read-only (writes SKIPPED, ro) | 45.92 | — | ALL 21883 MATCHED | read sections ✓ |
+| D3L1EXFAT | `…0818` | `b7810ee` | full | 21.81 | 6.22 / 12.72 | ALL 20929 MATCHED | write verify ✓; correctness ✓; bigwrite ✓ after remount |
+| D3L1NTFS | `…0844` | `b7810ee` | full | 23.34 | 2.86 / 16.68 | ALL 20920 MATCHED | write verify ✓; correctness ✓; bigwrite ✓ after remount |
+| D3L2EXT4 | `…1011` | `b7810ee` | full | 23.03 | 5.29 / 12.71 | ALL 20939 MATCHED | write verify ✓; correctness ✓; bigwrite ✓ after remount |
+| D3L2FAT32 | `…0915` | `b7810ee` | full | 18.59 | 5.98 / 13.12 | ALL 20913 MATCHED | write verify ✓; correctness ✓; bigwrite ✓ after remount |
+| D3L2NTFS | `…0938` | `b7810ee` | full | 20.10 | 2.81 / 16.42 | ALL 20925 MATCHED | write verify ✓; correctness ✓; bigwrite ✓ after remount |
+| D3L4EXFAT | `…1102` | `b7810ee` | full | 19.65 | 4.18 / 12.76 | ALL 20910 MATCHED | write verify ✓; correctness ✓; bigwrite ✓ after remount |
+| D3L4FAT32 | `…1036` | `b7810ee` | full | 22.82 | 4.50 / 12.70 | ALL 20972 MATCHED | write verify ✓; correctness ✓; bigwrite ✓ after remount |
+
+Laptop after the runs: 8 of 10 CLEAN. **D3EXT2 and D3EXT3, never written by the app, had 1 MiB
+changed** — the superblock. LineageOS's vold mounts every partition it recognises when a stick is
+plugged in, ext2/ext3 included, and stamps `s_mtime`/`s_wtime`/`s_mnt_count` (and the ext2 state).
+Not the app; its reads of those partitions are read-only by construction. Both restored with
+`write_matrix_drive.sh --only` (user-approved) and re-verified **ALL CLEAN** with new baselines.
+
+### OnePlus 7 · Drive 4 · 10-17 12:12 – 13:37
+
+| Partition | Report | Build | Sections | Block read 4 MiB (MB/s) | bigwrite write / read-back (MB/s) | Fixtures | Verdict |
+|---|---|---|---|---|---|---|---|
+| D4BLEXFAT | `…1337` | `b7810ee` | full | 23.50 | 6.62 / 13.51 | ALL 21073 MATCHED | write verify ✓; correctness ✓; bigwrite ✓ after remount |
+| D4BLFAT32 | `…1314` | `b7810ee` | full | 22.94 | 6.11 / 13.02 | ALL 20918 MATCHED | write verify ✓; correctness ✓; bigwrite ✓ after remount |
+| D4L1EXT2 | `…1212` | `b7810ee` | read-only (writes SKIPPED, ro) | 20.12 | — | ALL 21870 MATCHED | read sections ✓ |
+| D4L1EXT3 | `…1219` | `b7810ee` | read-only (writes SKIPPED, ro) | 20.58 | — | ALL 21875 MATCHED | read sections ✓ |
+| D4L2EXT2 | `…1227` | `b7810ee` | read-only (writes SKIPPED, ro) | 27.36 | — | ALL 21678 MATCHED | read sections ✓ |
+| D4L2EXT3 | `…1235` | `b7810ee` | read-only (writes SKIPPED, ro) | 23.31 | — | ALL 21971 MATCHED | read sections ✓ |
+| D4L4EXT2 | `…1243` | `b7810ee` | read-only (writes SKIPPED, ro) | 21.77 | — | ALL 21916 MATCHED | read sections ✓ |
+| D4L4EXT3 | `…1251` | `b7810ee` | read-only (writes SKIPPED, ro) | 21.44 | — | ALL 21846 MATCHED | read sections ✓ |
+| D4VCEXT2 | `…1259` | `b7810ee` | read-only (writes SKIPPED, ro) | 23.67 | — | ALL 21948 MATCHED | read sections ✓ |
+| D4VCEXT3 | `…1306` | `b7810ee` | read-only (writes SKIPPED, ro) | 23.44 | — | ALL 21956 MATCHED | read sections ✓ |
+
+Laptop after the runs: **ALL CLEAN**; the eight read-only partitions byte-identical to their baselines.
+
+### Samsung M30 · Drive 1 · 10-16 22:48 – 10-17 11:58
+
+| Partition | Report | Build | Sections | Block read 4 MiB (MB/s) | bigwrite write / read-back (MB/s) | Fixtures | Verdict |
+|---|---|---|---|---|---|---|---|
+| D1FAT32 | `…2248` | `325548b` | read-only (writes SKIPPED, ro) | 27.31 | — | — | **FAILED** (see below) |
+| D1BLEXFAT | `…0740` | `b7810ee` | full | 10.35 | 3.67 / 9.50 | ALL 20898 MATCHED | write verify ✓; correctness ✓; bigwrite ✓ after remount |
+| D1BLNTFS | `…0808` | `b7810ee` | full | 11.07 | 1.97 / 11.25 | ALL 20905 MATCHED | write verify ✓; correctness ✓; bigwrite ✓ after remount |
+| D1EXFAT | `…0648` | `b7810ee` | full | 24.53 | 5.79 / 16.01 | — | write verify ✓; correctness ✓; bigwrite ✓ after remount; **FAILED** (see below) |
+| D1EXT4 | `…0706` | `b7810ee` | full | 29.41 | 4.87 / 15.87 | ALL 20854 MATCHED | write verify ✓; correctness ✓; bigwrite ✓ after remount |
+| D1FAT32 | `…0630` | `b7810ee` | full | 28.43 | 5.32 / 16.37 | ALL 20995 MATCHED | write verify ✓; correctness ✓; bigwrite ✓ after remount |
+| D1NTFS | `…0724` | `b7810ee` | full | 29.17 | — | — | write verify ✓; correctness ✓; **FAILED** (see below) |
+| D1APFSCI | `…1103` | `b7810ee` | read-only (writes SKIPPED, ro) | 26.92 | — | ALL 22129 MATCHED | read sections ✓ |
+| D1APFSCS | `…1120` | `b7810ee` | read-only (writes SKIPPED, ro) | 26.51 | — | ALL 22024 MATCHED | read sections ✓ |
+| D1APFSECI | `…1138` | `b7810ee` | read-only (writes SKIPPED, ro) | 24.96 | — | ALL 21777 MATCHED | read sections ✓ |
+| D1APFSECS | `…1158` | `b7810ee` | read-only (writes SKIPPED, ro) | 23.81 | — | ALL 21911 MATCHED | read sections ✓ |
+| D1EXFAT | `…1013` | `b7810ee` | full | 24.22 | 5.63 / 15.61 | ALL 20963 MATCHED | write verify ✓; correctness ✓; bigwrite ✓ after remount |
+| D1NTFS | `…1034` | `b7810ee` | full | 23.23 | 2.37 / 19.03 | ALL 21052 MATCHED | write verify ✓; correctness ✓; bigwrite ✓ after remount |
+
+**The FAILED rows are USB, not the file systems,** and all three were on a VIA USB-C multiport adapter
+(LAN + hub): `MAX_RECOVERY_ATTEMPTS Exceeded` and EIO (-5) from libaums mid-transfer —
+- D1FAT32 `…2248` (`325548b`): write verify failed reading a chunk (`MAX_RECOVERY`), and the rest
+  followed from the dead handle ("could not create a working directory", "Item already exists!");
+- D1EXFAT `…0648`: fixtures failed on an exFAT read (-5) after a passing bigwrite;
+- D1NTFS `…0724`: bigwrite and fixtures failed with EIO.
+
+The user changed to a direct adapter; D1EXFAT and D1NTFS were rerun (`…1013`, `…1034`) and passed.
+Laptop after the runs: 9 CLEAN, **D1FAT32 NOT CLEAN — one orphan cluster** (`fsck.fat`: "Reclaimed 1
+unused cluster"). FAT32 has no journal, and the 22:48 run lost the drive mid-operation, which is
+exactly what leaves one. D1 restored (user-approved) and re-verified **ALL CLEAN**; the OnePlus
+D1FAT32 run afterwards (next table) left it CLEAN — no leak in 0.4.2 on a working link.
+
+### OnePlus 7 · Drive 1 · 10-17 15:11 – 17:40
+
+| Partition | Report | Build | Sections | Block read 4 MiB (MB/s) | bigwrite write / read-back (MB/s) | Fixtures | Verdict |
+|---|---|---|---|---|---|---|---|
+| D1APFSCI | `…1701` | `b7810ee` | read-only (writes SKIPPED, ro) | 52.01 | — | ALL 22129 MATCHED | read sections ✓ |
+| D1APFSCS | `…1713` | `b7810ee` | read-only (writes SKIPPED, ro) | 50.69 | — | ALL 22024 MATCHED | read sections ✓ |
+| D1APFSECI | `…1725` | `b7810ee` | read-only (writes SKIPPED, ro) | 45.53 | — | ALL 21777 MATCHED | read sections ✓ |
+| D1APFSECS | `…1740` | `b7810ee` | read-only (writes SKIPPED, ro) | 49.77 | — | ALL 21911 MATCHED | read sections ✓ |
+| D1BLEXFAT | `…1616` | `b7810ee` | full | 27.48 | 5.70 / 12.70 | ALL 20898 MATCHED | write verify ✓; correctness ✓; bigwrite ✓ after remount |
+| D1BLNTFS | `…1636` | `b7810ee` | full | 23.80 | 2.73 / 17.28 | ALL 20905 MATCHED | write verify ✓; correctness ✓; bigwrite ✓ after remount |
+| D1EXFAT | `…1524` | `b7810ee` | full | 42.34 | 8.77 / 18.05 | ALL 20963 MATCHED | write verify ✓; correctness ✓; bigwrite ✓ after remount |
+| D1EXT4 | `…1600` | `b7810ee` | full | 55.96 | 6.15 / 18.72 | ALL 20854 MATCHED | write verify ✓; correctness ✓; bigwrite ✓ after remount |
+| D1FAT32 | `…1511` | `b7810ee` | full | 53.53 | 7.61 / 15.51 | ALL 20995 MATCHED | write verify ✓; correctness ✓; bigwrite ✓ after remount |
+| D1NTFS | `…1539` | `b7810ee` | full | 53.64 | 3.03 / 26.29 | ALL 21052 MATCHED | write verify ✓; correctness ✓; bigwrite ✓ after remount |
+
+Laptop after the runs: **ALL CLEAN**, D1FAT32 included.
+
+### Samsung M30 · Drive 3 · 10-17 15:11 – 10-18 10:40
+
+| Partition | Report | Build | Sections | Block read 4 MiB (MB/s) | bigwrite write / read-back (MB/s) | Fixtures | Verdict |
+|---|---|---|---|---|---|---|---|
+| D3EXT2 | `…1511` | `b7810ee` | read-only (writes SKIPPED, ro) | 25.72 | — | ALL 21821 MATCHED | read sections ✓ |
+| D3EXT3 | `…1523` | `b7810ee` | read-only (writes SKIPPED, ro) | 25.44 | — | ALL 21883 MATCHED | read sections ✓ |
+| D3L1EXFAT | `…1536` | `b7810ee` | full | 10.51 | — | — | write verify ✓; correctness ✓; **FAILED** (see below) |
+| D3L1EXFAT | `…1902` | `b7810ee` | full | 10.31 | 3.87 / 8.29 | ALL 20929 MATCHED | write verify ✓; correctness ✓; bigwrite ✓ after remount |
+| D3L1NTFS | `…0923` | `b7810ee` | full | 10.43 | 1.58 / 8.93 | ALL 20920 MATCHED | write verify ✓; correctness ✓; bigwrite ✓ after remount |
+| D3L2FAT32 | `…1040` | `b7810ee` | full | 10.20 | 3.98 / 8.52 | ALL 20913 MATCHED | write verify ✓; correctness ✓; bigwrite ✓ after remount |
+
+D3L1EXFAT `…1536` **FAILED** in bigwrite: the stick stopped answering 380 MB into the 2.2 GB write
+(`exFAT write failed at offset 379764702 … -5`), again on the VIA multiport adapter; the app then
+could not write its report to the drive. Laptop: **ALL CLEAN** (the partition kept a 0-byte
+`big.bin` and its fixtures). Rerun at the user's request on the same adapter (`…1902`): passed, with
+three `MAX_RECOVERY` reads that libaums recovered. D3L1NTFS and D3L2FAT32 passed; the sequence was
+then stopped for the 0.4.2 additions. Laptop after: **ALL CLEAN**.
+
+### OnePlus 7 · Drive 5 (copy, …EF455) · 10-18
+
+| Partition | Report | Build | Sections | Block read 4 MiB (MB/s) | bigwrite write / read-back (MB/s) | Fixtures | Verdict |
+|---|---|---|---|---|---|---|---|
+| VC_ATS_ARGON_PIM0 | `…0939` | `b7810ee` | reduced¹ | 0.08 | — | — | write verify ✓; correctness ✓ |
+| VC_STA_ARGON_PIM1 | `…1006` | `b7810ee` | reduced¹ | 0.08 | — | — | write verify ✓; correctness ✓ |
+| VC_TWO_SHA512_PIM0 | `…1026` | `b7810ee` | full | 18.49 | 2.84 / 13.80 | ALL 20962 MATCHED | write verify ✓; correctness ✓; bigwrite ✓ after remount |
+| VC_SA_SHA512_PIM1 | `…1541` | `7837d2d` | full | 7.87 | 3.69 / 6.63 | ALL 20915 MATCHED | write verify ✓; correctness ✓; bigwrite ✓ after remount |
+| VC_ATS_ARGON_PIM0 | `…1608` | `7837d2d` | full | 6.47 | 3.77 / 5.43 | ALL 20902 MATCHED | write verify ✓; correctness ✓; bigwrite ✓ after remount |
+
+¹ `free,block,dir,path,write,unaligned,correct`: every cipher with Serpent read at **0.08 MB/s** —
+the vendored 1998 reference implementation — where bigwrite and fixtures would each have taken
+hours. The last two rows are build **`7837d2d`** (PR #77), where the Linux kernel's bitsliced
+Serpent replaces it: Serpent-AES now runs the full suite at 7.87 MB/s, the three-cipher cascade at
+6.47. Laptop after all five: p1, p3 and p5 `fsck` **CLEAN**; the allocation tables changed only as
+the runs wrote (p1/p5 ≈ 446,000 FAT entries ≈ 2.2 GB of clusters; p3's NTFS bitmap); exFAT p2/p7/p10
+changed one byte, the "percent in use" field, from being mounted; the rest identical.
+
+### realme 8 · Drive 2 (…2D62) · 10-18 13:13 — issue #71
+
+| Partition | Report | Build | Sections | Block read 4 MiB (MB/s) | bigwrite write / read-back (MB/s) | Fixtures | Verdict |
+|---|---|---|---|---|---|---|---|
+| D2VCEXFAT | `…1313` | `26ef076` | read-only (writes SKIPPED, ro) | 9.27 | — | ALL 20974 MATCHED | read sections ✓ |
+
+Read-only, on `26ef076`, to look at issue #71 (large USB transfers failing on realme/OnePlus
+Android 16 phones). The first 64 KiB read failed with `MAX_RECOVERY`, also with the stick plugged in
+directly; 0.4.1's step-down to 32 KiB then carried the whole run, including the 2.1 GB sequential
+read. Nothing written, so no laptop check.
+
+### Runs that produced no result (dropped, listed so the gaps are explained)
+
+- **M30, D1EXFAT, 10-17:** stalled before its first section — the phone, on an adapter that does not
+  charge it, let the screen doze.
+- **OnePlus 7, D2BLFAT32, 10-17:** hung on the USB permission dialog after a reinstall; restarted.
+- **M30, D3L1NTFS, 10-18 09:21:** Android killed the app as it started, straight after a reinstall
+  ("timeout publishing content providers"); the benchmark ran without the activity and mounted nothing.
+- **OnePlus 7, D5 p1, 10-18 09:35:** stopped after the block reads to give the Serpent partitions the
+  reduced set (0.08 MB/s).
+- **realme 8, D2VCEXFAT, 10-18 12:55:** the run helper sent no PIM (a bug in the helper, fixed); stopped
+  before the unlock finished. **12:56:** the USB-C hub dropped off the port at 13:04 (power
+  renegotiation, all three devices on it removed); the mount never completed.
+- **OnePlus 7, D5 p5, 10-18 15:39:** the phone had locked (a secure lock screen, now that phones sleep
+  between runs); the app opened behind it and mounted nothing. `start_run.sh` now waits for an unlock.
+
+### Commit hashes after the merges of #68 and #74–#78
+
+`main` requires linear history, so each PR was rebase-merged and its commits given new hashes.
+Same order, same subjects; each change identical to the one tested (#77 was based on `6cde6eb` and landed on `47b4f04`, so its tree also carries #76 — `git diff 6cde6eb 7837d2d` equals `git diff 47b4f04 4b5b630`)). #78 was based on `4b5b630`, the tip of `main`, so its tree is unchanged by the merge: the D5 runs on APKs stamped `6e281db` measured exactly `de98da6`.
+
+| On the branch (cited) | On `main` | PR | Commit |
+|---|---|---|---|
+| `7a42e7d` | `0cdaf2a` | #68 | bench: time the USB layer in bigwrite; xfer extra to try transfer sizes |
+| `2a184b5` | `27efed5` | #68 | libaums: a partial-sector write tail reads one sector, not the span (V21) |
+| `76d28be` | `a3dc383` | #68 | bench: the xfer extra applies to USB devices already open |
+| `2a79076` | `2509489` | #68 | experiment: V19's FAT32 write runs back, measured with V21 |
+| `325548b` | `b7810ee` | #68 | docs: record the FAT32 write-run A/B; ship V19 with V21 |
+| `5ebcb43` | `26ef076` | #74 | feat(ui): Encrypt picks a type and takes keyfiles; Format picks a filesystem; ERASE in a dialog |
+| `9de8b29` | `6cde6eb` | #75 | fix: drives over 1 TiB showed "Unknown"; videos would not play from the Files app |
+| `b38f3c6` | `47b4f04` | #76 | feat: say "OTG is switched off" only when it is, on OPPO/realme/OnePlus |
+| `7837d2d` | `4b5b630` | #77 | perf: Serpent ~140x faster - the Linux kernel's bitsliced code replaces the 1998 reference |
+| `6e281db` | `de98da6` | #78 | fix: the app stopped responding while a long write held a drive |
+
+---
+
 ## 2026-10-16 (night) — FAT32 write runs again (V19 + V21): D1FAT32 on the OnePlus 7, six runs
 
 Measurement runs for `perf/fat32-speed`. Each run: `--es tests free,bigwrite --es drive D1FAT32`,
