@@ -2391,6 +2391,9 @@ fun formatSize(bytes: Long): String {
  * it is a real one rather than the "Partition N" this app makes up, else OTGMASTER. Cut to
  * the 11 characters both filesystems allow; the formatter upper-cases it for FAT32.
  */
+/** How often a mounted drive's card re-reads its capacity and free space. */
+private const val SPACE_REFRESH_MS = 3_000L
+
 internal fun suggestedVolumeLabel(drive: MountedDrive): String {
     val own = runCatching { drive.fileSystem.volumeLabel.trim() }.getOrDefault("")
     val partition = drive.partitionLabel.trim().takeUnless { it.matches(Regex("(?i)partition \\d+")) }.orEmpty()
@@ -2453,13 +2456,22 @@ fun OtgMasterApp(
     var showSettings by remember { mutableStateOf(false) }
     var formatTarget by remember { mutableStateOf<MountedDrive?>(null) }
     var encryptTarget by remember { mutableStateOf<MountedDrive?>(null) }
+    // The volume label (and, for a drive without a partition table, its capacity) is read
+    // under the filesystem's lock, which a long write holds for minutes: read it off the main
+    // thread, once per form, and open the form when it is in.
+    val formatForm by produceState<Pair<app.fayaz.otgmaster.ui.DriveSummary, String>?>(null, formatTarget) {
+        value = formatTarget?.let { t -> withContext(Dispatchers.IO) { driveSummary(t)?.let { it to suggestedVolumeLabel(t) } } }
+    }
+    val encryptForm by produceState<Pair<app.fayaz.otgmaster.ui.DriveSummary, String>?>(null, encryptTarget) {
+        value = encryptTarget?.let { t -> withContext(Dispatchers.IO) { driveSummary(t)?.let { it to suggestedVolumeLabel(t) } } }
+    }
     formatTarget?.let { target ->
-        driveSummary(target)?.let { summary ->
+        formatForm?.let { (summary, suggestedLabel) ->
             app.fayaz.otgmaster.ui.FormatScreen(
                 drive = summary,
                 current = app.fayaz.otgmaster.format.DriveFormatter.Filesystem.entries
                     .firstOrNull { it.displayName.equals(target.filesystemName, ignoreCase = true) },
-                suggestedLabel = suggestedVolumeLabel(target),
+                suggestedLabel = suggestedLabel,
                 insideContainer = !target.isPlain,
                 onConfirm = { req -> formatTarget = null; onFormat(target, req) },
                 onDismiss = { formatTarget = null },
@@ -2467,10 +2479,10 @@ fun OtgMasterApp(
         }
     }
     encryptTarget?.let { target ->
-        driveSummary(target)?.let { summary ->
+        encryptForm?.let { (summary, suggestedLabel) ->
             app.fayaz.otgmaster.ui.EncryptScreen(
                 drive = summary,
-                suggestedLabel = suggestedVolumeLabel(target),
+                suggestedLabel = suggestedLabel,
                 onConfirm = { req -> encryptTarget = null; onEncrypt(target, req) },
                 onDismiss = { encryptTarget = null },
             )
@@ -2547,10 +2559,19 @@ fun OtgMasterApp(
                         colors = CardDefaults.cardColors(containerColor = cardColor)
                     ) {
                         Column(modifier = Modifier.padding(16.dp)) {
-                            val totalSpace = drive.fileSystem.capacity
-                            val freeSpace = drive.fileSystem.freeSpace
-                            val usedSpace = totalSpace - freeSpace
-                            val progress = if (totalSpace > 0) usedSpace.toFloat() / totalSpace.toFloat() else 0f
+                            // Read off the main thread and refreshed, never while drawing: NTFS and
+                            // exFAT answer under the volume's lock, which a long write holds for
+                            // minutes, and ext4 reads its superblock from the drive. Read here, a
+                            // 2.2 GB write to an NTFS volume on a Pixel 7 Pro made the app "not
+                            // responding" at the first touch. Until the first read, no bar.
+                            val space by produceState<Pair<Long, Long>?>(null, drive.id) {
+                                while (true) {
+                                    value = withContext(Dispatchers.IO) {
+                                        runCatching { drive.fileSystem.capacity to drive.fileSystem.freeSpace }.getOrNull()
+                                    } ?: value
+                                    delay(SPACE_REFRESH_MS)
+                                }
+                            }
 
                             Text(text = driveTitle(drive), style = MaterialTheme.typography.titleMedium)
 
@@ -2588,6 +2609,9 @@ fun OtgMasterApp(
                                 app.fayaz.otgmaster.ui.JournalRepairNotice(onRepair = { onRequestJournalRepair(drive) })
                             }
 
+                            space?.let { (totalSpace, freeSpace) ->
+                            val usedSpace = totalSpace - freeSpace
+                            val progress = if (totalSpace > 0) usedSpace.toFloat() / totalSpace.toFloat() else 0f
                             Spacer(modifier = Modifier.height(4.dp))
                             Text(text = formatSize(totalSpace), style = MaterialTheme.typography.bodyMedium, color = MaterialTheme.colorScheme.onSurfaceVariant)
 
@@ -2605,6 +2629,7 @@ fun OtgMasterApp(
                             ) {
                                 Text(text = stringResource(R.string.used_label, formatSize(usedSpace)), style = MaterialTheme.typography.bodySmall)
                                 Text(text = stringResource(R.string.free_label, formatSize(freeSpace)), style = MaterialTheme.typography.bodySmall)
+                            }
                             }
                             disconnectHistory[drive.partitionKey]?.let { events ->
                                 Spacer(modifier = Modifier.height(8.dp))
