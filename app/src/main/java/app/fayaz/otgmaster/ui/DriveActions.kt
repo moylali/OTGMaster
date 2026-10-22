@@ -11,6 +11,11 @@ import androidx.compose.foundation.layout.FlowRow
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.width
+import androidx.compose.foundation.selection.toggleable
+import androidx.compose.ui.autofill.ContentType
+import androidx.compose.ui.semantics.Role
+import androidx.compose.ui.semantics.contentType
+import app.fayaz.otgmaster.security.PasswordManager
 import androidx.compose.foundation.layout.WindowInsets
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
@@ -105,6 +110,8 @@ class EncryptRequest(
     val filesystem: DriveFormatter.Filesystem,
     val label: String,
     val full: Boolean,
+    /** Offer the password to the user's password manager once the volume is created. */
+    val saveToPasswordManager: Boolean = false,
 )
 
 /** A Format request from the screen: [filesystem] may differ from the volume's current one. */
@@ -291,7 +298,9 @@ private fun PasswordField(value: String, label: String, id: String, onChange: (S
                     contentDescription = stringResource(if (visible) R.string.cd_hide_password else R.string.cd_show_password))
             }
         },
-        modifier = Modifier.fillMaxWidth().semantics { contentDescription = id },
+        // Every password typed here is a new one: password managers offer to save it,
+        // not to fill an old one in.
+        modifier = Modifier.fillMaxWidth().semantics { contentDescription = id; contentType = ContentType.NewPassword },
     )
 }
 
@@ -436,6 +445,7 @@ fun EncryptScreen(
     var confirm by remember { mutableStateOf("") }
     var pimText by remember { mutableStateOf("") }
     var pimConfirm by remember { mutableStateOf("") }
+    var saveToPasswordManager by remember { mutableStateOf(false) }
     var cipher by remember { mutableStateOf(VeraCryptCipher.AES) }
     var hash by remember { mutableStateOf(VeraCryptHash.SHA512) }
     var keyfiles by remember { mutableStateOf(emptyList<Uri>()) }
@@ -545,6 +555,18 @@ fun EncryptScreen(
             "encrypt_fs") { fs = it }
         LabelField(label, "encrypt_label") { label = it }
         QuickOption(quick) { quick = it }
+        if (PasswordManager.isAvailable && password.isNotEmpty()) {
+            Row(
+                verticalAlignment = Alignment.CenterVertically,
+                modifier = Modifier.fillMaxWidth().toggleable(
+                    value = saveToPasswordManager, role = Role.Checkbox, onValueChange = { saveToPasswordManager = it },
+                ).semantics { contentDescription = "encrypt_save_password_manager" },
+            ) {
+                Checkbox(checked = saveToPasswordManager, onCheckedChange = null)
+                Spacer(modifier = Modifier.width(8.dp))
+                Text(stringResource(R.string.encrypt_save_password_manager), style = MaterialTheme.typography.bodyMedium)
+            }
+        }
         problem?.let { Text(it, color = MaterialTheme.colorScheme.error, style = MaterialTheme.typography.bodySmall) }
         Button(
             onClick = { confirming = true },
@@ -557,7 +579,8 @@ fun EncryptScreen(
         EraseConfirmDialog(drive, stringResource(R.string.encrypt_button),
             onConfirm = {
                 confirming = false
-                onConfirm(EncryptRequest(type, password.toCharArray(), pim, cipher, hash, keyfiles, fs, label.trim(), !quick))
+                onConfirm(EncryptRequest(type, password.toCharArray(), pim, cipher, hash, keyfiles, fs, label.trim(), !quick,
+                    saveToPasswordManager = PasswordManager.isAvailable && saveToPasswordManager && password.isNotEmpty()))
                 password = ""; confirm = ""; pimConfirm = ""
             },
             onDismiss = { confirming = false })

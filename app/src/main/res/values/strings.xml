@@ -31,6 +31,7 @@
     <string name="algorithm_not_supported">%1$s (not yet supported)</string>
     <string name="cd_hide_password">Hide password</string>
     <string name="cd_show_password">Show password</string>
+    <string name="cd_fill_from_password_manager">Fill from password manager</string>
     <string name="unlocking_in_progress">Unlocking… This may take a while</string>
     <string name="unlock_and_mount">Unlock &amp; Mount</string>
     <string name="label_usb_drive">USB Drive</string>
@@ -221,6 +222,9 @@
     <string name="encrypt_pim">PIM (optional)</string>
     <string name="encrypt_pim_confirm">Confirm PIM</string>
     <string name="encrypt_pims_differ">The PIMs do not match.</string>
+    <string name="encrypt_save_password_manager">Save the password in my password manager</string>
+    <string name="log_password_manager_saved">Password saved in your password manager as \"%1$s\".</string>
+    <string name="log_password_manager_not_saved">The password was not saved in your password manager (%1$s).</string>
     <string name="encrypt_pim_hint_pbkdf2">Empty for VeraCrypt\'s default (500,000 iterations).</string>
     <string name="encrypt_pim_hint_argon2">Empty for VeraCrypt\'s default (416 MiB, 6 passes). Higher values need more memory and time to unlock.</string>
     <string name="encrypt_filesystem">Filesystem inside</string>

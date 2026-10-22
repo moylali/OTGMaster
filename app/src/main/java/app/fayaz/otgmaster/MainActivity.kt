@@ -39,6 +39,8 @@ import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.KeyboardArrowDown
 import androidx.compose.material.icons.filled.KeyboardArrowUp
 import androidx.compose.material.icons.filled.Visibility
+import androidx.compose.ui.semantics.contentType
+import androidx.compose.material.icons.filled.Key
 import androidx.compose.material.icons.filled.VisibilityOff
 import androidx.compose.material.icons.filled.Delete
 import androidx.compose.material.icons.filled.ContentCopy
@@ -1811,6 +1813,8 @@ class MainActivity : AppCompatActivity() {
         window.addFlags(android.view.WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON)
         appendLog(getString(R.string.log_encrypt_started, drive.name, req.cipher.displayName, req.hash.displayName,
             req.filesystem.displayName, if (req.full) "full" else "quick"))
+        // Taken before the volume is created: the request's password is wiped afterwards.
+        val passwordToSave = if (req.saveToPasswordManager) String(req.password) else null
         lifecycleScope.launch(Dispatchers.IO) {
             val t0 = System.currentTimeMillis()
             try {
@@ -1843,6 +1847,19 @@ class MainActivity : AppCompatActivity() {
                 val candidate = VolumeCandidate(drive.partitionLabel, start, count,
                     app.fayaz.otgmaster.veracrypt.ContainerType.VERACRYPT)
                 val secs = ((System.currentTimeMillis() - t0) / 1000).toInt()
+                if (req.saveToPasswordManager && passwordToSave != null) {
+                    // The username is the device and the partition, nothing else (decided
+                    // 10-30): it is what the user sees in the manager and picks in its chooser.
+                    // The rest (PIM, keyfiles, cipher) is theirs to remember.
+                    val device = drive.sourceDeviceDisplayName ?: drive.name
+                    val id = listOf(device, drive.partitionLabel).filter { it.isNotBlank() }.joinToString(" · ")
+                    val saved = withContext(Dispatchers.Main) {
+                        app.fayaz.otgmaster.security.PasswordManager.save(this@MainActivity, id, passwordToSave)
+                    }
+                    withContext(Dispatchers.Main) {
+                        appendLog(getString(if (saved) R.string.log_password_manager_saved else R.string.log_password_manager_not_saved, id))
+                    }
+                }
                 withContext(Dispatchers.Main) {
                     offerForUnlock(drive, raw, candidate)
                     appendLog(getString(R.string.log_encrypt_done, drive.name, secs))
@@ -3087,6 +3104,7 @@ fun VeraCryptMountSection(
     var hashExpanded by remember { mutableStateOf(false) }
     val focusManager = androidx.compose.ui.platform.LocalFocusManager.current
     val context = androidx.compose.ui.platform.LocalContext.current
+    val passwordManagerScope = androidx.compose.runtime.rememberCoroutineScope()
 
     val keyfileLauncher = rememberLauncherForActivityResult(
         contract = ActivityResultContracts.OpenMultipleDocuments()
@@ -3293,16 +3311,33 @@ fun VeraCryptMountSection(
                 }),
                 visualTransformation = if (passwordVisible) androidx.compose.ui.text.input.VisualTransformation.None else PasswordVisualTransformation(),
                 trailingIcon = {
-                    IconButton(onClick = { passwordVisible = !passwordVisible }) {
-                        Icon(
-                            imageVector = if (passwordVisible) Icons.Default.Visibility else Icons.Default.VisibilityOff,
-                            contentDescription = if (passwordVisible) stringResource(R.string.cd_hide_password) else stringResource(R.string.cd_show_password)
-                        )
+                    Row {
+                        if (!isPreFilled && app.fayaz.otgmaster.security.PasswordManager.isAvailable) {
+                            IconButton(
+                                onClick = {
+                                    passwordManagerScope.launch {
+                                        app.fayaz.otgmaster.security.PasswordManager.pick(context)?.let { password = it }
+                                    }
+                                },
+                                modifier = Modifier.semantics { contentDescription = "password_manager_fill" },
+                            ) {
+                                Icon(Icons.Default.Key, contentDescription = stringResource(R.string.cd_fill_from_password_manager))
+                            }
+                        }
+                        IconButton(onClick = { passwordVisible = !passwordVisible }) {
+                            Icon(
+                                imageVector = if (passwordVisible) Icons.Default.Visibility else Icons.Default.VisibilityOff,
+                                contentDescription = if (passwordVisible) stringResource(R.string.cd_hide_password) else stringResource(R.string.cd_show_password)
+                            )
+                        }
                     }
                 },
                 modifier = Modifier
                     .fillMaxWidth()
-                    .semantics { contentDescription = "password_input" }
+                    .semantics {
+                        contentDescription = "password_input"
+                        contentType = androidx.compose.ui.autofill.ContentType.Password
+                    }
             )
 
             if (!isLuks) {
