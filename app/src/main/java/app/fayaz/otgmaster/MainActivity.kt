@@ -1825,11 +1825,13 @@ class MainActivity : AppCompatActivity() {
                         req.cipher, req.hash, req.filesystem, req.label, req.full, progressFor(title),
                         keyfiles = req.keyfiles.map { uri -> { contentResolver.openInputStream(uri) } })
                 }
-                // Any credentials saved for the old volume would now only fail.
+                // Any credentials saved for the old volume would now only fail. Only this
+                // partition's: the device's other partitions keep theirs, and the session
+                // entry is dropped only when it is this partition's (it holds one per device).
                 if (deviceKey != null) {
                     withContext(Dispatchers.Main) {
                         credentialStore.deletePartition(deviceKey, start)
-                        sessionPlaintextCreds.remove(deviceKey)
+                        if (sessionPlaintextCreds[deviceKey]?.candidateStartBlock == start) sessionPlaintextCreds.remove(deviceKey)
                     }
                 }
                 // Not mounted with the key still in memory. The new volume goes to the unlock

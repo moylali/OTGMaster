@@ -219,6 +219,8 @@
     <string name="encrypt_cipher">Encryption</string>
     <string name="encrypt_kdf">Key derivation</string>
     <string name="encrypt_pim">PIM (optional)</string>
+    <string name="encrypt_pim_confirm">Confirm PIM</string>
+    <string name="encrypt_pims_differ">The PIMs do not match.</string>
     <string name="encrypt_pim_hint_pbkdf2">Empty for VeraCrypt\'s default (500,000 iterations).</string>
     <string name="encrypt_pim_hint_argon2">Empty for VeraCrypt\'s default (416 MiB, 6 passes). Higher values need more memory and time to unlock.</string>
     <string name="encrypt_filesystem">Filesystem inside</string>
