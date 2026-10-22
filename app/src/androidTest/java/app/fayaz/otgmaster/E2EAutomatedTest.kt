@@ -670,7 +670,10 @@ class E2EAutomatedTest {
             hideKeyboard()
             if (newCipher != "AES") pickOption("encrypt_cipher", newCipher)
             if (newHash != "SHA-512") pickOption("encrypt_kdf", newHash)
-            if (newPim.isNotEmpty()) { typeInto("encrypt_pim", newPim); hideKeyboard() }
+            if (newPim.isNotEmpty()) {
+                typeInto("encrypt_pim", newPim); hideKeyboard()
+                typeInto("encrypt_pim_confirm", newPim); hideKeyboard()
+            }
             if (arguments.getString("erase_fs", "exfat") == "fat32") pickOption("encrypt_fs", "FAT32")
             arguments.getString("erase_label", "").takeIf { it.isNotEmpty() }?.let {
                 typeInto("encrypt_label", it); hideKeyboard()

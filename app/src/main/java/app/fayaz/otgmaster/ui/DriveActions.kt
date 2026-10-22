@@ -10,6 +10,7 @@ import androidx.compose.foundation.layout.ExperimentalLayoutApi
 import androidx.compose.foundation.layout.FlowRow
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
+import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.layout.WindowInsets
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
@@ -434,6 +435,7 @@ fun EncryptScreen(
     var password by remember { mutableStateOf("") }
     var confirm by remember { mutableStateOf("") }
     var pimText by remember { mutableStateOf("") }
+    var pimConfirm by remember { mutableStateOf("") }
     var cipher by remember { mutableStateOf(VeraCryptCipher.AES) }
     var hash by remember { mutableStateOf(VeraCryptHash.SHA512) }
     var keyfiles by remember { mutableStateOf(emptyList<Uri>()) }
@@ -471,6 +473,7 @@ fun EncryptScreen(
         !hasCredential -> null
         password != confirm -> stringResource(R.string.encrypt_passwords_differ)
         pimInvalid -> stringResource(R.string.encrypt_pim_invalid)
+        pimText != pimConfirm -> stringResource(R.string.encrypt_pims_differ)
         else -> VeraCryptVolumeCreator.passwordProblem(password.toCharArray(), pim, keyfiles.isNotEmpty())
     }
 
@@ -525,6 +528,16 @@ fun EncryptScreen(
                     singleLine = true, keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Number),
                     modifier = Modifier.fillMaxWidth().semantics { contentDescription = "encrypt_pim" },
                 )
+                // A mistyped PIM locks the volume as surely as a mistyped password, and the
+                // field shows digits in the clear, which invites the same false confidence.
+                if (pimText.isNotEmpty() || pimConfirm.isNotEmpty()) {
+                    OutlinedTextField(
+                        value = pimConfirm, onValueChange = { pimConfirm = it.filter(Char::isDigit).take(7) },
+                        label = { Text(stringResource(R.string.encrypt_pim_confirm)) },
+                        singleLine = true, keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Number),
+                        modifier = Modifier.fillMaxWidth().semantics { contentDescription = "encrypt_pim_confirm" },
+                    )
+                }
             }
         }
 
@@ -545,7 +558,7 @@ fun EncryptScreen(
             onConfirm = {
                 confirming = false
                 onConfirm(EncryptRequest(type, password.toCharArray(), pim, cipher, hash, keyfiles, fs, label.trim(), !quick))
-                password = ""; confirm = ""
+                password = ""; confirm = ""; pimConfirm = ""
             },
             onDismiss = { confirming = false })
     }
