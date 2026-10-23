@@ -508,7 +508,7 @@ read. Nothing written, so no laptop check.
 - **OnePlus 7, D5 p5, 10-18 15:39:** the phone had locked (a secure lock screen, now that phones sleep
   between runs); the app opened behind it and mounted nothing. `start_run.sh` now waits for an unlock.
 
-### Commit hashes after the merges of #68 and #74–#78
+### Commit hashes after the merges of #68, #74–#78 and #81
 
 `main` requires linear history, so each PR was rebase-merged and its commits given new hashes.
 Same order, same subjects; each change identical to the one tested (#77 was based on `6cde6eb` and landed on `47b4f04`, so its tree also carries #76 — `git diff 6cde6eb 7837d2d` equals `git diff 47b4f04 4b5b630`)). #78 was based on `4b5b630`, the tip of `main`, so its tree is unchanged by the merge: the D5 runs on APKs stamped `6e281db` measured exactly `de98da6`.
@@ -525,6 +525,8 @@ Same order, same subjects; each change identical to the one tested (#77 was base
 | `b38f3c6` | `47b4f04` | #76 | feat: say "OTG is switched off" only when it is, on OPPO/realme/OnePlus |
 | `7837d2d` | `4b5b630` | #77 | perf: Serpent ~140x faster - the Linux kernel's bitsliced code replaces the 1998 reference |
 | `6e281db` | `de98da6` | #78 | fix: the app stopped responding while a long write held a drive |
+| `5150d64` | `4c6a02d` | #81 | docs: record the 0.4.2 matrix round on b7810ee and the runs since; hash table for #68, #74-#77 |
+| `3b42309` | `c7b130e` | #81 | docs: v0.4.2 regression report, the release matrix on 6e281db, store screenshots |
 
 ---
 
