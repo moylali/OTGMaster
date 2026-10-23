@@ -33,6 +33,300 @@ to a row here.
 
 ---
 
+## 2026-10-18 (night) to 2026-10-22 — the 0.4.2 release matrix on `6e281db` (= `de98da6`)
+
+The matrix restarted on the final 0.4.2 tree once #74–#78 were in. Every report below says
+`build: 0.4.2 (48) commit 6e281db`, checked against the APK installed before each drive; `6e281db`
+is #78's head and landed on `main` as `de98da6` with an identical tree (hash table in the section
+below). Same procedure as the round below: one partition per run via `sequence_runs.sh` →
+`start_run.sh`, the "full" section set, password123 / PIM 1 / AES / SHA-512 unless the partition
+says otherwise (Drive 5 partitions carry their own cipher, KDF and PIM). After each drive's runs
+it went to the laptop: `read_matrix_drive.sh` + `verify_matrix_drive.py` (Drives 1–4), or
+`verify_volume.sh` + manifest hashes per partition (Drive 5, `hostcheck_d5.sh`).
+
+Devices: **Pixel 7 Pro** (Android 17, SDK 37), **OnePlus 7** (GM1901, LineageOS 23.2, Android 16),
+**Samsung M30** (SM-M305F, Android 10). Drive 5 exists twice: the original (…EF449) and a copy
+built from the same script (…EF455).
+
+| | Drive 1 | Drive 2 | Drive 3 | Drive 4 | Drive 5 |
+|---|---|---|---|---|---|
+| Pixel 7 Pro | 10/10 ✓ · host: D1FAT32 NOT CLEAN (vold, below) | 10/10 ✓ · ALL CLEAN | 10/10 ✓ · ALL CLEAN | 10/10 ✓ · ALL CLEAN | 10/10 ✓ (…EF455) · ALL CLEAN |
+| OnePlus 7 | 10/10 ✓ · ALL CLEAN | 10/10 ✓ · ALL CLEAN | 10/10 ✓ · ALL CLEAN | 10/10 ✓ · ALL CLEAN | 10/10 ✓ (…EF449, p10 rerun) · ALL CLEAN |
+| Samsung M30 | 10/10 ✓ (D1EXT4 rerun) · ALL CLEAN | 10/10 ✓ · ALL CLEAN | 10/10 ✓ (two reruns) · ALL CLEAN | not run | **FAILED** — 2 partitions passed, then USB dropouts (below) |
+
+### Pixel 7 Pro · Drive 1 · 10-20 07:21 – 09:34
+
+| Partition | Finished | bigwrite write / read-back (MB/s) | Fixtures | Verdict |
+|---|---|---|---|---|
+| D1FAT32 | 07:34 | 8.17 / 35.75 | ALL 20995 MATCHED | all ✓ |
+| D1EXFAT | 07:45 | 9.38 / 38.46 | ALL 20963 MATCHED | all ✓ |
+| D1NTFS | 08:05 | 3.16 / 35.27 | ALL 21052 MATCHED | all ✓ |
+| D1EXT4 | 08:18 | 6.17 / 41.87 | ALL 20854 MATCHED | all ✓ |
+| D1BLEXFAT | 08:32 | 6.61 / 27.22 | ALL 20898 MATCHED | all ✓ |
+| D1BLNTFS | 08:55 | 2.81 / 27.99 | ALL 20905 MATCHED | all ✓ |
+| D1APFSCI | 09:05 | — | ALL 22129 MATCHED | read sections ✓; writes SKIPPED (ro) |
+| D1APFSCS | 09:14 | — | ALL 22024 MATCHED | read sections ✓; writes SKIPPED (ro) |
+| D1APFSECI | 09:24 | — | ALL 21777 MATCHED | read sections ✓; writes SKIPPED (ro) |
+| D1APFSECS | 09:34 | — | ALL 21911 MATCHED | read sections ✓; writes SKIPPED (ro) |
+Laptop: 9 of 10 CLEAN. **D1FAT32 NOT CLEAN**: dirty bit set, boot sector and backup differ at
+offset 65 (01/00 — the volume-dirty flag), free-cluster summary off by one (83612 vs 83611).
+Every fixture and the big write matched. The Pixel's vold mounts a plain FAT32 partition with the
+kernel's own vfat driver as soon as the drive is attached, which sets that flag; the drive was
+pulled with vold's mount still up. The app's own writes go through its own driver, and the same
+partition was clean after the OnePlus and M30 runs. Repaired with `fsck.fat -a` (the user), clean.
+
+### Pixel 7 Pro · Drive 2 · 10-19 07:19 – 10:35
+
+| Partition | Finished | bigwrite write / read-back (MB/s) | Fixtures | Verdict |
+|---|---|---|---|---|
+| D2VCFAT32 | 07:35 | 6.72 / 25.32 | ALL 20958 MATCHED | all ✓ |
+| D2VCEXFAT | 07:53 | 7.32 / 26.74 | ALL 20974 MATCHED | all ✓ |
+| D2VCNTFS | 08:21 | 2.76 / 26.33 | ALL 20919 MATCHED | all ✓ |
+| D2VCEXT4 | 08:39 | 5.46 / 28.56 | ALL 21071 MATCHED | all ✓ |
+| D2L1FAT32 | 08:55 | 7.05 / 27.62 | ALL 20953 MATCHED | all ✓ |
+| D2L1EXT4 | 09:14 | 5.28 / 28.01 | ALL 21024 MATCHED | all ✓ |
+| D2L2EXFAT | 09:32 | 7.47 / 26.29 | ALL 20942 MATCHED | all ✓ |
+| D2L4EXT4 | 09:51 | 5.08 / 29.13 | ALL 20888 MATCHED | all ✓ |
+| D2L4NTFS | 10:18 | 2.72 / 27.55 | ALL 20927 MATCHED | all ✓ |
+| D2BLFAT32 | 10:35 | 5.88 / 28.93 | ALL 20974 MATCHED | all ✓ |
+Laptop: ALL CLEAN.
+
+### Pixel 7 Pro · Drive 3 · 10-19 19:16 – 22:33
+
+| Partition | Finished | bigwrite write / read-back (MB/s) | Fixtures | Verdict |
+|---|---|---|---|---|
+| D3EXT2 | 19:21 | — | ALL 21821 MATCHED | read sections ✓; writes SKIPPED (ro) |
+| D3EXT3 | 19:25 | — | ALL 21883 MATCHED | read sections ✓; writes SKIPPED (ro) |
+| D3L1EXFAT | 19:44 | 7.47 / 26.14 | ALL 20929 MATCHED | all ✓ |
+| D3L1NTFS | 20:11 | 2.83 / 26.90 | ALL 20920 MATCHED | all ✓ |
+| D3L2FAT32 | 20:29 | 7.00 / 28.68 | ALL 20913 MATCHED | all ✓ |
+| D3L2NTFS | 20:59 | 2.62 / 25.62 | ALL 20925 MATCHED | all ✓ |
+| D3L2EXT4 | 21:18 | 5.17 / 26.62 | ALL 20939 MATCHED | all ✓ |
+| D3L4FAT32 | 21:40 | 4.32 / 28.76 | ALL 20972 MATCHED | all ✓ |
+| D3L4EXFAT | 22:05 | 4.36 / 27.05 | ALL 20910 MATCHED | all ✓ |
+| D3BLNTFS | 22:33 | 2.72 / 27.48 | ALL 21023 MATCHED | all ✓ |
+Laptop: ALL CLEAN.
+
+### Pixel 7 Pro · Drive 4 · 10-19 17:43 – 19:00
+
+| Partition | Finished | bigwrite write / read-back (MB/s) | Fixtures | Verdict |
+|---|---|---|---|---|
+| D4L1EXT2 | 17:48 | — | ALL 21870 MATCHED | read sections ✓; writes SKIPPED (ro) |
+| D4L1EXT3 | 17:53 | — | ALL 21875 MATCHED | read sections ✓; writes SKIPPED (ro) |
+| D4L2EXT2 | 17:58 | — | ALL 21678 MATCHED | read sections ✓; writes SKIPPED (ro) |
+| D4L2EXT3 | 18:03 | — | ALL 21971 MATCHED | read sections ✓; writes SKIPPED (ro) |
+| D4L4EXT2 | 18:08 | — | ALL 21916 MATCHED | read sections ✓; writes SKIPPED (ro) |
+| D4L4EXT3 | 18:13 | — | ALL 21846 MATCHED | read sections ✓; writes SKIPPED (ro) |
+| D4VCEXT2 | 18:18 | — | ALL 21948 MATCHED | read sections ✓; writes SKIPPED (ro) |
+| D4VCEXT3 | 18:23 | — | ALL 21956 MATCHED | read sections ✓; writes SKIPPED (ro) |
+| D4BLFAT32 | 18:41 | 6.26 / 26.52 | ALL 20918 MATCHED | all ✓ |
+| D4BLEXFAT | 19:00 | 7.40 / 25.96 | ALL 21073 MATCHED | all ✓ |
+Laptop: ALL CLEAN.
+
+### Pixel 7 Pro · Drive 5 (copy, …EF455) · 10-18 21:16 – 10-19 01:39
+
+| Partition | Finished | bigwrite write / read-back (MB/s) | Fixtures | Verdict |
+|---|---|---|---|---|
+| VC_ATS_ARGON_PIM0 | 21:58 | 3.82 / 5.86 | ALL 20902 MATCHED | all ✓ |
+| VC_STA_ARGON_PIM1 | 22:31 | 3.08 / 6.82 | ALL 20965 MATCHED | all ✓ |
+| VC_TWO_SHA512_PIM0 | 23:07 | 2.62 / 20.88 | ALL 20962 MATCHED | all ✓ |
+| VC_AT_ARGON_PIM1 | 23:26 | 4.76 / 17.11 | ALL 20950 MATCHED | all ✓ |
+| VC_SA_SHA512_PIM1 | 23:51 | 4.27 / 7.20 | ALL 20915 MATCHED | all ✓ |
+| VC_TS_ARGON_PIM31 | 01:23 | 3.38 / 7.65 | ALL 20984 MATCHED | all ✓ |
+| FMT_EXFAT | 01:28 | — | ALL 20027 MATCHED | all ✓ (no bigwrite: Format/Encrypt target) |
+| FMT_FAT32 | 01:32 | — | ALL 20027 MATCHED | all ✓ (no bigwrite: Format/Encrypt target) |
+| ENC_TO_EXFAT | 01:35 | — | ALL 20027 MATCHED | all ✓ (no bigwrite: Format/Encrypt target) |
+| ENC_TO_FAT32 | 01:39 | — | ALL 20027 MATCHED | all ✓ (no bigwrite: Format/Encrypt target) |
+FMT_* and ENC_TO_* are the Format/Encrypt targets: the app formats or encrypts them as the run's
+first step, so they run the read sections and fixtures only. Laptop (`hostcheck-042g-EF455`):
+all ten partitions CLEAN.
+
+### OnePlus 7 · Drive 1 · 10-19 17:43 – 20:27
+
+| Partition | Finished | bigwrite write / read-back (MB/s) | Fixtures | Verdict |
+|---|---|---|---|---|
+| D1FAT32 | 17:57 | 8.19 / 15.96 | ALL 20995 MATCHED | all ✓ |
+| D1EXFAT | 18:12 | 8.87 / 18.15 | ALL 20963 MATCHED | all ✓ |
+| D1NTFS | 18:34 | 3.03 / 26.65 | ALL 21052 MATCHED | all ✓ |
+| D1EXT4 | 18:49 | 6.36 / 18.89 | ALL 20854 MATCHED | all ✓ |
+| D1BLEXFAT | 19:08 | 5.74 / 12.92 | ALL 20898 MATCHED | all ✓ |
+| D1BLNTFS | 19:34 | 2.76 / 17.52 | ALL 20905 MATCHED | all ✓ |
+| D1APFSCI | 19:46 | — | ALL 22129 MATCHED | read sections ✓; writes SKIPPED (ro) |
+| D1APFSCS | 19:58 | — | ALL 22024 MATCHED | read sections ✓; writes SKIPPED (ro) |
+| D1APFSECI | 20:13 | — | ALL 21777 MATCHED | read sections ✓; writes SKIPPED (ro) |
+| D1APFSECS | 20:27 | — | ALL 21911 MATCHED | read sections ✓; writes SKIPPED (ro) |
+Laptop: ALL CLEAN.
+
+### OnePlus 7 · Drive 2 · 10-19 21:03 – 10-20 01:05
+
+| Partition | Finished | bigwrite write / read-back (MB/s) | Fixtures | Verdict |
+|---|---|---|---|---|
+| D2VCFAT32 | 21:24 | 6.57 / 13.46 | ALL 20958 MATCHED | all ✓ |
+| D2VCEXFAT | 21:48 | 6.21 / 12.90 | ALL 20974 MATCHED | all ✓ |
+| D2VCNTFS | 22:19 | 2.80 / 16.91 | ALL 20919 MATCHED | all ✓ |
+| D2VCEXT4 | 22:42 | 5.63 / 13.08 | ALL 21071 MATCHED | all ✓ |
+| D2L1FAT32 | 23:03 | 6.65 / 14.14 | ALL 20953 MATCHED | all ✓ |
+| D2L1EXT4 | 23:26 | 5.42 / 13.11 | ALL 21024 MATCHED | all ✓ |
+| D2L2EXFAT | 23:50 | 6.30 / 12.84 | ALL 20942 MATCHED | all ✓ |
+| D2L4EXT4 | 00:14 | 5.24 / 13.17 | ALL 20888 MATCHED | all ✓ |
+| D2L4NTFS | 00:44 | 2.80 / 16.88 | ALL 20927 MATCHED | all ✓ |
+| D2BLFAT32 | 01:05 | 6.70 / 14.83 | ALL 20974 MATCHED | all ✓ |
+Laptop: ALL CLEAN.
+
+### OnePlus 7 · Drive 3 · 10-19 07:19 – 11:15
+
+| Partition | Finished | bigwrite write / read-back (MB/s) | Fixtures | Verdict |
+|---|---|---|---|---|
+| D3EXT2 | 07:27 | — | ALL 21821 MATCHED | read sections ✓; writes SKIPPED (ro) |
+| D3EXT3 | 07:34 | — | ALL 21883 MATCHED | read sections ✓; writes SKIPPED (ro) |
+| D3L1EXFAT | 07:59 | 6.29 / 12.88 | ALL 20929 MATCHED | all ✓ |
+| D3L1NTFS | 08:30 | 2.85 / 16.94 | ALL 20920 MATCHED | all ✓ |
+| D3L2FAT32 | 08:52 | 6.80 / 14.05 | ALL 20913 MATCHED | all ✓ |
+| D3L2NTFS | 09:24 | 2.81 / 16.54 | ALL 20925 MATCHED | all ✓ |
+| D3L2EXT4 | 09:48 | 5.46 / 13.06 | ALL 20939 MATCHED | all ✓ |
+| D3L4FAT32 | 10:13 | 4.51 / 14.03 | ALL 20972 MATCHED | all ✓ |
+| D3L4EXFAT | 10:44 | 4.29 / 13.02 | ALL 20910 MATCHED | all ✓ |
+| D3BLNTFS | 11:15 | 2.75 / 17.51 | ALL 21023 MATCHED | all ✓ |
+Laptop: ALL CLEAN.
+
+### OnePlus 7 · Drive 4 · 10-20 07:22 – 09:11
+
+| Partition | Finished | bigwrite write / read-back (MB/s) | Fixtures | Verdict |
+|---|---|---|---|---|
+| D4L1EXT2 | 07:30 | — | ALL 21870 MATCHED | read sections ✓; writes SKIPPED (ro) |
+| D4L1EXT3 | 07:38 | — | ALL 21875 MATCHED | read sections ✓; writes SKIPPED (ro) |
+| D4L2EXT2 | 07:46 | — | ALL 21678 MATCHED | read sections ✓; writes SKIPPED (ro) |
+| D4L2EXT3 | 07:54 | — | ALL 21971 MATCHED | read sections ✓; writes SKIPPED (ro) |
+| D4L4EXT2 | 08:01 | — | ALL 21916 MATCHED | read sections ✓; writes SKIPPED (ro) |
+| D4L4EXT3 | 08:09 | — | ALL 21846 MATCHED | read sections ✓; writes SKIPPED (ro) |
+| D4VCEXT2 | 08:17 | — | ALL 21948 MATCHED | read sections ✓; writes SKIPPED (ro) |
+| D4VCEXT3 | 08:25 | — | ALL 21956 MATCHED | read sections ✓; writes SKIPPED (ro) |
+| D4BLFAT32 | 08:47 | 6.15 / 14.09 | ALL 20918 MATCHED | all ✓ |
+| D4BLEXFAT | 09:11 | 6.61 / 13.58 | ALL 21073 MATCHED | all ✓ |
+Laptop: ALL CLEAN.
+
+### OnePlus 7 · Drive 5 (original, …EF449) · 10-18 21:28 – 10-20 10:10
+
+| Partition | Finished | bigwrite write / read-back (MB/s) | Fixtures | Verdict |
+|---|---|---|---|---|
+| VC_ATS_ARGON_PIM0 | 22:41 | 3.53 / 5.70 | ALL 20027 MATCHED | all ✓ |
+| VC_STA_ARGON_PIM1 | 23:18 | 2.58 / 6.05 | ALL 20965 MATCHED | all ✓ |
+| VC_TWO_SHA512_PIM0 | 23:56 | 2.80 / 13.62 | ALL 20962 MATCHED | all ✓ |
+| VC_AT_ARGON_PIM1 | 00:20 | 3.71 / 10.30 | ALL 20950 MATCHED | all ✓ |
+| VC_SA_SHA512_PIM1 | 00:46 | 3.88 / 6.57 | ALL 20027 MATCHED | all ✓ |
+| VC_TS_ARGON_PIM31 | 02:21 | 2.99 / 6.74 | ALL 20984 MATCHED | all ✓ |
+| FMT_EXFAT | 02:27 | — | ALL 20027 MATCHED | all ✓ (no bigwrite: Format/Encrypt target) |
+| FMT_FAT32 | 02:32 | — | ALL 20027 MATCHED | all ✓ (no bigwrite: Format/Encrypt target) |
+| ENC_TO_EXFAT | 02:35 | — | ALL 20027 MATCHED | all ✓ (no bigwrite: Format/Encrypt target) |
+| ENC_TO_FAT32 | 02:37 | — | — | no result (nothing mounted; dropped) |
+| ENC_TO_FAT32 | 10:10 | — | ALL 20027 MATCHED | all ✓ (no bigwrite: Format/Encrypt target) |
+The first ENC_TO_FAT32 (02:37) mounted nothing — the phone had locked — and was rerun on 10-20.
+VC_ATS_ARGON_PIM0 and VC_SA_SHA512_PIM1 matched 20027 fixtures rather than the copy's 20902/20915:
+on this stick those two partitions held a 20027-file fixture set at the time (p5 still does; p1
+was rebuilt with 20902 on 10-22), and the app checks against the manifest on the partition. Laptop (`hostcheck-042g-EF449`, `hostcheck-042h-op-EF449` for p10):
+all ten CLEAN.
+
+### Samsung M30 · Drive 1 · 10-21 06:09 – 10:08
+
+| Partition | Finished | bigwrite write / read-back (MB/s) | Fixtures | Verdict |
+|---|---|---|---|---|
+| D1FAT32 | 06:28 | 5.25 / 13.58 | ALL 20995 MATCHED | all ✓ |
+| D1EXFAT | 06:49 | 5.65 / 14.95 | ALL 20963 MATCHED | all ✓ |
+| D1NTFS | 07:19 | 2.25 / 18.98 | ALL 21052 MATCHED | all ✓ |
+| D1EXT4 | 07:26 | — | — | no result (nothing mounted; dropped) |
+| D1BLEXFAT | 07:56 | 3.51 / 8.88 | ALL 20898 MATCHED | all ✓ |
+| D1BLNTFS | 08:32 | 2.01 / 11.30 | ALL 20905 MATCHED | all ✓ |
+| D1APFSCI | 08:49 | — | ALL 22129 MATCHED | read sections ✓; writes SKIPPED (ro) |
+| D1APFSCS | 09:05 | — | ALL 22024 MATCHED | read sections ✓; writes SKIPPED (ro) |
+| D1APFSECI | 09:26 | — | ALL 21777 MATCHED | read sections ✓; writes SKIPPED (ro) |
+| D1APFSECS | 09:47 | — | ALL 21911 MATCHED | read sections ✓; writes SKIPPED (ro) |
+| D1EXT4 | 10:08 | 4.42 / 15.88 | ALL 20854 MATCHED | all ✓ |
+D1EXT4's first run mounted nothing: a burst of USB errors at unlock (75 retries); no result, rerun.
+Laptop: ALL CLEAN.
+
+### Samsung M30 · Drive 2 · 10-20 17:39 – 10-21 02:53
+
+| Partition | Finished | bigwrite write / read-back (MB/s) | Fixtures | Verdict |
+|---|---|---|---|---|
+| D2VCFAT32 | 18:28 | 4.32 / 8.74 | ALL 20958 MATCHED | all ✓ |
+| D2VCEXFAT | 19:25 | 3.59 / 8.89 | ALL 20974 MATCHED | all ✓ |
+| D2VCNTFS | 20:30 | 1.91 / 10.57 | ALL 20919 MATCHED | all ✓ |
+| D2VCEXT4 | 21:24 | 3.35 / 9.48 | ALL 21071 MATCHED | all ✓ |
+| D2L1FAT32 | 22:16 | 4.32 / 9.34 | ALL 20953 MATCHED | all ✓ |
+| D2L1EXT4 | 23:10 | 3.28 / 9.49 | ALL 21024 MATCHED | all ✓ |
+| D2L2EXFAT | 00:06 | 3.58 / 8.99 | ALL 20942 MATCHED | all ✓ |
+| D2L4EXT4 | 01:00 | 3.24 / 9.57 | ALL 20888 MATCHED | all ✓ |
+| D2L4NTFS | 02:03 | 1.95 / 10.66 | ALL 20927 MATCHED | all ✓ |
+| D2BLFAT32 | 02:53 | 4.35 / 10.28 | ALL 20974 MATCHED | all ✓ |
+Laptop: ALL CLEAN.
+
+### Samsung M30 · Drive 3 · 10-21 10:13 – 10-22 08:50
+
+| Partition | Finished | bigwrite write / read-back (MB/s) | Fixtures | Verdict |
+|---|---|---|---|---|
+| D3EXT2 | 10:25 | — | ALL 21821 MATCHED | read sections ✓; writes SKIPPED (ro) |
+| D3EXT3 | 10:37 | — | ALL 21883 MATCHED | read sections ✓; writes SKIPPED (ro) |
+| D3L1EXFAT | 11:11 | — | — | **FAILED** (bigwrite): java.io.IOException: exFAT write failed at offset 337132679 (0 of 3145728 bytes written):… |
+| D3L1NTFS | 19:27 | 1.99 / 10.52 | ALL 20920 MATCHED | all ✓ |
+| D3L2FAT32 | 20:24 | 4.04 / 9.10 | ALL 20913 MATCHED | all ✓ |
+| D3L2NTFS | 21:33 | 1.95 / 10.49 | ALL 20925 MATCHED | all ✓ |
+| D3L2EXT4 | 22:31 | 3.31 / 9.54 | ALL 20939 MATCHED | all ✓ |
+| D3L4FAT32 | 23:31 | 2.90 / 9.45 | ALL 20972 MATCHED | all ✓ |
+| D3L4EXFAT | 00:13 | — | — | **FAILED** (bigwrite): java.io.IOException: exFAT write failed at offset 1175425777 (0 of 1048576 bytes written):… |
+| D3L1EXFAT | 06:37 | 3.87 / 8.95 | ALL 20929 MATCHED | all ✓ |
+| D3L4EXFAT | 07:43 | 2.47 / 9.07 | ALL 20910 MATCHED | all ✓ |
+| D3BLNTFS | 08:50 | 1.94 / 11.43 | ALL 21023 MATCHED | all ✓ |
+D3L1EXFAT and D3L4EXFAT each lost the stick in the big write (36 failed transfers, the device
+never answered again until replugged); both reran clean. Laptop after the failures and after the
+reruns (two read-backs): ALL CLEAN.
+
+### Samsung M30 · Drive 5 — **FAILED**, USB dropouts
+
+| Partition | Finished | bigwrite write / read-back (MB/s) | Fixtures | Verdict |
+|---|---|---|---|---|
+| copy 10-19 · VC_ATS_ARGON_PIM0 | 21:42 | — | — | **FAILED** (seq read, random read, write verify, unaligned, correctness, bigwrite): java.io.IOException: Item already exists!… |
+| copy 10-20 · VC_ATS_ARGON_PIM0 | 11:58 | 2.11 / 2.59 | ALL 20902 MATCHED | all ✓ |
+| copy 10-20 · VC_STA_ARGON_PIM1 | 13:36 | 1.35 / 2.80 | ALL 20965 MATCHED | all ✓ |
+| copy 10-20 · VC_TWO_SHA512_PIM0 | 14:43 | 1.84 / - | — | **FAILED** (bigwrite, fixtures): java.io.IOException: NTFS directory listing failed: I/O error (EIO)… |
+| copy 10-22 · VC_TWO_SHA512_PIM0 | 09:07 | — | — | no result (nothing mounted; dropped) |
+| copy 10-22 · VC_AT_ARGON_PIM1 | 09:24 | — | — | **FAILED** (bigwrite): java.io.IOException: exFAT write failed at offset 656973435 (0 of 777777 bytes written): -… |
+| original 10-22 · VC_ATS_ARGON_PIM0 | 05:26 | — | — | **FAILED** (bigwrite, fixtures): java.io.IOException: read failed: chunk of 8 blocks at 5168648 (request was 8 blocks at 51… |
+| original 10-22 · VC_ATS_ARGON_PIM0 | 11:50 | 1.07 / 1.08 | — | **FAILED** (fixtures): java.io.IOException: read failed: chunk of 32 blocks at 1062720 (request was 256 blocks at… |
+The copy (…EF455) on 10-19, 10-20 and 10-22 09:03; the original (…EF449) on 10-22 04:45 and 09:28. Every
+failure is the same event: a transfer times out (`result == -1 errno 0`), Reset Recovery and six
+retries five seconds apart get no answer, and the stick stays enumerated on the bus (checked on
+the M30 after the last one: `154b:1006 … 071C48F5FB0EF449`, 480 Mbit/s) but never responds again
+until replugged. The same build and sticks pass all ten partitions on the Pixel and the OnePlus;
+on the M30, Drives 1 and 2 see at most one or two recovered retries per run, while Drive 3 and
+both Drive 5 sticks lose the link. Drive 5 is the most exposed: VeraCrypt cascades with Argon2
+run at about 1 MB/s on this phone, so a partition takes over two hours. Run 3 on the copy passed two partitions
+before losing the stick in the third; the last attempt on the original passed the big write and
+dropped 47 minutes later in the fixture read.
+
+What the cut-offs left, from the laptop:
+- **…EF455 p3 (VC_TWO_SHA512_PIM0, NTFS), 10-20:** `ntfs_check`: 191 clusters in use but free in
+  `$Bitmap` — the MFT record was written and the bitmap was not. Restored with `make_d5_stick.sh`,
+  CLEAN, rebaselined. Writing the bitmap before the record would leave leaked clusters instead of
+  doubly-owned ones; noted for 0.4.3.
+- **…EF449 p1 (VC_ATS_ARGON_PIM0, FAT32), 10-22 05:26:** free-cluster summary wrong (917094 vs
+  1451416) — FSInfo not rewritten. Restored, CLEAN (20902 fixtures), rebaselined.
+- …EF455 p1/p2 after run 3: CLEAN.
+- **Pending:** …EF455 p4 (cut off 10-22 09:24, exFAT) and …EF449 p1 (dropped in a read, 10-22
+  11:50) have not been back on the laptop yet.
+
+A full USB reset (`USBDEVFS_RESET`) after Reset Recovery fails is the one recovery step libaums
+does not try (`resetDevice()` exists and is never called). Planned for 0.4.3, to be tested on the
+M30 since it reproduces there.
+
+### Runs that produced no result
+
+- **M30, D1EXT4, 10-21 07:26:** USB errors at unlock, nothing mounted.
+- **M30, D5 copy VC_TWO_SHA512_PIM0, 10-22 09:07:** the same, at unlock.
+- **M30, D5 copy VC_ATS_ARGON_PIM0, 10-19 22:11:** USB errors from the start; stopped, no report.
+- **OnePlus 7, D5 ENC_TO_FAT32, 10-19 02:37:** the phone had locked; nothing mounted; rerun 10-20.
+
+---
+
 ## 2026-10-16 (night) to 2026-10-18 — the 0.4.2 release-candidate matrix on `325548b` / `b7810ee`, and three changes measured on top
 
 The first 0.4.2 matrix round. `325548b` and `b7810ee` are the same tree (#68 rebase-merged one onto
