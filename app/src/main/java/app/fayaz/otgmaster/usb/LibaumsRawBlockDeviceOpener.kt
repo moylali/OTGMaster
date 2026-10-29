@@ -15,6 +15,7 @@ import java.io.IOException
 
 class LibaumsRawBlockDeviceOpener(private val context: Context) {
     private val usbManager = context.getSystemService(Context.USB_SERVICE) as UsbManager
+    private val quirks = UsbTransferQuirks(context)
 
     /**
      * Opens every attached mass-storage device not already in [excludeDeviceKeys] (e.g.
@@ -67,7 +68,32 @@ class LibaumsRawBlockDeviceOpener(private val context: Context) {
                     Log.i(TAG, "Initializing LUN $lun")
                     driver.init()
                     Log.i(TAG, "Initialized LUN $lun: blockSize=${driver.blockSize}, blocks=${driver.blocks}")
-                    return LibaumsRawBlockDevice(driver, communication)
+                    // In the app's own log, so a feedback report carries it. The USB
+                    // failures in #29, #71 and #88 could not be compared against each
+                    // other for want of this: the drive's identity, the endpoint sizes
+                    // and the phone's kernel were all missing. No serial number — see
+                    // UsbTransferQuirks and FeedbackPayload on why.
+                    app.fayaz.otgmaster.OtgMasterState.log(
+                        "USB: %04x:%04x %s %s, LUN %d of %d, %d blocks of %d B; bulk in/out %d/%d B; %s %s, Android %s, kernel %s"
+                            .format(
+                                device.vendorId, device.productId,
+                                device.manufacturerName ?: "?", device.productName ?: "?",
+                                lun, lunCount + 1, driver.blocks, driver.blockSize,
+                                candidate.inEndpoint.maxPacketSize, candidate.outEndpoint.maxPacketSize,
+                                android.os.Build.MANUFACTURER, android.os.Build.MODEL,
+                                android.os.Build.VERSION.RELEASE, System.getProperty("os.version"),
+                            )
+                    )
+                    val blockDevice = LibaumsRawBlockDevice(
+                        driver,
+                        communication,
+                        rememberedTransferBytes = quirks.transferBytes(device.vendorId, device.productId),
+                        onTransferSizeLowered = { quirks.remember(device.vendorId, device.productId, it) },
+                    )
+                    // Before the device is handed out, so the size is settled with
+                    // nothing mounted on top of it. See probeTransferSize.
+                    blockDevice.probeTransferSize()
+                    return blockDevice
                 } catch (_: MediaNotInserted) {
                     Log.i(TAG, "No media inserted in LUN $lun")
                     continue

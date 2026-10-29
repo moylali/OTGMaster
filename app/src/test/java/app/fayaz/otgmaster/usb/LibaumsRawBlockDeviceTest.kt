@@ -263,15 +263,215 @@ class LibaumsRawBlockDeviceTest {
 
     @Test
     fun `stepping down stops at the floor and the error keeps its cause`() {
-        // Rejects everything above 8 blocks (4 KiB): below the 16 KiB floor.
-        val driver = LimitedDriver(limitBlocks = 8)
+        // Rejects everything above 4 blocks (2 KiB): below the 4 KiB floor, so no
+        // step-down can satisfy it and the request has to fail.
+        val driver = LimitedDriver(limitBlocks = 4)
         val e = runCatching { LibaumsRawBlockDevice(driver, FakeCommunication()).readBlocks(2048, 512) }
             .exceptionOrNull()
         assertTrue("expected an IOException, got $e", e is java.io.IOException)
         val floor = LibaumsRawBlockDevice.MIN_TRANSFER_BYTES / 512
         assertTrue("the message names the floor: ${e!!.message}", e.message!!.contains("chunk limit $floor blocks"))
         assertTrue("the message carries the driver's reason: ${e.message}", e.message!!.contains("MAX_RECOVERY_ATTEMPTS"))
-        assertTrue("never below the floor", driver.accepted.isEmpty())
+        // The only sub-floor reads are the one-block liveness probes after each
+        // failure; no data chunk is ever issued below the floor.
+        assertTrue("no data chunk below the floor, only probes: ${driver.accepted}",
+            driver.accepted.all { it == 1 })
+    }
+
+    /**
+     * A drive that the oversized transfer leaves answering nothing, until its USB
+     * port is reset. Issue #88, a Galaxy S21 FE 5G with a 250 GB SanDisk 3.2Gen1:
+     * libexfat's first 64 KiB read of the volume failed, 32 KiB and 16 KiB failed
+     * behind it, and then a 512-byte read of the VeraCrypt header failed as well —
+     * so the drive was already gone and the step-downs were measuring nothing.
+     * Only unplugging recovered it, which means libaums' own Bulk-Only Mass Storage
+     * Reset (it sends one between each of its six attempts) was not enough.
+     */
+    private class StickyDriver(
+        private val limitBlocks: Int,
+        override val blockSize: Int = 512,
+        override val blocks: Long = 488_878_080L,
+    ) : BlockDeviceDriver {
+        var stuck = false
+        var inits = 0
+        var rejected = 0
+        val accepted = mutableListOf<Int>()
+        override fun init() { inits++ }
+        private fun check(buffer: ByteBuffer) {
+            val count = buffer.remaining() / blockSize
+            if (stuck) throw java.io.IOException(
+                "MAX_RECOVERY_ATTEMPTS Exceeded while trying to transfer command to device, please reattach device and try again")
+            if (count > limitBlocks) {
+                rejected++
+                // The transfer that is refused is also the one that wedges it: every
+                // later command fails, at any size, until the port is reset.
+                stuck = true
+                throw java.io.IOException(
+                    "MAX_RECOVERY_ATTEMPTS Exceeded while trying to transfer command to device, please reattach device and try again",
+                    java.io.IOException("Could not read from device, result == -1 errno 32 Broken pipe"))
+            }
+            accepted += count
+        }
+        override fun read(deviceOffset: Long, buffer: ByteBuffer) {
+            check(buffer)
+            val base = deviceOffset * blockSize
+            val start = buffer.position()
+            for (i in 0 until buffer.remaining()) buffer.put(start + i, ((base + i) % 251).toByte())
+            buffer.position(buffer.limit())
+        }
+        override fun write(deviceOffset: Long, buffer: ByteBuffer) {
+            check(buffer)
+            buffer.position(buffer.limit())
+        }
+    }
+
+    /** A port reset that works, as USBDEVFS_RESET does on a drive still on the bus. */
+    private class ResettableCommunication(private val driver: StickyDriver) : UsbCommunication {
+        var resets = 0
+        override val inEndpoint get() = throw NotImplementedError()
+        override val outEndpoint get() = throw NotImplementedError()
+        override val usbInterface get() = throw NotImplementedError()
+        override fun bulkOutTransfer(src: ByteBuffer) = throw NotImplementedError()
+        override fun bulkInTransfer(dest: ByteBuffer) = throw NotImplementedError()
+        override fun controlTransfer(
+            requestType: Int, request: Int, value: Int, index: Int,
+            buffer: ByteArray, length: Int
+        ) = throw NotImplementedError()
+        override fun resetDevice() { resets++; driver.stuck = false }
+        override fun clearFeatureHalt(endpoint: android.hardware.usb.UsbEndpoint) =
+            throw NotImplementedError()
+        override fun close() {}
+    }
+
+    @Test
+    fun `a drive the failed transfer left stuck is reset, then read smaller`() {
+        val driver = StickyDriver(limitBlocks = 64)
+        val communication = ResettableCommunication(driver)
+        val device = LibaumsRawBlockDevice(driver, communication)
+
+        // The read that failed in #88: libexfat's first 64 KiB of the volume, at the
+        // VeraCrypt data area (partition at block 32, data 256 blocks after it).
+        val data = device.readBlocks(288, 128)
+
+        assertArrayEquals("the read must still deliver the right bytes",
+            expectedBytes(288, 128, 512), data)
+        assertTrue("the port must have been reset", communication.resets > 0)
+        assertEquals("and the drive re-initialised after each reset",
+            communication.resets, driver.inits)
+        assertTrue("every accepted transfer within the drive's limit",
+            driver.accepted.all { it <= 64 })
+    }
+
+    @Test
+    fun `a drive that stays dead after the reset fails instead of retrying smaller`() {
+        // Nothing revives it, which is the drive in #88 before it was unplugged.
+        val driver = StickyDriver(limitBlocks = 64)
+        val dead = object : UsbCommunication {
+            override val inEndpoint get() = throw NotImplementedError()
+            override val outEndpoint get() = throw NotImplementedError()
+            override val usbInterface get() = throw NotImplementedError()
+            override fun bulkOutTransfer(src: ByteBuffer) = throw NotImplementedError()
+            override fun bulkInTransfer(dest: ByteBuffer) = throw NotImplementedError()
+            override fun controlTransfer(
+                requestType: Int, request: Int, value: Int, index: Int,
+                buffer: ByteArray, length: Int
+            ) = throw NotImplementedError()
+            override fun resetDevice() { /* the ioctl succeeds; the drive stays gone */ }
+            override fun clearFeatureHalt(endpoint: android.hardware.usb.UsbEndpoint) =
+                throw NotImplementedError()
+            override fun close() {}
+        }
+        val e = runCatching { LibaumsRawBlockDevice(driver, dead).readBlocks(288, 128) }
+            .exceptionOrNull()
+
+        assertTrue("expected an IOException, got $e", e is java.io.IOException)
+        // One rejection, not four. The old code stepped 128 -> 64 -> 32 -> 16 KiB
+        // into a drive that had stopped answering, at up to six libaums attempts and
+        // a 5 s timeout each, and then blamed the size.
+        assertEquals("it must not keep stepping down into a dead drive", 1, driver.rejected)
+    }
+
+    @Test
+    fun `the thrown message carries the whole cause chain, not just libaums' wrapper`() {
+        val driver = StickyDriver(limitBlocks = 64)
+        val e = runCatching {
+            LibaumsRawBlockDevice(driver, object : UsbCommunication {
+                override val inEndpoint get() = throw NotImplementedError()
+                override val outEndpoint get() = throw NotImplementedError()
+                override val usbInterface get() = throw NotImplementedError()
+                override fun bulkOutTransfer(src: ByteBuffer) = throw NotImplementedError()
+                override fun bulkInTransfer(dest: ByteBuffer) = throw NotImplementedError()
+                override fun controlTransfer(
+                    requestType: Int, request: Int, value: Int, index: Int,
+                    buffer: ByteArray, length: Int
+                ) = throw NotImplementedError()
+                override fun resetDevice() {}
+                override fun clearFeatureHalt(endpoint: android.hardware.usb.UsbEndpoint) =
+                    throw NotImplementedError()
+                override fun close() {}
+            }).readBlocks(288, 128)
+        }.exceptionOrNull()
+
+        // libaums reports every transport failure as MAX_RECOVERY_ATTEMPTS and keeps
+        // the reason as the cause. The reason is the part that says what to do about
+        // it, and it reached logcat only — feedback reports carry the app's log.
+        val message = e!!.message!!
+        assertTrue("names libaums' wrapper: $message", message.contains("MAX_RECOVERY_ATTEMPTS"))
+        assertTrue("and the errno underneath it: $message", message.contains("errno 32"))
+    }
+
+    @Test
+    fun `a remembered size is used from the first transfer, with no failure to learn it`() {
+        val driver = StickyDriver(limitBlocks = 64)
+        val device = LibaumsRawBlockDevice(
+            driver, ResettableCommunication(driver),
+            rememberedTransferBytes = 32 * 1024,
+        )
+        device.readBlocks(288, 128)
+        assertEquals("nothing should have had to fail", 0, driver.rejected)
+        assertTrue("and every transfer is at the remembered size or less",
+            driver.accepted.all { it <= 64 })
+    }
+
+    @Test
+    fun `the size learned the hard way is handed out to be remembered`() {
+        val driver = StickyDriver(limitBlocks = 64)
+        val learned = mutableListOf<Int>()
+        LibaumsRawBlockDevice(
+            driver, ResettableCommunication(driver),
+            onTransferSizeLowered = { learned += it },
+        ).readBlocks(288, 128)
+        assertTrue("the lowered size must be reported: $learned", learned.isNotEmpty())
+        assertEquals("and the last one is the size that worked",
+            32 * 1024, learned.last())
+    }
+
+    @Test
+    fun `probing settles the size at open, before anything is mounted`() {
+        val driver = StickyDriver(limitBlocks = 64)
+        val communication = ResettableCommunication(driver)
+        val device = LibaumsRawBlockDevice(driver, communication)
+        device.probeTransferSize()
+
+        val failuresAtOpen = driver.rejected
+        assertTrue("the probe must find the limit", failuresAtOpen > 0)
+        // Halving 120 KiB walks 240 -> 120 -> 60 blocks, not powers of two, and 60
+        // blocks is the first size this drive takes.
+        assertEquals("and settle on a size the drive takes", 60 * 512, device.transferBytes)
+
+        // The point of probing: the mount that follows does not fail its own way down.
+        driver.accepted.clear()
+        assertArrayEquals(expectedBytes(288, 128, 512), device.readBlocks(288, 128))
+        assertEquals("the mount read must not have to fail at all", failuresAtOpen, driver.rejected)
+    }
+
+    @Test
+    fun `probing a drive smaller than one transfer reads only what is there`() {
+        // 8 blocks total, far below the 120 KiB probe.
+        val driver = StickyDriver(limitBlocks = 240, blocks = 8L)
+        LibaumsRawBlockDevice(driver, ResettableCommunication(driver)).probeTransferSize()
+        assertTrue("must not read past the end: ${driver.accepted}",
+            driver.accepted.all { it <= 8 })
     }
 
     /** Records the peak number of threads inside read/write simultaneously. */
