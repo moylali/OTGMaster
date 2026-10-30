@@ -63,6 +63,24 @@ class BackupTestReceiver : BroadcastReceiver() {
         ).also { store.upsert(it) }
         intent.getStringExtra("password")?.let { BackupSecrets(context).setPassword(job.id, it) }
         val runner = BackupRunner(context)
+        if (intent.getStringExtra("op") == "export") {
+            // Copies the repository folder (and a restore beside it, if any) off the drive into
+            // app storage, so adb can pull a few MB instead of the whole partition.
+            val out = java.io.File(context.getExternalFilesDir(null), "export").apply { deleteRecursively(); mkdirs() }
+            val from = app.fayaz.otgmaster.backup.SafFileTree(context.contentResolver, dstUri)
+            val to = app.fayaz.otgmaster.backup.LocalFileTree(out)
+            var files = 0
+            fun copy(path: String) {
+                for (e in from.list(path)) {
+                    val p = app.fayaz.otgmaster.backup.Paths.join(path, e.name)
+                    if (e.isDirectory) { to.mkdirs(p); copy(p) }
+                    else { from.openRead(p).use { i -> to.openWrite(p).use { o -> i.copyTo(o) } }; files++ }
+                }
+            }
+            for (dir in listOf(folder, "$folder-restored")) if (from.stat(dir)?.isDirectory == true) { to.mkdirs(dir); copy(dir) }
+            Log.i(TAG, "RESULT EXPORTED $files files to $out")
+            return
+        }
         val outcome = when (intent.getStringExtra("op") ?: "backup") {
             "check" -> runner.check(job.id, readData = true)
             "restore" -> {
