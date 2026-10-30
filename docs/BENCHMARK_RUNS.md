@@ -33,6 +33,82 @@ to a row here.
 
 ---
 
+## 2026-10-30 — the USB pipelining A/B, the write lost after a reset, and the write-replay fix (V25)
+
+OnePlus 7 (Android 16), Drive 2, `start_run.sh` with the matrix credentials, one partition per run. Each report's
+`build:` line was checked against the APK installed before the run. Builds:
+
+- **`e68f230`** (`perf/usb-pipeline`, not merged): `PrefetchingBlockDevice`, a read-ahead that overlaps the next USB
+  read with the app's work, switched by the `pipeline` bench extra (off/on), plus the V24 phase timers.
+- **`066daaf`, `92d3b6e`** (`fix/write-replay`): the replay of the last 1 MiB written after any reset (V25);
+  `92d3b6e` reuses the window's buffers instead of allocating one per write.
+- **`6bd4eb1`**: the control for the A/B, the published `test-usbfix-6bd4eb1` (#93 + #96's first commit).
+
+"Failed attempts" counts libaums' `Could not read/write` lines in the run's logcat.
+
+| Partition | Build | Sections | seq read 128 KiB (MB/s) | bigwrite write / read-back (MB/s) | Verdict | Failed attempts | Host check |
+|---|---|---|---|---|---|---|---|
+| D2VCEXFAT | `e68f230`, pipeline off | seq, bigwrite | 24.73 | 7.55 / 22.62 | ALL PASSED | 18 | ALL CLEAN except this partition's big.bin, from run 4 below (09:22) |
+| D2VCEXFAT | `e68f230`, pipeline on | seq, bigwrite | 25.93 | 7.56 / 20.50 | ALL PASSED | 19 | as above |
+| D2VCEXFAT | `e68f230`, pipeline off | seq, bigwrite | 22.65 | 7.58 / 22.64 | ALL PASSED | 18 | as above |
+| D2VCEXFAT | `e68f230`, pipeline on | seq, bigwrite | 29.12 | 6.95 / — | **FAILED: big.bin DIFFERS at byte 44,732,416** | 43 | **D2VCEXFAT FAILED**: big.bin wrong in one sector (fsck clean); the other 9 partitions CLEAN |
+| D2VCFAT32 | `066daaf` | bigwrite | — | 4.41 / 11.19 | ALL PASSED | 0 | Drive 2 CLEAN (17:20 read-back) |
+| D2VCEXFAT | `066daaf` | bigwrite | — | 4.15 / 10.49 | ALL PASSED | 0 | Drive 2 CLEAN |
+| D2VCFAT32 | `066daaf` | write, correct, fixtures, bigwrite | — | 4.53 / 11.26 | ALL PASSED | 0 | Drive 2 CLEAN |
+| D2VCEXFAT | `6bd4eb1` (A/B control) | bigwrite | — | 4.22 / 10.58 | ALL PASSED | 0 | Drive 2 CLEAN |
+| D2VCEXFAT | `92d3b6e` (A/B fix) | bigwrite | — | 4.35 / 10.95 | ALL PASSED | 0 | Drive 2 CLEAN |
+| D2VCEXFAT | `6bd4eb1` (A/B control) | bigwrite | — | 4.42 / 10.59 | ALL PASSED | 0 | Drive 2 CLEAN |
+| D2VCEXFAT | `92d3b6e` (A/B fix) | bigwrite | — | 4.34 / 10.53 | ALL PASSED | 0 | Drive 2 CLEAN |
+
+**Pipelining: not merged.** Sequential reads rose 5–20% with the prefetch on (25.93 and 29.12 against 24.73 and
+22.65), inconsistently, and the bigwrite read-back fell about 9%. The phase timers put USB gaps at 71.4% of read wall
+time with it and 71.5% without, so it overlapped almost nothing. A second reader of the device is a concurrency risk
+for a gain that small, and correctness comes first. The next speed lead is the app's per-chunk CPU cost, about 1.9 ms
+per 64 KiB.
+
+**Run 4's mismatch is a drive losing an acknowledged write after a reset, and it is not new.** The host read-back
+(`d2-verify-pipe`, 09:22) found `BENCH_BIG/big.bin` wrong in exactly one 512-byte sector at file offset 44,732,416;
+fsck clean, every neighbouring sector identical to that morning's copy. That sector, LBA 17,607,920, was all zeros on
+the drive. At 08:52:12 a 64 KiB write at block 17,607,921 failed, and libaums sent its Bulk-Only reset six times before
+the app's recovery retried it. Block 17,607,920 was written and confirmed by the command before; it starts the 4 KiB
+unit holding the failed write's first seven blocks, and the drive lost the whole unit. The retry rewrote the failed
+write's blocks, and nothing rewrote the one before. The prefetch only reads, and the sector matches no data the app
+produced. 0.4.2 retries the same way. The fix (`066daaf`, V25) writes the last 1 MiB again after any reset;
+`WriteReplayTest` reproduces the loss and fails 4 of 5 cases without it.
+
+**The fix costs no speed.** The four A/B runs alternate builds on the same partition: 4.22 and 4.42 MB/s without it,
+4.35 and 4.34 with it; read-back 10.58/10.59 against 10.95/10.53. No reset happened in them, so no replay ran. That
+day the phone wrote at about 4.3 MB/s on every build, against 7.5 that morning, and read back at half speed too, so
+the drop is the phone or its link: the control build was as slow.
+
+Laptop, 10-30 17:20 (`d2-verify-1030b`), after every run above and the `7148f3c` check: all 10 partitions checker
+clean, every file matched, every bigwrite file and tree intact, D2VCEXFAT's big.bin included (a later run
+rewrote it). The verifier marks D2VCEXFAT not clean for one reason only: `BENCH/file with spaces.txt`, below.
+
+The run-4 sector stays damaged until a run rewrites big.bin; the later runs on D2VCEXFAT did. D2VCEXFAT also has the
+file `BENCH/file with spaces.txt`, copied there in the `6bd4eb1` smoke test, which the verifier reports as unexplained.
+
+### Commit hashes after the merge of #93
+
+| On the branch (cited) | On `main` | PR | Commit |
+|---|---|---|---|
+| `ea69d7b` | `be05e84` | #93 | fix: a drive the USB transfer leaves stuck is reset, not retried into (#88, #71) |
+| `9978050` | `3f095ee` | #93 | fix(usb): retry at the same size after a port reset; every recovery step in the app's log |
+| `4b05bad` | `0251b00` | #93 | fix(usb): any failure is retried once at the same size before the size is blamed |
+| `36c0065` | `4bf80c2` | #93 | fix(usb): keep a lowered transfer size only when the drive needed a port reset |
+| `4eae31e` | `4712685` | #93 | docs: record the #93/#96 device runs and the V22 phase timers; hash table for #82 |
+
+### Commit hashes after the merge of #96
+
+| On the branch (cited) | On `main` | PR | Commit |
+|---|---|---|---|
+| `d055cb1` (`6bd4eb1` before the rebase onto `main`) | `e4afba6` | #96 | fix(usb): drives over 2 TiB open and are addressed with 16-byte SCSI commands (#87) |
+| `2beb34e` | `1bb18aa` | #96 | fix(usb): ask READ CAPACITY(10) again before believing 0xFFFFFFFF (#87) |
+| `7148f3c` | `069d7a6` | #96 | fix(log): a mount that fails says why: libexfat's messages and swallowed exceptions (#98) |
+| `573aea6` | `0ce2fb6` | #96 | docs: record Drive 5 on 6bd4eb1 (M30, realme) and the 7148f3c device checks |
+
+---
+
 ## 2026-10-22, 10-29 and 10-30 — USB recovery for #88/#71 and the 2 TB fix for #87 (#93, #96), and the V22 phase timers
 
 Each run used `regress_chain.sh` (Drives 2 and 3) or `sequence_runs.sh` (Drive 5) → `start_run.sh` with the "full"
