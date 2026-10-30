@@ -194,14 +194,27 @@ private fun MoreActionsButton(items: List<DriveAction>) {
             Text(stringResource(R.string.more_actions))
             Icon(Icons.Default.ArrowDropDown, contentDescription = null)
         }
-        DropdownMenu(expanded = open, onDismissRequest = { open = false }) {
-            items.forEach { a ->
-                DropdownMenuItem(
-                    text = { MenuText(a.title, a.unavailable) },
-                    enabled = a.unavailable == null,
-                    onClick = { open = false; a.onClick() },
-                    modifier = Modifier.actionId(a.id),
-                )
+        // The list looks like the button that opened it: the button's colours and its text
+        // size (asked for 2026-10-30). Material 3 1.2's DropdownMenu takes no container
+        // colour, so the menu's own theme colours are pointed at the button's: it draws
+        // its container in surfaceContainer and its items in onSurface (disabled items at
+        // 38% of it, as on a disabled button).
+        val scheme = MaterialTheme.colorScheme
+        MaterialTheme(colorScheme = scheme.copy(
+            surfaceContainer = scheme.primary,
+            surface = scheme.primary,
+            onSurface = scheme.onPrimary,
+            onSurfaceVariant = scheme.onPrimary,
+        )) {
+            DropdownMenu(expanded = open, onDismissRequest = { open = false }) {
+                items.forEach { a ->
+                    DropdownMenuItem(
+                        text = { MenuText(a.title, a.unavailable) },
+                        enabled = a.unavailable == null,
+                        onClick = { open = false; a.onClick() },
+                        modifier = Modifier.actionId(a.id),
+                    )
+                }
             }
         }
     }
@@ -210,10 +223,10 @@ private fun MoreActionsButton(items: List<DriveAction>) {
 @Composable
 private fun MenuText(title: String, unavailable: String?) {
     Column {
-        Text(title)
+        Text(title, style = MaterialTheme.typography.labelLarge) // the button's text style
         if (unavailable != null) {
             Text(unavailable, style = MaterialTheme.typography.bodySmall,
-                color = MaterialTheme.colorScheme.onSurfaceVariant)
+                color = MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.8f))
         }
     }
 }
