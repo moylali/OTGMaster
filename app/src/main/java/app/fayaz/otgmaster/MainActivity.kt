@@ -362,6 +362,19 @@ class MainActivity : AppCompatActivity() {
                 .revokeExtendedGrants(applicationContext, drives.map { it.id }.toSet())
         }
         MountedDriveService.update(applicationContext, OtgMasterState.mountedDrives.map(::driveTitle))
+        // Format and Encrypt keep the service in the foreground for their whole run, with
+        // their progress in its notification, and post a notice when they end.
+        lifecycleScope.launch {
+            androidx.compose.runtime.snapshotFlow { driveOperation.value }.collect { op ->
+                when {
+                    op == null -> Unit // the result was dismissed
+                    op.finished -> MountedDriveService.operationFinished(applicationContext, op.title,
+                        op.error ?: op.phase, failed = op.error != null)
+                    else -> MountedDriveService.operationProgress(applicationContext,
+                        MountedDriveService.Operation(op.title, op.phase, op.fraction))
+                }
+            }
+        }
 
         val usbMgr = getSystemService(Context.USB_SERVICE) as UsbManager
         usbDeviceProvider = RealUsbDeviceProvider(usbMgr, permissionIntent)
