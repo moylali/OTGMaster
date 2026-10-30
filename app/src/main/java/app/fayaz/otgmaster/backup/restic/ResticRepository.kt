@@ -16,6 +16,7 @@ interface ResticBackend {
     fun readRange(path: String, offset: Long, length: Int): ByteArray
     fun write(path: String, data: ByteArray)
     fun exists(path: String): Boolean
+    fun size(path: String): Long
     fun delete(path: String)
     fun mkdirs(dir: String)
 }
@@ -34,6 +35,7 @@ class LocalBackend(private val root: java.io.File) : ResticBackend {
         check(tmp.renameTo(f)) { "could not move $tmp into place" }
     }
     override fun exists(path: String) = root.resolve(path).exists()
+    override fun size(path: String) = root.resolve(path).length()
     override fun delete(path: String) { root.resolve(path).delete() }
     override fun mkdirs(dir: String) { root.resolve(dir).mkdirs() }
 }

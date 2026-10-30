@@ -51,6 +51,7 @@ class FileTreeBackend(private val tree: FileTree) : ResticBackend {
     }
 
     override fun exists(path: String) = tree.stat(path) != null
+    override fun size(path: String) = tree.stat(path)?.size ?: 0L
     override fun delete(path: String) = tree.delete(path)
     override fun mkdirs(dir: String) = tree.mkdirs(dir)
 
