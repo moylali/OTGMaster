@@ -33,6 +33,25 @@ to a row here.
 
 ---
 
+## 2026-10-30 — first device backups: restic repository written by the app, checked by restic
+
+Galaxy M30 (Android 10), Drive 5 (…EF449), the debug build `cf31657`/`546f4a2` of `feat/restic`, driven by
+the debug `RUN_BACKUP` broadcast (bench/BackupTestReceiver). Source: `BENCH/edge` on the plain exFAT partition
+ENC2EXFAT (22 fixture files, 67.2 MiB, including a 64 MiB file of zeros). Destination: the folder `restic-test`
+on the plain FAT32 partition FMT_FAT32, through the app's own DocumentsProvider.
+
+| Step | Result |
+|---|---|
+| First backup | SUCCESS: 22 files, 3.7 MB added (the zeros deduplicate), snapshot `43e6de35` |
+| Second backup, nothing changed | SUCCESS: 22 files, 16.6 KB added (tree blobs only; the parent snapshot let every file be skipped unread) |
+| Check, reading all data | Repository OK: 2 snapshots, 22 data blobs read and verified |
+| Restore of the newest snapshot to `restic-test-restored` on the same partition | SUCCESS: 22 files, 67.2 MB |
+
+On the laptop, the repository folder and the restored folder were copied off the drive by the debug export (a
+whole-partition dump over Wi-Fi adb ran at 0.4 MB/s and was abandoned) and checked with restic 0.18.1:
+`snapshots` lists both, with the job's tags and path `/edge`; `check --read-data` finds no errors; `restore latest`
+gives the same 22 files, byte for byte, as the app's own restore. Host fsck of FMT_FAT32 is pending with Drive 5's
+next read-back.
 ## 2026-10-30 — the USB pipelining A/B, the write lost after a reset, and the write-replay fix (V25)
 
 OnePlus 7 (Android 16), Drive 2, `start_run.sh` with the matrix credentials, one partition per run. Each report's
@@ -114,6 +133,19 @@ file `BENCH/file with spaces.txt`, copied there in the `6bd4eb1` smoke test, whi
 | `69cafee` (`066daaf` before the rebase onto `main`) | `1a9f5ec` | #99 | fix(usb): write the last 1 MiB again after any reset, so a drive cannot silently drop acknowledged writes (libaums V25) |
 | `4864b3d` (`92d3b6e`) | `5d562a5` | #99 | perf(usb): reuse the replay window's buffers instead of allocating one per write |
 | `1e09561` | `1bc28dd` | #99 | docs: record the pipelining A/B, the lost-write root cause and the write-replay A/B; hash table for #93 |
+
+### Commit hashes after the merge of #100
+
+| On the branch (cited) | On `main` | PR | Commit |
+|---|---|---|---|
+| `f7a9dce` | `bb58b42` | #100 | test(e2e): click the disconnect history again when the click expanded nothing |
+| `18d7a2e` | `d9696ce` | #100 | feat(log): say why each partition a scan found was neither mounted nor offered |
+| `d783722` | `c38a7db` | #100 | feat(report): USB lines that scrolled out of the log still reach Report issue |
+| `d9d8c73` | `6e2d7c2` | #100 | feat(encrypt): the new volume is unlocked with its password before it is used, not mounted with the key in memory |
+| `cf2f7c4` | `3369cf4` | #100 | feat: Format and Encrypt run in the foreground, with progress and a result in notifications |
+| `8f47095` | `6863756` | #100 | ui: the More actions list takes its button's colours and text size |
+| `1bf7a4e` | `8db87b2` | #100 | feat(log): 200 time-stamped lines with repeats folded, every failure's reason, and all of it in Report issue |
+| `97ffd5e` | `584d5c4` | #100 | docs: hash table for #99; changelog for everything since v0.4.2 on this branch |
 
 ---
 
