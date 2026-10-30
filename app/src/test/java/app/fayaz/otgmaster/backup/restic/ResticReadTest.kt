@@ -103,4 +103,28 @@ class ResticReadTest {
         assertNotNull("a flipped byte must not restore silently", failure)
         tmp.deleteRecursively()
     }
+
+    @Test
+    fun `ResticRestore puts a restic-made snapshot's folder into a FileTree byte for byte`() {
+        val restic = restic(); assumeTrue("restic not installed", restic != null)
+        val tmp = Files.createTempDirectory("restic-restore").toFile()
+        val src = tmp.resolve("src").also { it.mkdirs() }
+        val expected = sourceTree(src)
+        val repoDir = tmp.resolve("repo")
+        run(restic!!, "-r", repoDir.path, "init", password = "pw")
+        run(restic, "-r", repoDir.path, "backup", src.path, password = "pw")
+        val repo = ResticRepository.open(LocalBackend(repoDir), "pw".toByteArray())!!
+        val snap = repo.snapshots().single()
+        val r = ResticRestore(repo)
+        val node = r.find(snap, src.path)!!
+        val out = tmp.resolve("out").also { it.mkdirs() }
+        r.restore(node, app.fayaz.otgmaster.backup.LocalFileTree(out), "restored")
+        for ((k, v) in expected) assertArrayEquals(k, v, out.resolve("restored").resolve(k).readBytes())
+        assertEquals(expected.size.toLong(), r.filesRestored)
+        // One folder only.
+        val sub = r.find(snap, src.path + "/DCIM")!!
+        r.restore(sub, app.fayaz.otgmaster.backup.LocalFileTree(out), "just-dcim")
+        assertEquals(setOf("Camera"), out.resolve("just-dcim").list()!!.toSet())
+        tmp.deleteRecursively()
+    }
 }
