@@ -837,6 +837,7 @@ class MainActivity : AppCompatActivity() {
                     }
                 } catch (e: Exception) {
                     android.util.Log.w(TAG, "re-probe of partly mounted $key failed", e)
+                    OtgMasterState.logFailure("probe", "Re-reading the partitions of $key failed", e)
                 } finally {
                     reofferInFlight.remove(key)
                 }
@@ -944,6 +945,7 @@ class MainActivity : AppCompatActivity() {
                         VeraCryptUnlocker().probeCandidates(opened.blockDevice)
                     } catch (e: Exception) {
                         e.printStackTrace()
+                        OtgMasterState.logFailure("probe", "Reading the partition table of $displayName failed", e)
                         emptyList()
                     }
                     // Detect plain filesystems on IO thread (readBlocks is blocking).
@@ -2256,8 +2258,7 @@ class MainActivity : AppCompatActivity() {
     }
 
     private fun appendLog(line: String) {
-        if (logsState.size > 50) logsState.removeAt(0)
-        logsState.add(line)
+        OtgMasterState.appendFolded(logsState, line, OtgMasterState.MAX_LOG_LINES)
         // Mirrored into process-wide state so FeedbackActivity can show the same lines.
         OtgMasterState.recordLog(line)
     }
@@ -2321,6 +2322,7 @@ class MainActivity : AppCompatActivity() {
                 }
             } catch (e: Exception) {
                 errorMsg = e.message
+                OtgMasterState.logFailure("share", "Copying shared files to the drive failed", e)
             }
             withContext(Dispatchers.Main) {
                 toastState.value = if (errorMsg != null) {

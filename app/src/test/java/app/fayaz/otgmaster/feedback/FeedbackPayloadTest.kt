@@ -29,7 +29,7 @@ class FeedbackPayloadTest {
 
     /** The parameter must survive the trip the form will take it on. */
     private fun decodePayload(url: String): JSONObject {
-        val raw = url.substringAfter("payload=")
+        val raw = url.substringAfter("payload=").substringBefore('#')
         val b64 = URLDecoder.decode(raw, "UTF-8")
         return JSONObject(String(java.util.Base64.getDecoder().decode(b64), Charsets.UTF_8))
     }
@@ -53,7 +53,7 @@ class FeedbackPayloadTest {
         // A long random-ish log makes a '+' in the base64 overwhelmingly likely.
         val noisy = (1..40).map { "event $it: ÿþ mount ✓ $it" }
         val url = FeedbackPayload.url("https://example.test/", contents(logLines = noisy))
-        val param = url.substringAfter("payload=")
+        val param = url.substringAfter("payload=").substringBefore('#')
         assertFalse("raw '+' would decode to a space", param.contains('+'))
         // And it still decodes, which is the point of encoding it.
         assertTrue(decodePayload(url).getString("deviceLogs").contains("event 40"))
@@ -122,7 +122,8 @@ class FeedbackPayloadTest {
         val big = (1..50).map { "line $it " + "x".repeat(300) }
         val c = FeedbackPayload.collectForTest(big)
         val url = FeedbackPayload.url("https://otgmaster-feedback.moylali.workers.dev/", c)
-        assertTrue("url was ${url.length} chars", url.length <= 8_000)
+        val query = url.substringBefore('#')
+        assertTrue("the part a server sees was ${query.length} chars", query.length <= 8_000)
         assertTrue("older lines should be reported as dropped", c.logLinesDropped > 0)
         // The tail is what a report needs: it describes what just went wrong.
         assertTrue("the newest line must be kept", c.logLines.last().startsWith("line 50"))
@@ -145,5 +146,31 @@ class FeedbackPayloadTest {
         val usb = listOf("USB: a 120 KiB read at block 0 took 9 ms; using 120 KiB transfers")
         val c = FeedbackPayload.collectForTest(listOf("Found 1 USB devices.") + usb, usbEvents = usb)
         assertEquals(listOf("Found 1 USB devices.") + usb, c.logLines)
+    }
+
+    /** The `logs` fragment parameter, decoded as the form does. */
+    private fun decodeLogs(url: String): String? {
+        val raw = url.substringAfter('#', "").split('&').firstOrNull { it.startsWith("logs=") }?.removePrefix("logs=")
+            ?: return null
+        return String(java.util.Base64.getDecoder().decode(URLDecoder.decode(raw, "UTF-8")), Charsets.UTF_8)
+    }
+
+    @Test
+    fun `the whole log goes in a separate base64 logs parameter, the short one stays in payload`() {
+        val big = (1..200).map { "line $it " + "x".repeat(120) + " ✓" }
+        val c = FeedbackPayload.collectForTest(big)
+        val url = FeedbackPayload.url("https://example.test/", c)
+        assertEquals("all 200 lines in logs", big.joinToString("\n"), decodeLogs(url))
+        val inPayload = decodePayload(url).getString("deviceLogs")
+        assertTrue("payload keeps the newest lines for older forms", inPayload.endsWith(big.last()))
+        assertTrue("payload stays within its budget", inPayload.length <= 3_500)
+        assertTrue("query part within proxy limits", url.substringBefore('#').length <= 8_000)
+        assertFalse("raw '+' would decode to a space", url.substringAfter('#').contains('+'))
+    }
+
+    @Test
+    fun `no logs parameter when logs are not selected`() {
+        val url = FeedbackPayload.url("https://example.test/", contents(), FeedbackPayload.Selection(logs = false))
+        assertEquals(null, decodeLogs(url))
     }
 }

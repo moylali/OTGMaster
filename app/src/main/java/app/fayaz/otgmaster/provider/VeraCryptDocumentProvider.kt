@@ -149,12 +149,24 @@ class VeraCryptDocumentProvider : DocumentsProvider() {
             java.util.concurrent.ConcurrentHashMap<String, java.util.concurrent.locks.ReentrantLock>()
 
         /** Runs [body] with the filesystem of [docId]'s drive exclusively held. */
-        fun <T> onDrive(docId: String?, body: () -> T): T {
+        fun <T> onDrive(docId: String?, op: String = "request", body: () -> T): T {
             val lock = driveLocks.computeIfAbsent(docId?.substringBefore(':') ?: "") {
                 java.util.concurrent.locks.ReentrantLock()
             }
             lock.lock()
-            try { return body() } finally { lock.unlock() }
+            try {
+                return body()
+            } catch (e: Throwable) {
+                // The caller (the Files app, a gallery, a backup app) gets the exception,
+                // and the user sees "couldn't copy" at best; the reason was nowhere a
+                // report could carry. No file name: reports are anonymous by design.
+                if (e !is FileNotFoundException) {
+                    OtgMasterState.logFailure("provider-$op", "Files app: $op on a mounted drive failed", e)
+                }
+                throw e
+            } finally {
+                lock.unlock()
+            }
         }
 
         private val proxyHandler: android.os.Handler by lazy {
@@ -181,7 +193,7 @@ class VeraCryptDocumentProvider : DocumentsProvider() {
     }
 
     override fun createDocument(documentId: String?, mimeType: String?, displayName: String?): String =
-        onDrive(documentId) { createDocumentImpl(documentId, mimeType, displayName) }
+        onDrive(documentId, "create") { createDocumentImpl(documentId, mimeType, displayName) }
 
     private fun createDocumentImpl(
         documentId: String?,
@@ -199,7 +211,7 @@ class VeraCryptDocumentProvider : DocumentsProvider() {
     }
 
     override fun deleteDocument(documentId: String?) =
-        onDrive(documentId) { deleteDocumentImpl(documentId) }
+        onDrive(documentId, "delete") { deleteDocumentImpl(documentId) }
 
     private fun deleteDocumentImpl(documentId: String?) {
         val file = getFileForDocId(documentId) ?: throw FileNotFoundException("File not found")
@@ -207,7 +219,7 @@ class VeraCryptDocumentProvider : DocumentsProvider() {
     }
 
     override fun renameDocument(documentId: String?, displayName: String?): String =
-        onDrive(documentId) { renameDocumentImpl(documentId, displayName) }
+        onDrive(documentId, "rename") { renameDocumentImpl(documentId, displayName) }
 
     private fun renameDocumentImpl(documentId: String?, displayName: String?): String {
         val file = getFileForDocId(documentId) ?: throw FileNotFoundException("File not found")
@@ -341,20 +353,20 @@ class VeraCryptDocumentProvider : DocumentsProvider() {
             }
             
             val callback = object : ProxyFileDescriptorCallback() {
-                override fun onGetSize(): Long = onDrive(documentId) { file.length }
+                override fun onGetSize(): Long = onDrive(documentId, "size") { file.length }
 
                 override fun onRead(offset: Long, size: Int, data: ByteArray): Int =
-                    onDrive(documentId) { readInto(file, offset, size, data) }
+                    onDrive(documentId, "read") { readInto(file, offset, size, data) }
 
                 override fun onWrite(offset: Long, size: Int, data: ByteArray): Int =
-                    onDrive(documentId) {
+                    onDrive(documentId, "write") {
                         file.write(offset, ByteBuffer.wrap(data, 0, size))
                         size
                     }
 
-                override fun onFsync() = onDrive(documentId) { file.flush() }
+                override fun onFsync() = onDrive(documentId, "sync") { file.flush() }
 
-                override fun onRelease() = onDrive(documentId) { file.close() }
+                override fun onRelease() = onDrive(documentId, "close") { file.close() }
             }
 
             val pfdMode = ParcelFileDescriptor.parseMode(mode ?: "r")
@@ -365,12 +377,12 @@ class VeraCryptDocumentProvider : DocumentsProvider() {
             ?: throw IllegalStateException("StorageManager not available")
 
         val callback = object : ProxyFileDescriptorCallback() {
-            override fun onGetSize(): Long = onDrive(documentId) { file.length }
+            override fun onGetSize(): Long = onDrive(documentId, "size") { file.length }
 
             override fun onRead(offset: Long, size: Int, data: ByteArray): Int =
-                onDrive(documentId) { readInto(file, offset, size, data) }
+                onDrive(documentId, "read") { readInto(file, offset, size, data) }
 
-            override fun onRelease() = onDrive(documentId) { file.close() }
+            override fun onRelease() = onDrive(documentId, "close") { file.close() }
         }
 
         return storageManager.openProxyFileDescriptor(

@@ -44,6 +44,7 @@ class MountedDriveService : Service() {
             // connectedDevice prerequisites are not met. The drive still works while the app
             // is in front; the service only keeps it working behind another app.
             Log.w(TAG, "foreground service refused: ${e.javaClass.simpleName}: ${e.message}")
+            OtgMasterState.logFailure("fgs", "Android refused the background service that keeps drives mounted behind other apps", e)
             running = false
             stopSelf()
         }
@@ -136,6 +137,7 @@ class MountedDriveService : Service() {
                 app.startForegroundService(Intent(app, MountedDriveService::class.java))
             } catch (e: Exception) {
                 Log.w(TAG, "could not start the mounted-drive service: ${e.javaClass.simpleName}: ${e.message}")
+                OtgMasterState.logFailure("fgs", "Could not start the background service that keeps drives mounted", e)
             }
         }
 

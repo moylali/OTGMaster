@@ -121,18 +121,53 @@ object OtgMasterState {
      * The recent log lines, mirrored here so another activity can read them.
      *
      * MainActivity keeps the list the UI renders; this is the same content, process
-     * wide, for the report screen. Bounded to the same 50 lines: it exists to be
-     * attached to a bug report, not to be a history.
+     * wide, for the report screen. [MAX_LOG_LINES] lines, each stamped with the time
+     * it was written, and a line that repeats the one before is folded into it
+     * ("… (repeated ×10, last 12:05:10)"), so a drive failing in a loop costs one
+     * line instead of the whole history.
      */
     private val logHistory = CopyOnWriteArrayList<String>()
 
+    const val MAX_LOG_LINES = 200
+
     fun recordLog(line: String) {
-        if (logHistory.size >= 50) logHistory.removeAt(0)
-        logHistory.add(line)
+        // One time for both lists, so FeedbackPayload can tell a USB line already in
+        // the recent log by equality.
+        val now = System.currentTimeMillis()
+        appendFolded(logHistory, line, MAX_LOG_LINES, now)
         if (line.startsWith("USB:") || line.startsWith("libaums:")) {
-            if (usbHistory.size >= MAX_USB_EVENTS) usbHistory.removeAt(0)
-            usbHistory.add(line)
+            appendFolded(usbHistory, line, MAX_USB_EVENTS, now)
         }
+    }
+
+    private val REPEATED = Regex(""" \(repeated ×(\d+), last \d\d:\d\d:\d\d\)$""")
+    private val STAMP = Regex("""^\d\d:\d\d:\d\d """)
+
+    /** "12:01:03" for [now]. */
+    fun stamp(now: Long = System.currentTimeMillis()): String =
+        java.text.SimpleDateFormat("HH:mm:ss", java.util.Locale.US).format(java.util.Date(now))
+
+    /**
+     * Adds [line] to [list] with a time stamp, or, when the last entry is the same
+     * line, counts it there instead. Keeps at most [max] entries, oldest dropped.
+     * Shared by the UI's list and the report's history so both read the same.
+     */
+    @Synchronized
+    fun appendFolded(list: MutableList<String>, line: String, max: Int, now: Long = System.currentTimeMillis()) {
+        val time = stamp(now)
+        val last = list.lastOrNull()
+        if (last != null) {
+            val m = REPEATED.find(last)
+            val text = (if (m != null) last.substring(0, m.range.first) else last).replaceFirst(STAMP, "")
+            if (text == line) {
+                val n = (m?.groupValues?.get(1)?.toInt() ?: 1) + 1
+                val first = STAMP.find(last)?.value ?: ""
+                list[list.size - 1] = "$first$line (repeated ×$n, last $time)"
+                return
+            }
+        }
+        while (list.size >= max) list.removeAt(0)
+        list.add("$time $line")
     }
 
     fun recentLogs(): List<String> = logHistory.toList()
@@ -147,7 +182,7 @@ object OtgMasterState {
      * needed for. FeedbackPayload puts any that fell out back in, ahead of the recent log.
      */
     private val usbHistory = CopyOnWriteArrayList<String>()
-    private const val MAX_USB_EVENTS = 24
+    private const val MAX_USB_EVENTS = 40
 
     fun usbEvents(): List<String> = usbHistory.toList()
 
@@ -175,6 +210,21 @@ object OtgMasterState {
      */
     @Volatile
     var logSink: ((String) -> Unit)? = null
+
+    /**
+     * A failure's reason into the log, for paths that used to tell only logcat: a
+     * report is all a maintainer gets, so every failure says what failed and why.
+     * At most [MAX_FAILURE_LINES] per [kind] per process, so a path failing in a loop
+     * (a native read on a dying drive) cannot fill the log by itself.
+     */
+    fun logFailure(kind: String, what: String, e: Throwable) {
+        val n = failureCounts.merge(kind, 1, Int::plus) ?: 1
+        if (n <= MAX_FAILURE_LINES) log("$what: ${e.reason()}")
+        else if (n == MAX_FAILURE_LINES + 1) log("$kind: further failures not logged")
+    }
+
+    private val failureCounts = java.util.concurrent.ConcurrentHashMap<String, Int>()
+    private const val MAX_FAILURE_LINES = 10
 
     fun log(line: String) {
         // With no activity alive the line used to be dropped. USB recovery happens
