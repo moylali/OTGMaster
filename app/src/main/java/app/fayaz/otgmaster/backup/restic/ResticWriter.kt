@@ -104,7 +104,22 @@ class ResticWriter(
 
     private fun times(millis: Long) = Instant.ofEpochMilli(millis).toString()
 
-    private fun fileNode(s: BackupSource): JSONObject {
+    /** Files skipped because the parent snapshot already holds them unchanged. */
+    var filesUnchanged = 0L; private set
+
+    private fun fileNode(s: BackupSource, previous: ResticRepository.Node?): JSONObject {
+        // Unchanged since the parent snapshot (same size and modification time, as restic
+        // decides by default): its chunks are already in the repository, so the file is
+        // not read at all. This is what makes a daily backup of a phone folder fast.
+        val t = times(s.modifiedMillis)
+        if (previous != null && previous.type == "file" && previous.size == s.size && sameMillis(previous.mtime, s.modifiedMillis) &&
+            previous.content.all { repo.hasBlob(it) }) {
+            filesDone++; filesUnchanged++
+            return JSONObject().put("name", s.name).put("type", "file").put("mode", FILE_MODE)
+                .put("mtime", t).put("atime", t).put("ctime", t)
+                .put("uid", 0).put("gid", 0).put("user", "").put("group", "").put("inode", 0).put("device_id", 0)
+                .put("size", s.size).put("links", 1).put("content", JSONArray(previous.content))
+        }
         val content = JSONArray()
         var size = 0L
         s.open().use { input ->
@@ -117,23 +132,23 @@ class ResticWriter(
             }
         }
         filesDone++
-        val t = times(s.modifiedMillis)
         return JSONObject().put("name", s.name).put("type", "file").put("mode", FILE_MODE)
             .put("mtime", t).put("atime", t).put("ctime", t)
             .put("uid", 0).put("gid", 0).put("user", "").put("group", "").put("inode", 0).put("device_id", 0)
             .put("size", size).put("links", 1).put("content", content)
     }
 
-    /** The tree blob for [dir]'s contents, children first; returns its id. */
-    fun saveTree(dir: BackupSource): String {
+    /** The tree blob for [dir]'s contents, children first; returns its id. [parentTree] is the same folder in the parent snapshot. */
+    fun saveTree(dir: BackupSource, parentTree: String? = null): String {
+        val previous = parentTree?.let { id -> runCatching { repo.tree(id) }.getOrNull() }?.associateBy { it.name }.orEmpty()
         val nodes = dir.children().sortedWith { a, b -> compareBytes(a.name, b.name) }.map { c ->
             if (c.isDirectory) {
                 val t = times(c.modifiedMillis)
                 JSONObject().put("name", c.name).put("type", "dir").put("mode", DIR_MODE)
                     .put("mtime", t).put("atime", t).put("ctime", t)
                     .put("uid", 0).put("gid", 0).put("user", "").put("group", "").put("inode", 0).put("device_id", 0)
-                    .put("subtree", saveTree(c))
-            } else fileNode(c)
+                    .put("subtree", saveTree(c, previous[c.name]?.takeIf { it.type == "dir" }?.subtree))
+            } else fileNode(c, previous[c.name])
         }
         val json = JSONObject().put("nodes", JSONArray(nodes))
         return saveBlob(ResticRepository.BlobType.TREE, (json.toString() + "\n").toByteArray(Charsets.UTF_8))
@@ -143,10 +158,15 @@ class ResticWriter(
      * Backs up [source] as a snapshot whose path is [path], and returns the snapshot's id.
      * Takes and releases a lock around the run, as restic does.
      */
-    fun backup(source: BackupSource, path: String, tags: List<String> = emptyList()): String {
+    fun backup(source: BackupSource, path: String, tags: List<String> = emptyList(), parent: ResticRepository.Snapshot? = null): String {
         lock()
         try {
-            val tree = saveTree(source)
+            // The parent's tree for this path: the same nesting the snapshot uses.
+            var parentTree: String? = parent?.tree
+            for (part in path.trim('/').split('/').filter { it.isNotEmpty() }) {
+                parentTree = parentTree?.let { id -> runCatching { repo.tree(id) }.getOrNull()?.firstOrNull { it.name == part }?.subtree }
+            }
+            val tree = saveTree(source, parentTree)
             // The snapshot's tree is the source's contents under its path, as restic lays a
             // backed-up directory out: one tree per path component, from the root down.
             var top = tree
@@ -171,6 +191,7 @@ class ResticWriter(
                 .put("hostname", hostname).put("username", username).put("uid", 0).put("gid", 0)
                 .put("program_version", programVersion)
             if (tags.isNotEmpty()) snap.put("tags", JSONArray(tags))
+            if (parent != null) snap.put("parent", parent.id)
             val sealed = repo.key.encrypt(snap.toString().toByteArray(), random)
             val id = ResticRepository.sha256Hex(sealed)
             backend.write("snapshots/$id", sealed)
@@ -181,6 +202,10 @@ class ResticWriter(
     }
 
     companion object {
+        /** restic writes nanoseconds and a local offset, this code milliseconds in UTC: compare as instants. */
+        fun sameMillis(rfc3339: String?, millis: Long): Boolean = rfc3339 != null &&
+            runCatching { java.time.OffsetDateTime.parse(rfc3339).toInstant().toEpochMilli() == millis }.getOrDefault(false)
+
         /** restic's default pack size. */
         const val PACK_SIZE = 16 * 1024 * 1024
         const val FILE_MODE = 420L            // 0644

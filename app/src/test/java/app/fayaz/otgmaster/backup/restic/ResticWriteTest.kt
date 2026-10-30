@@ -132,4 +132,32 @@ class ResticWriteTest {
         assertEquals(id, again.snapshots().single().id)
         tmp.deleteRecursively()
     }
+
+    @Test
+    fun `a second backup reads only what changed, and restic restores both`() {
+        val restic = restic(); assumeTrue("restic not installed", restic != null)
+        val tmp = Files.createTempDirectory("restic-incr").toFile()
+        val src = tmp.resolve("src").also { it.mkdirs() }
+        tree(src, 5)
+        val repoDir = tmp.resolve("repo").also { it.mkdirs() }
+        val repo = ResticWriter.init(LocalBackend(repoDir), "pw".toByteArray(), "phone", "otg")
+        ResticWriter(repo, "phone", "otg", "t").backup(FileSource(src), "/p", listOf("otg-job:1"))
+        // One file changes, one is added.
+        src.resolve("notes.txt").writeText("changed\n"); src.resolve("notes.txt").setLastModified(1_800_000_000_000)
+        src.resolve("added.bin").writeBytes(ByteArray(10_000) { 7 })
+        val repo2 = ResticRepository.open(LocalBackend(repoDir), "pw".toByteArray())!!
+        val parent = repo2.snapshots().single()
+        val w = ResticWriter(repo2, "phone", "otg", "t")
+        val id2 = w.backup(FileSource(src), "/p", listOf("otg-job:1"), parent)
+        assertEquals("the 6 unchanged files skipped (7 minus notes.txt)", 6L, w.filesUnchanged)
+        assertTrue("only the changed bytes read: ${w.bytesRead}", w.bytesRead < 20_000)
+        val check = run(restic!!, "-r", repoDir.path, "check", "--read-data")
+        assertTrue(check, check.contains("no errors were found"))
+        val target = tmp.resolve("restore")
+        run(restic, "-r", repoDir.path, "restore", id2.substring(0, 8), "--target", target.path)
+        for (f in src.walkTopDown().filter { it.isFile }) {
+            assertArrayEquals(f.path, f.readBytes(), target.resolve("p").resolve(f.relativeTo(src).path).readBytes())
+        }
+        tmp.deleteRecursively()
+    }
 }
