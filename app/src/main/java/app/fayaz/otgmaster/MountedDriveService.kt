@@ -74,8 +74,11 @@ class MountedDriveService : Service() {
         @Volatile private var lastProgressPost = 0L
 
         fun update(context: Context, titles: List<String>) {
+            val added = titles.any { it !in this.titles }
             this.titles = titles
             refresh(context.applicationContext)
+            // A drive just mounted: a backup that was waiting for it can run now.
+            if (added) app.fayaz.otgmaster.backup.BackupScheduler.evaluateSoon(context, "attach")
         }
 
         /**
