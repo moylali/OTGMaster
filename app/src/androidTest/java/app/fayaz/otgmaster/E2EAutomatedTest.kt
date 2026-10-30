@@ -713,6 +713,17 @@ class E2EAutomatedTest {
         if (failed != null) captureScreen("${action}_failed")
         assertNull("$action failed: ${failed?.text}", failed)
         done!!.click()
+        if (action == "encrypt") {
+            // Not mounted after Encrypt: the new volume is offered for unlock, so its
+            // password is proved before anything is written to it (#94).
+            assertNull("the new volume was mounted without its password", waitForMounted(5000L))
+            assertTrue("password field not offered for the new volume",
+                device.wait(Until.findObject(By.descContains("password_input")), 30000L) != null)
+            if (newCipher.isNotEmpty() && newCipher != "AES") pickOption("cipher_picker", newCipher)
+            if (newHash.isNotEmpty() && newHash != "SHA-512") pickOption("hash_picker", newHash)
+            assertTrue("the new volume did not unlock with its password after encrypt",
+                doMount(newPassword, newPim, testCase, clearFields = true))
+        }
         assertNotNull("no mounted card after $action", waitForMounted(60000L))
 
         var root = listRoot(context)

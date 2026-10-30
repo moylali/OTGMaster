@@ -1557,6 +1557,32 @@ class MainActivity : AppCompatActivity() {
         }
     }
 
+    /**
+     * Puts [candidate], a partition of [drive]'s USB device, in the unlock form, keeping
+     * [raw] open for it: what unmountDrive does for an encrypted partition that is
+     * unmounted while others on the same drive stay up.
+     */
+    private fun offerForUnlock(drive: MountedDrive, raw: RawBlockDevice, candidate: VolumeCandidate) {
+        val sourceKey = drive.sourceDeviceName ?: return
+        openedDevices[sourceKey] = raw
+        val existing = _deviceCandidates.value.find { it.deviceName == sourceKey }
+        _deviceCandidates.value = if (existing != null) {
+            _deviceCandidates.value.map {
+                if (it.deviceName == sourceKey && it.candidates.none { c -> c.startBlock == candidate.startBlock })
+                    it.copy(candidates = (it.candidates + candidate).sortedBy { c -> c.startBlock })
+                else it
+            }
+        } else {
+            _deviceCandidates.value + UsbDeviceCandidate(
+                deviceName = sourceKey,
+                displayName = drive.sourceDeviceDisplayName ?: sourceKey,
+                blockDevice = raw,
+                candidates = listOf(candidate),
+                plainPartitions = emptyList(),
+            )
+        }
+    }
+
     /** Mounts the filesystem now on [device] in [old]'s place, and lists it again. */
     private suspend fun remountAfterErase(
         old: MountedDrive,
@@ -1681,13 +1707,17 @@ class MainActivity : AppCompatActivity() {
                         sessionPlaintextCreds.remove(deviceKey)
                     }
                 }
-                driveOperation.value = app.fayaz.otgmaster.ui.DriveOperation(title, getString(R.string.operation_mounting), null)
-                val cached = wrapWithCache(volume, req.filesystem.displayName)
+                // Not mounted with the key still in memory. The new volume goes to the unlock
+                // form instead, so the user proves the password, PIM and keyfiles work while
+                // the drive is still empty, rather than after copying files onto it. Issue
+                // #94's reporter encrypted, used the drive, and found later that what they
+                // had kept would not open it.
+                volume.close() // wipes the master key; the USB connection stays open
                 val candidate = VolumeCandidate(drive.partitionLabel, start, count,
                     app.fayaz.otgmaster.veracrypt.ContainerType.VERACRYPT)
-                remountAfterErase(drive, cached, req.filesystem.displayName, candidate, plain = false)
                 val secs = ((System.currentTimeMillis() - t0) / 1000).toInt()
                 withContext(Dispatchers.Main) {
+                    offerForUnlock(drive, raw, candidate)
                     appendLog(getString(R.string.log_encrypt_done, drive.name, secs))
                     driveOperation.value = app.fayaz.otgmaster.ui.DriveOperation(title,
                         getString(R.string.operation_encrypt_done, req.cipher.displayName, req.hash.displayName,
