@@ -15,6 +15,8 @@ data class DeletedFile(
     val state: State,
     /** When it was last modified, from the directory entry; null when unknown. */
     val modifiedMillis: Long?,
+    /** Its clusters run consecutively from [firstCluster] (always assumed on FAT32; exFAT records it). */
+    val contiguous: Boolean = true,
 ) {
     enum class State {
         /** Every cluster it would occupy is still free: the content is very likely intact. */
@@ -173,7 +175,7 @@ class FatRecovery(private val dev: RawBlockDevice) {
 
     /** Every deleted file on the volume, in live folders and in deleted ones. */
     fun scan(isCancelled: () -> Boolean = { false }): List<DeletedFile> {
-        val liveStarts = HashSet<Long>()
+        val liveStarts = HashMap<Long, Long>() // first cluster -> size of the live file there
         val deleted = ArrayList<Pair<String, Entry>>()
         val deletedDirs = ArrayList<Pair<String, Entry>>()
         val seenDirs = HashSet<Long>()
@@ -186,8 +188,8 @@ class FatRecovery(private val dev: RawBlockDevice) {
                 when {
                     e.deleted && dir -> deletedDirs += p to e
                     e.deleted -> deleted += p to e
-                    dir -> { liveStarts += e.firstCluster; if (valid(e.firstCluster)) walk(p, e.firstCluster) }
-                    else -> if (e.firstCluster != 0L) liveStarts += e.firstCluster
+                    dir -> { liveStarts[e.firstCluster] = -1L; if (valid(e.firstCluster)) walk(p, e.firstCluster) }
+                    else -> if (e.firstCluster != 0L) liveStarts[e.firstCluster] = e.size
                 }
             }
         }
@@ -215,7 +217,9 @@ class FatRecovery(private val dev: RawBlockDevice) {
             if (e.firstCluster == 0L) return@mapNotNull DeletedFile(path, e.size, 0, DeletedFile.State.RECOVERABLE.takeIf { e.size == 0L }
                 ?: DeletedFile.State.OVERWRITTEN, e.mtime)
             if (!valid(e.firstCluster)) return@mapNotNull null
-            if (e.firstCluster in liveStarts) return@mapNotNull null // a renamed or moved file, still there
+            // A live file starting where this one did, with its size, is this file renamed or
+            // moved: still there, so not listed. A different size means the space was reused.
+            if (liveStarts[e.firstCluster] == e.size) return@mapNotNull null
             val n = clustersFor(e.size)
             val state = when {
                 inUse(e.firstCluster) -> DeletedFile.State.OVERWRITTEN
