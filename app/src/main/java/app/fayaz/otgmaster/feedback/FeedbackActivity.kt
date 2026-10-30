@@ -102,6 +102,7 @@ class FeedbackActivity : ComponentActivity() {
             FeedbackPayload.collect(
                 OtgMasterState.mountedDrives.toList(),
                 OtgMasterState.recentLogs(),
+                OtgMasterState.usbEvents(),
             )
         }
         var sel by remember { mutableStateOf(FeedbackPayload.Selection()) }
