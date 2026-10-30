@@ -231,7 +231,7 @@
     <string name="operation_unmounting">Unmounting</string>
     <string name="operation_mounting">Mounting the new volume</string>
     <string name="operation_format_done">Formatted as %1$s and mounted.</string>
-    <string name="operation_encrypt_done">Encrypted (%1$s, %2$s) with %3$s inside, and mounted.</string>
+    <string name="operation_encrypt_done">Encrypted (%1$s, %2$s) with %3$s inside. Unlock it now with the password, PIM and keyfiles you chose, to check they open it before you copy anything onto it.</string>
     <string name="operation_failed">Failed: %1$s</string>
     <string name="log_format_started">Format %1$s (%2$s, %3$s) started</string>
     <string name="log_format_done">Formatted %1$s as %2$s in %3$d s</string>
