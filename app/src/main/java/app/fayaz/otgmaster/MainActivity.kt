@@ -345,6 +345,9 @@ class MainActivity : AppCompatActivity() {
         // colours follow the in-app theme once it is read (applySystemBarAppearance).
         enableEdgeToEdge()
         
+        // Hourly: start due backups whose drives are mounted, remind about overdue ones.
+        runCatching { app.fayaz.otgmaster.backup.BackupScheduler.ensurePeriodic(this) }
+            .onFailure { OtgMasterState.logFailure("backup-scheduler", "Could not schedule the hourly backup check", it) }
         FileSystemFactory.registerFileSystem(ExFatFileSystemCreator(), 1)
         FileSystemFactory.registerFileSystem(app.fayaz.otgmaster.ext4.Ext4FileSystemCreator(), 2)
         FileSystemFactory.registerFileSystem(app.fayaz.otgmaster.ntfs.NtfsFileSystemCreator(), 2)
@@ -2516,6 +2519,15 @@ fun OtgMasterApp(
     var showSettings by remember { mutableStateOf(false) }
     var formatTarget by remember { mutableStateOf<MountedDrive?>(null) }
     var encryptTarget by remember { mutableStateOf<MountedDrive?>(null) }
+    var backupTarget by remember { mutableStateOf<MountedDrive?>(null) }
+    var backupsTarget by remember { mutableStateOf<MountedDrive?>(null) }
+    val backupJobs by app.fayaz.otgmaster.backup.JobStore.get(androidx.compose.ui.platform.LocalContext.current).jobs.collectAsState()
+    backupTarget?.let { d ->
+        app.fayaz.otgmaster.ui.BackupSetupDialog(d.id, d.name, onDismiss = { backupTarget = null })
+    }
+    backupsTarget?.let { d ->
+        app.fayaz.otgmaster.ui.BackupJobsDialog(d.id, onDismiss = { backupsTarget = null })
+    }
     // The volume label (and, for a drive without a partition table, its capacity) is read
     // under the filesystem's lock, which a long write holds for minutes: read it off the main
     // thread, once per form, and open the form when it is in.
@@ -2714,6 +2726,13 @@ fun OtgMasterApp(
                                         formatUnavailable(drive)) { formatTarget = drive })
                                     add(app.fayaz.otgmaster.ui.DriveAction("encrypt_action", stringResource(R.string.encrypt_drive_menu),
                                         encryptUnavailable(drive)) { encryptTarget = drive })
+                                    add(app.fayaz.otgmaster.ui.DriveAction("backup_action", stringResource(R.string.backup_action),
+                                        if (drive.isReadOnly) stringResource(R.string.backup_read_only) else null) { backupTarget = drive })
+                                    val driveJobs = app.fayaz.otgmaster.ui.jobsForDrive(backupJobs, drive.id)
+                                    if (driveJobs.isNotEmpty()) {
+                                        add(app.fayaz.otgmaster.ui.DriveAction("backups_action",
+                                            stringResource(R.string.backups_action, driveJobs.size)) { backupsTarget = drive })
+                                    }
                                     if (canClearCredentials) {
                                         add(app.fayaz.otgmaster.ui.DriveAction("clear_credentials_action",
                                             stringResource(R.string.clear_cached_credentials)) { deviceKey?.let(onClearDeviceCreds) })
