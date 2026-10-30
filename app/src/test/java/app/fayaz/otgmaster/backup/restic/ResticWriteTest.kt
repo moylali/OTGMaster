@@ -109,4 +109,27 @@ class ResticWriteTest {
         val reducible = Polynomials.mulMod(0b111, (1L shl 51) or 0b11, Long.MAX_VALUE ushr 1)
         assertFalse(Polynomials.irreducible(reducible))
     }
+
+    @Test
+    fun `through the FileTree adapters the app uses, restic still checks clean and restores`() {
+        val restic = restic(); assumeTrue("restic not installed", restic != null)
+        val tmp = Files.createTempDirectory("restic-tree").toFile()
+        val src = tmp.resolve("src").also { it.mkdirs() }
+        val expected = tree(src, 4)
+        val repoDir = tmp.resolve("repo").also { it.mkdirs() }
+        val backend = FileTreeBackend(app.fayaz.otgmaster.backup.LocalFileTree(repoDir))
+        val repo = ResticWriter.init(backend, "pw".toByteArray(), "phone", "otg")
+        val id = ResticWriter(repo, "phone", "otg", "OTG Master test")
+            .backup(FileTreeSource.root(app.fayaz.otgmaster.backup.LocalFileTree(src)), "/drive/Backups")
+        assertTrue("no temporary file left", repoDir.walkTopDown().none { it.name.endsWith(FileTreeBackend.TMP) })
+        val check = run(restic!!, "-r", repoDir.path, "check", "--read-data")
+        assertTrue(check, check.contains("no errors were found"))
+        val target = tmp.resolve("restore")
+        run(restic, "-r", repoDir.path, "restore", id.substring(0, 8), "--target", target.path)
+        assertSame(expected, target.resolve("drive/Backups"))
+        // And the app reads its own repository back through the same adapters.
+        val again = ResticRepository.open(backend, "pw".toByteArray())!!
+        assertEquals(id, again.snapshots().single().id)
+        tmp.deleteRecursively()
+    }
 }
