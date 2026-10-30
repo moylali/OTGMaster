@@ -69,6 +69,7 @@ object NtfsNative {
         size
     } catch (e: Exception) {
         android.util.Log.e("NtfsNative", "pread $size @ $offset failed", e)
+        app.fayaz.otgmaster.OtgMasterState.logFailure("ntfs-io", "NTFS: reading $size bytes at byte $offset failed", e)
         -1
     }
 
@@ -89,6 +90,7 @@ object NtfsNative {
         size
     } catch (e: Exception) {
         android.util.Log.e("NtfsNative", "pwrite $size @ $offset failed", e)
+        app.fayaz.otgmaster.OtgMasterState.logFailure("ntfs-io", "NTFS: writing $size bytes at byte $offset failed", e)
         -1
     }
 }

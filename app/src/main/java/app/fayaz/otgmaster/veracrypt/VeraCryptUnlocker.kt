@@ -104,6 +104,8 @@ class VeraCryptUnlocker {
                 ContainerType.VERACRYPT
             }
         } catch (e: Exception) {
+            app.fayaz.otgmaster.OtgMasterState.logFailure("container",
+                "Could not read the header of the partition at block $startBlock", e)
             ContainerType.UNKNOWN
         }
         // The container type is carried as a field and rendered as a tag in the

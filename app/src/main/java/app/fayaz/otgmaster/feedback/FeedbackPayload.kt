@@ -28,6 +28,11 @@ object FeedbackPayload {
         val logLines: List<String>,
         /** Log lines dropped to keep the URL within [MAX_URL_CHARS]. */
         val logLinesDropped: Int,
+        /**
+         * The whole log (up to [MAX_FULL_LOG_CHARS]), sent separately in the URL
+         * fragment as `logs`. [logLines] stays in `payload` for forms that predate it.
+         */
+        val fullLogLines: List<String> = logLines,
     )
 
     data class Partition(
@@ -91,7 +96,9 @@ object FeedbackPayload {
             )
         }
         val (kept, dropped) = trimLogs(logs, usbEvents)
+        val (full, _) = trimLogs(logs, usbEvents, MAX_FULL_LOG_CHARS, MAX_FULL_USB_CHARS)
         return Contents(
+            fullLogLines = full,
             deviceName = "${Build.MANUFACTURER} ${Build.MODEL} (Android ${Build.VERSION.RELEASE})",
             appVersion = "${BuildConfig.VERSION_NAME} (${BuildConfig.VERSION_CODE})",
             usbMake = first?.sourceDeviceDisplayName ?: "",
@@ -115,11 +122,16 @@ object FeedbackPayload {
      * omitted lines is worth showing — silently truncating would let someone believe
      * they had sent a complete log.
      */
-    private fun trimLogs(logs: List<String>, usbEvents: List<String> = emptyList()): Pair<List<String>, Int> {
+    private fun trimLogs(
+        logs: List<String>,
+        usbEvents: List<String> = emptyList(),
+        maxChars: Int = MAX_LOG_CHARS,
+        maxUsbChars: Int = MAX_USB_CHARS,
+    ): Pair<List<String>, Int> {
         // USB lines that have already scrolled out of the recent log go first, with a
         // budget of their own (OtgMasterState.usbEvents says why), newest kept.
         val earlier = ArrayDeque<String>()
-        var usbBudget = MAX_USB_CHARS
+        var usbBudget = maxUsbChars
         for (line in usbEvents.filter { it !in logs }.asReversed()) {
             val cost = line.length + 1
             if (usbBudget - cost < 0) break
@@ -129,7 +141,7 @@ object FeedbackPayload {
         val header = if (earlier.isEmpty()) emptyList()
             else listOf(EARLIER_USB_HEADER) + earlier + RECENT_LOG_HEADER
         val kept = ArrayDeque<String>()
-        var budget = MAX_LOG_CHARS - header.sumOf { it.length + 1 }
+        var budget = maxChars - header.sumOf { it.length + 1 }
         for (line in logs.asReversed()) {
             val cost = line.length + 1
             if (budget - cost < 0) break
@@ -154,7 +166,9 @@ object FeedbackPayload {
      */
     internal fun collectForTest(logs: List<String>, usbEvents: List<String> = emptyList()): Contents {
         val (kept, dropped) = trimLogs(logs, usbEvents)
+        val (full, _) = trimLogs(logs, usbEvents, MAX_FULL_LOG_CHARS, MAX_FULL_USB_CHARS)
         return Contents(
+            fullLogLines = full,
             deviceName = "TestCo TestPhone (Android 99)",
             appVersion = "0.0.0 (0)",
             usbMake = "Test USB Drive",
@@ -203,9 +217,15 @@ object FeedbackPayload {
         // encoded empty object, so the link carries no data even in a browser history
         // or a proxy log.
         if (sel.nothing) return base
-        val b64 = java.util.Base64.getEncoder()
-            .encodeToString(toJson(c, sel).toByteArray(Charsets.UTF_8))
-        return "$base?payload=${java.net.URLEncoder.encode(b64, "UTF-8")}"
+        val enc = java.util.Base64.getEncoder()
+        val b64 = enc.encodeToString(toJson(c, sel).toByteArray(Charsets.UTF_8))
+        val url = "$base?payload=${java.net.URLEncoder.encode(b64, "UTF-8")}"
+        // The whole log as its own parameter, in the fragment: a browser never sends the
+        // fragment to a server or proxy, so the 8 KB that bounds `payload` does not apply.
+        // A form that predates it ignores it and still gets the short log in `payload`.
+        if (!sel.logs || c.fullLogLines.isEmpty()) return url
+        val logs = enc.encodeToString(c.fullLogLines.joinToString("\n").toByteArray(Charsets.UTF_8))
+        return "$url#logs=${java.net.URLEncoder.encode(logs, "UTF-8")}"
     }
 
     /** What the user reads before deciding. Mirrors the payload exactly. */
@@ -246,15 +266,11 @@ object FeedbackPayload {
         }
         if (sel.logs) {
             appendLine()
-            if (c.logLines.isEmpty()) {
+            if (c.fullLogLines.isEmpty()) {
                 appendLine("Log: empty")
             } else {
-                append("Log: ${c.logLines.size} line(s)")
-                if (c.logLinesDropped > 0) {
-                    append(" — ${c.logLinesDropped} older line(s) left out to fit the link")
-                }
-                appendLine()
-                c.logLines.forEach { appendLine("  $it") }
+                appendLine("Log: ${c.fullLogLines.size} line(s)")
+                c.fullLogLines.forEach { appendLine("  $it") }
             }
         }
     }
@@ -277,6 +293,13 @@ object FeedbackPayload {
     private const val MAX_LOG_CHARS = 3_500
     /** Of [MAX_LOG_CHARS], at most this much for USB lines older than the recent log. */
     private const val MAX_USB_CHARS = 1_200
+    /**
+     * The whole log, in the fragment. 200 lines at a generous 200 characters each, with
+     * room for the USB lines that scrolled out; well under GitHub's 65,536-character
+     * issue body, which is where the form puts it.
+     */
+    private const val MAX_FULL_LOG_CHARS = 40_000
+    private const val MAX_FULL_USB_CHARS = 8_000
     internal const val EARLIER_USB_HEADER = "--- earlier USB events ---"
     internal const val RECENT_LOG_HEADER = "--- recent log ---"
 }

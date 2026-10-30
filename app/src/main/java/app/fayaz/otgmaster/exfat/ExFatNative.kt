@@ -107,6 +107,7 @@ object ExFatNative {
             size
         } catch (e: Exception) {
             e.printStackTrace()
+            app.fayaz.otgmaster.OtgMasterState.logFailure("exfat-io", "exFAT: reading $size bytes at byte $offset failed", e)
             -1
         }
     }
@@ -132,6 +133,7 @@ object ExFatNative {
             }
             size
         } catch (e: Exception) {
+            app.fayaz.otgmaster.OtgMasterState.logFailure("exfat-io", "exFAT: writing $size bytes at byte $offset failed", e)
             e.printStackTrace()
             -1
         }

@@ -60,6 +60,8 @@ class CredentialStore(context: Context) {
             // Prefs are undecryptable — stale file from a previous install or a key rotation.
             // Delete and start fresh; losing cached credentials is recoverable (re-enter once).
             android.util.Log.w("OTGMaster", "CredentialStore: encrypted prefs unreadable, wiping (${e.message})")
+            app.fayaz.otgmaster.OtgMasterState.logFailure("credentials",
+                "Saved passwords could not be decrypted (Android keystore changed?) and were cleared", e)
             try { context.deleteSharedPreferences("otg_cred_store") } catch (_: Exception) {}
             try { build() } catch (e2: Exception) {
                 android.util.Log.e("OTGMaster", "CredentialStore: prefs recreate failed (${e2.message})")

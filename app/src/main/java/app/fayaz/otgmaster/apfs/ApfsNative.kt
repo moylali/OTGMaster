@@ -56,6 +56,7 @@ object ApfsNative {
         size
     } catch (e: Exception) {
         android.util.Log.e("ApfsNative", "pread $size @ $offset failed", e)
+        app.fayaz.otgmaster.OtgMasterState.logFailure("apfs-io", "APFS: reading $size bytes at byte $offset failed", e)
         -1
     }
 }
