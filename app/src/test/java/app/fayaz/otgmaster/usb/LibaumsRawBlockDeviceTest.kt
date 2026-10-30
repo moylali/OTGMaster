@@ -432,6 +432,16 @@ class LibaumsRawBlockDeviceTest {
         assertEquals(64 * 512, device.transferBytes)
     }
 
+    @Test
+    fun `a size refused while the drive answers is used smaller but not remembered`() {
+        val driver = LimitedDriverForRetry(limitBlocks = 64)
+        val learned = mutableListOf<Int>()
+        val device = LibaumsRawBlockDevice(driver, FakeCommunication(), onTransferSizeLowered = { learned += it })
+        device.readBlocks(0, 128)
+        assertEquals("smaller for this attach", 64 * 512, device.transferBytes)
+        assertTrue("but not kept for the drive model: $learned", learned.isEmpty())
+    }
+
     /** Refuses transfers over [limitBlocks] and keeps answering smaller ones. */
     private class LimitedDriverForRetry(private val limitBlocks: Int) : BlockDeviceDriver {
         override val blockSize = 512
