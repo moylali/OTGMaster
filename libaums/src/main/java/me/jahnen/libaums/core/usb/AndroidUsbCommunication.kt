@@ -59,16 +59,25 @@ internal abstract class AndroidUsbCommunication(
 
         Log.d(TAG, "Performing native reset")
 
-        if (!deviceConnection!!.releaseInterface(usbInterface)) {
+        // LOCAL PATCH (docs/VENDOR_FIXES.md V22): each step's outcome goes to the
+        // app's log as one line, so a report says which step failed.
+        val released = deviceConnection!!.releaseInterface(usbInterface)
+        val releaseNote = if (released) "ok" else "failed, errno ${ErrNo.errno} ${ErrNo.errstr}"
+        if (!released) {
             Log.w(TAG, "Failed to release interface, errno: ${ErrNo.errno} ${ErrNo.errstr}")
         }
 
-        if (!resetUsbDeviceNative(deviceConnection!!.fileDescriptor)) {
+        val reset = resetUsbDeviceNative(deviceConnection!!.fileDescriptor)
+        val resetNote = if (reset) "ok" else "failed, errno ${ErrNo.errno} ${ErrNo.errstr}"
+        if (!reset) {
             Log.w(TAG, "ioctl failed! errno ${ErrNo.errno} ${ErrNo.errstr}")
             Log.w(TAG, "USB device will likely require new discovery and permissions")
         }
 
-        if (!deviceConnection!!.claimInterface(usbInterface, true)) {
+        val claimed = deviceConnection!!.claimInterface(usbInterface, true)
+        UsbDiagnostics.report("libaums: port reset: release interface $releaseNote; USBDEVFS_RESET $resetNote; " +
+            "claim interface " + (if (claimed) "ok" else "failed, errno ${ErrNo.errno} ${ErrNo.errstr}"))
+        if (!claimed) {
             throw IOException("Could not claim interface, errno: ${ErrNo.errno} ${ErrNo.errstr}")
         }
     }

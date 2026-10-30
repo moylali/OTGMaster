@@ -312,6 +312,7 @@ Vendored fork of [magnusja/libaums](https://github.com/magnusja/libaums).
 | `FatDirectory`, `Fat32FileSystem` | V20 — one live handle per directory entry, so a GC cannot leave two copies of a directory that overwrite each other's entries | see below |
 | `ClusterChain` | V19 — write runs of consecutive clusters up to 1 MiB, not four clusters | see below |
 | `ByteBlockDevice` | V21 — the trailing read-modify-write reads the last sector only. V1 read the whole span: a 1 MiB write ending mid-sector read 1 MiB first, 1 GB extra in a 2.2 GB FAT32 bigwrite with merged runs. `ByteBlockDeviceTailTest` counts the sectors read | the commit adding this row |
+| `ScsiBlockDevice`, `AndroidUsbCommunication`, new `UsbDiagnostics` | V22 — what libaums told only logcat reaches the app's log: one summary line per command that needed retries (each failure's message, Reset Recovery outcomes) and one per port reset (release, `USBDEVFS_RESET` and claim, with errno). User reports carry the app's log, never logcat, and #29, #71 and #88 were filed without the reason. No behaviour change | the commit adding this row |
 
 ## V19 — `ClusterChain.write` stopped at four clusters
 

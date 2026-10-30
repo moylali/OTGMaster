@@ -17,6 +17,16 @@ class LibaumsRawBlockDeviceOpener(private val context: Context) {
     private val usbManager = context.getSystemService(Context.USB_SERVICE) as UsbManager
     private val quirks = UsbTransferQuirks(context)
 
+    init {
+        // libaums' own retries, Reset Recoveries and port resets, one line each, into
+        // the app's log so "Report issue" carries them (libaums V22). Capped per open,
+        // like LibaumsRawBlockDevice's own lines, so a drive failing in a loop cannot
+        // push the rest of the history out of the report's budget.
+        me.jahnen.libaums.core.usb.UsbDiagnostics.sink = { line ->
+            if (libaumsLines.incrementAndGet() <= MAX_LIBAUMS_LINES) app.fayaz.otgmaster.OtgMasterState.log(line)
+        }
+    }
+
     /**
      * Opens every attached mass-storage device not already in [excludeDeviceKeys] (e.g.
      * already-mounted devices, keyed by [UsbDeviceDescriber.stableKey]), so the UI can let
@@ -73,6 +83,7 @@ class LibaumsRawBlockDeviceOpener(private val context: Context) {
                     // other for want of this: the drive's identity, the endpoint sizes
                     // and the phone's kernel were all missing. No serial number — see
                     // UsbTransferQuirks and FeedbackPayload on why.
+                    libaumsLines.set(0)
                     app.fayaz.otgmaster.OtgMasterState.log(
                         "USB: %04x:%04x %s %s, LUN %d of %d, %d blocks of %d B; bulk in/out %d/%d B; %s %s, Android %s, kernel %s"
                             .format(
@@ -152,6 +163,9 @@ class LibaumsRawBlockDeviceOpener(private val context: Context) {
 
     private companion object {
         const val TAG = "OTGMaster"
+        /** See the init block. About one failing request's worth, as in LibaumsRawBlockDevice. */
+        const val MAX_LIBAUMS_LINES = 12
+        val libaumsLines = java.util.concurrent.atomic.AtomicInteger(0)
         const val INTERFACE_SUBCLASS_SCSI = 6
         const val INTERFACE_PROTOCOL_BULK_ONLY = 80
     }
