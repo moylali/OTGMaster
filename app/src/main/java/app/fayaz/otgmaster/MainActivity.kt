@@ -770,6 +770,8 @@ class MainActivity : AppCompatActivity() {
         }
         lastNoDeviceHints = null
 
+        mountMtpDevices(devices, mountedDeviceKeys)
+
         // Devices not already mounted, not already sitting in the dropdown unprobed, and
         // that actually expose a mass-storage interface (skips USB hubs/keyboards/etc.).
         val candidateDevices = devices.filter {
@@ -785,6 +787,71 @@ class MainActivity : AppCompatActivity() {
             appendLog(getString(R.string.log_requested_usb_permission))
         } else {
             openAndProbeUsb()
+        }
+    }
+
+    /** MTP devices being opened, so a second scan does not open one twice. */
+    private val mtpInFlight = java.util.concurrent.ConcurrentHashMap.newKeySet<String>()
+
+    /**
+     * Another phone or a camera over USB (MTP/PTP): each storage it reports is mounted
+     * read-only as a drive (mtp/MtpFileSystem). The phone must be unlocked and set to
+     * "File transfer"; if Android's own file-transfer service already holds the device,
+     * opening fails and the log says so.
+     */
+    private fun mountMtpDevices(devices: List<UsbDevice>, mountedKeys: Set<String>) {
+        for (d in devices) {
+            if (!app.fayaz.otgmaster.mtp.MtpSession.isMtpDevice(d) || UsbDeviceDescriber.isMassStorageDevice(d)) continue
+            val has = usbDeviceProvider.hasPermission(d)
+            val key = UsbDeviceDescriber.stableKey(d, has)
+            if (key in mountedKeys || !mtpInFlight.add(key)) continue
+            if (!has) {
+                mtpInFlight.remove(key)
+                usbDeviceProvider.requestPermission(d, permissionIntent)
+                appendLog(getString(R.string.log_requested_usb_permission))
+                return
+            }
+            lifecycleScope.launch(Dispatchers.IO) {
+                try {
+                    val usb = getSystemService(Context.USB_SERVICE) as UsbManager
+                    val connection = usb.openDevice(d) ?: throw java.io.IOException("Android would not open the USB device")
+                    val mtp = android.mtp.MtpDevice(d)
+                    if (!mtp.open(connection)) {
+                        connection.close()
+                        throw java.io.IOException("the device refused an MTP session: unlock it, choose File transfer, " +
+                            "and close any other app showing its files")
+                    }
+                    val session = app.fayaz.otgmaster.mtp.MtpSession(d, mtp)
+                    val storages = session.storages()
+                    if (storages.isEmpty()) throw java.io.IOException("${session.name} reports no storage (is it unlocked?)")
+                    val drives = storages.map { fs ->
+                        val id = app.fayaz.otgmaster.extension.ExtensionContract.stableDriveId(
+                            key, fs.storageId.toLong() and 0xFFFFFFFFL, OtgMasterState.mountedDrives.map { it.id })
+                        MountedDrive(
+                            id = id,
+                            name = "${session.name} · ${fs.volumeLabel}",
+                            fileSystem = fs,
+                            blockDevice = null,
+                            sourceDeviceName = key,
+                            sourceDeviceDisplayName = session.name,
+                            isPlain = true,
+                            partitionLabel = fs.volumeLabel,
+                            filesystemName = "MTP",
+                            mountedReadOnly = true,
+                        ).also { OtgMasterState.addDrive(it) }
+                    }
+                    withContext(Dispatchers.Main) {
+                        appendLog("Mounted ${session.name} over MTP, read-only: ${drives.joinToString { it.partitionLabel }}")
+                        contentResolver.notifyChange(android.provider.DocumentsContract.buildRootsUri("app.fayaz.otgmaster.documents"), null)
+                        newlyMountedDriveIds.value = newlyMountedDriveIds.value + drives.map { it.id }
+                        updateMountedDrives()
+                    }
+                } catch (e: Exception) {
+                    OtgMasterState.logFailure("mtp", "Could not open ${UsbDeviceDescriber.friendlyName(d, 0)} over MTP", e)
+                } finally {
+                    mtpInFlight.remove(key)
+                }
+            }
         }
     }
 
@@ -1334,6 +1401,9 @@ class MainActivity : AppCompatActivity() {
             .filter { it.sourceDeviceName?.let(matchesDetached) == true }
         if (lost.isNotEmpty()) recordDisconnect(lost)
         lost.forEach { unmountDrive(it, disconnected = true) }
+        // An MTP device's session is shared by its storages; close it once they are gone.
+        lost.mapNotNull { (it.fileSystem as? app.fayaz.otgmaster.mtp.MtpStorageFileSystem)?.session }.distinct()
+            .forEach { s -> lifecycleScope.launch(Dispatchers.IO) { runCatching { s.close() } } }
         // Close and discard any probed-but-not-yet-mounted block handles.
         val keysToClose = openedDevices.keys.filter { matchesDetached(it) }
         val toClose = keysToClose.mapNotNull { openedDevices.remove(it) }
