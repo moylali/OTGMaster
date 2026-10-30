@@ -127,4 +127,23 @@ class FeedbackPayloadTest {
         // The tail is what a report needs: it describes what just went wrong.
         assertTrue("the newest line must be kept", c.logLines.last().startsWith("line 50"))
     }
+
+    @Test
+    fun `USB lines that scrolled out of the recent log are put back first`() {
+        val usb = listOf("USB: write of 120 KiB at block 7 failed: ...", "USB: the drive answers; retrying the write at the same size")
+        val recent = (1..50).map { "line $it " + "x".repeat(40) }
+        val c = FeedbackPayload.collectForTest(recent, usbEvents = usb)
+        assertEquals(FeedbackPayload.EARLIER_USB_HEADER, c.logLines.first())
+        assertEquals(usb, c.logLines.subList(1, 3))
+        assertEquals(FeedbackPayload.RECENT_LOG_HEADER, c.logLines[3])
+        assertTrue("the newest line must still be kept", c.logLines.last().startsWith("line 50"))
+        assertTrue("within the budget", c.logLines.sumOf { it.length + 1 } <= 3_500)
+    }
+
+    @Test
+    fun `USB lines still in the recent log are not repeated`() {
+        val usb = listOf("USB: a 120 KiB read at block 0 took 9 ms; using 120 KiB transfers")
+        val c = FeedbackPayload.collectForTest(listOf("Found 1 USB devices.") + usb, usbEvents = usb)
+        assertEquals(listOf("Found 1 USB devices.") + usb, c.logLines)
+    }
 }

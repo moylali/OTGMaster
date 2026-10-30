@@ -129,9 +129,27 @@ object OtgMasterState {
     fun recordLog(line: String) {
         if (logHistory.size >= 50) logHistory.removeAt(0)
         logHistory.add(line)
+        if (line.startsWith("USB:") || line.startsWith("libaums:")) {
+            if (usbHistory.size >= MAX_USB_EVENTS) usbHistory.removeAt(0)
+            usbHistory.add(line)
+        }
     }
 
     fun recentLogs(): List<String> = logHistory.toList()
+
+    /**
+     * The USB layer's own lines ("USB: ..." from LibaumsRawBlockDevice, "libaums: ..."
+     * from the driver), kept apart from [logHistory].
+     *
+     * They are written when a drive is opened or fails, which is usually long before the
+     * user taps Report issue; by then a mount, an unlock and a few scans can have pushed
+     * them out of the last 50 lines, and the report arrives without the one thing it was
+     * needed for. FeedbackPayload puts any that fell out back in, ahead of the recent log.
+     */
+    private val usbHistory = CopyOnWriteArrayList<String>()
+    private const val MAX_USB_EVENTS = 24
+
+    fun usbEvents(): List<String> = usbHistory.toList()
 
     /**
      * True while a benchmark is running, so whichever screen is in front can hold the

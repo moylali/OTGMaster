@@ -71,7 +71,7 @@ object FeedbackPayload {
      * remains is make, capacity, filesystem and whether the volume is encrypted —
      * enough to reproduce a storage bug without identifying the drive or its owner.
      */
-    fun collect(drives: List<MountedDrive>, logs: List<String>): Contents {
+    fun collect(drives: List<MountedDrive>, logs: List<String>, usbEvents: List<String> = emptyList()): Contents {
         val first = drives.firstOrNull()
         val partitions = drives.map { d ->
             val encType = when (d.sourceVolumeCandidate?.containerType) {
@@ -90,7 +90,7 @@ object FeedbackPayload {
                 encryptionType = encType,
             )
         }
-        val (kept, dropped) = trimLogs(logs)
+        val (kept, dropped) = trimLogs(logs, usbEvents)
         return Contents(
             deviceName = "${Build.MANUFACTURER} ${Build.MODEL} (Android ${Build.VERSION.RELEASE})",
             appVersion = "${BuildConfig.VERSION_NAME} (${BuildConfig.VERSION_CODE})",
@@ -115,16 +115,28 @@ object FeedbackPayload {
      * omitted lines is worth showing — silently truncating would let someone believe
      * they had sent a complete log.
      */
-    private fun trimLogs(logs: List<String>): Pair<List<String>, Int> {
+    private fun trimLogs(logs: List<String>, usbEvents: List<String> = emptyList()): Pair<List<String>, Int> {
+        // USB lines that have already scrolled out of the recent log go first, with a
+        // budget of their own (OtgMasterState.usbEvents says why), newest kept.
+        val earlier = ArrayDeque<String>()
+        var usbBudget = MAX_USB_CHARS
+        for (line in usbEvents.filter { it !in logs }.asReversed()) {
+            val cost = line.length + 1
+            if (usbBudget - cost < 0) break
+            usbBudget -= cost
+            earlier.addFirst(line)
+        }
+        val header = if (earlier.isEmpty()) emptyList()
+            else listOf(EARLIER_USB_HEADER) + earlier + RECENT_LOG_HEADER
         val kept = ArrayDeque<String>()
-        var budget = MAX_LOG_CHARS
+        var budget = MAX_LOG_CHARS - header.sumOf { it.length + 1 }
         for (line in logs.asReversed()) {
             val cost = line.length + 1
             if (budget - cost < 0) break
             budget -= cost
             kept.addFirst(line)
         }
-        return kept.toList() to (logs.size - kept.size)
+        return header + kept.toList() to (logs.size - kept.size)
     }
 
     /**
@@ -140,8 +152,8 @@ object FeedbackPayload {
      * Builds Contents from logs alone, for tests that need the real trimming without
      * an Android Build or a mounted drive.
      */
-    internal fun collectForTest(logs: List<String>): Contents {
-        val (kept, dropped) = trimLogs(logs)
+    internal fun collectForTest(logs: List<String>, usbEvents: List<String> = emptyList()): Contents {
+        val (kept, dropped) = trimLogs(logs, usbEvents)
         return Contents(
             deviceName = "TestCo TestPhone (Android 99)",
             appVersion = "0.0.0 (0)",
@@ -263,4 +275,8 @@ object FeedbackPayload {
      * fields and for percent-encoding expanding `+` and `/` threefold.
      */
     private const val MAX_LOG_CHARS = 3_500
+    /** Of [MAX_LOG_CHARS], at most this much for USB lines older than the recent log. */
+    private const val MAX_USB_CHARS = 1_200
+    internal const val EARLIER_USB_HEADER = "--- earlier USB events ---"
+    internal const val RECENT_LOG_HEADER = "--- recent log ---"
 }
