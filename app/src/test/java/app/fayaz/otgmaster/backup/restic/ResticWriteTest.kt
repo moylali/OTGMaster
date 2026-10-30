@@ -160,4 +160,42 @@ class ResticWriteTest {
         }
         tmp.deleteRecursively()
     }
+
+    @Test
+    fun `forget and prune free what only old snapshots used, and restic still checks clean`() {
+        val restic = restic(); assumeTrue("restic not installed", restic != null)
+        val tmp = Files.createTempDirectory("restic-prune").toFile()
+        val src = tmp.resolve("src").also { it.mkdirs() }
+        tree(src, 6)
+        val gone = src.resolve("old-video.bin").apply { writeBytes(ByteArray(40_000_000).also { Random(9).nextBytes(it) }) }
+        val repoDir = tmp.resolve("repo").also { it.mkdirs() }
+        val repo = ResticWriter.init(LocalBackend(repoDir), "pw".toByteArray(), "phone", "otg")
+        ResticWriter(repo, "phone", "otg", "t").backup(FileSource(src), "/p")
+        gone.delete()
+        val r2 = ResticRepository.open(LocalBackend(repoDir), "pw".toByteArray())!!
+        val keepId = ResticWriter(r2, "phone", "otg", "t").backup(FileSource(src), "/p", parent = r2.snapshots().single())
+
+        val r3 = ResticRepository.open(LocalBackend(repoDir), "pw".toByteArray())!!
+        val m = ResticMaintenance(r3, "phone", "otg")
+        val drop = m.toForget(r3.snapshots(), KeepPolicy(last = 1))
+        assertEquals(1, drop.size)
+        m.forget(drop.map { it.id })
+        val before = repoDir.walkTopDown().filter { it.isFile }.sumOf { it.length() }
+        val res = m.prune()
+        val after = repoDir.walkTopDown().filter { it.isFile }.sumOf { it.length() }
+        // The 40 MB file shares its first and last pack with files still in use, and packs in
+        // part use are kept whole (no repacking), so one full 16 MB pack is what goes.
+        assertTrue("a pack only the forgotten snapshot used was deleted: ${res.packsDeleted}", res.packsDeleted >= 1)
+        assertTrue("at least 15 MB freed: ${before - after}", before - after >= 15_000_000)
+
+        val check = run(restic!!, "-r", repoDir.path, "check", "--read-data")
+        assertTrue(check, check.contains("no errors were found"))
+        val target = tmp.resolve("restore")
+        run(restic, "-r", repoDir.path, "restore", keepId.substring(0, 8), "--target", target.path)
+        for (f in src.walkTopDown().filter { it.isFile }) {
+            assertArrayEquals(f.path, f.readBytes(), target.resolve("p").resolve(f.relativeTo(src).path).readBytes())
+        }
+        assertTrue("no lock left behind", repoDir.resolve("locks").list()!!.isEmpty())
+        tmp.deleteRecursively()
+    }
 }
