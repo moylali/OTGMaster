@@ -33,6 +33,81 @@ to a row here.
 
 ---
 
+## 2026-10-22, 10-29 and 10-30 — USB recovery for #88/#71 and the 2 TB fix for #87 (#93, #96), and the V22 phase timers
+
+Each run used `regress_chain.sh` (Drives 2 and 3) or `sequence_runs.sh` (Drive 5) → `start_run.sh` with the "full"
+section set and the matrix credentials. Each report's `build:` line was checked against the APK installed
+before the run. Builds:
+
+- **`31acb7f`:** #93 and #96 before #93's last commit. It has the reset, probe, quirks and same-size retry, but a
+  lowered size was still remembered without a port reset.
+- **`6275ed9`, `6bd4eb1`:** all of #93 and #96. They differ only in versionName ("0.4.3" vs "0.4.2") and
+  AGENTS.md text: `git diff --stat 6275ed9 6bd4eb1` touches nothing else. Rebased onto `main`, the
+  code is the same, as #96's commit on top of this one. `6bd4eb1` is the build published as the `test-usbfix-6bd4eb1` pre-release.
+
+"Failed attempts" counts libaums' `Could not read/write` retries in the run's logcat. Each was recovered,
+because every run below completed all its sections.
+
+| Device | Partition | Build | Sections | bigwrite write / read-back (MB/s) | Fixtures | Failed attempts, recovery | Host check |
+|---|---|---|---|---|---|---|---|
+| OnePlus 7 (Android 16) | D2VCFAT32 | `31acb7f` | full, all ✓ | 6.33 / 24.33 | ALL 20958 MATCHED | 16; one read failed twice at 120 KiB → 60 KiB **and remembered** (the bug `4b05bad`/`36c0065` fix) | Drive 2 ALL CLEAN |
+| OnePlus 7 | D2VCFAT32 | `6275ed9` | full, all ✓ | 7.44 / 24.31 | ALL 20958 MATCHED | 16; one write failed twice at 120 KiB → 60 KiB for the session, not remembered | Drive 2 ALL CLEAN |
+| OnePlus 7 | D2L1EXT4 | `6275ed9` | full, all ✓ | 5.22 / 22.53 | ALL 21024 MATCHED | 23; two same-size retries, one → 60 KiB | Drive 2 ALL CLEAN (e2fsck clean) |
+| OnePlus 7 | D2VCFAT32 | 0.4.2 `6e281db` (A/B) | full, all ✓ | 7.77 / 25.14 | ALL 20958 MATCHED | 12; 1 step-down (0.4.2's bare step-down) | Drive 2 ALL CLEAN |
+| Samsung M30 (Android 10) | D3L1EXFAT | `6275ed9` | full, all ✓ | 3.63 / 9.06 | ALL 20929 MATCHED | 0 | Drive 3 ALL CLEAN |
+| Samsung M30 | D3L4EXFAT | `6275ed9` | full, all ✓ | 2.49 / 9.18 | ALL 20910 MATCHED | 0 | Drive 3 ALL CLEAN |
+| Samsung M30 | D5 p1 VC_ATS_ARGON_PIM0 (…EF449) | `6bd4eb1` | full, all ✓ | 1.94 / 2.59 | ALL 20902 MATCHED | 0 | pending (Drive 5 still running) |
+| realme 8 (RMX3085, Android 13, Realme UI 4.0) | D5 p1 VC_ATS_ARGON_PIM0 (…EF455) | `6bd4eb1` | full, all ✓ | 2.58 / 3.65 | ALL 20902 MATCHED | 23; a 64 KiB read at block 100665344 (partition 7's start, auto-mounted) failed twice → 32 KiB for the session | pending (Drive 5 still running) |
+
+What these show:
+
+- **On the OnePlus, the retries come from the phone, not the change.** 0.4.2 retried 12 times on the same partition.
+  The PR build retries a similar number and recovers them the same way. Write speed is within run-to-run spread:
+  7.44 vs 7.77 MB/s.
+- **The M30 on Drive 3 and Drive 5 had no failed transfers at all.** On 0.4.2 it lost both Drive 3 exFAT partitions in
+  the bigwrite, and broke with USB read/write failures in every Drive 5 attempt (10-18 to 10-22, the section
+  below). One clean night doesn't prove those dropouts are gone, but they didn't happen.
+- **The realme run is the first on that phone to complete** (#71's OnePlus CPH2585 is an OPPO-family phone, like the realme). Its one stuck
+  read was recovered by a same-size retry and then a step-down, with no reset needed.
+- **No drive went dead on any of these runs, so `USBDEVFS_RESET` has still run only in unit tests.**
+
+Laptop, 10-30: Drive 2 (all 10 partitions) and Drive 3 (all 10) read back with `read_matrix_drive.sh` and
+`verify_matrix_drive.py`. Both are **ALL CLEAN**: checker clean, every file matched, every bigwrite and tree intact.
+
+After the Drive 2 read-back, the published minified APK (`6bd4eb1`, R8) was smoke-tested on the OnePlus with
+Drive 2. D2VCFAT32 opened read-only (a read-only choice saved for that partition on this phone). D2VCEXFAT opened
+read-write. The Files app browsed `BENCH/edge`, opened `file with spaces.txt` ("Hello World", the manifest's hash),
+and copied it into `BENCH/`, where it read back. That copy is the one change Drive 2's next host check should
+report on D2VCEXFAT.
+
+**V22 phase timers, `feature/async-usbfs` `a52d526`, 10-22, OnePlus 7, bigwrite only:**
+
+| Partition | bigwrite write / read-back (MB/s) | Write: data / CSW wait / gaps, share of wall time | Result |
+|---|---|---|---|
+| D2VCFAT32 | 6.91 / 23.35 | 10.8% / 55.6% / 30.2% (33,202 commands, 65 KiB each) | ALL PASSED after remount |
+| D2VCEXFAT | 7.89 / 24.12 | 12.4% / 31.7% / 41.4% (19,509 commands, 110 KiB each) | ALL PASSED after remount |
+
+Data moves at 67 MB/s while the drive is taking it, and the drive's CSW wait is most of a write. So async URBs could
+save at most the CBW and data phases, ~2% of writes, and ~6% of reads, whose gaps are 74–75% of wall time. Overlapping
+the app's own work (cache, crypto, filesystem) with the transfer could save up to ~40%. Those numbers come from these
+two runs. Host check: Drive 2's 10-30 read-back above came after these runs and the #93 runs, and is ALL CLEAN.
+
+Not completed, so no result: OnePlus D2VCFAT32 on `d133498` (stopped in the read sections, to rebuild with the
+same-size retry); the start of D2L1EXT4 on `31acb7f` (stopped to move to `6275ed9`).
+
+### Commit hashes after the merge of #82
+
+| On the branch (cited) | On `main` | PR | Commit |
+|---|---|---|---|
+| `d52add3` | `cae7d2b` | #82 | chore: bump version to 0.4.3 (49) |
+| `2cfa3a9` | `f615e4e` | #82 | docs: hash table for #81, the v0.4.2 records |
+| `19c13f8` | `01b1f3f` | #82 | chore: keep versionName 0.4.2 until the next tag; the rule checks versionCode |
+
+#93 and #96 were rebased from `19c13f8` onto `01b1f3f`. Those two commits have the same tree, so `d4fa8e2` → `36c0065`
+is the same code, and so is `6bd4eb1` → #96's rebased commit.
+
+---
+
 ## 2026-10-18 (night) to 2026-10-22 — the 0.4.2 release matrix on `6e281db` (= `de98da6`)
 
 The matrix restarted on the final 0.4.2 tree once #74–#78 were in. Every report below says
