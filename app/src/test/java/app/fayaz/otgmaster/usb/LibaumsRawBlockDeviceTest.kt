@@ -363,6 +363,37 @@ class LibaumsRawBlockDeviceTest {
     }
 
     @Test
+    fun `a one-off dropout is reset and retried at the same size, not remembered smaller`() {
+        // The M30 with a PNY stick: hours of 120 KiB transfers, then one that leaves
+        // the drive answering nothing. The size is not the cause, so the reset must
+        // not cost this drive model its transfer size on this phone for good.
+        val driver = StickyDriver(limitBlocks = 240)
+        val communication = ResettableCommunication(driver)
+        val learned = mutableListOf<Int>()
+        val device = LibaumsRawBlockDevice(driver, communication, onTransferSizeLowered = { learned += it })
+        device.readBlocks(0, 240)
+        driver.stuck = true
+
+        assertArrayEquals(expectedBytes(4096, 240, 512), device.readBlocks(4096, 240))
+        assertEquals("one reset", 1, communication.resets)
+        assertEquals("the size is kept", 240 * 512, device.transferBytes)
+        assertTrue("and nothing is handed out to be remembered: $learned", learned.isEmpty())
+    }
+
+    @Test
+    fun `a drive that sticks again straight after the reset is read smaller`() {
+        // #88's drive: the same transfer sticks it again, so after the second reset
+        // the size is what is wrong. 128 blocks -> reset, retry 128 -> reset, 64.
+        val driver = StickyDriver(limitBlocks = 64)
+        val communication = ResettableCommunication(driver)
+        val device = LibaumsRawBlockDevice(driver, communication)
+        assertArrayEquals(expectedBytes(288, 128, 512), device.readBlocks(288, 128))
+        assertEquals("two resets: one same-size retry, then the step down", 2, communication.resets)
+        assertEquals(2, driver.rejected)
+        assertEquals(64 * 512, device.transferBytes)
+    }
+
+    @Test
     fun `a drive that stays dead after the reset fails instead of retrying smaller`() {
         // Nothing revives it, which is the drive in #88 before it was unplugged.
         val driver = StickyDriver(limitBlocks = 64)

@@ -66,6 +66,27 @@ class LibaumsRawBlockDevice(
         (bytes / blockSize).coerceAtLeast(1)
     }
 
+    init {
+        if (transferBytesOverride == null && rememberedTransferBytes != null) {
+            app.fayaz.otgmaster.OtgMasterState.log(
+                "USB: using ${maxTransferBlocks * blockSize / 1024} KiB transfers, remembered for this drive model")
+        }
+    }
+
+    /**
+     * Successful transfers since the last port reset, or -1 if there has been none.
+     *
+     * A reset that brings a drive back says nothing about the size by itself. In #88
+     * the size is the cause: the same transfer sticks the drive again straight after
+     * the reset. On the M30 with a PNY stick it is not: the drive drops out once in
+     * hours of transfers at a size it otherwise takes. Stepping down on every reset
+     * would ratchet that drive model to the floor on that phone for good, since the
+     * size is remembered and only ever lowered. So after a reset the same size is
+     * tried once more, and only a failure within [SAME_SIZE_RETRY_WINDOW] transfers
+     * of the last reset counts against the size.
+     */
+    @Volatile private var transfersSinceReset = -1L
+
     /**
      * The floor for [maxTransferBlocks].
      *
@@ -130,7 +151,7 @@ class LibaumsRawBlockDevice(
         }
         true
     } catch (e: Exception) {
-        Log.w(TAG, "one-block read at $at failed too: ${e.message}")
+        report("USB: a one-block read at block $at failed too: ${causeChain(e)}")
         false
     }
 
@@ -143,11 +164,15 @@ class LibaumsRawBlockDevice(
      * recovered them. USBDEVFS_RESET is the step above it and nothing called it.
      */
     private fun resetPort(): Boolean = try {
+        val t0 = System.nanoTime()
         synchronized(transferLock) {
             checkOpen()
             communication.resetDevice()
             driver.init()
         }
+        report("USB: port reset and re-initialised in ${(System.nanoTime() - t0) / 1_000_000} ms: " +
+            "${driver.blocks} blocks of ${driver.blockSize} B")
+        transfersSinceReset = 0
         true
     } catch (e: Exception) {
         report("USB: the port reset failed: ${causeChain(e)}")
@@ -171,12 +196,18 @@ class LibaumsRawBlockDevice(
         if (closed) return false
         report("USB: $op of ${chunk * blockSize / 1024} KiB at block $at failed: ${causeChain(e)}")
         if (!answersAt(at)) {
+            // Read before the reset sets it to 0: was the last reset only just now?
+            val since = transfersSinceReset
             report("USB: the drive has stopped answering; resetting its USB port")
             if (!resetPort() || !answersAt(at)) {
                 report("USB: the drive is still not answering - unplug it and plug it in again")
                 return false
             }
-            report("USB: the drive answers again after the port reset")
+            if (since < 0 || since >= SAME_SIZE_RETRY_WINDOW) {
+                report("USB: the drive answers again after the port reset; retrying the $op at the same size")
+                return true
+            }
+            report("USB: the drive answers again, but stuck again $since transfers after the last reset")
         }
         return stepDown(op, chunk)
     }
@@ -250,6 +281,7 @@ class LibaumsRawBlockDevice(
                     val t0 = System.nanoTime()
                     driver.read(startBlock + done, view)
                     io.readNanos += System.nanoTime() - t0
+                    if (transfersSinceReset >= 0) transfersSinceReset++
                     io.readCommands++
                     io.readBytes += chunk.toLong() * blockSize
                 }
@@ -286,6 +318,7 @@ class LibaumsRawBlockDevice(
                     val t0 = System.nanoTime()
                     driver.write(startBlock + done, view)
                     io.writeNanos += System.nanoTime() - t0
+                    if (transfersSinceReset >= 0) transfersSinceReset++
                     io.writeCommands++
                     io.writeBytes += chunk.toLong() * blockSize
                 }
@@ -349,7 +382,10 @@ class LibaumsRawBlockDevice(
         val probe = minOf(maxTransferBlocks.toLong(), blockCount).toInt()
         if (probe <= 0) return
         try {
+            val t0 = System.nanoTime()
             readBlocks(0, probe)
+            report("USB: a ${probe * blockSize / 1024} KiB read at block 0 took " +
+                "${(System.nanoTime() - t0) / 1_000_000} ms; using ${transferBytes / 1024} KiB transfers")
         } catch (e: Exception) {
             // Not fatal: small reads may still work, and the partition table is read
             // one block at a time, so the drive is still worth offering to the user.
@@ -374,7 +410,9 @@ class LibaumsRawBlockDevice(
         /** See [minTransferBlocks]. */
         const val MIN_TRANSFER_BYTES = 4 * 1024
         /** See [reportedLines]. About one failing request's worth of detail. */
-        private const val MAX_REPORTED_LINES = 16
+        private const val MAX_REPORTED_LINES = 24
+        /** See [transfersSinceReset]. About 7 MiB at 30 KiB, 28 MiB at 120 KiB. */
+        private const val SAME_SIZE_RETRY_WINDOW = 240L
         /** See [causeChain]. libaums nests two deep; the rest is room to spare. */
         private const val MAX_CAUSE_DEPTH = 4
         private const val TAG = "LibaumsRawBlockDevice"
