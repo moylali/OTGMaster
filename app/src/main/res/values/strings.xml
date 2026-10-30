@@ -292,4 +292,16 @@
     <string name="backup_password_missing">Not on this phone.</string>
     <string name="backup_read_only">The drive is mounted read-only</string>
     <string name="close">Close</string>
+    <string name="recovery_action">Recover deleted files…</string>
+    <string name="recovery_not_supported">Recovery works on FAT32 and exFAT</string>
+    <string name="recovery_title">Deleted files on %1$s</string>
+    <string name="recovery_scanning">Looking for deleted files… nothing is written to the drive.</string>
+    <string name="recovery_none">No deleted files found.</string>
+    <string name="recovery_help">Only deleted files are listed. They are copied to a folder you choose on the phone or another drive, never to this one, so nothing still recoverable is overwritten.</string>
+    <string name="recovery_partly">partly overwritten</string>
+    <string name="recovery_overwritten">overwritten</string>
+    <string name="recovery_recover">Recover %1$d…</string>
+    <string name="recovery_same_drive">Choose a folder on the phone or on another drive: writing to this one could overwrite the files being recovered.</string>
+    <string name="recovery_progress">Recovering %1$d of %2$d…</string>
+    <string name="recovery_done">Recovered %1$d of %2$d into “%3$s”.</string>
 </resources>
