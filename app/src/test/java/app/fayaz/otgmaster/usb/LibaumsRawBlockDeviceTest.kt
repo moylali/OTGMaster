@@ -381,6 +381,71 @@ class LibaumsRawBlockDeviceTest {
     }
 
     @Test
+    fun `a drive that is not ready yet is retried at the same size, not remembered smaller`() {
+        // A OnePlus 7 with a PNY stick, 0.8 s after it was plugged in: the probe's
+        // 120 KiB read failed all six libaums attempts, the one-block check after it
+        // failed twice inside libaums and then answered, and the drive took 120 KiB
+        // for hours afterwards. Nothing about the size. One failed call, then none.
+        var failuresLeft = 1
+        val driver = object : BlockDeviceDriver {
+            override val blockSize = 512
+            override val blocks = 1_000_000L
+            override fun init() {}
+            private fun check() {
+                if (failuresLeft > 0) { failuresLeft--; throw java.io.IOException(
+                    "MAX_RECOVERY_ATTEMPTS Exceeded while trying to transfer command to device, please reattach device and try again",
+                    java.io.IOException("Could not read from device, result == -1 errno 0 null")) }
+            }
+            override fun read(deviceOffset: Long, buffer: ByteBuffer) { check(); buffer.position(buffer.limit()) }
+            override fun write(deviceOffset: Long, buffer: ByteBuffer) { check(); buffer.position(buffer.limit()) }
+        }
+        val resets = intArrayOf(0)
+        val communication = object : UsbCommunication {
+            override val inEndpoint get() = throw NotImplementedError()
+            override val outEndpoint get() = throw NotImplementedError()
+            override val usbInterface get() = throw NotImplementedError()
+            override fun bulkOutTransfer(src: ByteBuffer) = throw NotImplementedError()
+            override fun bulkInTransfer(dest: ByteBuffer) = throw NotImplementedError()
+            override fun controlTransfer(
+                requestType: Int, request: Int, value: Int, index: Int,
+                buffer: ByteArray, length: Int
+            ) = throw NotImplementedError()
+            override fun resetDevice() { resets[0]++ }
+            override fun clearFeatureHalt(endpoint: android.hardware.usb.UsbEndpoint) =
+                throw NotImplementedError()
+            override fun close() {}
+        }
+        val learned = mutableListOf<Int>()
+        val device = LibaumsRawBlockDevice(driver, communication, onTransferSizeLowered = { learned += it })
+        device.probeTransferSize()
+        assertEquals("the size is kept", 240 * 512, device.transferBytes)
+        assertTrue("and nothing is handed out to be remembered: $learned", learned.isEmpty())
+        assertEquals("it answered without a port reset", 0, resets[0])
+    }
+
+    @Test
+    fun `a drive that refuses a size while answering steps down after a second refusal`() {
+        val driver = LimitedDriverForRetry(limitBlocks = 64)
+        val device = LibaumsRawBlockDevice(driver, FakeCommunication())
+        device.readBlocks(0, 128)
+        assertEquals("refused twice at 128 blocks, then read at 64", 2, driver.refusals)
+        assertEquals(64 * 512, device.transferBytes)
+    }
+
+    /** Refuses transfers over [limitBlocks] and keeps answering smaller ones. */
+    private class LimitedDriverForRetry(private val limitBlocks: Int) : BlockDeviceDriver {
+        override val blockSize = 512
+        override val blocks = 1_000_000L
+        var refusals = 0
+        override fun init() {}
+        private fun check(buffer: ByteBuffer) {
+            if (buffer.remaining() / blockSize > limitBlocks) { refusals++; throw java.io.IOException("refused") }
+        }
+        override fun read(deviceOffset: Long, buffer: ByteBuffer) { check(buffer); buffer.position(buffer.limit()) }
+        override fun write(deviceOffset: Long, buffer: ByteBuffer) { check(buffer); buffer.position(buffer.limit()) }
+    }
+
+    @Test
     fun `a drive that sticks again straight after the reset is read smaller`() {
         // #88's drive: the same transfer sticks it again, so after the second reset
         // the size is what is wrong. 128 blocks -> reset, retry 128 -> reset, 64.
