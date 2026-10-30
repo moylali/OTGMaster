@@ -26,6 +26,9 @@ import me.jahnen.libaums.core.driver.scsi.commands.ScsiInquiry
 import me.jahnen.libaums.core.driver.scsi.commands.ScsiInquiryResponse
 import me.jahnen.libaums.core.driver.scsi.commands.ScsiRead10
 import me.jahnen.libaums.core.driver.scsi.commands.ScsiReadCapacity
+import me.jahnen.libaums.core.driver.scsi.commands.ScsiReadCapacity16
+import me.jahnen.libaums.core.driver.scsi.commands.ScsiReadCapacity16Response
+import me.jahnen.libaums.core.driver.scsi.commands.ScsiReadWrite16
 import me.jahnen.libaums.core.driver.scsi.commands.ScsiReadCapacityResponse
 import me.jahnen.libaums.core.driver.scsi.commands.ScsiTestUnitReady
 import me.jahnen.libaums.core.driver.scsi.commands.ScsiWrite10
@@ -59,6 +62,9 @@ class ScsiBlockDevice(private val usbCommunication: UsbCommunication, private va
 
     private val writeCommand = ScsiWrite10(lun=lun)
     private val readCommand = ScsiRead10(lun=lun)
+    // LOCAL PATCH (docs/VENDOR_FIXES.md V23): for blocks past the 32-bit address range.
+    private val write16 = ScsiReadWrite16(write = true, lun = lun)
+    private val read16 = ScsiReadWrite16(write = false, lun = lun)
     private val csw = CommandStatusWrapper()
 
     private var cbwTagCounter = 1
@@ -149,8 +155,21 @@ class ScsiBlockDevice(private val usbCommunication: UsbCommunication, private va
         transferCommand(readCapacity, inBuffer)
         inBuffer.clear()
         val readCapacityResponse = ScsiReadCapacityResponse.read(inBuffer)
-        blockSize = readCapacityResponse.blockLength
-        blocks = readCapacityResponse.blockCount
+        if ((readCapacityResponse.logicalBlockAddress.toLong() and 0xffff_ffffL) == 0xffff_ffffL) {
+            // LOCAL PATCH (docs/VENDOR_FIXES.md V23): 0xFFFFFFFF means "too large for
+            // this command, ask READ CAPACITY(16)" (SBC-3 5.16.2). Upstream gave up here,
+            // so a drive over 2 TiB did not open at all (#87).
+            val buffer16 = ByteBuffer.allocate(ScsiReadCapacity16.RESPONSE_LENGTH)
+            transferCommand(ScsiReadCapacity16(lun = lun), buffer16)
+            buffer16.clear()
+            val capacity16 = ScsiReadCapacity16Response.read(buffer16)
+            blockSize = capacity16.blockLength
+            blocks = capacity16.blockCount
+            UsbDiagnostics.report("libaums: over 2 TiB; READ CAPACITY(16) says $blocks blocks of $blockSize B")
+        } else {
+            blockSize = readCapacityResponse.blockLength
+            blocks = readCapacityResponse.blockCount
+        }
 
         Log.i(TAG, "Block size: $blockSize")
         Log.i(TAG, "Block count: $blocks")
@@ -407,10 +426,16 @@ class ScsiBlockDevice(private val usbCommunication: UsbCommunication, private va
         //long time = System.currentTimeMillis();
         require(buffer.remaining() % blockSize == 0) { "buffer.remaining() must be multiple of blockSize!" }
 
-        readCommand.init(deviceOffset.toInt(), buffer.remaining(), blockSize)
+        // LOCAL PATCH (docs/VENDOR_FIXES.md V23): READ(10) takes a 32-bit address, and
+        // toInt() wrapped a larger one onto the start of the drive. READ(16) past it.
+        val command = if (needs16(deviceOffset, buffer.remaining())) {
+            read16.apply { init(deviceOffset, buffer.remaining(), blockSize) }
+        } else {
+            readCommand.apply { init(deviceOffset.toInt(), buffer.remaining(), blockSize) }
+        }
         //Log.d(TAG, "reading: " + read);
 
-        transferCommand(readCommand, buffer)
+        transferCommand(command, buffer)
         buffer.position(buffer.limit())
 
         //Log.d(TAG, "read time: " + (System.currentTimeMillis() - time));
@@ -427,13 +452,29 @@ class ScsiBlockDevice(private val usbCommunication: UsbCommunication, private va
         //long time = System.currentTimeMillis();
         require(buffer.remaining() % blockSize == 0) { "buffer.remaining() must be multiple of blockSize!" }
 
-        writeCommand.init(deviceOffset.toInt(), buffer.remaining(), blockSize)
+        // LOCAL PATCH (docs/VENDOR_FIXES.md V23): as in read. Here the wrap was worse
+        // than a failure: a write past 2 TiB landed on the start of the drive.
+        val command = if (needs16(deviceOffset, buffer.remaining())) {
+            write16.apply { init(deviceOffset, buffer.remaining(), blockSize) }
+        } else {
+            writeCommand.apply { init(deviceOffset.toInt(), buffer.remaining(), blockSize) }
+        }
         //Log.d(TAG, "writing: " + write);
 
-        transferCommand(writeCommand, buffer)
+        transferCommand(command, buffer)
         buffer.position(buffer.limit())
 
         //Log.d(TAG, "write time: " + (System.currentTimeMillis() - time));
+    }
+
+    /**
+     * LOCAL PATCH (docs/VENDOR_FIXES.md V23): whether a transfer reaches past the last
+     * block a 32-bit address can name. Only those use the 16-byte commands, so drives
+     * up to 2 TiB send exactly what they always have.
+     */
+    private fun needs16(deviceOffset: Long, bytes: Int): Boolean {
+        require(deviceOffset >= 0) { "negative block address $deviceOffset" }
+        return deviceOffset + bytes / blockSize - 1 > 0xffff_ffffL
     }
 
     companion object {
