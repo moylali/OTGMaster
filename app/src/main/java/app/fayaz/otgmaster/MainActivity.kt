@@ -2521,6 +2521,8 @@ fun OtgMasterApp(
     var encryptTarget by remember { mutableStateOf<MountedDrive?>(null) }
     var backupTarget by remember { mutableStateOf<MountedDrive?>(null) }
     var backupsTarget by remember { mutableStateOf<MountedDrive?>(null) }
+    var recoveryTarget by remember { mutableStateOf<MountedDrive?>(null) }
+    recoveryTarget?.let { d -> app.fayaz.otgmaster.ui.RecoveryDialog(d, onDismiss = { recoveryTarget = null }) }
     val backupJobs by app.fayaz.otgmaster.backup.JobStore.get(androidx.compose.ui.platform.LocalContext.current).jobs.collectAsState()
     backupTarget?.let { d ->
         app.fayaz.otgmaster.ui.BackupSetupDialog(d.id, d.name, onDismiss = { backupTarget = null })
@@ -2728,6 +2730,8 @@ fun OtgMasterApp(
                                         encryptUnavailable(drive)) { encryptTarget = drive })
                                     add(app.fayaz.otgmaster.ui.DriveAction("backup_action", stringResource(R.string.backup_action),
                                         if (drive.isReadOnly) stringResource(R.string.backup_read_only) else null) { backupTarget = drive })
+                                    add(app.fayaz.otgmaster.ui.DriveAction("recovery_action", stringResource(R.string.recovery_action),
+                                        app.fayaz.otgmaster.ui.recoveryUnavailable(drive, stringResource(R.string.recovery_not_supported))) { recoveryTarget = drive })
                                     val driveJobs = app.fayaz.otgmaster.ui.jobsForDrive(backupJobs, drive.id)
                                     if (driveJobs.isNotEmpty()) {
                                         add(app.fayaz.otgmaster.ui.DriveAction("backups_action",
