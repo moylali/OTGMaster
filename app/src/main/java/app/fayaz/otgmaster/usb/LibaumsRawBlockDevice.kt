@@ -291,10 +291,18 @@ class LibaumsRawBlockDevice(
             rememberWrite(block + (length - keep) / blockSize, src, offset + length - keep, keep)
             return
         }
+        // The array of a write leaving the window is reused when it is the same size, which
+        // it nearly always is (whole chunks): a 2.2 GB copy otherwise allocates ~18,000
+        // 120 KiB arrays, each zeroed and collected for nothing.
+        var reuse: ByteArray? = null
         while (recentWrites.isNotEmpty() && recentBytes + length > REPLAY_BYTES) {
-            recentBytes -= recentWrites.removeFirst().data.size
+            val old = recentWrites.removeFirst()
+            recentBytes -= old.data.size
+            if (reuse == null && old.data.size == length) reuse = old.data
         }
-        recentWrites.addLast(Written(block, src.copyOfRange(offset, offset + length)))
+        val copy = reuse ?: ByteArray(length)
+        System.arraycopy(src, offset, copy, 0, length)
+        recentWrites.addLast(Written(block, copy))
         recentBytes += length
     }
 
