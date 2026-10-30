@@ -313,6 +313,7 @@ Vendored fork of [magnusja/libaums](https://github.com/magnusja/libaums).
 | `ClusterChain` | V19 — write runs of consecutive clusters up to 1 MiB, not four clusters | see below |
 | `ByteBlockDevice` | V21 — the trailing read-modify-write reads the last sector only. V1 read the whole span: a 1 MiB write ending mid-sector read 1 MiB first, 1 GB extra in a 2.2 GB FAT32 bigwrite with merged runs. `ByteBlockDeviceTailTest` counts the sectors read | the commit adding this row |
 | `ScsiBlockDevice`, `AndroidUsbCommunication`, new `UsbDiagnostics` | V22 — what libaums told only logcat reaches the app's log: one summary line per command that needed retries (each failure's message, Reset Recovery outcomes) and one per port reset (release, `USBDEVFS_RESET` and claim, with errno). User reports carry the app's log, never logcat, and #29, #71 and #88 were filed without the reason. No behaviour change | the commit adding this row |
+| `ScsiBlockDevice`, new `ScsiBlock16` | V23 — drives over 2 TiB: READ CAPACITY(16) when READ CAPACITY(10) answers 0xFFFFFFFF, and READ(16)/WRITE(16) for transfers reaching past block 0xFFFFFFFF. Upstream threw "Device requires SCSI READ CAPACITY(16)" at open, so such a drive did not open at all, and its `deviceOffset.toInt()` would have sent a transfer past 2^32 blocks to the start of the drive. Transfers below keep the 10-byte commands. `LargeDiskScsiTest` (issue #87's 5,860,532,224-sector disk) fails on the old code | the commit adding this row |
 
 ## V19 — `ClusterChain.write` stopped at four clusters
 
