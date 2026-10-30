@@ -159,7 +159,12 @@ object OtgMasterState {
     var logSink: ((String) -> Unit)? = null
 
     fun log(line: String) {
-        logSink?.invoke(line)
+        // With no activity alive the line used to be dropped. USB recovery happens
+        // in the background too — a copy from the Files app reads through the
+        // DocumentsProvider with MainActivity gone — and those are the lines a
+        // "Report issue" needs (#71, #88), so they go to the report's history anyway.
+        val sink = logSink
+        if (sink != null) sink(line) else recordLog(line)
     }
 
     /**

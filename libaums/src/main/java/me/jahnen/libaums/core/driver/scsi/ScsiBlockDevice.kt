@@ -37,6 +37,7 @@ import me.jahnen.libaums.core.driver.scsi.commands.sense.ScsiRequestSenseRespons
 import me.jahnen.libaums.core.driver.scsi.commands.sense.SenseException
 import me.jahnen.libaums.core.usb.PipeException
 import me.jahnen.libaums.core.usb.UsbCommunication
+import me.jahnen.libaums.core.usb.UsbDiagnostics
 import java.io.IOException
 import java.nio.ByteBuffer
 import java.util.Arrays
@@ -185,6 +186,15 @@ class ScsiBlockDevice(private val usbCommunication: UsbCommunication, private va
         // or wrote from the wrong offset without any error.
         val startPosition = inBuffer.position()
         val startLimit = inBuffer.limit()
+        // LOCAL PATCH (docs/VENDOR_FIXES.md V22): what each failed attempt and Reset
+        // Recovery said, summarised in one line for the app's log (UsbDiagnostics).
+        val failures = mutableListOf<String>()
+        var resetsOk = 0
+        val resetErrors = mutableListOf<String>()
+        fun summary() = "${failures.size} failed attempt(s): " +
+            failures.groupingBy { it }.eachCount().entries.joinToString("; ") { (m, n) -> if (n > 1) "$m (x$n)" else m } +
+            "; Reset Recovery $resetsOk ok" +
+            (if (resetErrors.isEmpty()) "" else ", ${resetErrors.size} failed: ${resetErrors.distinct().joinToString("; ")}")
         for(i in 0..MAX_RECOVERY_ATTEMPTS) {
             inBuffer.limit(startLimit)
             inBuffer.position(startPosition)
@@ -196,8 +206,10 @@ class ScsiBlockDevice(private val usbCommunication: UsbCommunication, private va
                     // OR
                     // command has no data phase ie. no need to sent again
                     // and read response into buffer
+                    if (failures.isNotEmpty()) UsbDiagnostics.report("libaums: $command recovered after ${summary()}")
                     return
                 }
+                failures += "sense issued, retrying"
 
                 // sense command was sent because of error, sense was successful
                 // ie. NO_SENSE, RECOVERED_ERROR, COMPLETED, see
@@ -206,6 +218,7 @@ class ScsiBlockDevice(private val usbCommunication: UsbCommunication, private va
 
             } catch (e: SenseException) {
                 Log.w(TAG, (e.message ?: "SenseException"))
+                failures += "${e.javaClass.simpleName}: ${e.message}"
                 when(e) {
                     is InitRequired -> init()
                     is NotReadyTryAgain -> {} // try again
@@ -214,11 +227,14 @@ class ScsiBlockDevice(private val usbCommunication: UsbCommunication, private va
                 lastException = e
             } catch(e: PipeException) {
                 Log.w(TAG, (e.message ?: "PipeException") + ", try bulk storage reset and retry")
+                failures += "PipeException: ${e.message}"
                 bulkOnlyMassStorageReset()
+                resetsOk++
                 lastException = e
             } catch (e: IOException) {
                 // Retry
                 Log.w(TAG, (e.message ?: "IOException") + ", retrying...")
+                failures += "${e.message}"
                 // LOCAL PATCH (docs/VENDOR_FIXES.md V12): resynchronise before retrying.
                 // A transfer that failed part-way leaves the rest of its data and its
                 // CSW queued in the device; a retry without Reset Recovery reads that
@@ -227,12 +243,15 @@ class ScsiBlockDevice(private val usbCommunication: UsbCommunication, private va
                 // Reset Recovery after an invalid CSW.
                 try {
                     bulkOnlyMassStorageReset()
+                    resetsOk++
                 } catch (r: Exception) {
                     Log.w(TAG, "reset recovery failed: ${r.message}")
+                    resetErrors += "${r.message}"
                 } catch (r: LinkageError) {
                     // LOCAL PATCH (docs/VENDOR_FIXES.md V13): a missing native method is
                     // an Error, not an Exception; it must fail the reset, not the app.
                     Log.e(TAG, "reset recovery unavailable: ${r.message}")
+                    resetErrors += "unavailable: ${r.message}"
                 }
                 lastException = e
             }
@@ -240,6 +259,7 @@ class ScsiBlockDevice(private val usbCommunication: UsbCommunication, private va
             Thread.sleep(100)
         }
 
+        UsbDiagnostics.report("libaums: $command gave up after ${summary()}")
         throw IOException(
             "MAX_RECOVERY_ATTEMPTS Exceeded while trying to transfer command to device, please reattach device and try again",
             lastException
