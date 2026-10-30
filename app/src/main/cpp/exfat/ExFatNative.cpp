@@ -338,3 +338,13 @@ Java_app_fayaz_otgmaster_exfat_ExFatIoStats_snapshot(JNIEnv* env, jclass clazz) 
     return arr;
 }
 #endif /* OTG_IO_STATS */
+
+// LOCAL PATCH (docs/VENDOR_FIXES.md E3): libexfat's errors and warnings since the last
+// call, one per line, or null if there were none. ExFatDiagnostics puts them in the app's log.
+extern "C" JNIEXPORT jstring JNICALL
+Java_app_fayaz_otgmaster_exfat_ExFatNative_takeMessages(JNIEnv *env, jobject thiz) {
+    char buf[2304];
+    size_t n = exfat_take_messages(buf, sizeof(buf));
+    if (n == 0) return NULL;
+    return env->NewStringUTF(buf);
+}

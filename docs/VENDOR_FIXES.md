@@ -272,6 +272,7 @@ pre-dates this registry (see the note under the index).
 |---|---|---|
 | `io.c` | E1 — `exfat_pread`/`exfat_pwrite` check `NewByteArray` and the Kotlin callback for a pending exception, and return -1 instead of making the next JNI call with it pending, which aborts the app (seen on the emulator: an `OutOfMemoryError` during a benchmark write became SIGABRT in `SetByteArrayRegion`) | the commit adding this row |
 | `io.c` | E2 — `exfat_generic_pwrite` writes each run of consecutive clusters (up to 1 MiB) in one `exfat_pwrite` instead of one per cluster. Each call is a JNI upcall and a device command, so at 4 KiB clusters a 1 MiB write was 256 commands; `ExFatWriteRunsTest` counts 1.0 per MiB after. exFAT wrote at 0.7–1.8 MB/s on every matrix partition against FAT32's 6–8; 8.95 on D1EXFAT after (OnePlus, `BENCHMARK_RUNS.md` 2026-10-16) | the commit adding this row |
+| `log.c`, `exfat.h`, `ExFatNative.cpp` | E3 — `exfat_error` and `exfat_warn` also keep their message (first 2 KiB, later ones counted) for `exfat_take_messages()`, which `ExFatNative.takeMessages()` hands to the app's log: every warning at mount, errors only while in use (libexfat warns about reference counts on routine closes), at most 20 lines per mounted volume. They went to logcat only, so issue #98's refused read-write mount reached the user as "Failed to mount exFAT: null". `ExFatMessagesTest` | the commit adding this row |
 
 ---
 

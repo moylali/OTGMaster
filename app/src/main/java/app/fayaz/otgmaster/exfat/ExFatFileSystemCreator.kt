@@ -43,12 +43,22 @@ class ExFatFileSystemCreator : FileSystemCreator {
             }
             
             val readOnly = blockDevice is app.fayaz.otgmaster.block.ReadOnlyBlockDeviceDriver
+            ExFatNative.takeMessages()  // drop anything left from an earlier volume
             val exfatPtr = ExFatNative.mount(rawBlockDevice, readOnly)
-            if (exfatPtr == 0L) return null
+            val mode = if (readOnly) "read-only mount" else "read-write mount"
+            ExFatNative.reportMessages(mode)
+            if (exfatPtr == 0L) {
+                app.fayaz.otgmaster.OtgMasterState.log("exFAT: libexfat refused the $mode (reason above, if it gave one)")
+                return null
+            }
             
             return ExFatFileSystem(rawBlockDevice, exfatPtr, readOnly)
         } catch (e: Exception) {
             e.printStackTrace()
+            // Swallowed here, so the caller only knew "no filesystem accepted it".
+            app.fayaz.otgmaster.OtgMasterState.log("exFAT: mount failed: ${e.javaClass.simpleName}: ${e.message}" +
+                (e.cause?.let { " (cause: ${it.javaClass.simpleName}: ${it.message})" } ?: ""))
+            ExFatNative.reportMessages("mount")
             return null
         }
     }

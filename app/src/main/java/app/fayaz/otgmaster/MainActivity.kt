@@ -874,7 +874,7 @@ class MainActivity : AppCompatActivity() {
                 device.close()
                 withContext(Dispatchers.Main) {
                     isQemuProbing = false
-                    appendLog(getString(R.string.log_error_probing_qemu_candidates, e.message))
+                    appendLog(getString(R.string.log_error_probing_qemu_candidates, e.reason()))
                 }
             }
         }
@@ -901,7 +901,7 @@ class MainActivity : AppCompatActivity() {
                     LibaumsRawBlockDeviceOpener(this@MainActivity).openAllAvailable(excludeKeys)
                 } catch (e: Exception) {
                     e.printStackTrace()
-                    withContext(Dispatchers.Main) { appendLog(getString(R.string.log_error_probing_candidates, e.message)) }
+                    withContext(Dispatchers.Main) { appendLog(getString(R.string.log_error_probing_candidates, e.reason())) }
                     return@launch
                 }
 
@@ -1152,7 +1152,7 @@ class MainActivity : AppCompatActivity() {
                     val msg = if (detected is DetectedFilesystem.Unknown)
                         getString(R.string.log_unrecognized_fs_not_mounted)
                     else
-                        getString(R.string.log_failed_to_mount, detected.displayName, e.message)
+                        getString(R.string.log_failed_to_mount, detected.displayName, e.reason())
                     withContext(Dispatchers.Main) {
                         onComplete()
                         appendLog(msg)
@@ -1244,7 +1244,7 @@ class MainActivity : AppCompatActivity() {
                         appendLog(getString(R.string.log_cached_credentials_invalid, deviceDisplayName))
                     }
                     toastState.value = Pair("Mount failed: ${e.message ?: "Unknown error"}", false)
-                    appendLog(getString(R.string.log_failed_to_unlock, deviceDisplayName, e.message))
+                    appendLog(getString(R.string.log_failed_to_unlock, deviceDisplayName, e.reason()))
                 }
             }
             }
@@ -1797,7 +1797,7 @@ class MainActivity : AppCompatActivity() {
                 e.printStackTrace()
                 withContext(Dispatchers.Main) {
                     toastState.value = Pair("Mount failed: ${e.message ?: "Unknown error"}", false)
-                    appendLog("Failed to mount ${candidate.displayName}: ${e.message}")
+                    appendLog("Failed to mount ${candidate.displayName}: ${e.reason()}")
                 }
             } finally {
                 // Only after addDrive (or the failure): from then on mountedDrives answers.
@@ -3513,4 +3513,19 @@ fun SettingsDrawer(
             }
         }
     }
+}
+
+/**
+ * A failure's reason for the app's log. `e.message` alone printed "null" for exceptions
+ * that carry none (#98: "Failed to mount exFAT: null"), so the type is named instead, and
+ * the cause when there is one.
+ */
+internal fun Throwable.reason(): String {
+    val own = when (this) {
+        is me.jahnen.libaums.core.fs.FileSystemFactory.UnsupportedFileSystemException ->
+            "no filesystem driver accepted the volume (see the lines above for why)"
+        else -> message?.takeIf { it.isNotBlank() } ?: javaClass.simpleName
+    }
+    val c = cause ?: return own
+    return "$own (cause: ${c.javaClass.simpleName}: ${c.message})"
 }

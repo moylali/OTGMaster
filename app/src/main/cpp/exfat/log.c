@@ -31,6 +31,60 @@
 
 int exfat_errors;
 
+#include <pthread.h>
+#include <string.h>
+/*
+ * LOCAL PATCH (docs/VENDOR_FIXES.md E3): keep errors and warnings for the app's log.
+ * They went to logcat only, which a user's report never carries: issue #98's read-write
+ * mount failed as "Failed to mount exFAT: null", with libexfat's reason left behind on
+ * the phone. The first messages are kept (the first error is the cause); later ones are
+ * counted. exfat_take_messages() hands them over and empties the buffer.
+ */
+static pthread_mutex_t otg_msgs_lock = PTHREAD_MUTEX_INITIALIZER;
+static char otg_msgs[2048];
+static size_t otg_msgs_len;
+static unsigned otg_msgs_dropped;
+
+static void otg_capture(const char* prefix, const char* format, va_list ap)
+{
+	char line[300];
+	int n = snprintf(line, sizeof(line), "%s", prefix);
+	if (n < 0)
+		return;
+	vsnprintf(line + n, sizeof(line) - n, format, ap);
+	pthread_mutex_lock(&otg_msgs_lock);
+	size_t len = strlen(line);
+	if (otg_msgs_len + len + 2 <= sizeof(otg_msgs))
+	{
+		memcpy(otg_msgs + otg_msgs_len, line, len);
+		otg_msgs_len += len;
+		otg_msgs[otg_msgs_len++] = '\n';
+		otg_msgs[otg_msgs_len] = '\0';
+	}
+	else
+		otg_msgs_dropped++;
+	pthread_mutex_unlock(&otg_msgs_lock);
+}
+
+size_t exfat_take_messages(char* out, size_t size)
+{
+	pthread_mutex_lock(&otg_msgs_lock);
+	size_t n = 0;
+	if (size > 0)
+	{
+		n = snprintf(out, size, "%s", otg_msgs_len ? otg_msgs : "");
+		if (otg_msgs_dropped && n < size)
+			n += snprintf(out + n, size - n, "(%u more not kept)\n", otg_msgs_dropped);
+		if (n >= size)
+			n = size - 1;
+	}
+	otg_msgs_len = 0;
+	otg_msgs[0] = '\0';
+	otg_msgs_dropped = 0;
+	pthread_mutex_unlock(&otg_msgs_lock);
+	return n;
+}
+
 /*
  * This message means an internal bug in exFAT implementation.
  */
@@ -68,6 +122,12 @@ void exfat_error(const char* format, ...)
 	exfat_errors++;
 	va_start(ap, format);
 	va_copy(aq, ap);
+	{
+		va_list ac;
+		va_copy(ac, ap);
+		otg_capture("ERROR: ", format, ac); /* LOCAL PATCH E3 */
+		va_end(ac);
+	}
 
 	fflush(stdout);
 	fputs("ERROR: ", stderr);
@@ -94,6 +154,12 @@ void exfat_warn(const char* format, ...)
 
 	va_start(ap, format);
 	va_copy(aq, ap);
+	{
+		va_list ac;
+		va_copy(ac, ap);
+		otg_capture("WARN: ", format, ac); /* LOCAL PATCH E3 */
+		va_end(ac);
+	}
 
 	fflush(stdout);
 	fputs("WARN: ", stderr);

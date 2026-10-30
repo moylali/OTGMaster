@@ -224,6 +224,8 @@ const char* exfat_get_label(struct exfat* ef);
 int exfat_set_label(struct exfat* ef, const char* label);
 
 int exfat_soil_super_block(const struct exfat* ef);
+/* LOCAL PATCH (docs/VENDOR_FIXES.md E3): errors and warnings since the last call, one per line. */
+size_t exfat_take_messages(char* out, size_t size);
 int exfat_mount(struct exfat* ef, const char* spec, const char* options);
 void exfat_unmount(struct exfat* ef);
 

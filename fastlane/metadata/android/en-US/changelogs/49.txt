@@ -2,3 +2,4 @@
 • Fixed: drives that failed to open with "MAX_RECOVERY_ATTEMPTS"; a drive that stops responding is now reset instead of retried
 • Fixed: the transfer size a drive accepts is found before mounting and remembered for next time
 • Fixed: a reported USB error now says what the drive answered, not just that it failed
+• Fixed: when a drive will not mount, the log now says why
