@@ -93,6 +93,9 @@ class LibaumsRawBlockDevice(
     /** The transfer size, in blocks, of the last same-size retry. See [transfersSinceRetry]. */
     @Volatile private var retriedChunk = 0
 
+    /** Whether the failure before that retry needed a port reset. See [stepDown]. */
+    @Volatile private var retryFollowedReset = false
+
     /**
      * The floor for [maxTransferBlocks].
      *
@@ -210,7 +213,9 @@ class LibaumsRawBlockDevice(
         }
         val since = transfersSinceRetry
         val repeated = chunk == retriedChunk && since in 0 until SAME_SIZE_RETRY_WINDOW
+        val stuck = wasReset || (repeated && retryFollowedReset)
         retriedChunk = chunk
+        retryFollowedReset = wasReset
         transfersSinceRetry = 0
         if (!repeated) {
             report("USB: the drive answers" + (if (wasReset) " again after the port reset" else "") +
@@ -218,14 +223,23 @@ class LibaumsRawBlockDevice(
             return true
         }
         report("USB: the $op failed again at ${chunk * blockSize / 1024} KiB, $since transfers after the last retry")
-        return stepDown(op, chunk)
+        return stepDown(op, chunk, remember = stuck)
     }
 
     /**
      * Halves the transfer size, down to [minTransferBlocks]; false once it is there.
      * The caller has already established that the drive is answering.
+     *
+     * [remember] hands the new size to [onTransferSizeLowered], which keeps it for
+     * this drive model on this phone, for good. Only when the failures took a port
+     * reset to recover from — the drive was stuck, as in #88, where every attach
+     * stuck it again at the old size and a replug threw the answer away. A drive
+     * that refuses a size while still answering costs one failed transfer per
+     * attach, which is no reason to hold every drive of its model back forever: on
+     * a OnePlus 7 a PNY stick that takes 120 KiB for hours failed twice within a
+     * second of being opened, and would otherwise have been kept at 60 KiB.
      */
-    private fun stepDown(op: String, chunk: Int): Boolean {
+    private fun stepDown(op: String, chunk: Int, remember: Boolean): Boolean {
         if (chunk <= minTransferBlocks) return false
         val next = (chunk / 2).coerceAtLeast(minTransferBlocks)
         synchronized(transferLock) { if (next < maxTransferBlocks) maxTransferBlocks = next }
@@ -233,7 +247,7 @@ class LibaumsRawBlockDevice(
         // Not for a benchmark override: that is someone deliberately trying sizes
         // this drive may well refuse, and the refusal is the measurement, not a
         // property of the drive worth keeping.
-        if (transferBytesOverride == null) onTransferSizeLowered(next * blockSize)
+        if (remember && transferBytesOverride == null) onTransferSizeLowered(next * blockSize)
         return true
     }
 
