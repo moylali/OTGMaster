@@ -24,6 +24,26 @@ object ExFatNative {
      */
     external fun unmount(exfatPtr: Long)
 
+    /** libexfat's errors and warnings since the last call, one per line; null if none (E3). */
+    external fun takeMessages(): String?
+
+    /**
+     * Puts what libexfat said since the last call into the app's log, so a "Report issue"
+     * carries it. Before this a read-write mount refused by libexfat reached the user as
+     * "Failed to mount exFAT: null" (#98), its reason left in logcat.
+     */
+    fun reportMessages(context: String, errorsOnly: Boolean = false, max: Int = MAX_LINES): Int {
+        val text = try { takeMessages() } catch (_: UnsatisfiedLinkError) { null } ?: return 0
+        // In use, libexfat warns about reference counts on routine closes; only errors
+        // are worth a line there. At mount every warning counts (an unclean volume).
+        val lines = text.lineSequence().filter { it.isNotBlank() && (!errorsOnly || it.startsWith("ERROR")) }
+            .take(max).toList()
+        for (line in lines) app.fayaz.otgmaster.OtgMasterState.log("exFAT ($context): $line")
+        return lines.size
+    }
+
+    private const val MAX_LINES = 12
+
     @JvmStatic
     external fun getFreeSpace(exfatPtr: Long): Long
 

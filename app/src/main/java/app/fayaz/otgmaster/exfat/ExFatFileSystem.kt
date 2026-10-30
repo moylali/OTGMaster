@@ -109,8 +109,19 @@ class ExFatFileSystem(
      */
     fun <T> withNative(body: () -> T): T = lock.withLock {
         if (isUnmounted) throw IOException("exFAT filesystem is unmounted")
-        body()
+        try {
+            body()
+        } finally {
+            // An error libexfat found while reading or writing (a bad cluster, a broken
+            // entry) would otherwise reach only logcat (E3).
+            val left = MAX_IN_USE_LINES - inUseLines
+            if (left > 0) inUseLines += ExFatNative.reportMessages("in use", errorsOnly = true, max = left)
+            else ExFatNative.takeMessages()
+        }
     }
+
+    /** Lines reported while mounted, capped so a failing drive cannot fill the report. */
+    private var inUseLines = 0
 
     override val rootDirectory: UsbFile
         get() = _rootDirectory
@@ -160,5 +171,6 @@ class ExFatFileSystem(
     private companion object {
         /** Sentinel telling the releaser thread to finish. Not a valid pointer. */
         const val STOP_RELEASER = -1L
+        const val MAX_IN_USE_LINES = 20
     }
 }
