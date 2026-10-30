@@ -59,13 +59,21 @@ class FileTreeBackend(private val tree: FileTree) : ResticBackend {
 }
 
 /** A folder in a [FileTree] as something to back up. */
-class FileTreeSource(private val tree: FileTree, private val path: String, private val entry: FileTree.Entry) : BackupSource {
+class FileTreeSource(
+    private val tree: FileTree,
+    private val path: String,
+    private val entry: FileTree.Entry,
+    /** Paths relative to the tree's root left out, with everything under them (the repository itself, when it sits inside the source). */
+    private val excludes: Set<String> = emptySet(),
+) : BackupSource {
     override val name: String get() = entry.name
     override val isDirectory: Boolean get() = entry.isDirectory
     override val size: Long get() = entry.size
     override val modifiedMillis: Long get() = entry.lastModified
     override fun children(): List<BackupSource> =
-        tree.list(path).map { FileTreeSource(tree, Paths.join(path, it.name), it) }
+        tree.list(path).mapNotNull { e -> Paths.join(path, e.name).takeIf { it !in excludes }?.let { FileTreeSource(tree, it, e, excludes) } }
+
+    fun excluding(paths: Set<String>): FileTreeSource = if (paths.isEmpty()) this else FileTreeSource(tree, path, entry, excludes + paths)
     override fun open(): InputStream = tree.openRead(path)
 
     companion object {
