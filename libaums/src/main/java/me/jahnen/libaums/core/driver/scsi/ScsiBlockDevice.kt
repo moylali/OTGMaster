@@ -352,8 +352,23 @@ class ScsiBlockDevice(private val usbCommunication: UsbCommunication, private va
         }
     }
 
+    /**
+     * LOCAL PATCH (docs/VENDOR_FIXES.md V25): how many Bulk-Only Mass Storage Resets
+     * this device has sent, including those inside a retry that went on to succeed.
+     *
+     * A reset can make the drive lose data it had already acknowledged. On a OnePlus 7
+     * a reset sent while a write was failing left the sector *before* that write - which
+     * an earlier command had written and the drive had confirmed - reading back as
+     * zeros: the drive had been rewriting the 4 KiB unit that sector shares with the
+     * failing write's start. The app above cannot see resets that libaums recovers
+     * from on its own; this counter lets it notice them and write that data again.
+     */
+    @Volatile var resets = 0L
+        private set
+
     @Throws(IOException::class)
     private fun bulkOnlyMassStorageReset() {
+        resets++ // LOCAL PATCH (docs/VENDOR_FIXES.md V25)
         Log.w(TAG, "sending bulk only mass storage request")
         val bArr = ByteArray(2)
         // REQUEST_BULK_ONLY_MASS_STORAGE_RESET = 255

@@ -19,6 +19,11 @@ class LibaumsRawBlockDevice(
      * so it can be remembered for the next time this drive is plugged in.
      */
     private val onTransferSizeLowered: (Int) -> Unit = {},
+    /**
+     * Bulk-Only Mass Storage Resets sent so far, by libaums (local patch V25). A
+     * parameter so tests can stand in for a drive that resets; see [replayRecentWrites].
+     */
+    private val bulkResets: () -> Long = { (driver as? me.jahnen.libaums.core.driver.scsi.ScsiBlockDevice)?.resets ?: 0L },
 ) : RawBlockDevice {
     override val blockSize: Int = driver.blockSize
     override val blockCount: Long = driver.blocks
@@ -176,6 +181,7 @@ class LibaumsRawBlockDevice(
         val t0 = System.nanoTime()
         synchronized(transferLock) {
             checkOpen()
+            portResets++
             communication.resetDevice()
             driver.init()
         }
@@ -251,6 +257,85 @@ class LibaumsRawBlockDevice(
         return true
     }
 
+    /**
+     * The most recent writes, oldest first, up to [REPLAY_BYTES]: what a reset may have
+     * cost, kept so it can be written again.
+     *
+     * A drive acknowledges a write when it has the data, not when the data is safe in
+     * flash. A Bulk-Only reset or a port reset can then drop work the drive had in
+     * hand. On device-matrix Drive 2 (OnePlus 7, 2026-10-30) a write failed at block
+     * 17,607,921 and libaums reset the drive six times; afterwards block 17,607,920 -
+     * written by the command before, and confirmed - read back as zeros. It begins
+     * the 4 KiB unit holding the failed write's first seven blocks: the drive had
+     * been rewriting that unit when the reset arrived, and lost all of it. The retry
+     * restored the failed write's blocks. Nothing rewrote the one before it, because
+     * as far as the app knew, it was already on the drive. The loss is invisible to
+     * fsck - one sector of file data - and showed only as a bigwrite read-back mismatch.
+     *
+     * Writes are idempotent, so after any reset the safe answer is to write this window
+     * again, oldest first: the drive ends in the state the app believes it is in.
+     */
+    private class Written(val block: Long, val data: ByteArray)
+    private val recentWrites = ArrayDeque<Written>()
+    private var recentBytes = 0
+    @Volatile private var portResets = 0L
+
+    private fun resets(): Long = bulkResets() + portResets
+
+    /** Caller holds [transferLock]. Copies: the caller's array may be reused. */
+    private fun rememberWrite(block: Long, src: ByteArray, offset: Int, length: Int) {
+        if (length > REPLAY_BYTES) {
+            recentWrites.clear(); recentBytes = 0
+            // Only the tail can be lost to a reset that comes after this write.
+            val keep = REPLAY_BYTES - REPLAY_BYTES % blockSize
+            rememberWrite(block + (length - keep) / blockSize, src, offset + length - keep, keep)
+            return
+        }
+        while (recentWrites.isNotEmpty() && recentBytes + length > REPLAY_BYTES) {
+            recentBytes -= recentWrites.removeFirst().data.size
+        }
+        recentWrites.addLast(Written(block, src.copyOfRange(offset, offset + length)))
+        recentBytes += length
+    }
+
+    /**
+     * Writes [recentWrites] again, oldest first. Throws if the drive will not take
+     * them, rather than carry on over data it may have dropped. A reset during the
+     * replay starts it over, a few times at most.
+     */
+    private fun replayRecentWrites(why: String) {
+        synchronized(transferLock) {
+            if (recentWrites.isEmpty()) return
+            repeat(MAX_REPLAY_ROUNDS) {
+                val before = resets()
+                for (w in recentWrites) driver.write(w.block, ByteBuffer.wrap(w.data))
+                replays++
+                report("USB: $why; wrote the last ${recentBytes / 1024} KiB again " +
+                    "(${recentWrites.size} writes from block ${recentWrites.first().block}), " +
+                    "in case the reset lost them")
+                if (resets() == before) return
+            }
+            throw java.io.IOException("the drive kept resetting while the last writes were written again")
+        }
+    }
+
+    /** After [recover] said to retry: a reset has happened on the way, so replay first. */
+    private fun replayAfterRecovery(op: String, cause: Exception) {
+        try {
+            replayRecentWrites("recovered from a failed $op")
+        } catch (e: Exception) {
+            throw java.io.IOException(
+                "could not write the last ${recentBytes / 1024} KiB again after a failed $op; " +
+                    "data written just before it may not be on the drive: ${causeChain(e)}",
+                cause,
+            )
+        }
+    }
+
+    /** How many times [recentWrites] has been written again; for tests and the benchmark. */
+    @Volatile var replays = 0L
+        private set
+
     @Volatile private var closed = false
 
     /**
@@ -302,14 +387,16 @@ class LibaumsRawBlockDevice(
                     // while this thread waited.
                     checkOpen()
                     val t0 = System.nanoTime()
+                    val resetsBefore = resets()
                     driver.read(startBlock + done, view)
                     io.readNanos += System.nanoTime() - t0
+                    if (resets() != resetsBefore) replayRecentWrites("a read needed a reset")
                     if (transfersSinceRetry >= 0) transfersSinceRetry++
                     io.readCommands++
                     io.readBytes += chunk.toLong() * blockSize
                 }
             } catch (e: Exception) {
-                if (recover("read", chunk, startBlock + done, e)) continue
+                if (recover("read", chunk, startBlock + done, e)) { replayAfterRecovery("read", e); continue }
                 // Transfer failures here are otherwise reported with no indication of
                 // what was being read, which made a Pixel 10 Pro XL failure impossible
                 // to attribute without guesswork. The whole cause chain goes in: this
@@ -339,14 +426,17 @@ class LibaumsRawBlockDevice(
                 synchronized(transferLock) {
                     checkOpen()
                     val t0 = System.nanoTime()
+                    val resetsBefore = resets()
                     driver.write(startBlock + done, view)
                     io.writeNanos += System.nanoTime() - t0
+                    rememberWrite(startBlock + done, data, done * blockSize, chunk * blockSize)
+                    if (resets() != resetsBefore) replayRecentWrites("a write needed a reset")
                     if (transfersSinceRetry >= 0) transfersSinceRetry++
                     io.writeCommands++
                     io.writeBytes += chunk.toLong() * blockSize
                 }
             } catch (e: Exception) {
-                if (recover("write", chunk, startBlock + done, e)) continue
+                if (recover("write", chunk, startBlock + done, e)) { replayAfterRecovery("write", e); continue }
                 throw java.io.IOException(
                     "write failed: chunk of $chunk blocks at ${startBlock + done} " +
                     "(request was $total blocks at $startBlock; " +
@@ -436,6 +526,10 @@ class LibaumsRawBlockDevice(
         private const val MAX_REPORTED_LINES = 24
         /** See [transfersSinceRetry]. About 7 MiB at 30 KiB, 28 MiB at 120 KiB. */
         private const val SAME_SIZE_RETRY_WINDOW = 240L
+        /** See [recentWrites]: several 120 KiB commands, well past one flash page or erase unit. */
+        const val REPLAY_BYTES = 1 shl 20
+        /** See [replayRecentWrites]. */
+        private const val MAX_REPLAY_ROUNDS = 3
         /** See [causeChain]. libaums nests two deep; the rest is room to spare. */
         private const val MAX_CAUSE_DEPTH = 4
         private const val TAG = "LibaumsRawBlockDevice"
