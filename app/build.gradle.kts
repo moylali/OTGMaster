@@ -177,6 +177,8 @@ dependencies {
     // without Robolectric.
 
     testImplementation("org.json:json:20240303")
+    // restic compresses blobs and index files with zstd; pure Java, so the app and the host tests share one decoder.
+    implementation("io.airlift:aircompressor:0.27")
 
 
     testImplementation("junit:junit:4.13.2")
