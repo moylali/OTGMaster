@@ -244,5 +244,9 @@
         <item quantity="one">%1$s and %2$d other mounted</item>
         <item quantity="other">%1$s and %2$d others mounted</item>
     </plurals>
+    <string name="notification_channel_operations">Format and Encrypt results</string>
+    <string name="notification_operation_done">%1$s: finished</string>
+    <string name="notification_operation_failed">%1$s: failed</string>
+    <string name="notification_operation_keep_attached">Keep the drive attached until it finishes</string>
     <string name="notification_mounted_detail">Files stay available in other apps until you unmount.</string>
 </resources>
