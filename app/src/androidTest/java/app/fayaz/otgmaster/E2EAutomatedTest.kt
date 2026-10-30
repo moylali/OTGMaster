@@ -975,8 +975,16 @@ class E2EAutomatedTest {
         // filled in), and the minified run once expanded nothing, its click on a stale
         // handle lost. The expanded lines can also sit below the fold, so they are
         // scrolled to.
-        assertTrue("disconnect history could not be clicked", clickByDesc("disconnect_history"))
-        val line = findScrolling(By.textContains(latest), text = latest)
+        // A click can land while the card recomposes and expand nothing: the card is then
+        // still collapsed (chevron down; attempt-1 screenshot on 4eae31e and bea4a45, both
+        // FLAKY). Click again, up to three times, until the expanded line shows.
+        var line: androidx.test.uiautomator.UiObject2? = null
+        for (attempt in 1..3) {
+            assertTrue("disconnect history could not be clicked", clickByDesc("disconnect_history"))
+            line = findScrolling(By.textContains(latest), text = latest)
+            if (line != null) break
+            android.util.Log.w("E2E", "disconnect history did not expand on click $attempt; clicking again")
+        }
         if (line == null) captureScreen("history_not_expanded")
         assertNotNull("expanded history does not list '$latest'", line)
         assertEquals("expanded history lists the wrong number of drops", count,
