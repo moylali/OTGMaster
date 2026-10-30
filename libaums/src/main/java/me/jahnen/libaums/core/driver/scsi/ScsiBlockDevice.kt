@@ -151,11 +151,37 @@ class ScsiBlockDevice(private val usbCommunication: UsbCommunication, private va
         transferCommandWithoutDataPhase(testUnit)
 
         val readCapacity = ScsiReadCapacity(lun=lun)
-        inBuffer.clear()
-        transferCommand(readCapacity, inBuffer)
-        inBuffer.clear()
-        val readCapacityResponse = ScsiReadCapacityResponse.read(inBuffer)
-        if ((readCapacityResponse.logicalBlockAddress.toLong() and 0xffff_ffffL) == 0xffff_ffffL) {
+        fun readCapacity10(): ScsiReadCapacityResponse {
+            inBuffer.clear()
+            transferCommand(readCapacity, inBuffer)
+            inBuffer.clear()
+            return ScsiReadCapacityResponse.read(inBuffer)
+        }
+        fun saysTooLarge(r: ScsiReadCapacityResponse) = (r.logicalBlockAddress.toLong() and 0xffff_ffffL) == 0xffff_ffffL
+        var readCapacityResponse = readCapacity10()
+        if (saysTooLarge(readCapacityResponse)) {
+            // LOCAL PATCH (docs/VENDOR_FIXES.md V26): ask again before believing it. A
+            // bridge can say 0xFFFFFFFF while the disk behind it is still starting: issue
+            // #87's 2 TB SSD (3,907,029,168 blocks, under 2^32) in a Realtek RTL9210
+            // enclosure did, then answered no READ CAPACITY(16) until it was replugged,
+            // and on the replug said its real size to READ CAPACITY(10). A disk really
+            // over 2 TiB keeps saying 0xFFFFFFFF and costs CAPACITY_RECHECKS seconds once.
+            val first = "0xFFFFFFFF, block length ${readCapacityResponse.blockLength}"
+            for (i in 1..CAPACITY_RECHECKS) {
+                Thread.sleep(CAPACITY_RECHECK_MS)
+                transferCommandWithoutDataPhase(testUnit)
+                readCapacityResponse = readCapacity10()
+                if (!saysTooLarge(readCapacityResponse)) {
+                    UsbDiagnostics.report("libaums: READ CAPACITY(10) said $first, then " +
+                        "${readCapacityResponse.blockCount} blocks after ${i}s; using that")
+                    break
+                }
+            }
+            if (saysTooLarge(readCapacityResponse)) {
+                UsbDiagnostics.report("libaums: READ CAPACITY(10) said $first ${CAPACITY_RECHECKS + 1} times; asking READ CAPACITY(16)")
+            }
+        }
+        if (saysTooLarge(readCapacityResponse)) {
             // LOCAL PATCH (docs/VENDOR_FIXES.md V23): 0xFFFFFFFF means "too large for
             // this command, ask READ CAPACITY(16)" (SBC-3 5.16.2). Upstream gave up here,
             // so a drive over 2 TiB did not open at all (#87).
@@ -481,6 +507,9 @@ class ScsiBlockDevice(private val usbCommunication: UsbCommunication, private va
         private const val MAX_RECOVERY_ATTEMPTS = 5
         /** LOCAL PATCH (docs/VENDOR_FIXES.md V10): ASC for "medium may have changed". */
         private const val MEDIUM_MAY_HAVE_CHANGED = 0x28
+        /** LOCAL PATCH (docs/VENDOR_FIXES.md V26): READ CAPACITY(10) asked again this often, a second apart, after 0xFFFFFFFF. */
+        private const val CAPACITY_RECHECKS = 3
+        private const val CAPACITY_RECHECK_MS = 1000L
         private val TAG = ScsiBlockDevice::class.java.simpleName
     }
 }

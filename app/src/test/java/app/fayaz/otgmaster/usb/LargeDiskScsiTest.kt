@@ -23,7 +23,8 @@ import java.nio.ByteOrder
  */
 class LargeDiskScsiTest {
 
-    private class BigDrive(val blocks: Long) : UsbCommunication {
+    /** [startingAnswers]: how many READ CAPACITY(10)s are answered 0xFFFFFFFF before the real size. */
+    private class BigDrive(val blocks: Long, var startingAnswers: Int = 0) : UsbCommunication {
         /** Written blocks; unwritten ones read as [pattern]. */
         val written = HashMap<Long, ByteArray>()
         val opcodes = mutableListOf<Int>()
@@ -59,7 +60,7 @@ class LargeDiskScsiTest {
                 0x12 -> { pending += ByteArray(36); pending += csw(tag) }            // INQUIRY
                 0x00 -> pending += csw(tag)                                           // TEST UNIT READY
                 0x25 -> {                                                             // READ CAPACITY(10)
-                    val last = if (blocks - 1 > 0xFFFF_FFFFL) -1 else (blocks - 1).toInt()
+                    val last = if (blocks - 1 > 0xFFFF_FFFFL || startingAnswers-- > 0) -1 else (blocks - 1).toInt()
                     pending += ByteBuffer.allocate(8).putInt(last).putInt(BLOCK).array()
                     pending += csw(tag)
                 }
@@ -163,6 +164,26 @@ class LargeDiskScsiTest {
         val dev = ScsiBlockDevice(drive, 0).also { it.init() }
         assertEquals(3_907_029_168L, dev.blocks)
         assertEquals("no READ CAPACITY(16)", false, 0x9E in drive.opcodes)
+    }
+
+    @Test
+    fun `a bridge that first says 0xFFFFFFFF for a 2 TB disk is asked again, and READ CAPACITY(16) is not sent`() {
+        // Issue #87's RTL9210 enclosure with a 2 TB SSD: 0xFFFFFFFF on the first ask, then
+        // no answer to READ CAPACITY(16) until replugged, then its real size on replug.
+        val drive = BigDrive(3_907_029_168L, startingAnswers = 2)
+        val dev = ScsiBlockDevice(drive, 0).also { it.init() }
+        assertEquals(3_907_029_168L, dev.blocks)
+        assertEquals("no READ CAPACITY(16)", false, 0x9E in drive.opcodes)
+        assertEquals("READ CAPACITY(10) three times", 3, drive.opcodes.count { it == 0x25 })
+    }
+
+    @Test
+    fun `a disk really over 2 TiB is asked READ CAPACITY(10) four times, then READ CAPACITY(16)`() {
+        val drive = BigDrive(REPORTER_BLOCKS)
+        val dev = ScsiBlockDevice(drive, 0).also { it.init() }
+        assertEquals(REPORTER_BLOCKS, dev.blocks)
+        assertEquals(4, drive.opcodes.count { it == 0x25 })
+        assertEquals(1, drive.opcodes.count { it == 0x9E })
     }
 
     private fun expected(drive: BigDrive, lba: Long, count: Int): ByteArray {

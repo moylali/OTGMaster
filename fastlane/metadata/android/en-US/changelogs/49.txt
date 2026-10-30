@@ -1,4 +1,4 @@
-• Fixed: drives over 2 TB would not open
+• Fixed: drives over 2 TB, and some 2 TB enclosures, would not open
 • Fixed: drives that failed to open with "MAX_RECOVERY_ATTEMPTS"; a drive that stops responding is now reset instead of retried
 • Fixed: the transfer size a drive accepts is found before mounting and remembered for next time
 • Fixed: a reported USB error now says what the drive answered, not just that it failed
