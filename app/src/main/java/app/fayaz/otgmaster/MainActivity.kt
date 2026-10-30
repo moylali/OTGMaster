@@ -924,6 +924,7 @@ class MainActivity : AppCompatActivity() {
                 openedList.forEach {
                     android.util.Log.i("OTGMaster", "probe opened ${it.deviceKey} as ${objId(it.blockDevice)}")
                 }
+                val skippedLines = mutableListOf<String>()
                 val newCandidates = openedList.mapIndexed { index, opened ->
                     val displayName = UsbDeviceDescriber.friendlyName(opened.usbDevice, baseIndex + index)
                     val allCandidates = try {
@@ -942,10 +943,24 @@ class MainActivity : AppCompatActivity() {
                         it.containerType != app.fayaz.otgmaster.veracrypt.ContainerType.UNKNOWN &&
                         it.containerType != app.fayaz.otgmaster.veracrypt.ContainerType.UNENCRYPTED
                     }
+                    // Partitions neither mounted nor offered, one line each, so a drive with
+                    // "missing" partitions says why (and so does a report sent from it).
+                    val skipped = app.fayaz.otgmaster.fs.SkippedPartitions.lines(
+                        allCandidates, plainPartitions.map { it.startBlock }.toSet(),
+                        opened.blockDevice.blockSize, ::formatSize,
+                    ) { c ->
+                        runCatching {
+                            app.fayaz.otgmaster.fs.FilesystemDetector.detectFromBytes(
+                                opened.blockDevice.readBlocks(c.startBlock,
+                                    minOf(4L, opened.blockDevice.blockCount - c.startBlock).toInt()))
+                        }.getOrDefault(app.fayaz.otgmaster.fs.DetectedFilesystem.Unknown)
+                    }
+                    skipped.forEach { skippedLines += "$displayName · $it" }
                     UsbDeviceCandidate(opened.deviceKey, displayName, opened.blockDevice, candidates, plainPartitions, allCandidates.size - candidates.size)
                 }
 
                 withContext(Dispatchers.Main) {
+                    skippedLines.forEach { appendLog(it) }
                     val existingKeys = _deviceCandidates.value.map { it.deviceName }.toSet()
                     val (uniqueNew, duplicates) = newCandidates.partition { it.deviceName !in existingKeys }
                     // Close rather than leak the redundant connections opened for devices
