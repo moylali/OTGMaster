@@ -82,5 +82,9 @@
             </intent-filter>
         </provider>
 
+        <!-- "Proceed" / "Not now" on a backup's low-space question. -->
+        <receiver
+            android:name=".backup.BackupActionReceiver"
+            android:exported="false" />
     </application>
 </manifest>

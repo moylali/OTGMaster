@@ -26,7 +26,7 @@ class BackupSecrets(context: Context) {
             EncryptedSharedPreferences.PrefValueEncryptionScheme.AES256_GCM,
         )
     }.onFailure {
-        app.fayaz.otgmaster.OtgMasterState.log("Saved backup passwords could not be decrypted (left in place): ${it.javaClass.simpleName}: ${it.message}")
+        app.fayaz.otgmaster.OtgMasterState.logFailure("backup-secrets", "Saved backup passwords could not be decrypted (left in place)", it)
     }.getOrNull()
 
     fun password(jobId: String): String? = prefs?.getString(jobId, null)
