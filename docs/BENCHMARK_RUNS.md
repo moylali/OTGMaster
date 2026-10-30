@@ -56,8 +56,18 @@ because every run below completed all its sections.
 | OnePlus 7 | D2VCFAT32 | 0.4.2 `6e281db` (A/B) | full, all ✓ | 7.77 / 25.14 | ALL 20958 MATCHED | 12; 1 step-down (0.4.2's bare step-down) | Drive 2 ALL CLEAN |
 | Samsung M30 (Android 10) | D3L1EXFAT | `6275ed9` | full, all ✓ | 3.63 / 9.06 | ALL 20929 MATCHED | 0 | Drive 3 ALL CLEAN |
 | Samsung M30 | D3L4EXFAT | `6275ed9` | full, all ✓ | 2.49 / 9.18 | ALL 20910 MATCHED | 0 | Drive 3 ALL CLEAN |
-| Samsung M30 | D5 p1 VC_ATS_ARGON_PIM0 (…EF449) | `6bd4eb1` | full, all ✓ | 1.94 / 2.59 | ALL 20902 MATCHED | 0 | pending (Drive 5 still running) |
-| realme 8 (RMX3085, Android 13, Realme UI 4.0) | D5 p1 VC_ATS_ARGON_PIM0 (…EF455) | `6bd4eb1` | full, all ✓ | 2.58 / 3.65 | ALL 20902 MATCHED | 23; a 64 KiB read at block 100665344 (partition 7's start, auto-mounted) failed twice → 32 KiB for the session | pending (Drive 5 still running) |
+| Samsung M30 | D5 p1 VC_ATS_ARGON_PIM0 (…EF449) | `6bd4eb1` | full, all ✓ | 1.94 / 2.59 | ALL 20902 MATCHED | 0 | pending: stick not yet on the laptop |
+| Samsung M30 | D5 p2 VC_STA_ARGON_PIM1 (…EF449) | `6bd4eb1` | full, all ✓ | 1.37 / 2.82 | ALL 20965 MATCHED | 0 | pending: stick not yet on the laptop |
+| Samsung M30 | D5 p3 VC_TWO_SHA512_PIM0 (…EF449) | `6bd4eb1` | full, all ✓ | 2.01 / 8.82 | ALL 20962 MATCHED | 11; one 120 KiB write gave up, the drive answered, and the same-size retry went through | pending: stick not yet on the laptop |
+| Samsung M30 | D5 p4 VC_AT_ARGON_PIM1 (…EF449) | `6bd4eb1` | full, all ✓ | 2.59 / 6.22 | ALL 20950 MATCHED | 0 | pending: stick not yet on the laptop |
+| Samsung M30 | D5 p5 VC_SA_SHA512_PIM1 (…EF449) | `6bd4eb1` | full, all ✓ | 2.15 / 3.27 | ALL 20027 MATCHED | 0 | pending: stick not yet on the laptop |
+| Samsung M30 | D5 p6 VC_TS_ARGON_PIM31 (…EF449) | `6bd4eb1` | full, all ✓ | 1.52 / 3.22 | ALL 20984 MATCHED | 0 | pending: stick not yet on the laptop |
+| realme 8 (RMX3085, Android 13, Realme UI 4.0) | D5 p1 VC_ATS_ARGON_PIM0 (…EF455) | `6bd4eb1` | full, all ✓ | 2.58 / 3.65 | ALL 20902 MATCHED | 23; a 64 KiB read at block 100665344 (partition 7's start, auto-mounted) failed twice → 32 KiB for the session | pending: stick not yet on the laptop |
+| realme 8 | D5 p2 VC_STA_ARGON_PIM1 (…EF455) | `6bd4eb1` | full, all ✓ | 1.74 / 3.84 | ALL 20965 MATCHED | 36; a 120 KiB read and a 60 KiB write each failed twice and were stepped down for the session | pending: stick not yet on the laptop |
+| realme 8 | D5 p3 VC_TWO_SHA512_PIM0 (…EF455) | `6bd4eb1` | full, all ✓ | 1.78 / 7.92 | ALL 20962 MATCHED | 73; five writes (60 and 120 KiB) gave up, each recovered by a same-size retry after the drive answered | pending: stick not yet on the laptop |
+| realme 8 | D5 p4 VC_AT_ARGON_PIM1 (…EF455) | `6bd4eb1` | full, all ✓ | 2.63 / 7.55 | ALL 20950 MATCHED | 23; one 64 KiB write failed twice → stepped down; one read recovered at the same size | pending: stick not yet on the laptop |
+| realme 8 | D5 p5 VC_SA_SHA512_PIM1 (…EF455) | `6bd4eb1` | full, all ✓ | 2.48 / 4.36 | ALL 20915 MATCHED | 66; six writes (60–120 KiB) gave up, five recovered by a same-size retry | pending: stick not yet on the laptop |
+| realme 8 | D5 p6 VC_TS_ARGON_PIM31 (…EF455) | `6bd4eb1` | full, all ✓ | 2.04 / 4.43 | ALL 20984 MATCHED | 32; a 64 KiB read failed twice → 32 KiB; two reads recovered at the same size | pending: stick not yet on the laptop |
 
 What these show:
 
@@ -70,6 +80,12 @@ What these show:
 - **The realme run is the first on that phone to complete** (#71's OnePlus CPH2585 is an OPPO-family phone, like the realme). Its one stuck
   read was recovered by a same-size retry and then a step-down, with no reset needed.
 - **No drive went dead on any of these runs, so `USBDEVFS_RESET` has still run only in unit tests.**
+
+Drive 5 finished on both phones on 10-30, every partition with all sections passing. The realme's runs recovered
+between 23 and 73 failed transfers each, many of them writes. The write-loss mechanism found on 10-30 (a Reset Recovery
+after a failed write can lose a 4 KiB unit the drive had already acknowledged, `fix/write-replay`) applies to those
+writes, and bigwrite and fixtures sample only part of the volume. So **the host checks of both Drive 5 sticks are the
+result that counts here**, and they are not done yet: the rows say so until they are.
 
 Laptop, 10-30: Drive 2 (all 10 partitions) and Drive 3 (all 10) read back with `read_matrix_drive.sh` and
 `verify_matrix_drive.py`. Both are **ALL CLEAN**: checker clean, every file matched, every bigwrite and tree intact.
@@ -91,6 +107,19 @@ Data moves at 67 MB/s while the drive is taking it, and the drive's CSW wait is 
 save at most the CBW and data phases, ~2% of writes, and ~6% of reads, whose gaps are 74–75% of wall time. Overlapping
 the app's own work (cache, crypto, filesystem) with the transfer could save up to ~40%. Those numbers come from these
 two runs. Host check: Drive 2's 10-30 read-back above came after these runs and the #93 runs, and is ALL CLEAN.
+
+**`7148f3c` (#96's head: the READ CAPACITY(10) re-ask, V26, and the libexfat messages, E3), 10-30:**
+
+- OnePlus 7, D2VCEXFAT, sections `free,write,correct,fixtures`: the drive opened and all six Drive 2 partitions
+  mounted on the new init path. `write verify` ALL PASSED and `correctness` ALL PASSED. The 16 MiB write section ran
+  at 0.18 MB/s, the bottom of that section's 0.20–1.51 MB/s range on earlier runs, on a day this phone's bigwrite ran
+  at about half its usual speed on every build (the A/B in `fix/write-replay`). The phone left the network at 14:45
+  during `fixtures` (16,000 entries matched by then), so the run did not complete and has no row. No `exFAT (…)` line
+  appeared: a clean volume has nothing to report, and libexfat's routine reference-count warnings stay out of the
+  log while in use, as intended. Host check of D2VCEXFAT: pending, with Drive 2's next read-back.
+- Galaxy M30, Drive 5, the published minified APK (`test-diag-7148f3c`): the drive opened (`Initialized LUN 0:
+  blocks=121145344`) and its plain exFAT and FAT32 partitions auto-mounted read-write. The minified build has no
+  benchmark receiver, so this is a smoke test, not a run.
 
 Not completed, so no result: OnePlus D2VCFAT32 on `d133498` (stopped in the read sections, to rebuild with the
 same-size retry); the start of D2L1EXT4 on `31acb7f` (stopped to move to `6275ed9`).
