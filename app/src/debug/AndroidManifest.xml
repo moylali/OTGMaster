@@ -1,6 +1,15 @@
 <manifest xmlns:android="http://schemas.android.com/apk/res/android">
 
     <application>
+        <!-- Debug-only: a backup between two mounted partitions with no UI. See BackupTestReceiver. -->
+        <receiver
+            android:name=".bench.BackupTestReceiver"
+            android:exported="true">
+            <intent-filter>
+                <action android:name="app.fayaz.otgmaster.RUN_BACKUP" />
+            </intent-filter>
+        </receiver>
+
         <!--
           Debug-only benchmark trigger. Declared in the debug source set alone, so
           release builds contain neither this entry nor the classes behind it.
