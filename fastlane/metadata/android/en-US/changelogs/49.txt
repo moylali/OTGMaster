@@ -1,4 +1,4 @@
-• Fixed: drives that would not open, failing with "MAX_RECOVERY_ATTEMPTS"
-• Fixed: a drive that stops responding is reset, instead of being retried at ever smaller sizes
-• Fixed: the transfer size a drive accepts is found before mounting, and remembered for next time
-• Fixed: a reported USB failure now says what the drive reported, not just that it failed
+• Fixed: drives over 2 TB would not open
+• Fixed: drives that failed to open with "MAX_RECOVERY_ATTEMPTS"; a drive that stops responding is now reset instead of retried
+• Fixed: the transfer size a drive accepts is found before mounting and remembered for next time
+• Fixed: a reported USB error now says what the drive answered, not just that it failed
