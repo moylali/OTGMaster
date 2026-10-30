@@ -52,6 +52,20 @@ class ResticWriter(
 
     private class Entry(val type: ResticRepository.BlobType, val id: String, val offset: Int, val length: Int)
 
+    /** Called every file with (files done, bytes read, the file's name); for the progress notification. */
+    var onProgress: (Long, Long, String) -> Unit = { _, _, _ -> }
+
+    /** Polled between files; a run asked to stop throws [CancelledException] and writes no snapshot. */
+    var isCancelled: () -> Boolean = { false }
+
+    /**
+     * Files and folders that could not be read, as "path: reason". They are left out of
+     * the snapshot, as restic leaves them out, and the run reports a warning naming them.
+     */
+    val errors = mutableListOf<String>()
+    var dirsDone = 0L; private set
+    var filesNew = 0L; private set
+
     /** Statistics for the run, for the progress notification and the job's record. */
     var filesDone = 0L; private set
     var bytesRead = 0L; private set
@@ -108,6 +122,8 @@ class ResticWriter(
     var filesUnchanged = 0L; private set
 
     private fun fileNode(s: BackupSource, previous: ResticRepository.Node?): JSONObject {
+        if (isCancelled()) throw CancelledException()
+        onProgress(filesDone, bytesRead, s.name)
         // Unchanged since the parent snapshot (same size and modification time, as restic
         // decides by default): its chunks are already in the repository, so the file is
         // not read at all. This is what makes a daily backup of a phone folder fast.
@@ -136,19 +152,35 @@ class ResticWriter(
             .put("mtime", t).put("atime", t).put("ctime", t)
             .put("uid", 0).put("gid", 0).put("user", "").put("group", "").put("inode", 0).put("device_id", 0)
             .put("size", size).put("links", 1).put("content", content)
+            .also { if (previous == null) filesNew++ }
     }
 
     /** The tree blob for [dir]'s contents, children first; returns its id. [parentTree] is the same folder in the parent snapshot. */
-    fun saveTree(dir: BackupSource, parentTree: String? = null): String {
+    fun saveTree(dir: BackupSource, parentTree: String? = null, at: String = ""): String {
         val previous = parentTree?.let { id -> runCatching { repo.tree(id) }.getOrNull() }?.associateBy { it.name }.orEmpty()
-        val nodes = dir.children().sortedWith { a, b -> compareBytes(a.name, b.name) }.map { c ->
+        dirsDone++
+        val children = try {
+            dir.children()
+        } catch (e: java.io.IOException) {
+            errors += "${at.ifEmpty { "/" }}: ${e.message ?: e.javaClass.simpleName}"
+            emptyList()
+        }
+        val nodes = children.sortedWith { a, b -> compareBytes(a.name, b.name) }.mapNotNull { c ->
+            val path = "$at/${c.name}"
             if (c.isDirectory) {
                 val t = times(c.modifiedMillis)
                 JSONObject().put("name", c.name).put("type", "dir").put("mode", DIR_MODE)
                     .put("mtime", t).put("atime", t).put("ctime", t)
                     .put("uid", 0).put("gid", 0).put("user", "").put("group", "").put("inode", 0).put("device_id", 0)
-                    .put("subtree", saveTree(c, previous[c.name]?.takeIf { it.type == "dir" }?.subtree))
-            } else fileNode(c, previous[c.name])
+                    .put("subtree", saveTree(c, previous[c.name]?.takeIf { it.type == "dir" }?.subtree, path))
+            } else try {
+                fileNode(c, previous[c.name])
+            } catch (e: java.io.IOException) {
+                // One unreadable file must not lose the whole backup. Chunks of it already
+                // saved stay in the pack and cost nothing while no snapshot uses them.
+                errors += "$path: ${e.message ?: e.javaClass.simpleName}"
+                null
+            }
         }
         val json = JSONObject().put("nodes", JSONArray(nodes))
         return saveBlob(ResticRepository.BlobType.TREE, (json.toString() + "\n").toByteArray(Charsets.UTF_8))
@@ -166,6 +198,7 @@ class ResticWriter(
             for (part in path.trim('/').split('/').filter { it.isNotEmpty() }) {
                 parentTree = parentTree?.let { id -> runCatching { repo.tree(id) }.getOrNull()?.firstOrNull { it.name == part }?.subtree }
             }
+            val started = Instant.now()
             val tree = saveTree(source, parentTree)
             // The snapshot's tree is the source's contents under its path, as restic lays a
             // backed-up directory out: one tree per path component, from the root down.
@@ -192,6 +225,15 @@ class ResticWriter(
                 .put("program_version", programVersion)
             if (tags.isNotEmpty()) snap.put("tags", JSONArray(tags))
             if (parent != null) snap.put("parent", parent.id)
+            // restic 0.17's snapshot summary, so `restic snapshots` and the app's timeline
+            // show the same counts.
+            snap.put("summary", JSONObject()
+                .put("backup_start", started.toString()).put("backup_end", Instant.now().toString())
+                .put("files_new", filesNew).put("files_changed", filesDone - filesNew - filesUnchanged)
+                .put("files_unmodified", filesUnchanged).put("dirs_new", 0).put("dirs_changed", 0)
+                .put("dirs_unmodified", 0).put("data_blobs", 0).put("tree_blobs", 0)
+                .put("data_added", bytesAdded).put("data_added_packed", bytesAdded)
+                .put("total_files_processed", filesDone).put("total_bytes_processed", bytesRead))
             val sealed = repo.key.encrypt(snap.toString().toByteArray(), random)
             val id = ResticRepository.sha256Hex(sealed)
             backend.write("snapshots/$id", sealed)
@@ -290,3 +332,5 @@ object Polynomials {
         }
     }
 }
+
+class CancelledException : RuntimeException("cancelled")
