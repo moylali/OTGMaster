@@ -1248,6 +1248,7 @@ class E2EAutomatedTest {
         android.os.SystemClock.sleep(500)
         val option = device.wait(Until.findObject(By.text(label)), 3000L)
             ?: device.wait(Until.findObject(By.textStartsWith("$label ")), timeout)
+        if (option == null) captureScreen("option_missing_${pickerDesc}")
         assertTrue("Option '$label' not found in $pickerDesc", option != null)
         option?.click()
         android.os.SystemClock.sleep(500)
