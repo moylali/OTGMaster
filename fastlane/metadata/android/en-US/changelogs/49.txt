@@ -1,5 +1,6 @@
 • Fixed: data written just before a USB error could be lost; it is now written again
 • Fixed: drives over 2 TB, and some 2 TB enclosures, would not open
-• Fixed: drives failing with "MAX_RECOVERY_ATTEMPTS"; a stuck drive is reset, and the transfer size it takes is remembered
-• Fixed: a reported USB error now says what the drive answered
-• Fixed: when a drive will not mount, the log now says why
+• Fixed: drives failing with "MAX_RECOVERY_ATTEMPTS"; a stuck drive is reset
+• New: after Encrypt, unlock the drive once to prove the password
+• New: Format and Encrypt show their progress in a notification
+• New: the log keeps 200 lines, says why anything failed, and Report issue sends all of it

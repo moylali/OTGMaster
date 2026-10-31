@@ -107,6 +107,14 @@ file `BENCH/file with spaces.txt`, copied there in the `6bd4eb1` smoke test, whi
 | `7148f3c` | `069d7a6` | #96 | fix(log): a mount that fails says why: libexfat's messages and swallowed exceptions (#98) |
 | `573aea6` | `0ce2fb6` | #96 | docs: record Drive 5 on 6bd4eb1 (M30, realme) and the 7148f3c device checks |
 
+### Commit hashes after the merge of #99
+
+| On the branch (cited) | On `main` | PR | Commit |
+|---|---|---|---|
+| `69cafee` (`066daaf` before the rebase onto `main`) | `1a9f5ec` | #99 | fix(usb): write the last 1 MiB again after any reset, so a drive cannot silently drop acknowledged writes (libaums V25) |
+| `4864b3d` (`92d3b6e`) | `5d562a5` | #99 | perf(usb): reuse the replay window's buffers instead of allocating one per write |
+| `1e09561` | `1bc28dd` | #99 | docs: record the pipelining A/B, the lost-write root cause and the write-replay A/B; hash table for #93 |
+
 ---
 
 ## 2026-10-22, 10-29 and 10-30 — USB recovery for #88/#71 and the 2 TB fix for #87 (#93, #96), and the V22 phase timers
