@@ -134,6 +134,43 @@ These apply to every commit, without being asked.
    otherwise docs-only PR means the whole PR runs the tests. Decide from
    `git diff --name-only origin/main...HEAD`, not from memory of what changed.
 
+## Tags
+
+**Only a real release may be named `vX.Y.Z`, and every other tag is named
+`test-*`.** F-Droid reads this repo's tags, and nothing in the app shows it:
+fdroiddata's entry is `UpdateCheckMode: Tags ^v[0-9]+\.[0-9]+\.[0-9]+$`, so
+`fdroid checkupdates` walks the five most recent tags whose *name* matches that
+pattern, reads `versionCode` out of each tagged tree, and auto-generates a build
+entry pinned to the highest one. `main` always carries an unreleased
+`versionCode` — the bump happens straight after a tag — so any tag landing on
+mainline work hands F-Droid a version that was never released.
+
+Test builds shared with issue reporters go out as GitHub pre-releases, and a
+release needs a tag of its own; that is fine and expected. Name them `test-*`
+(`test-usbfix-6bd4eb1`, `test-diag-7148f3c`) and the pattern cannot match them.
+
+**A `vX.Y.Z` tag's tree must carry `versionName X.Y.Z`.** fdroiddata's
+`Binaries:` URL substitutes `%v` with `versionName` to find the reference APK,
+so a tag whose tree disagrees with its name sends F-Droid to a release holding
+an APK built from some other commit. Run `scripts/bump-version.sh <name>` first
+and tag the bump commit, never a later one.
+
+`.github/workflows/tag-guard.yml` checks both of these on every tag push. It
+cannot block the push — GitHub has no server-side hook for that — so it fails
+on the tag instead, while deleting and re-pushing still costs nothing.
+
+This is issue #103. Two `test-*` pre-release tags were pushed at commits
+carrying `versionCode 49` / `versionName 0.4.2`, while the real `v0.4.2` tag
+carries `versionCode 48`. fdroiddata had a bare `UpdateCheckMode: Tags` with no
+pattern at the time, so checkupdates took `versionCode 49` off a test tag,
+pinned the build to that commit, and diffed it against the v0.4.2 release APK —
+built from the v0.4.2 commit. The reproducible build failed on `classes.dex`,
+both baseline profiles and all four `libveracrypt-native.so`, which reads like
+non-determinism in the NDK output and was nothing of the kind: the two trees
+simply were not the same tree. `META-INF/version-control-info.textproto` said
+so outright, naming both commits, and that is the line to read first next time a
+reproducible build fails.
+
 ## Benchmarking and verification
 
 **To run a benchmark, follow "Standard procedure" at the top of
@@ -316,7 +353,8 @@ invocation gets pasted; `LUKS_SUPPORT.md` now holds the design evaluation only.
 - **Do not push to mainline** unless explicitly asked. Commit to the working
   branch.
 - Unless a tag is created, nothing reaches F-Droid or Google Play, so landing
-  fixes on `main` is safe; tagging is the gate.
+  fixes on `main` is safe; tagging is the gate — and every tag goes through it,
+  test builds included, so see "Tags" before pushing one.
 
 ## Destructive commands
 

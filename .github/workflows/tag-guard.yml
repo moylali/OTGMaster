@@ -1,0 +1,84 @@
+# Checks every tag pushed to this repo, because F-Droid reads our tags.
+#
+# fdroiddata's UpdateCheckMode for app.fayaz.otgmaster is
+# `Tags ^v[0-9]+\.[0-9]+\.[0-9]+$`: `fdroid checkupdates` walks the five most
+# recent tags whose *name* matches that pattern, reads versionCode out of each
+# tagged tree, and auto-generates a build entry pinned to the highest one. It
+# then fetches the reference APK from `Binaries:`, which substitutes %v with
+# versionName. So two properties of our tags decide whether F-Droid's
+# reproducible build passes, and neither is visible from the app:
+#
+#   1. Only a real release may be named vX.Y.Z. Test builds shared with issue
+#      reporters go out as GitHub pre-releases, which need a tag of their own —
+#      those are named test-*, which the pattern cannot match.
+#   2. A vX.Y.Z tag's tree must carry versionName X.Y.Z, so that %v resolves to
+#      the release that actually holds the APK built from that commit.
+#
+# Issue #103 is what both rules are made of. Two `test-*` pre-release tags were
+# pushed at commits carrying versionCode 49 / versionName 0.4.2, while the real
+# v0.4.2 tag carries versionCode 48. fdroiddata had a bare `UpdateCheckMode:
+# Tags` then, with no pattern, so checkupdates took versionCode 49 off a test
+# tag, pinned the build to that commit, and compared it against the v0.4.2
+# release APK — which was built from the v0.4.2 commit. Every mismatch the job
+# reported (classes.dex, both baseline profiles, all four
+# libveracrypt-native.so, and the version-control-info.textproto revision that
+# named the two commits outright) came from that one substitution.
+#
+# This job cannot stop a bad tag from being pushed — GitHub has no server-side
+# hook for that — so it fails loudly on the tag instead, while the mistake is
+# still a minute old and the tag can be deleted and re-pushed. The alternative
+# is finding out from a reproducible-build failure a week later.
+
+name: Tag guard
+
+on:
+  push:
+    tags:
+      - "**"
+
+jobs:
+  check-tag:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Tag name and versionName agree
+        run: |
+          tag="${GITHUB_REF_NAME}"
+          echo "Tag: $tag"
+
+          case "$tag" in
+            test-*)
+              echo "Test-build tag. fdroiddata's tag pattern cannot match this, so it is"
+              echo "invisible to checkupdates and may sit at any version. Nothing to check."
+              exit 0
+              ;;
+            v*.*.*)
+              ;;
+            *)
+              echo "Error: '$tag' is neither a release tag (vX.Y.Z) nor a test-build tag (test-*)."
+              echo
+              echo "Every tag here is read by F-Droid. Name a release vX.Y.Z, and name anything"
+              echo "else — a build shared with an issue reporter, a diagnostic build — test-*,"
+              echo "so fdroiddata's tag pattern cannot pick it up. See AGENTS.md, 'Tags'."
+              exit 1
+              ;;
+          esac
+
+          expected="${tag#v}"
+          actual=$(grep -oP 'versionName = "\K[^"]+' app/build.gradle.kts)
+          code=$(grep -oP 'versionCode = \K\d+' app/build.gradle.kts)
+          echo "versionName in app/build.gradle.kts: $actual (versionCode $code)"
+
+          if [ "$actual" != "$expected" ]; then
+            echo
+            echo "Error: release tag '$tag' expects versionName '$expected', but the tagged"
+            echo "commit says '$actual'."
+            echo
+            echo "F-Droid resolves its reference APK URL by substituting %v with versionName,"
+            echo "so it would look for a release named v$actual to check the build from this"
+            echo "commit. Run scripts/bump-version.sh before tagging, and tag the bump commit."
+            exit 1
+          fi
+
+          echo "OK: release tag $tag carries versionName $actual."
