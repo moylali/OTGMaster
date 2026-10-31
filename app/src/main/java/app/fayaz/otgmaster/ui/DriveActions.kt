@@ -272,7 +272,7 @@ private fun <T> Picker(label: String, value: T, options: List<T>, name: (T) -> S
             value = name(value), onValueChange = {}, readOnly = true,
             label = { Text(label) },
             trailingIcon = { ExposedDropdownMenuDefaults.TrailingIcon(expanded = open) },
-            modifier = Modifier.menuAnchor().fillMaxWidth().semantics { contentDescription = id },
+            modifier = Modifier.menuAnchor(androidx.compose.material3.MenuAnchorType.PrimaryNotEditable).fillMaxWidth().semantics { contentDescription = id },
         )
         ExposedDropdownMenu(expanded = open, onDismissRequest = { open = false }) {
             options.forEach { o ->
