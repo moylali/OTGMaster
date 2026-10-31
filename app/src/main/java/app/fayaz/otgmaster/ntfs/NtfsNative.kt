@@ -51,6 +51,14 @@ object NtfsNative {
         newDirMref: Long, newName: String, caseOnly: Boolean,
     ): Int
     @JvmStatic external fun sync(handle: Long): Int
+    /**
+     * Writes an empty NTFS over the first [sizeBytes] of [device] with ntfs-3g's mkntfs
+     * (quick). [partStart] goes in the boot sector's hidden-sectors field. 0 on success.
+     */
+    @JvmStatic external fun format(
+        device: RawBlockDevice, sizeBytes: Long, sectorSize: Int, partStart: Long,
+        label: String, clusterSize: Int,
+    ): Int
 
     const val READ_ONLY_NONE = 0
     const val READ_ONLY_REQUESTED = 1

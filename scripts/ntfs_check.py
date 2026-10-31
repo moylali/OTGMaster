@@ -113,7 +113,13 @@ class Report:
 
 
 def apply_fixups(buf, sector, what, rep):
-    """Applies the update sequence array; reports a mismatch (torn write)."""
+    """Applies the update sequence array; reports a mismatch (torn write).
+
+    The stride is always 512 bytes (NTFS_BLOCK_SIZE), whatever the sector size: on a
+    4096-byte-sector volume a 4 KiB MFT record carries 9 entries, not 2. Using the
+    volume's bytes-per-sector rejected every record of a correct 4Kn volume.
+    """
+    sector = 512
     buf = bytearray(buf)
     usa_ofs, usa_count = struct.unpack_from("<HH", buf, 4)
     if usa_ofs + usa_count * 2 > len(buf) or usa_count - 1 != len(buf) // sector:

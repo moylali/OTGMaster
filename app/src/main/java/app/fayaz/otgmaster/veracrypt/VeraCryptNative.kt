@@ -53,7 +53,15 @@ object VeraCryptNative {
      * decrypt, 1 to encrypt. Returns 0 on success; the buffer is left untouched on
      * failure.
      */
-    external fun cryptSectorsInPlace(
+    /**
+     * Argon2id (version 0x13) of [password] and [salt]: [outLen] bytes. For LUKS2 keyslots.
+     * Throws IllegalStateException with Argon2's message when it fails (usually memory).
+     */
+    @JvmStatic
+    external fun argon2id(password: ByteArray, salt: ByteArray, timeCost: Int, memoryKiB: Int,
+                          lanes: Int, outLen: Int): ByteArray?
+
+        external fun cryptSectorsInPlace(
         ciphers: IntArray,
         direction: Int,
         masterKey: ByteArray,
