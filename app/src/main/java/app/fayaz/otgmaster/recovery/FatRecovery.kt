@@ -174,13 +174,14 @@ class FatRecovery(private val dev: RawBlockDevice) {
     private fun clustersFor(size: Long) = maxOf(1L, (size + clusterBytes - 1) / clusterBytes)
 
     /** Every deleted file on the volume, in live folders and in deleted ones. */
-    fun scan(isCancelled: () -> Boolean = { false }): List<DeletedFile> {
+    fun scan(isCancelled: () -> Boolean = { false }, onProgress: (folders: Int, found: Int) -> Unit = { _, _ -> }): List<DeletedFile> {
         val liveStarts = HashMap<Long, Long>() // first cluster -> size of the live file there
         val deleted = ArrayList<Pair<String, Entry>>()
         val deletedDirs = ArrayList<Pair<String, Entry>>()
         val seenDirs = HashSet<Long>()
         fun walk(path: String, first: Long) {
             if (isCancelled() || !seenDirs.add(first)) return
+            onProgress(seenDirs.size, deleted.size)
             val data = java.io.ByteArrayOutputStream().also { o -> chain(first, 4096).forEach { o.write(readCluster(it)) } }.toByteArray()
             for (e in entries(data)) {
                 val p = if (path.isEmpty()) e.name else "$path/${e.name}"
@@ -213,6 +214,7 @@ class FatRecovery(private val dev: RawBlockDevice) {
                 if (child.attr and 0x10 != 0) queue += p to child else deleted += p to child
             }
         }
+        if (isCancelled()) throw java.util.concurrent.CancellationException("scan stopped")
         return deleted.mapNotNull { (path, e) ->
             if (e.firstCluster == 0L) return@mapNotNull DeletedFile(path, e.size, 0, DeletedFile.State.RECOVERABLE.takeIf { e.size == 0L }
                 ?: DeletedFile.State.OVERWRITTEN, e.mtime)

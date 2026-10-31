@@ -313,6 +313,15 @@
     <string name="recovery_partly">partly overwritten</string>
     <string name="recovery_overwritten">overwritten</string>
     <string name="recovery_recover">Recover %1$d…</string>
+    <string name="recovery_scan_progress">Scanned %1$d folder(s) · %2$d deleted file(s) found</string>
+    <string name="recovery_stop">Stop</string>
+    <string name="recovery_stopped">Scan stopped. Nothing is listed: until every folder is read, a file that was only moved or renamed cannot be told from a deleted one.</string>
+    <string name="recovery_none_why">Deleted files can no longer be found when their space has been reused, when the drive was formatted since, or, on FAT32, when they were deleted through OTG Master, which removes the entry entirely.</string>
+    <string name="recovery_kind_all">All</string>
+    <string name="recovery_kind_photos">Photos</string>
+    <string name="recovery_kind_videos">Videos</string>
+    <string name="recovery_kind_documents">Documents</string>
+    <string name="recovery_kind_other">Other</string>
     <string name="recovery_count">%1$d of %2$d selected</string>
     <string name="recovery_select_all">Select all</string>
     <string name="recovery_select_none">Select none</string>
