@@ -1,0 +1,1 @@
+Plain FAT32 (64 MiB) encrypted from the card's More menu as LUKS2 (AES-XTS, Argon2id), ext4 inside, full overwrite. Offered for unlock, opens with the new password, takes a file, unlocks again. Host: cryptsetup unlocks the keyslot (luks_payload.py), the data is decrypted in Python, e2fsck -fn, flower.jpg absent, after_erase.txt present, no plaintext of the old files left.

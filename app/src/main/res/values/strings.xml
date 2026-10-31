@@ -246,6 +246,7 @@
     <string name="encrypt_pim_hint_argon2">Empty for VeraCrypt\'s default (416 MiB, 6 passes). Higher values need more memory and time to unlock.</string>
     <string name="encrypt_filesystem">Filesystem inside</string>
     <string name="encrypt_type">Encryption type</string>
+    <string name="encrypt_luks2_note">LUKS2 is Linux\'s own encryption: AES-256 in XTS mode, the password protected by Argon2id. Linux desktops open it with the password; Windows and macOS need extra software. For a drive used on Windows or a Mac too, choose VeraCrypt.</string>
     <string name="encrypt_create_keyfile">Create keyfile</string>
     <string name="encrypt_keyfile_create_failed">Could not create the keyfile: %1$s</string>
     <string name="encrypt_keyfiles_note">Keep a copy of every keyfile: the volume cannot be opened without them. Their order does not matter.</string>

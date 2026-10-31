@@ -1,0 +1,8 @@
+action=encrypt
+quick=false
+cipher=AES
+hash=SHA-512
+pim=1
+fs=ext4
+password=otgmaster-encrypt-test-2026
+label=ENCEXT4

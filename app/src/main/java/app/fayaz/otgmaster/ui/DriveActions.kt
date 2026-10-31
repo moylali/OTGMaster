@@ -96,8 +96,8 @@ data class DriveSummary(
     val serial: String?,
 )
 
-/** What Encrypt can create. VeraCrypt only for now; the form under the picker is the type's own. */
-enum class EncryptionType(val displayName: String) { VERACRYPT("VeraCrypt") }
+/** What Encrypt can create; the form under the picker is the type's own. VeraCrypt opens on Windows, macOS and Linux; LUKS2 is Linux's own (cryptsetup). */
+enum class EncryptionType(val displayName: String) { VERACRYPT("VeraCrypt"), LUKS2("LUKS2") }
 
 /** An Encrypt request from the screen; the activity wipes [password] once used. */
 class EncryptRequest(
@@ -389,7 +389,7 @@ private fun EraseScreen(
 }
 
 /**
- * Format: an empty exFAT or FAT32 of the volume's size, the current one by default;
+ * Format: an empty exFAT, FAT32, ext4 or NTFS of the volume's size, the current one by default;
  * inside a container, the container and its password stay.
  */
 @Composable
@@ -401,7 +401,9 @@ fun FormatScreen(
     onConfirm: (FormatRequest) -> Unit,
     onDismiss: () -> Unit,
 ) {
-    var fs by remember { mutableStateOf(current ?: DriveFormatter.Filesystem.EXFAT) }
+    // ext2 and ext3 volumes are offered ext4, the only ext this app writes.
+    var fs by remember { mutableStateOf(current ?: if (drive.filesystem.startsWith("ext")) DriveFormatter.Filesystem.EXT4
+        else DriveFormatter.Filesystem.EXFAT) }
     var label by remember { mutableStateOf(suggestedLabel) }
     var quick by remember { mutableStateOf(false) }
     var confirming by remember { mutableStateOf(false) }
@@ -431,7 +433,7 @@ fun FormatScreen(
 /**
  * Encrypt: a new encrypted volume over the whole partition. It erases — the old files are
  * not carried into the new volume — and the screen says so before anything else. The type
- * picker decides the form under it; VeraCrypt is the only type for now.
+ * picker decides the form under it: VeraCrypt or LUKS2.
  */
 @Composable
 fun EncryptScreen(
@@ -478,9 +480,11 @@ fun EncryptScreen(
 
     val pim = pimText.toIntOrNull()?.takeIf { it > 0 }
     val pimInvalid = pimText.isNotEmpty() && pimText.toIntOrNull() == null
-    val hasCredential = password.isNotEmpty() || keyfiles.isNotEmpty()
+    val luks2 = type == EncryptionType.LUKS2
+    val hasCredential = password.isNotEmpty() || (!luks2 && keyfiles.isNotEmpty())
     val problem = when {
         !hasCredential -> null
+        luks2 -> if (password != confirm) stringResource(R.string.encrypt_passwords_differ) else null
         password != confirm -> stringResource(R.string.encrypt_passwords_differ)
         pimInvalid -> stringResource(R.string.encrypt_pim_invalid)
         pimText != pimConfirm -> stringResource(R.string.encrypt_pims_differ)
@@ -496,6 +500,16 @@ fun EncryptScreen(
             "encrypt_type") { type = it }
 
         when (type) {
+            EncryptionType.LUKS2 -> {
+                PasswordField(password, stringResource(R.string.encrypt_password), "encrypt_password") { password = it }
+                PasswordField(confirm, stringResource(R.string.encrypt_password_confirm), "encrypt_password_confirm") { confirm = it }
+                if (password.isNotEmpty() && password.length < VeraCryptVolumeCreator.SHORT_PASSWORD_CHARS) {
+                    Text(stringResource(R.string.encrypt_short_password, VeraCryptVolumeCreator.SHORT_PASSWORD_CHARS),
+                        style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                }
+                Text(stringResource(R.string.encrypt_luks2_note), style = MaterialTheme.typography.bodySmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant)
+            }
             EncryptionType.VERACRYPT -> {
                 PasswordField(password, stringResource(R.string.encrypt_password), "encrypt_password") { password = it }
                 PasswordField(confirm, stringResource(R.string.encrypt_password_confirm), "encrypt_password_confirm") { confirm = it }
@@ -579,7 +593,8 @@ fun EncryptScreen(
         EraseConfirmDialog(drive, stringResource(R.string.encrypt_button),
             onConfirm = {
                 confirming = false
-                onConfirm(EncryptRequest(type, password.toCharArray(), pim, cipher, hash, keyfiles, fs, label.trim(), !quick,
+                onConfirm(EncryptRequest(type, password.toCharArray(), if (luks2) null else pim, cipher, hash,
+                    if (luks2) emptyList() else keyfiles, fs, label.trim(), !quick,
                     saveToPasswordManager = PasswordManager.isAvailable && saveToPasswordManager && password.isNotEmpty()))
                 password = ""; confirm = ""; pimConfirm = ""
             },

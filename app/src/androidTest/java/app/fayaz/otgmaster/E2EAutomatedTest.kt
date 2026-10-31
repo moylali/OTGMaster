@@ -616,8 +616,9 @@ class E2EAutomatedTest {
      * with the password it now has and still holds that file.
      * scripts/verify_e2e_volume.py --erase then checks the drive on the host.
      *
-     * Case files: erase.txt (action, quick, and for encrypt cipher, hash, pim, fs,
-     * password, label), plus plain.txt for a volume that auto-mounts without a password.
+     * Case files: erase.txt (action, quick, fs, and for encrypt type (luks2, else VeraCrypt),
+     * cipher, hash, pim, password, label), plus plain.txt for a volume that auto-mounts
+     * without a password.
      */
     @Test
     fun testEraseOperations() {
@@ -660,21 +661,34 @@ class E2EAutomatedTest {
         var newPim = pim
         var newCipher = arguments.getString("cipher", "")
         var newHash = arguments.getString("hash", "")
+        // erase_fs is the filesystem the picker is set to: exfat (its default), fat32, ext4, ntfs.
+        val eraseFs = arguments.getString("erase_fs", "")
+        val fsOption = mapOf("fat32" to "FAT32", "exfat" to "exFAT", "ext4" to "ext4", "ntfs" to "NTFS")[eraseFs]
+        if (action == "format" && fsOption != null) pickOption("format_fs", fsOption, inDialog = true)
         if (action == "encrypt") {
+            val luks2 = arguments.getString("erase_type", "") == "luks2"
             newPassword = arguments.getString("erase_password", "")
-            newPim = arguments.getString("erase_pim", "")
-            newCipher = arguments.getString("erase_cipher", "AES")
-            newHash = arguments.getString("erase_hash", "SHA-512")
+            if (luks2) {
+                // LUKS2 has no cipher, KDF, PIM or keyfile choices; its unlock form neither.
+                pickOption("encrypt_type", "LUKS2", inDialog = true)
+                newPim = ""; newCipher = ""; newHash = ""
+            } else {
+                newPim = arguments.getString("erase_pim", "")
+                newCipher = arguments.getString("erase_cipher", "AES")
+                newHash = arguments.getString("erase_hash", "SHA-512")
+            }
             typeInto("encrypt_password", newPassword)
             typeInto("encrypt_password_confirm", newPassword)
             hideKeyboard()
-            if (newCipher != "AES") pickOption("encrypt_cipher", newCipher, inDialog = true)
-            if (newHash != "SHA-512") pickOption("encrypt_kdf", newHash, inDialog = true)
-            if (newPim.isNotEmpty()) {
-                typeInto("encrypt_pim", newPim); hideKeyboard()
-                typeInto("encrypt_pim_confirm", newPim); hideKeyboard()
+            if (!luks2) {
+                if (newCipher != "AES") pickOption("encrypt_cipher", newCipher, inDialog = true)
+                if (newHash != "SHA-512") pickOption("encrypt_kdf", newHash, inDialog = true)
+                if (newPim.isNotEmpty()) {
+                    typeInto("encrypt_pim", newPim); hideKeyboard()
+                    typeInto("encrypt_pim_confirm", newPim); hideKeyboard()
+                }
             }
-            if (arguments.getString("erase_fs", "exfat") == "fat32") pickOption("encrypt_fs", "FAT32", inDialog = true)
+            if (fsOption != null && eraseFs != "exfat") pickOption("encrypt_fs", fsOption, inDialog = true)
             arguments.getString("erase_label", "").takeIf { it.isNotEmpty() }?.let {
                 typeInto("encrypt_label", it); hideKeyboard()
             }

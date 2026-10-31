@@ -235,7 +235,7 @@ def check_erased_files(img, expected_content):
                     problems.append(f"after_erase.txt reads {got!r}, the test wrote {expected_content!r}")
             except OSError as e:
                 problems.append(f"after_erase.txt: {e} (listing: {names})")
-            extra = [n for n in names if n not in ("after_erase.txt", "System Volume Information")]
+            extra = [n for n in names if n not in ("after_erase.txt", "System Volume Information", "lost+found")]
             if extra:
                 problems.append(f"files left over from before the erase: {extra}")
         finally:
@@ -264,7 +264,9 @@ def erase_main(slot, case_dir):
         what.append("old plaintext gone" if full else "quick (old data may remain)")
 
         if action == "format" and plain_case:
-            fs_img, label_want = snapshot, "OTGFAT32" if "fat32" in name else "OTGEXFAT"
+            # make_e2e_matrix.make_fs labels a volume OTG<FS>.
+            label_want = next(f"OTG{fs.upper()}" for fs in ("fat32", "exfat", "ext4", "ntfs") if fs in name)
+            fs_img = snapshot
             label = run("blkid", "-p", "-o", "value", "-s", "LABEL", fs_img).stdout.strip()
             if label != label_want:
                 problems.append(f"label {label!r} after Format, was {label_want!r}")
@@ -275,6 +277,16 @@ def erase_main(slot, case_dir):
             fs_img = os.path.join(work, "plain.img")
             vc_decrypt(snapshot, password, pim, fs_img)
             what.append("same VeraCrypt password opens it")
+        elif spec.get("type") == "luks2":
+            # cryptsetup unlocks the keyslot (it hands luks_payload.py the volume key); the
+            # data segment is then decrypted with Python's cryptography, not the app's code.
+            fs_img = os.path.join(work, "plain.img")
+            p = run(sys.executable, os.path.join(HERE, "luks_payload.py"), "decrypt", snapshot, spec["password"], fs_img)
+            if p.returncode != 0:
+                problems.append(f"cryptsetup could not open the new LUKS2 volume:\n{p.stdout}{p.stderr}")
+                fs_img = None
+            else:
+                what.append("cryptsetup opened the new LUKS2 keyslot, data decrypted in Python")
         elif spec.get("cipher") == "AES" and spec.get("hash") == "SHA-512":
             fs_img = os.path.join(work, "plain.img")
             vc_decrypt(snapshot, spec["password"], int(spec.get("pim", "0") or 0), fs_img)
@@ -289,8 +301,8 @@ def erase_main(slot, case_dir):
 
         if fs_img is not None:
             fs = fs_type(fs_img)
-            want_fs = {"exfat": "exfat", "fat32": "vfat"}.get(spec.get("fs", ""), None)
-            if action == "encrypt" and want_fs and fs != want_fs:
+            want_fs = {"exfat": "exfat", "fat32": "vfat", "ext4": "ext4", "ntfs": "ntfs"}.get(spec.get("fs", ""), None)
+            if want_fs and fs != want_fs:
                 problems.append(f"filesystem inside is {fs!r}, asked for {want_fs!r}")
             problems += check_structure(fs, fs_img)
             problems += check_erased_files(fs_img, expected)

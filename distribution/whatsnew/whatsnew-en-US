@@ -1,8 +1,9 @@
 • New: back up phone folders to a drive in restic format
 • New: recover deleted files on FAT32 and exFAT drives
 • New: another phone over USB mounts as a read-only drive
-• New: Encrypt asks for the password once before use; progress notifications
-• Fixed: data written just before a USB error could be lost
-• Fixed: drives over 2 TB, some 2 TB enclosures, "MAX_RECOVERY_ATTEMPTS" drives
-• Fixed: drives plugged in while locked mount on unlock
+• New: Format/Encrypt with ext4 or NTFS; Encrypt as LUKS2
+• New: Encrypt checks the password; progress notes
 • New: a fuller log in Report issue
+• Fixed: data written just before a USB error could be lost
+• Fixed: drives over 2 TB, some 2 TB enclosures
+• Fixed: drives plugged in while locked mount on unlock

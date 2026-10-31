@@ -133,6 +133,36 @@ object DriveFormatter {
         return volume
     }
 
+    /**
+     * Turns [partition] (the whole partition, raw, 512-byte sectors) into a LUKS2 volume
+     * holding an empty [filesystem], and returns the decrypted data segment. [password] is
+     * wiped. Linux opens it with `cryptsetup open` (see [app.fayaz.otgmaster.luks.LuksVolumeCreator]).
+     */
+    fun encryptLuks2(
+        partition: RawBlockDevice,
+        password: CharArray,
+        filesystem: Filesystem,
+        label: String,
+        full: Boolean,
+        progress: Progress = Progress { _, _ -> },
+    ): RawBlockDevice {
+        val dataSectors = app.fayaz.otgmaster.luks.LuksVolumeCreator.dataBytes(partition.blockCount * 512) / 512
+        checkLayout(filesystem, 512, dataSectors, null)
+        // UTF-8, as cryptsetup takes a passphrase typed on Linux and as the unlock form sends it.
+        val bytes = String(password).toByteArray(Charsets.UTF_8)
+        password.fill('\u0000')
+        val volume = try {
+            app.fayaz.otgmaster.luks.LuksVolumeCreator.create(partition, bytes, label) { progress.update(it, 0f) }
+        } finally {
+            bytes.fill(0)
+        }
+        if (full) {
+            ZeroWriter.zero(volume, 0, dataSectors) { progress.update("Overwriting", it) }
+        }
+        writeFilesystem(volume, filesystem, dataSectors, label, null, 0, progress, full)
+        return volume
+    }
+
     /** Throws, writing nothing, if [fs] cannot be laid out on [sectors] sectors of [sectorSize]. */
     internal fun checkLayout(fs: Filesystem, sectorSize: Int, sectors: Long, cluster: Int?) {
         when (fs) {

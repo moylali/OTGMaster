@@ -1,0 +1,1 @@
+Plain ext4 (64 MiB) encrypted from the card's More menu: VeraCrypt AES / SHA-512, PIM 1, NTFS inside, full overwrite. Offered for unlock, opens with the new password, takes a file, unlocks again. Host: VeraCrypt header opened and decrypted in Python, ntfs_check.py and ntfsfix -n, flower.jpg absent, after_erase.txt present, no plaintext of the old files left.
