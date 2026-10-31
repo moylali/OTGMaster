@@ -299,7 +299,10 @@ class MainActivity : AppCompatActivity() {
                     val granted = intent.getBooleanExtra(UsbManager.EXTRA_PERMISSION_GRANTED, false)
                     if (device != null && granted) {
                         appendLog(getString(R.string.log_usb_permission_granted, device.deviceName))
-                        openAndProbeUsb()
+                        // A phone or camera goes to the MTP path, not the USB-drive one.
+                        if (app.fayaz.otgmaster.mtp.MtpSession.isMtpDevice(device) && !UsbDeviceDescriber.isMassStorageDevice(device)) {
+                            mountMtpDevices(listOf(device), OtgMasterState.mountedDrives.mapNotNull { it.sourceDeviceName }.toSet())
+                        } else openAndProbeUsb()
                     } else {
                         appendLog(getString(R.string.log_usb_permission_denied))
                     }
@@ -981,8 +984,15 @@ class MainActivity : AppCompatActivity() {
             try {
                 val excludeKeys = OtgMasterState.mountedDrives.mapNotNull { it.sourceDeviceName }.toSet() +
                     openedDevices.keys + pendingUnmounts.filterValues { it > 0 }.keys
+                val opener = LibaumsRawBlockDeviceOpener(this@MainActivity)
                 val openedList = try {
-                    LibaumsRawBlockDeviceOpener(this@MainActivity).openAllAvailable(excludeKeys)
+                    opener.openAllAvailable(excludeKeys).also {
+                        // Every device not opened says why, whether or not another one opened.
+                        val reasons = opener.notOpened.toList()
+                        if (reasons.isNotEmpty()) withContext(Dispatchers.Main) {
+                            reasons.forEach { appendLog(getString(R.string.log_could_not_open_device, it)) }
+                        }
+                    }
                 } catch (e: Exception) {
                     e.printStackTrace()
                     withContext(Dispatchers.Main) { appendLog(getString(R.string.log_error_probing_candidates, e.reason())) }
@@ -997,7 +1007,7 @@ class MainActivity : AppCompatActivity() {
                         // failure, so Scan works as a recovery action.
                         if (deferredCandidates.isNotEmpty()) {
                             restoreDeferredCandidates()
-                        } else if (!quietIfNone) {
+                        } else if (!quietIfNone && opener.notOpened.isEmpty()) {
                             appendLog(getString(R.string.log_could_not_open_block_device))
                         }
                     }
@@ -3682,3 +3692,6 @@ internal fun Throwable.reason(): String {
     val c = cause ?: return own
     return "$own (cause: ${c.javaClass.simpleName}: ${c.message})"
 }
+
+/** [Throwable.reason] for Java-style callers and other files. */
+internal fun reasonOf(t: Throwable): String = t.reason()
