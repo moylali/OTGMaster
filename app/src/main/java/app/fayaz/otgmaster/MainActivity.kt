@@ -383,8 +383,21 @@ class MainActivity : AppCompatActivity() {
         }
     }
 
+    /** This instance closed itself in onCreate, before registering anything; see there. */
+    private var duplicate = false
+
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
+        // A USB attach starts this activity singleTop, which reuses it only when it is on top.
+        // With the notifications question above it, Android made a second MainActivity over
+        // the first (Pixel 7 Pro, Android 17): the second mounted while the first still waited
+        // for the answer, and the question stayed buried under it. A file picker above it does
+        // the same. The first instance hears the attach through usbReceiver, so this one closes.
+        if (!isTaskRoot && intent?.action == UsbManager.ACTION_USB_DEVICE_ATTACHED) {
+            duplicate = true
+            finish()
+            return
+        }
         // Before the first frame, so it is laid out edge-to-edge from the start; the icon
         // colours follow the in-app theme once it is read (applySystemBarAppearance).
         enableEdgeToEdge()
@@ -648,6 +661,7 @@ class MainActivity : AppCompatActivity() {
     private var installedLogSink: ((String) -> Unit)? = null
 
     override fun onDestroy() {
+        if (duplicate) { super.onDestroy(); return }
         // Clear only what *this* instance installed. Nulling unconditionally let a
         // finishing instance wipe the handlers its replacement had already
         // installed, because onCreate of the new one can run before onDestroy of
