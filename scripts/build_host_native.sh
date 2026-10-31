@@ -10,7 +10,7 @@ set -euo pipefail
 cd "$(dirname "$0")/.."
 out="${1:-app/build/host-native/libotg-host.so}"
 cpp=app/src/main/cpp
-srcs=("$cpp"/ntfs-3g/libntfs-3g/*.c "$cpp"/ntfs/NtfsNative.cpp "$cpp"/exfat/*.c "$cpp"/exfat/*.h
+srcs=("$cpp"/ntfs-3g/libntfs-3g/*.c "$cpp"/ntfs-3g/ntfsprogs/*.c "$cpp"/ntfs-3g/ntfsprogs/*.h "$cpp"/ntfs/NtfsNative.cpp "$cpp"/exfat/*.c "$cpp"/exfat/*.h
       "$cpp"/exfat/ExFatNative.cpp
       "$cpp"/bitlocker/*.c "$cpp"/bitlocker/*.cpp "$cpp"/mbedtls/library/*.c
       "$cpp"/VeraCryptNative.cpp "$cpp"/vc_cascade.cpp "$cpp"/vc_cascade.h "$cpp"/serpent/*.c
@@ -43,6 +43,11 @@ mbed=(-I"$cpp/mbedtls/include" -I"$cpp/bitlocker" -I"$cpp/serpent" "${ltc[@]}" -
 for f in "$cpp"/ntfs-3g/libntfs-3g/*.c; do
     o="$obj/ntfs_$(basename "$f" .c).o"
     gcc -c "${flags[@]}" "$f" -o "$o" & pids+=($!)
+    objs+=("$o")
+done
+for f in "$cpp"/ntfs-3g/ntfsprogs/*.c; do
+    o="$obj/ntfsprogs_$(basename "$f" .c).o"
+    gcc -c "${flags[@]}" -DOTG_MKNTFS_LIBRARY -DHAVE_GETOPT_H -DHAVE_LIBGEN_H -I"$cpp/ntfs-3g/ntfsprogs" "$f" -o "$o" & pids+=($!)
     objs+=("$o")
 done
 for f in "$cpp"/mbedtls/library/*.c "$cpp"/bitlocker/*.c "$cpp"/serpent/*.c \

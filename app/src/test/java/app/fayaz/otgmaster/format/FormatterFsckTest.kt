@@ -226,6 +226,93 @@ class FormatterFsckTest {
         }
     }
 
+    // ── ext4 ─────────────────────────────────────────────────────────────────
+
+    private fun assertExt4Clean(f: File, what: String) {
+        val fsck = tool("e2fsck")
+        assumeTrue("e2fsck not available", fsck != null)
+        val (rc, out) = run(fsck!!, "-fn", f.absolutePath)
+        assertEquals("$what: e2fsck\n$out", 0, rc)
+    }
+
+    @Test fun ext4IsFsckCleanAtEverySizeClass() {
+        // 20 MiB: one group, 1024-block journal; 100 MiB: one group; 600 MiB: 5 groups, a
+        // short last group; 3 GiB: 24 groups, 16 MiB journal; 40 GiB: 320 groups, 64 MiB
+        // journal, two GDT backups past group 1. Quick and full.
+        for (mib in listOf(20L, 100L, 600L, 3L * 1024, 40L * 1024)) {
+            for (full in listOf(false, true)) {
+                if (full && mib > 1024) continue   // writing 40 GiB of zeros is not a unit test
+                val f = image(mib shl 20)
+                ImageDevice(f).use {
+                    if (full) ZeroWriter.zero(it, 0, it.blockCount)
+                    Ext4Formatter.format(it, it.blockCount, "otg test", full)
+                }
+                assertExt4Clean(f, "$mib MiB, full=$full")
+            }
+        }
+    }
+
+    @Test fun ext4KeepsItsLabelAndTakesFilesThroughTheDriver() {
+        val f = image(700L shl 20)
+        ImageDevice(f).use { Ext4Formatter.format(it, it.blockCount, "Holiday 26", full = false) }
+        val dumpe2fs = tool("dumpe2fs")
+        if (dumpe2fs != null) {
+            val (_, out) = run(dumpe2fs, "-h", f.absolutePath)
+            assertTrue(out, out.contains("Holiday 26"))
+            assertTrue(out, out.contains("metadata_csum"))
+            assertTrue(out, out.contains("has_journal"))
+        }
+        val payload = Random(7).nextBytes(5 * 1024 * 1024 + 123)
+        ImageDevice(f).use { dev ->
+            val fs = app.fayaz.otgmaster.ext4.Ext4FileSystem.create(dev)
+            assertTrue("a fresh volume is writable", !fs.isReadOnly)
+            val root = fs.rootDirectory
+            assertEquals(listOf("lost+found"), root.listFiles().map { it.name })
+            val dir = root.createDirectory("photos")
+            val file = dir.createFile("one.bin")
+            file.write(0, ByteBuffer.wrap(payload))
+            file.flush()
+            // Enough files to need inodes and blocks from groups past group 0's first.
+            for (i in 0 until 40) dir.createFile("f$i.txt").apply { write(0, ByteBuffer.wrap("file $i".toByteArray())); flush() }
+            fs.unmount()
+        }
+        assertExt4Clean(f, "after writing")
+        ImageDevice(f).use { dev ->
+            val root = app.fayaz.otgmaster.ext4.Ext4FileSystem.create(dev).rootDirectory
+            val file = root.search("photos/one.bin")!!
+            val back = ByteBuffer.allocate(payload.size)
+            file.read(0, back)
+            assertArrayEquals(payload, back.array())
+        }
+    }
+
+    @Test fun ext4OnFourKiBSectorsAndOnlyOnTheSectorsItIsGiven() {
+        val f = image(512L shl 20)
+        ImageDevice(f, blockSize = 4096).use { Ext4Formatter.format(it, it.blockCount, "FOURK", full = false) }
+        assertExt4Clean(f, "4 KiB sectors")
+        val g = image(64L shl 20)
+        val total = (60L shl 20) / 512
+        ImageDevice(g).use { Ext4Formatter.format(it, total, "", full = false) }
+        ImageDevice(g).use { dev ->
+            val after = dev.readBlocks(total, ((4L shl 20) / 512).toInt())
+            assertTrue("bytes past the volume were written", after.all { it == 0xA5.toByte() })
+        }
+        try {
+            Ext4Formatter.layout(8L shl 20)
+            throw AssertionError("8 MiB was accepted as ext4")
+        } catch (e: IllegalArgumentException) {
+            assertTrue(e.message!!, e.message!!.startsWith("ext4 needs at least"))
+        }
+    }
+
+    /** Leaves a formatted image at FORMAT_DEMO_OUT for checks a unit test cannot do (a kernel mount). */
+    @Test fun writeDemoImagesWhenAsked() {
+        val out = System.getenv("FORMAT_DEMO_OUT") ?: return
+        val f = File(out, "ext4.img")
+        RandomAccessFile(f, "rw").use { it.setLength(3L shl 30) }
+        ImageDevice(f).use { Ext4Formatter.format(it, it.blockCount, "OTGDEMO", full = false) }
+    }
+
     @Test fun exFatUpcaseTableDecompressesToAFullMapping() {
         val t = ExFatFormatter.UpcaseTable.compressed
         val b = ByteBuffer.wrap(t).order(java.nio.ByteOrder.LITTLE_ENDIAN)

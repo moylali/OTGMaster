@@ -179,6 +179,45 @@ class NtfsWriteCheckTest {
 
     // -------------------------------------------------------------------- tests
 
+    /**
+     * The app's own mkntfs (Format and Encrypt) against the host's: the volume it writes
+     * passes the same checks, mounts here, takes files, and still passes them.
+     */
+    @Test
+    fun theAppsMkntfsWritesACleanVolume() {
+        for (sectorSize in listOf(512, 4096)) {
+            RandomAccessFile(img, "rw").use { raf ->
+                // Junk where mkntfs must write, so a structure it forgot is visible.
+                raf.setLength(0); raf.setLength(200L shl 20)
+                raf.seek(0); raf.write(ByteArray(8 shl 20) { 0xA5.toByte() })
+            }
+            val dev = if (sectorSize == 512) FileBlockDevice(img) else object : RawBlockDevice {
+                val inner = FileBlockDevice(img)
+                override val blockSize = 4096
+                override val blockCount = img.length() / 4096
+                override fun readBlocks(startBlock: Long, blockCount: Int) = inner.readBlocks(startBlock * 8, blockCount * 8)
+                override fun writeBlocks(startBlock: Long, data: ByteArray) = inner.writeBlocks(startBlock * 8, data)
+                override fun close() = inner.close()
+            }
+            dev.use { app.fayaz.otgmaster.format.NtfsFormatter.format(it, it.blockCount, "Fotos 26", partitionOffset = 2048) }
+            assertVolumeClean("app mkntfs, $sectorSize-byte sectors")
+            if (sectorSize == 512) {
+                withFs { fs ->
+                    assertEquals("Fotos 26", fs.volumeLabel)
+                    assertNull(fs.readOnlyReason)
+                    assertEquals(0, fs.rootDirectory.listFiles().size)
+                    val f = fs.rootDirectory.createDirectory("dir").createFile("a.bin")
+                    f.writeChunked(Random(3).nextBytes(3 shl 20), Random(4))
+                }
+                assertVolumeClean("app mkntfs, after writing")
+                assertEquals(3 shl 20, ntfscat("/dir/a.bin").size)
+            }
+        }
+        // Twice in one process: mkntfs keeps state in globals (VENDOR_FIXES N2).
+        FileBlockDevice(img).use { app.fayaz.otgmaster.format.NtfsFormatter.format(it, it.blockCount, "", partitionOffset = 0) }
+        assertVolumeClean("app mkntfs, second run")
+    }
+
     @Test
     fun freshVolumeMountsAndIsEmpty() {
         withFs { fs ->

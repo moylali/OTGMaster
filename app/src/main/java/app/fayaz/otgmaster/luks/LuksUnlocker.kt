@@ -4,8 +4,6 @@ import android.util.Log
 import app.fayaz.otgmaster.block.RawBlockDevice
 import app.fayaz.otgmaster.veracrypt.NativeDecryptedBlockDevice
 import app.fayaz.otgmaster.veracrypt.SingleCipher
-import com.lambdapioneer.argon2kt.Argon2Kt
-import com.lambdapioneer.argon2kt.Argon2Mode
 import java.nio.ByteBuffer
 import java.security.MessageDigest
 import javax.crypto.Mac
@@ -210,18 +208,18 @@ class LuksUnlocker {
     ): ByteArray? {
         val slotKey: ByteArray = when (slot) {
             is Luks2Keyslot.Argon2id -> {
+                // The vendored reference Argon2 (as VeraCrypt volumes use), not Argon2Kt: the
+                // same code then runs in host tests, where a LUKS2 volume made by
+                // LuksVolumeCreator or by cryptsetup is unlocked against a loopback image.
                 try {
-                    val argon2 = Argon2Kt()
-                    val result = argon2.hash(
-                        mode             = Argon2Mode.ARGON2_ID,
-                        password         = password,
-                        salt             = slot.salt,
-                        tCostInIterations= slot.timeCost,
-                        mCostInKibibyte  = slot.memoryCostKiB,
-                        parallelism      = slot.parallelism,
-                        hashLengthInBytes= slot.keySize
+                    app.fayaz.otgmaster.veracrypt.VeraCryptNative.argon2id(password, slot.salt,
+                        slot.timeCost, slot.memoryCostKiB, slot.parallelism, slot.keySize)
+                        ?: throw UnsupportedFormatException("Argon2id could not run")
+                } catch (e: IllegalStateException) {
+                    throw UnsupportedFormatException(
+                        "This LUKS2 volume requires ${slot.memoryCostKiB / 1024} MiB to unlock " +
+                        "— Argon2id failed: ${e.message}"
                     )
-                    result.rawHashAsByteArray()
                 } catch (e: OutOfMemoryError) {
                     throw UnsupportedFormatException(
                         "This LUKS2 volume requires ${slot.memoryCostKiB / 1024} MiB to unlock " +

@@ -138,8 +138,12 @@ and write, used by `app/src/main/cpp/ntfs/NtfsNative.cpp`.
 - **Pinned upstream:** `7f0f841fc52cf719106c5c93bafe465004e36816`, tagged
   `2026.9.28` (upstream's version number), pinned 2026-10-01.
 - **What was taken:** `libntfs-3g/*.c` and `include/ntfs-3g/*.h`, byte for byte, plus
-  `COPYING`, `COPYING.LIB`, `AUTHORS`, `CREDITS` and `README`. Left out: the FUSE
-  driver (`src/`), `libfuse-lite/`, `ntfsprogs/`, the build system, and two library
+  `COPYING`, `COPYING.LIB`, `AUTHORS`, `CREDITS` and `README`. From `ntfsprogs/`, added
+  2026-10-31 at the same pin for Format and Encrypt: `mkntfs.c` and what it links
+  against, `sd.c`/`sd.h`, `attrdef.c`/`attrdef.h`, `boot.c`/`boot.h`, `utils.c`/`utils.h`
+  (patched as below; built with `OTG_MKNTFS_LIBRARY`, so `mkntfs` is a function and has no
+  `main`). Left out: the FUSE driver (`src/`), `libfuse-lite/`, the other ntfsprogs, the
+  build system, and two library
   files — `unix_io.c` (device I/O on a path, which Android apps cannot open; the app
   supplies `ntfs_device_operations` instead) and `win32_io.c`.
 - **Why vendored rather than a dependency:** there is no Android build of libntfs-3g
@@ -163,7 +167,8 @@ and write, used by `app/src/main/cpp/ntfs/NtfsNative.cpp`.
 
 | Area | Patch | Commit |
 |---|---|---|
-| — | none | — |
+| N1 `ntfsprogs/mkntfs.c` | Built as a library (`OTG_MKNTFS_LIBRARY`): the `NO_NTFS_DEVICE_DEFAULT_IO_OPS` `#error` is skipped, `main()` is compiled out, and `otg_mkntfs()` takes the device operations (NtfsNative.cpp's, which read and write through Kotlin) and the options `mkntfs -F -Q -s -p -H 255 -S 63 [-L] [-c]` would set. `mkntfs_open_partition` allocates the device with those ops instead of `ntfs_device_default_io_ops` on a path. | this commit |
+| N2 `ntfsprogs/mkntfs.c` | `mkntfs_cleanup` frees the cluster-allocation list but left `g_allocation` pointing at it (and leaked `g_upcaseinfo`); as a program that never mattered, but a second format in the same app process walked the freed list. Both are now reset. | this commit |
 
 ---
 

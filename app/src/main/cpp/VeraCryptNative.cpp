@@ -209,3 +209,35 @@ Java_app_fayaz_otgmaster_veracrypt_VeraCryptNative_encryptHeader(
         jbyteArray jSalt, jint iterations, jint memoryKiB, jbyteArray jPlainHeader) {
     return cryptHeader(env, jCiphers, kdf, jPassword, jSalt, iterations, memoryKiB, jPlainHeader, true);
 }
+
+/*
+ * Argon2id over the vendored reference implementation, for LUKS2 keyslots (which take
+ * their own lanes and output length, unlike VeraCrypt's fixed ones). Same exception as
+ * cryptHeader when Argon2 fails, most often by not getting its memory; null otherwise
+ * on failure.
+ */
+extern "C" JNIEXPORT jbyteArray JNICALL
+Java_app_fayaz_otgmaster_veracrypt_VeraCryptNative_argon2id(
+        JNIEnv *env, jobject thiz, jbyteArray jPassword, jbyteArray jSalt,
+        jint timeCost, jint memoryKiB, jint lanes, jint outLen) {
+    if (outLen <= 0 || outLen > 1024) return nullptr;
+    jsize pwdLen = env->GetArrayLength(jPassword);
+    jbyte* pwd = env->GetByteArrayElements(jPassword, NULL);
+    jsize saltLen = env->GetArrayLength(jSalt);
+    jbyte* salt = env->GetByteArrayElements(jSalt, NULL);
+    uint8_t out[1024];
+    int ret = argon2id_hash_raw((uint32_t) timeCost, (uint32_t) memoryKiB, (uint32_t) lanes,
+                                pwd, (size_t) pwdLen, salt, (size_t) saltLen, out, (size_t) outLen);
+    mbedtls_platform_zeroize(pwd, pwdLen);
+    env->ReleaseByteArrayElements(jPassword, pwd, JNI_ABORT);
+    env->ReleaseByteArrayElements(jSalt, salt, JNI_ABORT);
+    if (ret != ARGON2_OK) {
+        mbedtls_platform_zeroize(out, sizeof(out));
+        env->ThrowNew(env->FindClass("java/lang/IllegalStateException"), argon2_error_message(ret));
+        return nullptr;
+    }
+    jbyteArray result = env->NewByteArray(outLen);
+    if (result) env->SetByteArrayRegion(result, 0, outLen, (const jbyte*) out);
+    mbedtls_platform_zeroize(out, sizeof(out));
+    return result;
+}

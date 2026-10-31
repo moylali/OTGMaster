@@ -44,9 +44,15 @@ endif()
 # through ntfs_device_operations in ntfs/NtfsNative.cpp. ntfs/config.h stands in
 # for the autoconf-generated one.
 file(GLOB NTFS3G_SRCS "ntfs-3g/libntfs-3g/*.c")
-add_library(ntfs3g STATIC ${NTFS3G_SRCS})
-target_compile_definitions(ntfs3g PRIVATE HAVE_CONFIG_H _FILE_OFFSET_BITS=64)
-target_include_directories(ntfs3g PUBLIC ntfs ntfs-3g/include/ntfs-3g)
+# mkntfs and the ntfsprogs files it needs, built as a library function for Format and
+# Encrypt (docs/VENDOR_FIXES.md N1): no main(), the device comes from NtfsNative.cpp.
+set(MKNTFS_SRCS ntfs-3g/ntfsprogs/mkntfs.c ntfs-3g/ntfsprogs/sd.c ntfs-3g/ntfsprogs/utils.c
+    ntfs-3g/ntfsprogs/attrdef.c ntfs-3g/ntfsprogs/boot.c)
+add_library(ntfs3g STATIC ${NTFS3G_SRCS} ${MKNTFS_SRCS})
+target_compile_definitions(ntfs3g PRIVATE HAVE_CONFIG_H _FILE_OFFSET_BITS=64 OTG_MKNTFS_LIBRARY)
+target_include_directories(ntfs3g PUBLIC ntfs ntfs-3g/include/ntfs-3g PRIVATE ntfs-3g/ntfsprogs)
+# mkntfs's option parser is compiled though unused (bionic has getopt.h; config.h is libntfs-3g's).
+set_source_files_properties(${MKNTFS_SRCS} PROPERTIES COMPILE_DEFINITIONS "HAVE_GETOPT_H;HAVE_LIBGEN_H")
 target_compile_options(ntfs3g PRIVATE -Wno-address-of-packed-member -Wno-unused-but-set-variable)
 
 # libfsapfs and the libyal libraries it needs (vendored, see docs/VENDOR_FIXES.md).
