@@ -411,6 +411,8 @@ class MainActivity : AppCompatActivity() {
                             device?.let { UsbDeviceDescriber.friendlyName(it, 0) } ?: "the USB device", waited ?: 0L))
                     }
                 }
+                // Unlocked: a refresh deferred at the lock screen runs now (see onWindowFocusChanged).
+                Intent.ACTION_USER_PRESENT -> if (refreshWaitsForScreen) refreshDevices()
                 UsbManager.ACTION_USB_DEVICE_ATTACHED -> {
                     scanFoundNoDrive.value = false
                     notificationAskedThisPlugIn = false
@@ -820,6 +822,7 @@ class MainActivity : AppCompatActivity() {
             addAction(REQUEST_USB_PERMISSION)
             addAction(UsbManager.ACTION_USB_DEVICE_ATTACHED)
             addAction(UsbManager.ACTION_USB_DEVICE_DETACHED)
+            addAction(Intent.ACTION_USER_PRESENT)
         }
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
             registerReceiver(usbReceiver, filter, RECEIVER_NOT_EXPORTED)
@@ -894,6 +897,18 @@ class MainActivity : AppCompatActivity() {
      * phone cannot use the files anyway, so waiting costs nothing.
      */
     private var refreshWaitsForScreen = false
+
+    /**
+     * onResume alone missed the unlock: on a realme 8 (ColorOS, Android 13) the activity
+     * resumed at 13:07:44.99 while the lock screen was still going away (keyguardDone at
+     * 45.03), so [onScreen] said locked, the refresh waited again, and nothing ran it until
+     * the user tapped Scan USB. Window focus comes once the lock screen is gone (45.42 there),
+     * and ACTION_USER_PRESENT backs it up.
+     */
+    override fun onWindowFocusChanged(hasFocus: Boolean) {
+        super.onWindowFocusChanged(hasFocus)
+        if (hasFocus && refreshWaitsForScreen) refreshDevices()
+    }
 
     private fun onScreen(): Boolean =
         lifecycle.currentState.isAtLeast(androidx.lifecycle.Lifecycle.State.STARTED) &&
