@@ -1241,13 +1241,22 @@ class E2EAutomatedTest {
     private fun pickOption(pickerDesc: String, label: String, inDialog: Boolean = false) {
         // In the Encrypt dialog the picker can sit below the fold: the PIM confirmation field
         // (9a5e7f5) pushed encrypt_fs off an emulator's screen, and a wait cannot scroll.
-        val picker = if (inDialog) findInDialog(pickerDesc)
-            else device.wait(Until.findObject(By.descContains(pickerDesc)), timeout)
-        assertTrue("$pickerDesc not found", picker != null)
-        picker?.click()
-        android.os.SystemClock.sleep(500)
-        val option = device.wait(Until.findObject(By.text(label)), 3000L)
-            ?: device.wait(Until.findObject(By.textStartsWith("$label ")), timeout)
+        // A tap right after the keyboard closes can land where the picker was before the form
+        // re-laid out (encrypt_fs, after the PIM confirmation field, three runs in a row): the
+        // menu never opened. Wait for the UI to settle, and find and tap the picker again if no
+        // menu appeared.
+        var option: androidx.test.uiautomator.UiObject2? = null
+        for (attempt in 1..3) {
+            device.waitForIdle()
+            val picker = if (inDialog) findInDialog(pickerDesc)
+                else device.wait(Until.findObject(By.descContains(pickerDesc)), timeout)
+            assertTrue("$pickerDesc not found", picker != null)
+            picker?.click()
+            android.os.SystemClock.sleep(500)
+            option = device.wait(Until.findObject(By.text(label)), 3000L)
+                ?: device.wait(Until.findObject(By.textStartsWith("$label ")), 2000L)
+            if (option != null) break
+        }
         if (option == null) captureScreen("option_missing_${pickerDesc}")
         assertTrue("Option '$label' not found in $pickerDesc", option != null)
         option?.click()
