@@ -310,24 +310,63 @@ class MainActivity : AppCompatActivity() {
     }
     private var notificationAskRetried = false
 
-    /** True if the question was put now; [refreshDevices] runs again once it is answered. */
+    /**
+     * True if the question was put now; [refreshDevices] runs again once it is answered.
+     *
+     * Asked at every plug-in (and at app start with a drive attached) while notifications are
+     * off, not once ever: the user wants it in front of them each time they mount. Android
+     * stops showing its own dialog after two refusals, or once they are turned off in
+     * Settings (realme 8: granted=false, USER_SET, and the request returns at once), so then
+     * the app shows its own, which opens OTG Master's notification settings. Either answer
+     * mounts, and the same plug-in is not asked twice.
+     */
     private fun askForNotificationsFirst(): Boolean {
         if (Build.VERSION.SDK_INT < 33) return false
         if (checkSelfPermission(android.Manifest.permission.POST_NOTIFICATIONS) ==
             android.content.pm.PackageManager.PERMISSION_GRANTED) return false
         // Still on screen, or dismissed and not yet reported back: the answer runs the refresh.
         if (notificationAskOpen) return true
-        val prefs = getSharedPreferences("otgmaster_prefs", Context.MODE_PRIVATE)
-        if (prefs.getBoolean(PREF_ASKED_NOTIFICATIONS, false)) {
+        if (notificationAskedThisPlugIn) {
             if (!notificationsOffLogged) appendLog(getString(R.string.log_notifications_off))
             notificationsOffLogged = true
             return false
         }
-        prefs.edit().putBoolean(PREF_ASKED_NOTIFICATIONS, true).apply()
+        notificationAskedThisPlugIn = true
         notificationAskOpen = true
-        notificationPermission.launch(android.Manifest.permission.POST_NOTIFICATIONS)
+        val prefs = getSharedPreferences("otgmaster_prefs", Context.MODE_PRIVATE)
+        val askedBefore = prefs.getBoolean(PREF_ASKED_NOTIFICATIONS, false)
+        // Asked before and no rationale: Android will not show its dialog again.
+        if (askedBefore && !shouldShowRequestPermissionRationale(android.Manifest.permission.POST_NOTIFICATIONS)) {
+            notificationSettingsPrompt.value = true
+        } else {
+            prefs.edit().putBoolean(PREF_ASKED_NOTIFICATIONS, true).apply()
+            notificationPermission.launch(android.Manifest.permission.POST_NOTIFICATIONS)
+        }
         return true
     }
+
+    /** The app's own notifications question, for when Android no longer shows its dialog. */
+    private val notificationSettingsPrompt = mutableStateOf(false)
+    /** Reset by each plug-in: one question per plug-in, whatever the answer. */
+    private var notificationAskedThisPlugIn = false
+
+    private fun answerNotificationSettingsPrompt(openSettings: Boolean) {
+        notificationSettingsPrompt.value = false
+        notificationAskOpen = false
+        if (openSettings) {
+            appendLog(getString(R.string.log_notifications_settings_opened))
+            runCatching {
+                startActivity(Intent(android.provider.Settings.ACTION_APP_NOTIFICATION_SETTINGS)
+                    .putExtra(android.provider.Settings.EXTRA_APP_PACKAGE, packageName))
+            }.onFailure { OtgMasterState.logFailure("notifications", "Could not open the notification settings", it) }
+        } else {
+            appendLog(getString(R.string.log_notifications_off))
+            notificationsOffLogged = true
+        }
+        // Mounts now, or (Settings in front) when this activity is back on screen.
+        refreshDevices()
+    }
+
     private var notificationsOffLogged = false
     private var notificationAskOpen = false
 
@@ -358,6 +397,8 @@ class MainActivity : AppCompatActivity() {
                 }
                 UsbManager.ACTION_USB_DEVICE_ATTACHED -> {
                     scanFoundNoDrive.value = false
+                    notificationAskedThisPlugIn = false
+                    notificationsOffLogged = false
                     appendLog(getString(R.string.log_usb_device_attached))
                     refreshDevices()
                 }
@@ -545,6 +586,25 @@ class MainActivity : AppCompatActivity() {
                     modifier = Modifier.fillMaxSize(),
                     color = MaterialTheme.colorScheme.background
                 ) {
+                    if (notificationSettingsPrompt.value) {
+                        androidx.compose.material3.AlertDialog(
+                            onDismissRequest = { answerNotificationSettingsPrompt(false) },
+                            title = { Text(stringResource(R.string.notifications_prompt_title)) },
+                            text = { Text(stringResource(R.string.notifications_prompt_text)) },
+                            confirmButton = {
+                                androidx.compose.material3.TextButton(onClick = { answerNotificationSettingsPrompt(true) },
+                                    modifier = Modifier.semantics { contentDescription = "notifications_open_settings" }) {
+                                    Text(stringResource(R.string.notifications_prompt_open))
+                                }
+                            },
+                            dismissButton = {
+                                androidx.compose.material3.TextButton(onClick = { answerNotificationSettingsPrompt(false) },
+                                    modifier = Modifier.semantics { contentDescription = "notifications_not_now" }) {
+                                    Text(stringResource(R.string.notifications_prompt_not_now))
+                                }
+                            },
+                        )
+                    }
                     OtgMasterApp(
                         deviceCandidates = _deviceCandidates.value,
                         mountedDrives = mountedDrivesState.value,
@@ -645,6 +705,8 @@ class MainActivity : AppCompatActivity() {
         setIntent(intent)
         if (intent.action == UsbManager.ACTION_USB_DEVICE_ATTACHED) {
             attachLaunchAt = android.os.SystemClock.elapsedRealtime()
+            notificationAskedThisPlugIn = false
+            notificationsOffLogged = false
             refreshDevices()
         }
         handleShareIntent(intent)
