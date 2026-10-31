@@ -100,6 +100,9 @@
     <!-- Log/status messages -->
     <string name="log_usb_permission_granted">USB permission granted for %1$s.</string>
     <string name="log_usb_permission_denied">USB permission denied.</string>
+    <string name="log_usb_permission_denied_for">USB permission not granted for %1$s (answered after %2$d s: Deny, or the prompt was dismissed). Tap Scan USB Devices to be asked again.</string>
+    <string name="log_usb_permission_unanswered">%1$s was unplugged %2$d s after USB permission was asked for, before it was answered.</string>
+    <string name="log_usb_permission_after">(after %1$d s)</string>
     <string name="log_usb_device_attached">USB device attached.</string>
     <string name="log_usb_device_detached">USB device detached.</string>
     <string name="drive_disconnected_power_hint">%1$s disconnected while mounted. If it drops during transfers, it may need more power than the phone can supply. Try a powered USB hub or an enclosure with its own power supply.</string>
@@ -157,6 +160,8 @@
     <string name="log_hint_otg_switch_off">OTG connection is switched off, so USB drives cannot be seen. Turn it on in Settings (search Settings for \"OTG\"), then plug the drive in again.</string>
     <string name="log_hint_otg_switch">On %1$s phones, USB drives work only while OTG is switched on in Settings (search Settings for \"OTG\"). It switches itself off after a few minutes unused.</string>
     <string name="log_requested_usb_permission">Requested USB permission…</string>
+    <string name="log_requested_usb_permission_for">Requested USB permission for %1$s…</string>
+    <string name="log_usb_permission_still_waiting">Still waiting for USB permission for %1$s (asked %2$d s ago): tap Allow on Android\'s prompt; if none is showing, unplug and replug the drive.</string>
     <string name="log_could_not_open_block_device">Could not open RawBlockDevice via libaums: no USB device to open (all were already open or in use).</string>
     <string name="log_could_not_open_device">Could not open %1$s</string>
     <string name="log_probed_devices">Probed new USB drive(s): %1$s</string>

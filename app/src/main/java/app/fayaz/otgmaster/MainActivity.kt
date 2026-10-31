@@ -297,14 +297,17 @@ class MainActivity : AppCompatActivity() {
                 REQUEST_USB_PERMISSION -> {
                     val device = intent.getParcelableExtraCompat<UsbDevice>(UsbManager.EXTRA_DEVICE)
                     val granted = intent.getBooleanExtra(UsbManager.EXTRA_PERMISSION_GRANTED, false)
+                    val waited = device?.let { secondsSince(permissionAskedAt.remove(it.deviceName)) }
                     if (device != null && granted) {
-                        appendLog(getString(R.string.log_usb_permission_granted, device.deviceName))
+                        appendLog(getString(R.string.log_usb_permission_granted, device.deviceName) +
+                            (waited?.let { " " + getString(R.string.log_usb_permission_after, it) } ?: ""))
                         // A phone or camera goes to the MTP path, not the USB-drive one.
                         if (app.fayaz.otgmaster.mtp.MtpSession.isMtpDevice(device) && !UsbDeviceDescriber.isMassStorageDevice(device)) {
                             mountMtpDevices(listOf(device), OtgMasterState.mountedDrives.mapNotNull { it.sourceDeviceName }.toSet())
                         } else openAndProbeUsb()
                     } else {
-                        appendLog(getString(R.string.log_usb_permission_denied))
+                        appendLog(getString(R.string.log_usb_permission_denied_for,
+                            device?.let { UsbDeviceDescriber.friendlyName(it, 0) } ?: "the USB device", waited ?: 0L))
                     }
                 }
                 UsbManager.ACTION_USB_DEVICE_ATTACHED -> {
@@ -314,6 +317,10 @@ class MainActivity : AppCompatActivity() {
                 }
                 UsbManager.ACTION_USB_DEVICE_DETACHED -> {
                     val detached = intent.getParcelableExtraCompat<UsbDevice>(UsbManager.EXTRA_DEVICE)
+                    // Unplugged with its permission prompt still unanswered: say so, once.
+                    detached?.let { d -> permissionAskedAt.remove(d.deviceName)?.let { t ->
+                        appendLog(getString(R.string.log_usb_permission_unanswered, UsbDeviceDescriber.friendlyName(d, 0), secondsSince(t) ?: 0L))
+                    } }
                     if (detached != null) {
                         // At detach time, device.serialNumber often throws (device is gone), so
                         // stableKey falls back to the bus path. Keys stored at mount time likely
@@ -786,11 +793,32 @@ class MainActivity : AppCompatActivity() {
 
         val deviceNeedingPermission = candidateDevices.firstOrNull { !usbDeviceProvider.hasPermission(it) }
         if (deviceNeedingPermission != null) {
-            usbDeviceProvider.requestPermission(deviceNeedingPermission, permissionIntent)
-            appendLog(getString(R.string.log_requested_usb_permission))
+            requestUsbPermission(deviceNeedingPermission)
         } else {
             openAndProbeUsb()
         }
+    }
+
+    /** When permission was first asked for each device (by its bus path), until Android answers. */
+    private val permissionAskedAt = java.util.concurrent.ConcurrentHashMap<String, Long>()
+
+    private fun secondsSince(t: Long?) = t?.let { (System.currentTimeMillis() - it + 500) / 1000 }
+
+    /**
+     * Asks for USB permission, and says in the log what is still pending. A report used to
+     * show "Requested USB permission…" and then nothing, which cannot tell a prompt never
+     * answered from one answered late, or from a phone that never showed it.
+     */
+    private fun requestUsbPermission(d: UsbDevice) {
+        val name = UsbDeviceDescriber.friendlyName(d, 0)
+        val asked = permissionAskedAt[d.deviceName]
+        if (asked == null) {
+            permissionAskedAt[d.deviceName] = System.currentTimeMillis()
+            appendLog(getString(R.string.log_requested_usb_permission_for, name))
+        } else {
+            appendLog(getString(R.string.log_usb_permission_still_waiting, name, secondsSince(asked) ?: 0L))
+        }
+        usbDeviceProvider.requestPermission(d, permissionIntent)
     }
 
     /** MTP devices being opened, so a second scan does not open one twice. */
@@ -810,8 +838,7 @@ class MainActivity : AppCompatActivity() {
             if (key in mountedKeys || !mtpInFlight.add(key)) continue
             if (!has) {
                 mtpInFlight.remove(key)
-                usbDeviceProvider.requestPermission(d, permissionIntent)
-                appendLog(getString(R.string.log_requested_usb_permission))
+                requestUsbPermission(d)
                 return
             }
             lifecycleScope.launch(Dispatchers.IO) {
