@@ -33,6 +33,22 @@ to a row here.
 
 ---
 
+## 2026-10-30 — another phone over MTP (M30 with the realme attached)
+
+Galaxy M30 (Android 10), the 0.5.0 build `b3b79f8`, then `a9fc0a2`, with a realme 8 (RMX3085, Android 13)
+attached by OTG cable, unlocked, in File transfer mode. Its one USB interface is class 6/1/1 ("MTP").
+
+- `f3c52d4` asked for permission and then handed the device to the mass-storage opener, which found no
+  interface and logged only "Could not open RawBlockDevice via libaums." Fixed in `b3b79f8`: an MTP device goes
+  to the MTP path after the grant, and every device the opener skips or fails is logged with its reason.
+- `b3b79f8`: "Mounted realme RMX3085 over MTP, read-only: Internal shared storage", 108.2 GB with used and
+  free space as the realme reports them. The Files app listed the storage's folders and DCIM/Camera through
+  OTG Master's provider, and a 3.54 MB photo opened in full, which reads the whole file with
+  GetPartialObject64. No error in the app's log.
+- `a9fc0a2`: the card offers Open Files App only.
+
+---
+
 ## 2026-10-30 — first device backups: restic repository written by the app, checked by restic
 
 Galaxy M30 (Android 10), Drive 5 (…EF449), the debug build `cf31657`/`546f4a2` of `feat/restic`, driven by
@@ -172,18 +188,18 @@ because every run below completed all its sections.
 | OnePlus 7 | D2VCFAT32 | 0.4.2 `6e281db` (A/B) | full, all ✓ | 7.77 / 25.14 | ALL 20958 MATCHED | 12; 1 step-down (0.4.2's bare step-down) | Drive 2 ALL CLEAN |
 | Samsung M30 (Android 10) | D3L1EXFAT | `6275ed9` | full, all ✓ | 3.63 / 9.06 | ALL 20929 MATCHED | 0 | Drive 3 ALL CLEAN |
 | Samsung M30 | D3L4EXFAT | `6275ed9` | full, all ✓ | 2.49 / 9.18 | ALL 20910 MATCHED | 0 | Drive 3 ALL CLEAN |
-| Samsung M30 | D5 p1 VC_ATS_ARGON_PIM0 (…EF449) | `6bd4eb1` | full, all ✓ | 1.94 / 2.59 | ALL 20902 MATCHED | 0 | pending: stick not yet on the laptop |
-| Samsung M30 | D5 p2 VC_STA_ARGON_PIM1 (…EF449) | `6bd4eb1` | full, all ✓ | 1.37 / 2.82 | ALL 20965 MATCHED | 0 | pending: stick not yet on the laptop |
-| Samsung M30 | D5 p3 VC_TWO_SHA512_PIM0 (…EF449) | `6bd4eb1` | full, all ✓ | 2.01 / 8.82 | ALL 20962 MATCHED | 11; one 120 KiB write gave up, the drive answered, and the same-size retry went through | pending: stick not yet on the laptop |
-| Samsung M30 | D5 p4 VC_AT_ARGON_PIM1 (…EF449) | `6bd4eb1` | full, all ✓ | 2.59 / 6.22 | ALL 20950 MATCHED | 0 | pending: stick not yet on the laptop |
-| Samsung M30 | D5 p5 VC_SA_SHA512_PIM1 (…EF449) | `6bd4eb1` | full, all ✓ | 2.15 / 3.27 | ALL 20027 MATCHED | 0 | pending: stick not yet on the laptop |
-| Samsung M30 | D5 p6 VC_TS_ARGON_PIM31 (…EF449) | `6bd4eb1` | full, all ✓ | 1.52 / 3.22 | ALL 20984 MATCHED | 0 | pending: stick not yet on the laptop |
-| realme 8 (RMX3085, Android 13, Realme UI 4.0) | D5 p1 VC_ATS_ARGON_PIM0 (…EF455) | `6bd4eb1` | full, all ✓ | 2.58 / 3.65 | ALL 20902 MATCHED | 23; a 64 KiB read at block 100665344 (partition 7's start, auto-mounted) failed twice → 32 KiB for the session | pending: stick not yet on the laptop |
-| realme 8 | D5 p2 VC_STA_ARGON_PIM1 (…EF455) | `6bd4eb1` | full, all ✓ | 1.74 / 3.84 | ALL 20965 MATCHED | 36; a 120 KiB read and a 60 KiB write each failed twice and were stepped down for the session | pending: stick not yet on the laptop |
-| realme 8 | D5 p3 VC_TWO_SHA512_PIM0 (…EF455) | `6bd4eb1` | full, all ✓ | 1.78 / 7.92 | ALL 20962 MATCHED | 73; five writes (60 and 120 KiB) gave up, each recovered by a same-size retry after the drive answered | pending: stick not yet on the laptop |
-| realme 8 | D5 p4 VC_AT_ARGON_PIM1 (…EF455) | `6bd4eb1` | full, all ✓ | 2.63 / 7.55 | ALL 20950 MATCHED | 23; one 64 KiB write failed twice → stepped down; one read recovered at the same size | pending: stick not yet on the laptop |
-| realme 8 | D5 p5 VC_SA_SHA512_PIM1 (…EF455) | `6bd4eb1` | full, all ✓ | 2.48 / 4.36 | ALL 20915 MATCHED | 66; six writes (60–120 KiB) gave up, five recovered by a same-size retry | pending: stick not yet on the laptop |
-| realme 8 | D5 p6 VC_TS_ARGON_PIM31 (…EF455) | `6bd4eb1` | full, all ✓ | 2.04 / 4.43 | ALL 20984 MATCHED | 32; a 64 KiB read failed twice → 32 KiB; two reads recovered at the same size | pending: stick not yet on the laptop |
+| Samsung M30 | D5 p1 VC_ATS_ARGON_PIM0 (…EF449) | `6bd4eb1` | full, all ✓ | 1.94 / 2.59 | ALL 20902 MATCHED | 0 | EF449 CLEAN (10-30) |
+| Samsung M30 | D5 p2 VC_STA_ARGON_PIM1 (…EF449) | `6bd4eb1` | full, all ✓ | 1.37 / 2.82 | ALL 20965 MATCHED | 0 | EF449 CLEAN (10-30) |
+| Samsung M30 | D5 p3 VC_TWO_SHA512_PIM0 (…EF449) | `6bd4eb1` | full, all ✓ | 2.01 / 8.82 | ALL 20962 MATCHED | 11; one 120 KiB write gave up, the drive answered, and the same-size retry went through | EF449 CLEAN (10-30) |
+| Samsung M30 | D5 p4 VC_AT_ARGON_PIM1 (…EF449) | `6bd4eb1` | full, all ✓ | 2.59 / 6.22 | ALL 20950 MATCHED | 0 | EF449 CLEAN (10-30) |
+| Samsung M30 | D5 p5 VC_SA_SHA512_PIM1 (…EF449) | `6bd4eb1` | full, all ✓ | 2.15 / 3.27 | ALL 20027 MATCHED | 0 | EF449 CLEAN (10-30) |
+| Samsung M30 | D5 p6 VC_TS_ARGON_PIM31 (…EF449) | `6bd4eb1` | full, all ✓ | 1.52 / 3.22 | ALL 20984 MATCHED | 0 | EF449 CLEAN (10-30) |
+| realme 8 (RMX3085, Android 13, Realme UI 4.0) | D5 p1 VC_ATS_ARGON_PIM0 (…EF455) | `6bd4eb1` | full, all ✓ | 2.58 / 3.65 | ALL 20902 MATCHED | 23; a 64 KiB read at block 100665344 (partition 7's start, auto-mounted) failed twice → 32 KiB for the session | EF455 CLEAN except FMT_FAT32 (an Android mount, below) |
+| realme 8 | D5 p2 VC_STA_ARGON_PIM1 (…EF455) | `6bd4eb1` | full, all ✓ | 1.74 / 3.84 | ALL 20965 MATCHED | 36; a 120 KiB read and a 60 KiB write each failed twice and were stepped down for the session | EF455 CLEAN except FMT_FAT32 (an Android mount, below) |
+| realme 8 | D5 p3 VC_TWO_SHA512_PIM0 (…EF455) | `6bd4eb1` | full, all ✓ | 1.78 / 7.92 | ALL 20962 MATCHED | 73; five writes (60 and 120 KiB) gave up, each recovered by a same-size retry after the drive answered | EF455 CLEAN except FMT_FAT32 (an Android mount, below) |
+| realme 8 | D5 p4 VC_AT_ARGON_PIM1 (…EF455) | `6bd4eb1` | full, all ✓ | 2.63 / 7.55 | ALL 20950 MATCHED | 23; one 64 KiB write failed twice → stepped down; one read recovered at the same size | EF455 CLEAN except FMT_FAT32 (an Android mount, below) |
+| realme 8 | D5 p5 VC_SA_SHA512_PIM1 (…EF455) | `6bd4eb1` | full, all ✓ | 2.48 / 4.36 | ALL 20915 MATCHED | 66; six writes (60–120 KiB) gave up, five recovered by a same-size retry | EF455 CLEAN except FMT_FAT32 (an Android mount, below) |
+| realme 8 | D5 p6 VC_TS_ARGON_PIM31 (…EF455) | `6bd4eb1` | full, all ✓ | 2.04 / 4.43 | ALL 20984 MATCHED | 32; a 64 KiB read failed twice → 32 KiB; two reads recovered at the same size | EF455 CLEAN except FMT_FAT32 (an Android mount, below) |
 
 What these show:
 
@@ -201,7 +217,16 @@ Drive 5 finished on both phones on 10-30, every partition with all sections pass
 between 23 and 73 failed transfers each, many of them writes. The write-loss mechanism found on 10-30 (a Reset Recovery
 after a failed write can lose a 4 KiB unit the drive had already acknowledged, `fix/write-replay`) applies to those
 writes, and bigwrite and fixtures sample only part of the volume. So **the host checks of both Drive 5 sticks are the
-result that counts here**, and they are not done yet: the rows say so until they are.
+result that counts here**.
+
+Laptop, 10-30 20:00 (`hostcheck_d5.sh`, all 10 partitions of each stick): **EF449 (M30) is clean**, every checker
+clean and every fixture hash matching, the FAT32 partition the first device backups wrote to included. **EF455
+(realme) is clean on 9 of 10**, every fixture hash matching on all 10. Its FMT_FAT32 checker exits 1 for a dirty
+bit set in the primary boot sector only, FATs out of step and a free-cluster count one off, with a `LOST.DIR`
+created 10-29 23:01, when the stick went into the realme. That is Android's own storage service mounting a FAT32
+partition with the kernel's vfat (it creates `LOST.DIR`) and the stick leaving without an eject; OTG Master
+creates no `LOST.DIR` and writes no dirty bit. The data is intact. Metadata compares against the baselines show
+the changes the runs' writes explain.
 
 Laptop, 10-30: Drive 2 (all 10 partitions) and Drive 3 (all 10) read back with `read_matrix_drive.sh` and
 `verify_matrix_drive.py`. Both are **ALL CLEAN**: checker clean, every file matched, every bigwrite and tree intact.
