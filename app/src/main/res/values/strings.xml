@@ -313,6 +313,9 @@
     <string name="recovery_partly">partly overwritten</string>
     <string name="recovery_overwritten">overwritten</string>
     <string name="recovery_recover">Recover %1$d…</string>
+    <string name="recovery_count">%1$d of %2$d selected</string>
+    <string name="recovery_select_all">Select all</string>
+    <string name="recovery_select_none">Select none</string>
     <string name="recovery_same_drive">Choose a folder on the phone or on another drive: writing to this one could overwrite the files being recovered.</string>
     <string name="recovery_progress">Recovering %1$d of %2$d…</string>
     <string name="recovery_done">Recovered %1$d of %2$d into “%3$s”.</string>
