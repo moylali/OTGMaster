@@ -34,29 +34,48 @@ class LibaumsRawBlockDeviceOpener(private val context: Context) {
      */
     fun openAllAvailable(excludeDeviceKeys: Set<String> = emptySet()): List<OpenedUsbBlockDevice> {
         val opened = mutableListOf<OpenedUsbBlockDevice>()
+        notOpened.clear()
         for (device in usbManager.deviceList.values) {
+            val name = UsbDeviceDescriber.friendlyName(device, 0)
             val supportedInterfaces = device.supportedMassStorageInterfaces()
-            if (supportedInterfaces.isEmpty()) continue
+            if (supportedInterfaces.isEmpty()) {
+                notOpened += "$name: " + if (app.fayaz.otgmaster.mtp.MtpSession.isMtpDevice(device))
+                    "a phone or camera (MTP/PTP), not a USB drive; it is opened as one instead"
+                else "no USB mass-storage interface (${UsbDeviceDescriber.interfaceSummary(device)})"
+                continue
+            }
             val hasPermission = usbManager.hasPermission(device)
             if (UsbDeviceDescriber.stableKey(device, hasPermission) in excludeDeviceKeys) continue
             if (!hasPermission) {
                 Log.w(TAG, "${device.deviceName}: missing USB permission")
+                notOpened += "$name: no USB permission yet"
                 continue
             }
 
+            val errors = mutableListOf<String>()
             for (candidate in supportedInterfaces) {
                 try {
                     Log.i(TAG, "Opening ${device.deviceName} interface ${candidate.usbInterface.id}")
                     val blockDevice = open(device, candidate)
                     opened += OpenedUsbBlockDevice(device, candidate.usbInterface, blockDevice)
+                    errors.clear()
                     break
                 } catch (error: Exception) {
                     Log.e(TAG, "Failed opening ${device.deviceName}", error)
+                    errors += "interface ${candidate.usbInterface.id}: ${app.fayaz.otgmaster.reasonOf(error)}"
                 }
             }
+            if (errors.isNotEmpty()) notOpened += "$name: ${errors.joinToString("; ")}"
         }
         return opened
     }
+
+    /**
+     * Why each attached device the last [openAllAvailable] skipped or failed was not opened,
+     * one line per device, for the app's log: "Could not open" alone left every report
+     * asking the reporter for more (#71, #87, #97).
+     */
+    val notOpened = mutableListOf<String>()
 
     private fun open(device: UsbDevice, candidate: InterfaceCandidate): RawBlockDevice {
         val communication = UsbCommunicationFactory.createUsbCommunication(

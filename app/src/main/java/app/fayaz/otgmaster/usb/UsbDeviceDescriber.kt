@@ -45,6 +45,13 @@ object UsbDeviceDescriber {
      * filter out unrelated attached USB devices (hubs, keyboards, the OTG adapter chip
      * itself, etc.) before bothering to request permission for or try to open them.
      */
+    /** Each interface as "class/subclass/protocol", for a log line saying why a device was not opened. */
+    fun interfaceSummary(device: UsbDevice): String = (0 until device.interfaceCount).joinToString(", ") { i ->
+        val itf = device.getInterface(i)
+        "interface ${itf.id} class ${itf.interfaceClass}/${itf.interfaceSubclass}/${itf.interfaceProtocol}" +
+            (itf.name?.let { " \"$it\"" } ?: "")
+    }.ifEmpty { "no interfaces" }
+
     fun isMassStorageDevice(device: UsbDevice): Boolean {
         return (0 until device.interfaceCount).any { index ->
             val usbInterface = device.getInterface(index)

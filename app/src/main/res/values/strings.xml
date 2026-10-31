@@ -157,7 +157,8 @@
     <string name="log_hint_otg_switch_off">OTG connection is switched off, so USB drives cannot be seen. Turn it on in Settings (search Settings for \"OTG\"), then plug the drive in again.</string>
     <string name="log_hint_otg_switch">On %1$s phones, USB drives work only while OTG is switched on in Settings (search Settings for \"OTG\"). It switches itself off after a few minutes unused.</string>
     <string name="log_requested_usb_permission">Requested USB permission…</string>
-    <string name="log_could_not_open_block_device">Could not open RawBlockDevice via libaums.</string>
+    <string name="log_could_not_open_block_device">Could not open RawBlockDevice via libaums: no USB device to open (all were already open or in use).</string>
+    <string name="log_could_not_open_device">Could not open %1$s</string>
     <string name="log_probed_devices">Probed new USB drive(s): %1$s</string>
     <string name="log_error_probing_candidates">Error probing candidates: %1$s</string>
     <string name="log_no_block_device_opened">No block device opened.</string>
