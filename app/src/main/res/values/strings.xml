@@ -154,6 +154,7 @@
     <string name="log_fgs_started_after_refusal">The background service that keeps drives readable behind other apps is now running.</string>
     <string name="log_notifications_allowed">Notifications allowed: mounted drives, Format and Encrypt progress and backup reminders will show in the notification shade.</string>
     <string name="log_notifications_unanswered">The notifications question was closed without an answer; asking again.</string>
+    <string name="notifications_toast">Allow notifications to see when OTG Master is keeping your drive open for other apps.</string>
     <string name="notifications_prompt_title">Allow notifications?</string>
     <string name="notifications_prompt_text">Notifications are off for OTG Master. Without them you will not see that a drive is mounted, the progress of Format and Encrypt, or backup reminders. Drives mount either way.</string>
     <string name="notifications_prompt_open">Open settings</string>

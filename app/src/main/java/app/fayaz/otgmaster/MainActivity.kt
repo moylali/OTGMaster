@@ -333,6 +333,8 @@ class MainActivity : AppCompatActivity() {
         }
         notificationAskedThisPlugIn = true
         notificationAskOpen = true
+        // Android's dialog says only "Allow OTG Master to send you notifications?"; this says why.
+        android.widget.Toast.makeText(this, R.string.notifications_toast, android.widget.Toast.LENGTH_LONG).show()
         val prefs = getSharedPreferences("otgmaster_prefs", Context.MODE_PRIVATE)
         val askedBefore = prefs.getBoolean(PREF_ASKED_NOTIFICATIONS, false)
         // Asked before and no rationale: Android will not show its dialog again.
