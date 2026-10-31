@@ -278,15 +278,33 @@ class MainActivity : AppCompatActivity() {
     private val notificationPermission = registerForActivityResult(
         androidx.activity.result.contract.ActivityResultContracts.RequestPermission()
     ) { granted ->
-        appendLog(getString(if (granted) R.string.log_notifications_allowed else R.string.log_notifications_off))
+        notificationAskOpen = false
+        // Android answers "not granted" also when the question was closed unanswered: a drive
+        // plugged in at the lock screen starts this activity again, which dismissed it on a
+        // Pixel 7 Pro, and the app then took it as a refusal and never asked again. A real
+        // refusal makes the rationale flag true; a dismissal leaves it false. Asked again
+        // once per run at most, so a refusal fixed in Settings (also false) cannot loop.
+        if (!granted && Build.VERSION.SDK_INT >= 33 && !notificationAskRetried &&
+            !shouldShowRequestPermissionRationale(android.Manifest.permission.POST_NOTIFICATIONS)) {
+            notificationAskRetried = true
+            getSharedPreferences("otgmaster_prefs", Context.MODE_PRIVATE).edit()
+                .putBoolean(PREF_ASKED_NOTIFICATIONS, false).apply()
+            appendLog(getString(R.string.log_notifications_unanswered))
+        } else {
+            appendLog(getString(if (granted) R.string.log_notifications_allowed else R.string.log_notifications_off))
+            notificationsOffLogged = !granted
+        }
         refreshDevices()
     }
+    private var notificationAskRetried = false
 
     /** True if the question was put now; [refreshDevices] runs again once it is answered. */
     private fun askForNotificationsFirst(): Boolean {
         if (Build.VERSION.SDK_INT < 33) return false
         if (checkSelfPermission(android.Manifest.permission.POST_NOTIFICATIONS) ==
             android.content.pm.PackageManager.PERMISSION_GRANTED) return false
+        // Still on screen, or dismissed and not yet reported back: the answer runs the refresh.
+        if (notificationAskOpen) return true
         val prefs = getSharedPreferences("otgmaster_prefs", Context.MODE_PRIVATE)
         if (prefs.getBoolean(PREF_ASKED_NOTIFICATIONS, false)) {
             if (!notificationsOffLogged) appendLog(getString(R.string.log_notifications_off))
@@ -294,10 +312,12 @@ class MainActivity : AppCompatActivity() {
             return false
         }
         prefs.edit().putBoolean(PREF_ASKED_NOTIFICATIONS, true).apply()
+        notificationAskOpen = true
         notificationPermission.launch(android.Manifest.permission.POST_NOTIFICATIONS)
         return true
     }
     private var notificationsOffLogged = false
+    private var notificationAskOpen = false
 
     private val permissionIntent: PendingIntent by lazy {
         val flags = PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_MUTABLE
