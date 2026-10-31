@@ -288,7 +288,7 @@
     <string name="backup_low_space_question">Back up anyway?</string>
     <string name="backup_low_space_proceed">Back up</string>
     <string name="backup_low_space_skip">Not now</string>
-    <string name="backup_action">Back up…</string>
+    <string name="backup_action">Back up</string>
     <string name="backups_action">Backups (%1$d)</string>
     <string name="backup_setup_title">Back up to %1$s</string>
     <string name="backup_pick_source">Choose a folder on this phone</string>
@@ -312,7 +312,7 @@
     <string name="backup_snapshots">%1$d snapshot(s), newest %2$s</string>
     <string name="backup_run_now">Back up now</string>
     <string name="backup_check">Check</string>
-    <string name="backup_restore_latest">Restore newest…</string>
+    <string name="backup_restore_latest">Restore newest</string>
     <string name="backup_show_password">Password</string>
     <string name="backup_delete_job">Delete</string>
     <string name="backup_delete_job_title">Delete “%1$s”?</string>
@@ -321,7 +321,7 @@
     <string name="backup_password_missing">Not on this phone.</string>
     <string name="backup_read_only">The drive is mounted read-only</string>
     <string name="close">Close</string>
-    <string name="recovery_action">Recover deleted files…</string>
+    <string name="recovery_action">Recover deleted files</string>
     <string name="recovery_not_supported">Recovery works on FAT32 and exFAT</string>
     <string name="recovery_title">Deleted files on %1$s</string>
     <string name="recovery_scanning">Looking for deleted files… nothing is written to the drive.</string>
@@ -329,7 +329,7 @@
     <string name="recovery_help">Only deleted files are listed. They are copied to a folder you choose on the phone or another drive, never to this one, so nothing still recoverable is overwritten.</string>
     <string name="recovery_partly">partly overwritten</string>
     <string name="recovery_overwritten">overwritten</string>
-    <string name="recovery_recover">Recover %1$d…</string>
+    <string name="recovery_recover">Recover %1$d</string>
     <string name="recovery_scan_progress">Scanned %1$d folder(s) · %2$d deleted file(s) found</string>
     <string name="recovery_stop">Stop</string>
     <string name="recovery_stopped">Scan stopped. Nothing is listed: until every folder is read, a file that was only moved or renamed cannot be told from a deleted one.</string>
