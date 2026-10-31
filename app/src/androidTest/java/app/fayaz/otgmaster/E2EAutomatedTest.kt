@@ -668,13 +668,13 @@ class E2EAutomatedTest {
             typeInto("encrypt_password", newPassword)
             typeInto("encrypt_password_confirm", newPassword)
             hideKeyboard()
-            if (newCipher != "AES") pickOption("encrypt_cipher", newCipher)
-            if (newHash != "SHA-512") pickOption("encrypt_kdf", newHash)
+            if (newCipher != "AES") pickOption("encrypt_cipher", newCipher, inDialog = true)
+            if (newHash != "SHA-512") pickOption("encrypt_kdf", newHash, inDialog = true)
             if (newPim.isNotEmpty()) {
                 typeInto("encrypt_pim", newPim); hideKeyboard()
                 typeInto("encrypt_pim_confirm", newPim); hideKeyboard()
             }
-            if (arguments.getString("erase_fs", "exfat") == "fat32") pickOption("encrypt_fs", "FAT32")
+            if (arguments.getString("erase_fs", "exfat") == "fat32") pickOption("encrypt_fs", "FAT32", inDialog = true)
             arguments.getString("erase_label", "").takeIf { it.isNotEmpty() }?.let {
                 typeInto("encrypt_label", it); hideKeyboard()
             }
@@ -1238,8 +1238,11 @@ class E2EAutomatedTest {
      * substring of four cascade names. An unsupported option reads "<name> (not yet supported)",
      * so a prefix match is the fallback that still finds those.
      */
-    private fun pickOption(pickerDesc: String, label: String) {
-        val picker = device.wait(Until.findObject(By.descContains(pickerDesc)), timeout)
+    private fun pickOption(pickerDesc: String, label: String, inDialog: Boolean = false) {
+        // In the Encrypt dialog the picker can sit below the fold: the PIM confirmation field
+        // (9a5e7f5) pushed encrypt_fs off an emulator's screen, and a wait cannot scroll.
+        val picker = if (inDialog) findInDialog(pickerDesc)
+            else device.wait(Until.findObject(By.descContains(pickerDesc)), timeout)
         assertTrue("$pickerDesc not found", picker != null)
         picker?.click()
         android.os.SystemClock.sleep(500)
