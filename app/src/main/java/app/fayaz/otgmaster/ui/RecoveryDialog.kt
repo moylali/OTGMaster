@@ -80,7 +80,7 @@ fun recoveryUnavailable(drive: MountedDrive, notSupported: String): String? =
     else notSupported
 
 private interface Scanner {
-    fun scan(cancel: () -> Boolean): List<DeletedFile>
+    fun scan(cancel: () -> Boolean, progress: (Int, Int) -> Unit): List<DeletedFile>
     fun read(f: DeletedFile, out: OutputStream, limit: Long = Long.MAX_VALUE)
 }
 
@@ -88,12 +88,12 @@ private fun scannerFor(drive: MountedDrive): Scanner {
     val dev = drive.blockDevice ?: throw IllegalStateException("no block device")
     return if (drive.filesystemName.equals("exFAT", true)) ExFatRecovery(dev).let { r ->
         object : Scanner {
-            override fun scan(cancel: () -> Boolean) = r.scan(cancel)
+            override fun scan(cancel: () -> Boolean, progress: (Int, Int) -> Unit) = r.scan(cancel, progress)
             override fun read(f: DeletedFile, out: OutputStream, limit: Long) = r.read(f, out, limit)
         }
     } else FatRecovery(dev).let { r ->
         object : Scanner {
-            override fun scan(cancel: () -> Boolean) = r.scan(cancel)
+            override fun scan(cancel: () -> Boolean, progress: (Int, Int) -> Unit) = r.scan(cancel, progress)
             override fun read(f: DeletedFile, out: OutputStream, limit: Long) = r.read(f, out, limit)
         }
     }
@@ -102,6 +102,21 @@ private fun scannerFor(drive: MountedDrive): Scanner {
 private val IMAGE_EXT = setOf("jpg", "jpeg", "png", "webp", "heic", "heif", "gif", "bmp")
 private val VIDEO_EXT = setOf("mp4", "mov", "3gp", "mkv", "webm", "avi")
 private val AUDIO_EXT = setOf("mp3", "m4a", "aac", "wav", "flac", "ogg", "opus")
+private val DOC_EXT = setOf("pdf", "doc", "docx", "xls", "xlsx", "ppt", "pptx", "txt", "odt", "ods", "odp", "rtf", "csv", "md")
+
+/** The filter chips: what a person looking for a lost file thinks in. */
+private enum class Kind(val label: Int) {
+    ALL(R.string.recovery_kind_all), PHOTOS(R.string.recovery_kind_photos), VIDEOS(R.string.recovery_kind_videos),
+    DOCUMENTS(R.string.recovery_kind_documents), OTHER(R.string.recovery_kind_other);
+
+    fun matches(path: String): Boolean = when (this) {
+        ALL -> true
+        PHOTOS -> ext(path) in IMAGE_EXT
+        VIDEOS -> ext(path) in VIDEO_EXT
+        DOCUMENTS -> ext(path) in DOC_EXT
+        OTHER -> ext(path).let { it !in IMAGE_EXT && it !in VIDEO_EXT && it !in DOC_EXT }
+    }
+}
 private fun ext(path: String) = path.substringAfterLast('.', "").lowercase()
 
 /**
@@ -109,8 +124,10 @@ private fun ext(path: String) = path.substringAfterLast('.', "").lowercase()
  * EXIF thumbnail a camera stores in the first few kilobytes when there is one, else the
  * whole file decoded at a reduced size (photos up to [MAX_DECODE_BYTES] only).
  */
-private fun thumbnail(scanner: Scanner, f: DeletedFile, lockId: String): Bitmap? {
-    if (ext(f.path) !in IMAGE_EXT || f.state == DeletedFile.State.OVERWRITTEN || f.size == 0L) return null
+private fun thumbnail(scanner: Scanner, f: DeletedFile, lockId: String, cacheDir: java.io.File): Bitmap? {
+    if (f.state == DeletedFile.State.OVERWRITTEN || f.size == 0L) return null
+    if (ext(f.path) == "pdf") return pdfThumbnail(scanner, f, lockId, cacheDir)
+    if (ext(f.path) !in IMAGE_EXT) return null
     fun bytes(limit: Long) = ByteArrayOutputStream().also { o ->
         VeraCryptDocumentProvider.onDrive(lockId, "recover-thumb") { scanner.read(f, o, limit) }
     }.toByteArray()
@@ -127,6 +144,33 @@ private fun thumbnail(scanner: Scanner, f: DeletedFile, lockId: String): Bitmap?
     return BitmapFactory.decodeByteArray(all, 0, all.size, BitmapFactory.Options().apply { inSampleSize = sample })
 }
 
+/**
+ * Page 1 of a deleted PDF. Android's renderer needs a seekable file, so the PDF is copied
+ * into the app's private cache (never to the drive), rendered, and the copy deleted.
+ */
+private fun pdfThumbnail(scanner: Scanner, f: DeletedFile, lockId: String, cacheDir: java.io.File): Bitmap? {
+    if (f.size > MAX_PDF_BYTES) return null
+    val tmp = java.io.File.createTempFile("recover", ".pdf", cacheDir)
+    try {
+        tmp.outputStream().use { o -> VeraCryptDocumentProvider.onDrive(lockId, "recover-thumb") { scanner.read(f, o) } }
+        android.os.ParcelFileDescriptor.open(tmp, android.os.ParcelFileDescriptor.MODE_READ_ONLY).use { pfd ->
+            android.graphics.pdf.PdfRenderer(pfd).use { r ->
+                if (r.pageCount == 0) return null
+                r.openPage(0).use { page ->
+                    val scale = THUMB_PX.toFloat() / maxOf(page.width, page.height)
+                    val bmp = Bitmap.createBitmap(maxOf(1, (page.width * scale).toInt()), maxOf(1, (page.height * scale).toInt()), Bitmap.Config.ARGB_8888)
+                    bmp.eraseColor(android.graphics.Color.WHITE)
+                    page.render(bmp, null, null, android.graphics.pdf.PdfRenderer.Page.RENDER_MODE_FOR_DISPLAY)
+                    return bmp
+                }
+            }
+        }
+    } finally {
+        tmp.delete()
+    }
+}
+
+private const val MAX_PDF_BYTES = 20L * 1024 * 1024
 private const val EXIF_BYTES = 128L * 1024
 private const val MAX_DECODE_BYTES = 16L * 1024 * 1024
 private const val THUMB_PX = 160
@@ -137,6 +181,7 @@ private const val THUMB_PX = 160
  * previewed, and copies the chosen ones to a folder somewhere else. Nothing is written to
  * this partition: writing here could land on the very clusters being recovered.
  */
+@OptIn(androidx.compose.foundation.layout.ExperimentalLayoutApi::class)
 @Composable
 fun RecoveryDialog(drive: MountedDrive, onDismiss: () -> Unit) {
     val context = LocalContext.current
@@ -148,12 +193,23 @@ fun RecoveryDialog(drive: MountedDrive, onDismiss: () -> Unit) {
     val cancel = remember { AtomicBoolean(false) }
     val scanner = remember { runCatching { scannerFor(drive) } }
     val thumbs = remember { ConcurrentHashMap<String, Bitmap>() }
+    var progress by remember { mutableStateOf(0 to 0) }
+    var stopped by remember { mutableStateOf(false) }
+    var kind by remember { mutableStateOf(Kind.ALL) }
     val lockId = "${drive.id}:/"
     DisposableEffect(Unit) { onDispose { cancel.set(true) } }
 
     LaunchedEffect(Unit) {
         val result = withContext(Dispatchers.IO) {
-            runCatching { VeraCryptDocumentProvider.onDrive(lockId, "recover-scan") { scanner.getOrThrow().scan { cancel.get() } } }
+            runCatching {
+                VeraCryptDocumentProvider.onDrive(lockId, "recover-scan") {
+                    var last = 0L
+                    scanner.getOrThrow().scan({ cancel.get() }) { folders, found ->
+                        val now = System.currentTimeMillis()
+                        if (now - last > 200) { last = now; progress = folders to found }
+                    }
+                }
+            }
         }
         result.onSuccess { list ->
             files = list
@@ -161,8 +217,13 @@ fun RecoveryDialog(drive: MountedDrive, onDismiss: () -> Unit) {
             OtgMasterState.log("Recovery scan of ${drive.name}: ${list.size} deleted file(s), " +
                 "${list.count { it.state == DeletedFile.State.RECOVERABLE }} recoverable")
         }.onFailure {
-            error = "${it.javaClass.simpleName}: ${it.message}"
-            OtgMasterState.logFailure("recovery", "Recovery scan of ${drive.name} failed", it)
+            if (it is java.util.concurrent.CancellationException) {
+                stopped = true
+                OtgMasterState.log("Recovery scan of ${drive.name} stopped after ${progress.first} folder(s)")
+            } else {
+                error = "${it.javaClass.simpleName}: ${it.message}"
+                OtgMasterState.logFailure("recovery", "Recovery scan of ${drive.name} failed", it)
+            }
         }
     }
 
@@ -208,23 +269,41 @@ fun RecoveryDialog(drive: MountedDrive, onDismiss: () -> Unit) {
                 val list = files
                 when {
                     error != null -> Text(error!!, color = MaterialTheme.colorScheme.error)
-                    list == null -> Text(stringResource(R.string.recovery_scanning))
-                    list.isEmpty() -> Text(stringResource(R.string.recovery_none))
+                    stopped -> Text(stringResource(R.string.recovery_stopped))
+                    list == null -> {
+                        Text(stringResource(R.string.recovery_scanning))
+                        Text(stringResource(R.string.recovery_scan_progress, progress.first, progress.second),
+                            style = MaterialTheme.typography.bodySmall, modifier = Modifier.padding(top = 4.dp))
+                        TextButton(onClick = { cancel.set(true) }) { Text(stringResource(R.string.recovery_stop)) }
+                    }
+                    list.isEmpty() -> {
+                        Text(stringResource(R.string.recovery_none), style = MaterialTheme.typography.titleMedium)
+                        Text(stringResource(R.string.recovery_none_why), style = MaterialTheme.typography.bodySmall,
+                            modifier = Modifier.padding(top = 4.dp))
+                    }
                     else -> {
                         Text(stringResource(R.string.recovery_help), style = MaterialTheme.typography.bodySmall)
-                        val selectable = list.filter { it.state != DeletedFile.State.OVERWRITTEN }.map { it.path }.toSet()
+                        androidx.compose.foundation.layout.FlowRow(horizontalArrangement = Arrangement.spacedBy(6.dp)) {
+                            Kind.entries.forEach { k ->
+                                val n = list.count { k.matches(it.path) }
+                                if (k == Kind.ALL || n > 0) androidx.compose.material3.FilterChip(kind == k, { kind = k },
+                                    { Text("${stringResource(k.label)} ($n)") })
+                            }
+                        }
+                        val shown = list.filter { kind.matches(it.path) }
+                        val selectable = shown.filter { it.state != DeletedFile.State.OVERWRITTEN }.map { it.path }.toSet()
                         val allOn = selectable.isNotEmpty() && selected.containsAll(selectable)
                         Row(verticalAlignment = Alignment.CenterVertically, modifier = Modifier.fillMaxWidth()) {
                             Text(stringResource(R.string.recovery_count, selected.size, list.size),
                                 style = MaterialTheme.typography.labelLarge, modifier = Modifier.weight(1f))
-                            TextButton(enabled = !busy, onClick = { selected = if (allOn) emptySet() else selectable },
+                            TextButton(enabled = !busy, onClick = { selected = if (allOn) selected - selectable else selected + selectable },
                                 modifier = Modifier.semantics { contentDescription = "recovery_select_all" }) {
                                 Text(stringResource(if (allOn) R.string.recovery_select_none else R.string.recovery_select_all))
                             }
                         }
                         HorizontalDivider()
                         LazyColumn(Modifier.weight(1f)) {
-                            items(list, key = { it.path }) { f ->
+                            items(shown, key = { it.path }) { f ->
                                 val canSelect = f.state != DeletedFile.State.OVERWRITTEN
                                 Row(
                                     verticalAlignment = Alignment.CenterVertically,
@@ -233,7 +312,7 @@ fun RecoveryDialog(drive: MountedDrive, onDismiss: () -> Unit) {
                                     }.padding(vertical = 6.dp),
                                 ) {
                                     Checkbox(f.path in selected, null, enabled = canSelect)
-                                    Preview(f, thumbs, scanner.getOrNull(), lockId)
+                                    Preview(f, thumbs, scanner.getOrNull(), lockId, context.cacheDir)
                                     Spacer(Modifier.width(12.dp))
                                     Column(Modifier.weight(1f)) {
                                         Text(Paths.name(f.path), style = MaterialTheme.typography.bodyMedium)
@@ -266,11 +345,11 @@ fun RecoveryDialog(drive: MountedDrive, onDismiss: () -> Unit) {
 
 /** The photo's thumbnail once it is read (cached per path), else an icon for the file's kind. */
 @Composable
-private fun Preview(f: DeletedFile, cache: ConcurrentHashMap<String, Bitmap>, scanner: Scanner?, lockId: String) {
+private fun Preview(f: DeletedFile, cache: ConcurrentHashMap<String, Bitmap>, scanner: Scanner?, lockId: String, cacheDir: java.io.File) {
     val bitmap by produceState(cache[f.path], f.path) {
-        if (value == null && scanner != null && ext(f.path) in IMAGE_EXT) {
+        if (value == null && scanner != null && (ext(f.path) in IMAGE_EXT || ext(f.path) == "pdf")) {
             value = withContext(Dispatchers.IO) {
-                runCatching { thumbnail(scanner, f, lockId) }.getOrNull()?.also { cache[f.path] = it }
+                runCatching { thumbnail(scanner, f, lockId, cacheDir) }.getOrNull()?.also { cache[f.path] = it }
             }
         }
     }

@@ -137,11 +137,12 @@ class ExFatRecovery(private val dev: RawBlockDevice) {
     }
 
     /** Every deleted file, in live folders and in deleted ones. */
-    fun scan(isCancelled: () -> Boolean = { false }): List<DeletedFile> {
+    fun scan(isCancelled: () -> Boolean = { false }, onProgress: (folders: Int, found: Int) -> Unit = { _, _ -> }): List<DeletedFile> {
         val liveStarts = HashMap<Long, Long>() // first cluster -> size of the live file there
         val deleted = ArrayList<Pair<String, Entry>>()
         val seen = HashSet<Long>()
         fun walk(path: String, data: ByteArray, deletedDir: Boolean) {
+            onProgress(seen.size, deleted.size)
             for (e in entries(data)) {
                 if (isCancelled()) return
                 val p = if (path.isEmpty()) e.name else "$path/${e.name}"
@@ -158,6 +159,7 @@ class ExFatRecovery(private val dev: RawBlockDevice) {
         }
         seen += rootCluster
         walk("", read(Stream(rootCluster, clusterBytes.toLong() * 4096, false), 4096), false)
+        if (isCancelled()) throw java.util.concurrent.CancellationException("scan stopped")
         return deleted.mapNotNull { (path, e) ->
             val s = e.stream
             if (s.length == 0L) return@mapNotNull DeletedFile(path, 0, 0, DeletedFile.State.RECOVERABLE, e.mtime)
