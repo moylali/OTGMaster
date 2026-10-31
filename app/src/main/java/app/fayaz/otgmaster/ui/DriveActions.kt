@@ -133,13 +133,15 @@ class DriveAction(
  * A mounted card's actions. [primary] are always buttons. [secondary] take whatever room is
  * left on the same line, in order, as the same buttons; what does not fit goes into a
  * "More actions ▾" menu, measured at the card's current width — so a wide tablet card shows
- * every action and a phone keeps the two everyday ones. A disabled action always goes into
- * the menu, where its second line says why, rather than sitting as a greyed button.
+ * every action and a phone keeps the two everyday ones. An action that does not apply
+ * to the volume ([DriveAction.unavailable] set) is not shown at all.
  */
 @OptIn(ExperimentalLayoutApi::class)
 @Composable
 fun DriveActionRow(primary: List<DriveAction>, secondary: List<DriveAction>) {
     val gap = 8.dp
+    // An action that does not apply to this volume is left out, not shown greyed with a
+    // reason under it (asked for 2026-10-30): the menu lists only what can be done.
     val usable = secondary.filter { it.unavailable == null }
     SubcomposeLayout { constraints ->
         val fits = if (!constraints.hasBoundedWidth) usable.size else {
@@ -150,9 +152,8 @@ fun DriveActionRow(primary: List<DriveAction>, secondary: List<DriveAction>) {
             val start = primary.indices.sumOf { i -> widthOf("p$i") { ActionButton(primary[i]) } + gapPx }
             val widths = usable.indices.map { i -> widthOf("s$i") { ActionButton(usable[i]) } }
             val moreWidth = widthOf("more") { MoreActionsButton(emptyList()) }
-            val disabledLeft = secondary.size > usable.size
             fun lineWidth(k: Int): Int {
-                val more = k < usable.size || disabledLeft
+                val more = k < usable.size
                 return start + widths.take(k).sum() + gapPx * k + if (more) moreWidth else -gapPx
             }
             var k = usable.size
@@ -160,7 +161,7 @@ fun DriveActionRow(primary: List<DriveAction>, secondary: List<DriveAction>) {
             k
         }
         val shown = usable.take(fits)
-        val overflow = secondary.filter { it !in shown }
+        val overflow = usable.filter { it !in shown }
         val row = subcompose("row") {
             FlowRow(horizontalArrangement = Arrangement.spacedBy(gap), verticalArrangement = Arrangement.spacedBy(gap)) {
                 primary.forEach { ActionButton(it) }
@@ -209,8 +210,7 @@ private fun MoreActionsButton(items: List<DriveAction>) {
             DropdownMenu(expanded = open, onDismissRequest = { open = false }) {
                 items.forEach { a ->
                     DropdownMenuItem(
-                        text = { MenuText(a.title, a.unavailable) },
-                        enabled = a.unavailable == null,
+                        text = { Text(a.title, style = MaterialTheme.typography.labelLarge) }, // the button's text style
                         onClick = { open = false; a.onClick() },
                         modifier = Modifier.actionId(a.id),
                     )
@@ -220,16 +220,6 @@ private fun MoreActionsButton(items: List<DriveAction>) {
     }
 }
 
-@Composable
-private fun MenuText(title: String, unavailable: String?) {
-    Column {
-        Text(title, style = MaterialTheme.typography.labelLarge) // the button's text style
-        if (unavailable != null) {
-            Text(unavailable, style = MaterialTheme.typography.bodySmall,
-                color = MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.8f))
-        }
-    }
-}
 
 @Composable
 private fun DriveDetails(s: DriveSummary) {

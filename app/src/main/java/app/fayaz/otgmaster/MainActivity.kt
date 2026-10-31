@@ -2803,7 +2803,8 @@ fun OtgMasterApp(
                                         add(app.fayaz.otgmaster.ui.DriveAction("unmount_button", stringResource(R.string.unmount)) { onUnmount(drive) })
                                     }
                                 },
-                                secondary = buildList {
+                                // A phone or camera over MTP is read-only: browsing is all there is.
+                                secondary = if (drive.fileSystem is app.fayaz.otgmaster.mtp.MtpStorageFileSystem) emptyList() else buildList {
                                     add(app.fayaz.otgmaster.ui.DriveAction("format_action", stringResource(R.string.format_drive_menu),
                                         formatUnavailable(drive)) { formatTarget = drive })
                                     add(app.fayaz.otgmaster.ui.DriveAction("encrypt_action", stringResource(R.string.encrypt_drive_menu),
