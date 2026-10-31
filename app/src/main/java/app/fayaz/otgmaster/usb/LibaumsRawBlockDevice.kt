@@ -209,6 +209,13 @@ class LibaumsRawBlockDevice(
     private fun recover(op: String, chunk: Int, at: Long, e: Exception): Boolean {
         if (closed) return false
         report("USB: $op of ${chunk * blockSize / 1024} KiB at block $at failed: ${causeChain(e)}")
+        // A pause before asking whether the drive answers. On a realme 8 a drive plugged in
+        // at the lock screen was mounted by Android itself at unlock; when this app took it
+        // over, Android was still releasing it (vold unmounting its partitions for 2 s), and
+        // reads failed straight away: 6 attempts, then 5 more on the retry, or the partition
+        // re-read gave up. A second lets that finish. A real failure costs one second more.
+        Thread.sleep(SETTLE_BEFORE_RETRY_MS)
+        if (closed) return false
         val wasReset = !answersAt(at)
         if (wasReset) {
             report("USB: the drive has stopped answering; resetting its USB port")
@@ -534,6 +541,8 @@ class LibaumsRawBlockDevice(
         private const val MAX_REPORTED_LINES = 24
         /** See [transfersSinceRetry]. About 7 MiB at 30 KiB, 28 MiB at 120 KiB. */
         private const val SAME_SIZE_RETRY_WINDOW = 240L
+        /** See [recover]: how long a failed transfer waits before the drive is asked again. */
+        private const val SETTLE_BEFORE_RETRY_MS = 1_000L
         /** See [recentWrites]: several 120 KiB commands, well past one flash page or erase unit. */
         const val REPLAY_BYTES = 1 shl 20
         /** See [replayRecentWrites]. */
