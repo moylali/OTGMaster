@@ -305,6 +305,7 @@ class MainActivity : AppCompatActivity() {
         } else {
             appendLog(getString(if (granted) R.string.log_notifications_allowed else R.string.log_notifications_off))
             notificationsOffLogged = !granted
+            if (!granted) showNotificationsToast()
         }
         refreshDevices()
     }
@@ -333,8 +334,6 @@ class MainActivity : AppCompatActivity() {
         }
         notificationAskedThisPlugIn = true
         notificationAskOpen = true
-        // Android's dialog says only "Allow OTG Master to send you notifications?"; this says why.
-        android.widget.Toast.makeText(this, R.string.notifications_toast, android.widget.Toast.LENGTH_LONG).show()
         val prefs = getSharedPreferences("otgmaster_prefs", Context.MODE_PRIVATE)
         val askedBefore = prefs.getBoolean(PREF_ASKED_NOTIFICATIONS, false)
         // Asked before and no rationale: Android will not show its dialog again.
@@ -346,6 +345,13 @@ class MainActivity : AppCompatActivity() {
         }
         return true
     }
+
+    /**
+     * Says what declining costs, after a refusal only (the user's call, 2026-10-31): shown
+     * alongside the question it competed with the dialog, and a user who allows needs no reason.
+     */
+    private fun showNotificationsToast() =
+        android.widget.Toast.makeText(this, R.string.notifications_toast, android.widget.Toast.LENGTH_LONG).show()
 
     /** The app's own notifications question, for when Android no longer shows its dialog. */
     private val notificationSettingsPrompt = mutableStateOf(false)
@@ -363,6 +369,7 @@ class MainActivity : AppCompatActivity() {
             }.onFailure { OtgMasterState.logFailure("notifications", "Could not open the notification settings", it) }
         } else {
             appendLog(getString(R.string.log_notifications_off))
+            showNotificationsToast()
             notificationsOffLogged = true
         }
         // Mounts now, or (Settings in front) when this activity is back on screen.
