@@ -153,6 +153,7 @@
     <string name="log_usb_waits_for_screen">The phone is locked or OTG Master is not on screen: USB drives will be opened when it is back on screen, so Android lets OTG Master keep them readable behind other apps.</string>
     <string name="log_fgs_started_after_refusal">The background service that keeps drives readable behind other apps is now running.</string>
     <string name="log_notifications_allowed">Notifications allowed: mounted drives, Format and Encrypt progress and backup reminders will show in the notification shade.</string>
+    <string name="log_notifications_unanswered">The notifications question was closed without an answer; asking again.</string>
     <string name="log_notifications_off">Notifications are off for OTG Master: drives still mount and stay readable behind other apps, but the mounted-drive notice, Format and Encrypt progress and backup reminders will not show. Turn them on in Android Settings › Apps › OTG Master › Notifications.</string>
     <string name="log_found_usb_devices">Found %1$d USB devices.</string>
     <string name="log_reoffered_locked_partitions">%1$d locked partition(s) on %2$s, beside one already mounted.</string>
