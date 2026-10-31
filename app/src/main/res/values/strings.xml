@@ -156,7 +156,7 @@
     <string name="log_notifications_unanswered">The notifications question was closed without an answer; asking again.</string>
     <string name="notifications_toast">Allow notification permission for OTG Master to keep drives open for other apps.</string>
     <string name="notifications_prompt_title">Allow notifications?</string>
-    <string name="notifications_prompt_text">Allow notification permission for OTG Master to keep drives open for other apps. Notifications also show which drives are mounted, Format and Encrypt progress, and backup reminders. Drives mount either way.</string>
+    <string name="notifications_prompt_text">Helps keep Android from closing mounted drives while other apps use them.\n\nShows backup, format and encrypt progress, and reminders.</string>
     <string name="notifications_prompt_open">Open settings</string>
     <string name="notifications_prompt_allow">Allow</string>
     <string name="notifications_prompt_not_now">Not now</string>
