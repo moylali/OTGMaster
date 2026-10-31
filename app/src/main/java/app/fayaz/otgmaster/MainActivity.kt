@@ -3225,7 +3225,7 @@ fun VeraCryptMountSection(
                         label = { Text(stringResource(R.string.label_usb_drive)) },
                         trailingIcon = { ExposedDropdownMenuDefaults.TrailingIcon(expanded = deviceExpanded) },
                         colors = ExposedDropdownMenuDefaults.outlinedTextFieldColors(),
-                        modifier = Modifier.menuAnchor().fillMaxWidth().semantics { contentDescription = "device_picker" }
+                        modifier = Modifier.menuAnchor(androidx.compose.material3.MenuAnchorType.PrimaryNotEditable).fillMaxWidth().semantics { contentDescription = "device_picker" }
                     )
                     ExposedDropdownMenu(
                         expanded = deviceExpanded,
@@ -3283,7 +3283,7 @@ fun VeraCryptMountSection(
                     label = { Text(stringResource(R.string.label_volume_to_unlock)) },
                     trailingIcon = { ExposedDropdownMenuDefaults.TrailingIcon(expanded = expanded) },
                     colors = ExposedDropdownMenuDefaults.outlinedTextFieldColors(),
-                    modifier = Modifier.menuAnchor().fillMaxWidth().semantics { contentDescription = "candidate_picker" }
+                    modifier = Modifier.menuAnchor(androidx.compose.material3.MenuAnchorType.PrimaryNotEditable).fillMaxWidth().semantics { contentDescription = "candidate_picker" }
                 )
                 ExposedDropdownMenu(
                     expanded = expanded,
@@ -3493,7 +3493,7 @@ fun VeraCryptMountSection(
                     label = { Text(stringResource(R.string.label_encryption_algorithm)) },
                     trailingIcon = { if (!isPreFilled) ExposedDropdownMenuDefaults.TrailingIcon(expanded = cipherExpanded) },
                     colors = ExposedDropdownMenuDefaults.outlinedTextFieldColors(),
-                    modifier = Modifier.menuAnchor().fillMaxWidth().semantics { contentDescription = "cipher_picker" }
+                    modifier = Modifier.menuAnchor(androidx.compose.material3.MenuAnchorType.PrimaryNotEditable).fillMaxWidth().semantics { contentDescription = "cipher_picker" }
                 )
                 if (!isPreFilled) {
                     ExposedDropdownMenu(
@@ -3525,7 +3525,7 @@ fun VeraCryptMountSection(
                     label = { Text(stringResource(R.string.label_hash_algorithm)) },
                     trailingIcon = { if (!isPreFilled) ExposedDropdownMenuDefaults.TrailingIcon(expanded = hashExpanded) },
                     colors = ExposedDropdownMenuDefaults.outlinedTextFieldColors(),
-                    modifier = Modifier.menuAnchor().fillMaxWidth().semantics { contentDescription = "hash_picker" }
+                    modifier = Modifier.menuAnchor(androidx.compose.material3.MenuAnchorType.PrimaryNotEditable).fillMaxWidth().semantics { contentDescription = "hash_picker" }
                 )
                 if (!isPreFilled) {
                     ExposedDropdownMenu(
