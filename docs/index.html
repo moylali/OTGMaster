@@ -130,6 +130,13 @@
           <li>both overwrite every sector by default; <strong>Quick</strong> writes only the filesystem structures, and the old data stays on the drive until overwritten</li>
         </ul>
       </li>
+      <li><em>From 0.5.0</em>:
+        <ul>
+          <li><strong>Back up…</strong> copies a phone folder to a folder on the drive, now and then daily or weekly, as snapshots in the <a href="https://restic.net">restic</a> repository format — a computer opens them with <code>restic</code>, and a repository restic made is backed up into the same way — or as plain dated copies; it reminds you when a backup is overdue and names the drive to plug in</li>
+          <li><strong>Recover deleted files…</strong> lists the files a FAT32 or exFAT filesystem has deleted (only those) and copies the chosen ones to another drive or the phone; nothing is written to the drive being recovered</li>
+          <li>Another phone or a camera connected over USB (MTP/PTP) shows up as read-only drives, one per storage</li>
+        </ul>
+      </li>
     </ol>
 
     <h2>Roadmap</h2>

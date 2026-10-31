@@ -42,6 +42,10 @@ The app cannot perform a kernel mount on non-rooted Android. Instead it:
    - **Format** writes an empty FAT32 or exFAT of the same size — the current one by default, or the other — with the label given; a volume inside an encrypted container stays in it, with the same password
    - **Encrypt** erases the partition and creates a new VeraCrypt volume — any of the ciphers and cascades above, SHA-512 or Argon2id, optional PIM and keyfiles — holding a new FAT32 or exFAT
    - both overwrite every sector by default; **Quick** writes only the filesystem structures, and the old data stays on the drive until overwritten
+8. *From 0.5.0*:
+   - **Back up…** copies a phone folder to a folder on the drive, now and then daily or weekly, as snapshots in the [restic](https://restic.net) repository format — a computer opens them with `restic`, and a repository restic made is backed up into the same way — or as plain dated copies; it reminds you when a backup is overdue and names the drive to plug in
+   - **Recover deleted files…** lists the files a FAT32 or exFAT filesystem has deleted (only those) and copies the chosen ones to another drive or the phone; nothing is written to the drive being recovered
+   - Another phone or a camera connected over USB (MTP/PTP) shows up as read-only drives, one per storage
 
 ### Roadmap
 

@@ -1,6 +1,7 @@
-• Fixed: data written just before a USB error could be lost; it is now written again
-• Fixed: drives over 2 TB, and some 2 TB enclosures, would not open
-• Fixed: drives failing with "MAX_RECOVERY_ATTEMPTS"; a stuck drive is reset
-• New: after Encrypt, unlock the drive once to prove the password
-• New: Format and Encrypt show their progress in a notification
-• New: the log keeps 200 lines, says why anything failed, and Report issue sends all of it
+• New: back up phone folders to a drive, readable with restic on a computer
+• New: recover deleted files on FAT32 and exFAT drives
+• New: another phone over USB shows up as a drive (read-only)
+• New: Encrypt asks for the password once before use; progress notifications
+• Fixed: data written just before a USB error could be lost
+• Fixed: drives over 2 TB, some 2 TB enclosures, and "MAX_RECOVERY_ATTEMPTS" drives
+• New: a fuller log, sent whole by Report issue
