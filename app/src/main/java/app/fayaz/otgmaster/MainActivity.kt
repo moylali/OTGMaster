@@ -1827,7 +1827,7 @@ class MainActivity : AppCompatActivity() {
         drive.isReadOnly -> getString(R.string.action_unavailable_read_only)
         drive.sourceVolumeCandidate?.containerType == app.fayaz.otgmaster.veracrypt.ContainerType.BITLOCKER ->
             getString(R.string.format_unavailable_fs, "BitLocker")
-        drive.filesystemName != "FAT32" && drive.filesystemName != "exFAT" ->
+        drive.filesystemName !in setOf("FAT32", "exFAT", "ext2", "ext3", "ext4", "NTFS") ->
             getString(R.string.format_unavailable_fs, drive.filesystemName)
         drive.blockDevice == null -> getString(R.string.encrypt_unavailable_bounds)
         else -> null
@@ -1964,7 +1964,10 @@ class MainActivity : AppCompatActivity() {
                 // Read before anything is touched: a volume the formatter cannot lay out
                 // again is refused with its files intact.
                 val existing = deviceMutex.withLock {
-                    app.fayaz.otgmaster.format.DriveFormatter.readExisting(device, label)
+                    // A plain partition's boot sector records where it starts; ext4 has no
+                    // such field, so a change to FAT32 or NTFS takes it from the partition table.
+                    app.fayaz.otgmaster.format.DriveFormatter.readExisting(device, label,
+                        partitionStart = if (drive.isPlain) drive.partitionStartBlock ?: 0 else 0)
                 }.copy(label = req.label)
                 val target = req.filesystem
                 detachForErase(drive)
@@ -1997,8 +2000,9 @@ class MainActivity : AppCompatActivity() {
     }
 
     /**
-     * Encrypt: a new VeraCrypt volume over the whole partition, holding a new exFAT or
-     * FAT32, mounted in the old volume's place. Erases the partition.
+     * Encrypt: a new VeraCrypt or LUKS2 volume over the whole partition, holding a new
+     * exFAT, FAT32, ext4 or NTFS, offered for unlock in the old volume's place. Erases the
+     * partition.
      */
     private fun encryptDrive(drive: MountedDrive, req: app.fayaz.otgmaster.ui.EncryptRequest) {
         val title = getString(R.string.operation_encrypt_title, drive.partitionLabel.ifEmpty { drive.name })
@@ -2008,7 +2012,11 @@ class MainActivity : AppCompatActivity() {
         val deviceKey = drive.sourceDeviceName
         driveOperation.value = app.fayaz.otgmaster.ui.DriveOperation(title, getString(R.string.operation_unmounting), null)
         window.addFlags(android.view.WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON)
-        appendLog(getString(R.string.log_encrypt_started, drive.name, req.cipher.displayName, req.hash.displayName,
+        val luks2 = req.type == app.fayaz.otgmaster.ui.EncryptionType.LUKS2
+        // What the volume is encrypted with, as the log and the result say it.
+        val cipherName = if (luks2) "LUKS2 AES-XTS" else req.cipher.displayName
+        val kdfName = if (luks2) "Argon2id" else req.hash.displayName
+        appendLog(getString(R.string.log_encrypt_started, drive.name, cipherName, kdfName,
             req.filesystem.displayName, if (req.full) "full" else "quick"))
         // Taken before the volume is created: the request's password is wiped afterwards.
         val passwordToSave = if (req.saveToPasswordManager) String(req.password) else null
@@ -2022,9 +2030,14 @@ class MainActivity : AppCompatActivity() {
                 val slice = app.fayaz.otgmaster.block.SlicedBlockDevice(raw, start, count)
                 val partition = object : RawBlockDevice by slice { override fun close() {} }
                 val volume = deviceMutex.withLock {
-                    app.fayaz.otgmaster.format.DriveFormatter.encrypt(partition, req.password, req.pim,
-                        req.cipher, req.hash, req.filesystem, req.label, req.full, progressFor(title),
-                        keyfiles = req.keyfiles.map { uri -> { contentResolver.openInputStream(uri) } })
+                    if (luks2) {
+                        app.fayaz.otgmaster.format.DriveFormatter.encryptLuks2(partition, req.password.copyOf(),
+                            req.filesystem, req.label, req.full, progressFor(title))
+                    } else {
+                        app.fayaz.otgmaster.format.DriveFormatter.encrypt(partition, req.password, req.pim,
+                            req.cipher, req.hash, req.filesystem, req.label, req.full, progressFor(title),
+                            keyfiles = req.keyfiles.map { uri -> { contentResolver.openInputStream(uri) } })
+                    }
                 }
                 // Any credentials saved for the old volume would now only fail. Only this
                 // partition's: the device's other partitions keep theirs, and the session
@@ -2042,7 +2055,8 @@ class MainActivity : AppCompatActivity() {
                 // had kept would not open it.
                 volume.close() // wipes the master key; the USB connection stays open
                 val candidate = VolumeCandidate(drive.partitionLabel, start, count,
-                    app.fayaz.otgmaster.veracrypt.ContainerType.VERACRYPT)
+                    if (luks2) app.fayaz.otgmaster.veracrypt.ContainerType.LUKS2
+                    else app.fayaz.otgmaster.veracrypt.ContainerType.VERACRYPT)
                 val secs = ((System.currentTimeMillis() - t0) / 1000).toInt()
                 if (req.saveToPasswordManager && passwordToSave != null) {
                     // The username is the device and the partition, nothing else (decided
@@ -2061,7 +2075,7 @@ class MainActivity : AppCompatActivity() {
                     offerForUnlock(drive, raw, candidate)
                     appendLog(getString(R.string.log_encrypt_done, drive.name, secs))
                     driveOperation.value = app.fayaz.otgmaster.ui.DriveOperation(title,
-                        getString(R.string.operation_encrypt_done, req.cipher.displayName, req.hash.displayName,
+                        getString(R.string.operation_encrypt_done, cipherName, kdfName,
                             req.filesystem.displayName), 1f, finished = true)
                 }
             } catch (e: Exception) {

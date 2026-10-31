@@ -1,0 +1,1 @@
+Plain ext4 (64 MiB, whole device), formatted from the card's More menu (quick): an empty ext4 written by the app (Ext4Formatter), same size and label, flower.jpg gone, a new file written. Host: e2fsck -fn, label kept, flower.jpg absent, after_erase.txt present (kernel mount).

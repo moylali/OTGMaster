@@ -1,0 +1,1 @@
+Plain NTFS (64 MiB, whole device), formatted from the card's More menu (full overwrite): an empty NTFS written by the app's mkntfs, same size and label, flower.jpg gone, a new file written. Host: ntfs_check.py and ntfsfix -n, label kept, flower.jpg absent, after_erase.txt present, no byte of the old flower.jpg left.

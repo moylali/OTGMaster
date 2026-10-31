@@ -1,0 +1,6 @@
+action=encrypt
+quick=false
+type=luks2
+fs=ext4
+password=otgmaster-encrypt-test-2026
+label=LUKSEXT4

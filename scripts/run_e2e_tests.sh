@@ -160,7 +160,8 @@ ensure_testdata() {
 
     # Format and Encrypt from a mounted card (scripts/make_erase_fixtures.py, no root;
     # format_vc_exfat is a copy of the exfat case, so this runs after it exists).
-    for case_name in format_vc_exfat format_plain_fat32 encrypt_plain_fat32 encrypt_plain_exfat disconnect; do
+    for case_name in format_vc_exfat format_plain_fat32 encrypt_plain_fat32 encrypt_plain_exfat disconnect \
+                     format_plain_ext4 format_plain_ntfs encrypt_plain_ext4 encrypt_plain_ntfs encrypt_luks2_ext4; do
         if [ ! -f "$TESTDATA_DIR/$case_name/test.img" ]; then
             echo "Generating the Format/Encrypt fixtures..."
             python3 scripts/make_erase_fixtures.py || { echo "Format/Encrypt fixture generation failed!"; exit 1; }

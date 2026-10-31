@@ -1,0 +1,3 @@
+action=format
+quick=false
+fs=ntfs
