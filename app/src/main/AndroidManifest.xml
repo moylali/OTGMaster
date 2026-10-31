@@ -82,6 +82,17 @@
             </intent-filter>
         </provider>
 
+        <!-- A USB drive plugged in that Android did not open OTG Master for (it is not the default
+             app, and the chooser closes itself at the lock screen): a notification to open it. -->
+        <receiver
+            android:name=".usb.UsbPlugInReceiver"
+            android:exported="true">
+            <intent-filter>
+                <action android:name="android.hardware.usb.action.USB_DEVICE_ATTACHED" />
+                <action android:name="android.hardware.usb.action.USB_DEVICE_DETACHED" />
+            </intent-filter>
+        </receiver>
+
         <!-- "Proceed" / "Not now" on a backup's low-space question. -->
         <receiver
             android:name=".backup.BackupActionReceiver"
