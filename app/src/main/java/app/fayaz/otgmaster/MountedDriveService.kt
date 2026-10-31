@@ -39,12 +39,17 @@ class MountedDriveService : Service() {
             ServiceCompat.startForeground(this, NOTIFICATION_ID, notification,
                 if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) ServiceInfo.FOREGROUND_SERVICE_TYPE_CONNECTED_DEVICE else 0)
             running = true
+            if (refused) {
+                refused = false
+                OtgMasterState.log(getString(R.string.log_fgs_started_after_refusal))
+            }
         } catch (e: Exception) {
             // ForegroundServiceStartNotAllowedException, or a SecurityException where the
             // connectedDevice prerequisites are not met. The drive still works while the app
             // is in front; the service only keeps it working behind another app.
             Log.w(TAG, "foreground service refused: ${e.javaClass.simpleName}: ${e.message}")
             OtgMasterState.logFailure("fgs", "Android refused the background service that keeps drives mounted behind other apps", e)
+            refused = true
             running = false
             stopSelf()
         }
@@ -69,6 +74,9 @@ class MountedDriveService : Service() {
         private const val PROGRESS_INTERVAL_MS = 1_000L
 
         @Volatile private var running = false
+        /** A start was refused, so the next one that succeeds is worth a log line. */
+        @Volatile private var refused = false
+        val isRunning: Boolean get() = running
         @Volatile private var titles: List<String> = emptyList()
         @Volatile private var operation: Operation? = null
         @Volatile private var lastProgressPost = 0L
@@ -141,6 +149,7 @@ class MountedDriveService : Service() {
             } catch (e: Exception) {
                 Log.w(TAG, "could not start the mounted-drive service: ${e.javaClass.simpleName}: ${e.message}")
                 OtgMasterState.logFailure("fgs", "Could not start the background service that keeps drives mounted", e)
+                refused = true
             }
         }
 

@@ -269,23 +269,35 @@ class MainActivity : AppCompatActivity() {
     }
 
     /**
-     * Android 13+ shows an app's notifications only after it has asked. Asked once, when the
-     * first drive mounts, so MountedDriveService's notification can appear in the shade;
-     * declining changes nothing else (the service runs either way).
+     * Android 13+ shows an app's notifications only after it has asked. Asked once, before
+     * the first drive is opened, and nothing is mounted until it is answered: the mounted-
+     * drive notification, Format and Encrypt progress and backup reminders all need it.
+     * Either answer mounts; declining only hides those (the service runs either way), and
+     * the log says so, so a report shows it.
      */
     private val notificationPermission = registerForActivityResult(
         androidx.activity.result.contract.ActivityResultContracts.RequestPermission()
-    ) { granted -> android.util.Log.i("OTGMaster", "notification permission granted=$granted") }
+    ) { granted ->
+        appendLog(getString(if (granted) R.string.log_notifications_allowed else R.string.log_notifications_off))
+        refreshDevices()
+    }
 
-    private fun askForNotificationsOnce() {
-        if (Build.VERSION.SDK_INT < 33) return
+    /** True if the question was put now; [refreshDevices] runs again once it is answered. */
+    private fun askForNotificationsFirst(): Boolean {
+        if (Build.VERSION.SDK_INT < 33) return false
         if (checkSelfPermission(android.Manifest.permission.POST_NOTIFICATIONS) ==
-            android.content.pm.PackageManager.PERMISSION_GRANTED) return
+            android.content.pm.PackageManager.PERMISSION_GRANTED) return false
         val prefs = getSharedPreferences("otgmaster_prefs", Context.MODE_PRIVATE)
-        if (prefs.getBoolean(PREF_ASKED_NOTIFICATIONS, false)) return
+        if (prefs.getBoolean(PREF_ASKED_NOTIFICATIONS, false)) {
+            if (!notificationsOffLogged) appendLog(getString(R.string.log_notifications_off))
+            notificationsOffLogged = true
+            return false
+        }
         prefs.edit().putBoolean(PREF_ASKED_NOTIFICATIONS, true).apply()
         notificationPermission.launch(android.Manifest.permission.POST_NOTIFICATIONS)
+        return true
     }
+    private var notificationsOffLogged = false
 
     private val permissionIntent: PendingIntent by lazy {
         val flags = PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_MUTABLE
@@ -372,7 +384,6 @@ class MainActivity : AppCompatActivity() {
         // Keeps the process unfrozen while anything is mounted (MountedDriveService).
         OtgMasterState.onMountedChanged = { drives ->
             MountedDriveService.update(applicationContext, drives.map(::driveTitle))
-            if (drives.size == 1) runOnUiThread { if (!isFinishing) askForNotificationsOnce() }
             app.fayaz.otgmaster.provider.VeraCryptDocumentProvider
                 .revokeExtendedGrants(applicationContext, drives.map { it.id }.toSet())
         }
@@ -601,6 +612,12 @@ class MainActivity : AppCompatActivity() {
         // was avoiding; not restoring leaves the form permanently missing.
         isAutoMountPromptShowing = false
         restoreDeferredCandidates()
+        if (refreshWaitsForScreen) refreshDevices()
+        // Drives mounted without the service (Android refused it, on an OEM's rules or a race
+        // with the lock screen): on screen is when Android allows it, so ask again.
+        if (OtgMasterState.mountedDrives.isNotEmpty() && !MountedDriveService.isRunning) {
+            MountedDriveService.update(applicationContext, OtgMasterState.mountedDrives.map(::driveTitle))
+        }
     }
 
     // The handlers this instance installed, so onDestroy can tell them apart from a
@@ -727,7 +744,33 @@ class MainActivity : AppCompatActivity() {
         })
     }
 
+    /**
+     * A drive plugged in while the phone is locked, or while this app is behind another, is
+     * opened only once the app is on screen again.
+     *
+     * Android lets [MountedDriveService] start only while the app is visible. Mounting at the
+     * lock screen left the drive with no service ("startForegroundService() not allowed",
+     * Pixel 7 Pro, Android 17), nothing started it later, and Android then froze the process
+     * 30 s after the user went to the Files app, stalling reads from open files. A locked
+     * phone cannot use the files anyway, so waiting costs nothing.
+     */
+    private var refreshWaitsForScreen = false
+
+    private fun onScreen(): Boolean =
+        lifecycle.currentState.isAtLeast(androidx.lifecycle.Lifecycle.State.STARTED) &&
+            getSystemService(android.app.KeyguardManager::class.java)?.isKeyguardLocked != true
+
     private fun refreshDevices() {
+        if (!onScreen()) {
+            // onCreate's own call lands here too; onResume runs it, so it says nothing.
+            if (!refreshWaitsForScreen && lifecycle.currentState != androidx.lifecycle.Lifecycle.State.INITIALIZED) {
+                appendLog(getString(R.string.log_usb_waits_for_screen))
+            }
+            refreshWaitsForScreen = true
+            return
+        }
+        refreshWaitsForScreen = false
+        if (usbDeviceProvider.getDevices().isNotEmpty() && askForNotificationsFirst()) return
         val devices = usbDeviceProvider.getDevices()
         appendLog(getString(R.string.log_found_usb_devices, devices.size))
 
