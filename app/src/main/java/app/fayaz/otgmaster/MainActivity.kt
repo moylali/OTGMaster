@@ -183,6 +183,18 @@ class MainActivity : AppCompatActivity() {
         const val EXTRA_DRIVE_ID = "app.fayaz.otgmaster.EXTRA_DRIVE_ID"
         private const val SHARE_TARGET_CATEGORY = "app.fayaz.otgmaster.category.SHARE_TARGET"
         private const val PREF_ASKED_NOTIFICATIONS = "asked_notification_permission"
+
+        /** When Android last started this activity for a USB plug-in (elapsedRealtime). */
+        @Volatile private var attachLaunchAt = 0L
+        /** An instance is started (visible); it hears plug-ins through usbReceiver. */
+        @Volatile private var started = false
+
+        /**
+         * Whether a plug-in at [pluggedAt] reached the app: Android started it for the drive (it
+         * is the default app; the start can come just before the broadcast), or it is on screen.
+         * [app.fayaz.otgmaster.usb.UsbPlugInReceiver] posts its notification when neither.
+         */
+        fun handledSince(pluggedAt: Long): Boolean = started || attachLaunchAt >= pluggedAt - 5_000
         private const val PREF_MANUALLY_UNMOUNTED = "manually_unmounted_devices"
         private const val PREF_LAST_BOOT_TIME = "last_boot_time_ms"
         private const val PREF_READ_ONLY_DEFAULT = "read_only_default"
@@ -388,6 +400,7 @@ class MainActivity : AppCompatActivity() {
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
+        if (intent?.action == UsbManager.ACTION_USB_DEVICE_ATTACHED) attachLaunchAt = android.os.SystemClock.elapsedRealtime()
         // A USB attach starts this activity singleTop, which reuses it only when it is on top.
         // With the notifications question above it, Android made a second MainActivity over
         // the first (Pixel 7 Pro, Android 17): the second mounted while the first still waited
@@ -631,13 +644,26 @@ class MainActivity : AppCompatActivity() {
         super.onNewIntent(intent)
         setIntent(intent)
         if (intent.action == UsbManager.ACTION_USB_DEVICE_ATTACHED) {
+            attachLaunchAt = android.os.SystemClock.elapsedRealtime()
             refreshDevices()
         }
         handleShareIntent(intent)
     }
 
+    override fun onStart() {
+        super.onStart()
+        started = true
+    }
+
+    override fun onStop() {
+        started = false
+        super.onStop()
+    }
+
     override fun onResume() {
         super.onResume()
+        // On screen: a plug-in notice has done its job, whichever way the user got here.
+        app.fayaz.otgmaster.usb.UsbPlugInReceiver.cancel(this)
         // Backstop for a prompt that never delivered a callback — most often because the
         // screen locked while it was up, which dismisses it silently. Once we are resumed
         // there is nothing left to hide the form behind, so clear the flag and put the

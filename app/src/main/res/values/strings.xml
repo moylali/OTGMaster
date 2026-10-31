@@ -155,6 +155,11 @@
     <string name="log_notifications_allowed">Notifications allowed: mounted drives, Format and Encrypt progress and backup reminders will show in the notification shade.</string>
     <string name="log_notifications_unanswered">The notifications question was closed without an answer; asking again.</string>
     <string name="log_notifications_off">Notifications are off for OTG Master: drives still mount and stay readable behind other apps, but the mounted-drive notice, Format and Encrypt progress and backup reminders will not show. Turn them on in Android Settings › Apps › OTG Master › Notifications.</string>
+    <string name="notification_channel_plugged_in">USB drive plugged in</string>
+    <string name="notification_plugged_in_title">%1$s connected</string>
+    <string name="notification_plugged_in_text">Tap to open it in OTG Master.</string>
+    <string name="log_plugged_in_notice">%1$s was plugged in and Android did not open OTG Master for it (another app is the default, or the phone was locked with no default set); a notification offers to open it. Choosing OTG Master with \"Always\" opens it directly next time.</string>
+    <string name="log_plugged_in_no_notice">%1$s was plugged in and Android did not open OTG Master for it; notifications are off, so OTG Master could not offer to open it.</string>
     <string name="log_found_usb_devices">Found %1$d USB devices.</string>
     <string name="log_reoffered_locked_partitions">%1$d locked partition(s) on %2$s, beside one already mounted.</string>
     <string name="log_found_candidates_qemu">Found %1$d VeraCrypt volume candidates on QEMU disk.</string>
