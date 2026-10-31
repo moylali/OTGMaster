@@ -3160,12 +3160,17 @@ fun OtgMasterApp(
                 .semantics { testTagsAsResourceId = true }
                 .padding(paddingValues)
                 .consumeWindowInsets(paddingValues)
-                .imePadding()
         ) {
             // Two panes on a tablet, or a phone-sized window in landscape wide enough
             // for both: the unlock form on the left, what is mounted on the right, so a
             // mount is seen landing without scrolling past the form.
+            //
+            // Measured without the keyboard: with imePadding outside, a Galaxy Tab A9+ in
+            // portrait (800×1280 dp) became wider than tall when the keyboard opened for the
+            // password, switched to two panes, rebuilt the form (typed text gone, keyboard
+            // closed), and switched back.
             val twoPane = maxWidth >= 840.dp || (maxWidth > maxHeight && maxWidth >= 600.dp)
+            Box(modifier = Modifier.fillMaxSize().imePadding()) {
             if (twoPane) {
                 Row(
                     modifier = Modifier.fillMaxSize().padding(16.dp),
@@ -3199,6 +3204,7 @@ fun OtgMasterApp(
                     unlockSection()
                     logsSection()
                 }
+            }
             }
         }
     }
