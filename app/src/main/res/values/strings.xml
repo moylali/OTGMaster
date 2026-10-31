@@ -154,6 +154,11 @@
     <string name="log_fgs_started_after_refusal">The background service that keeps drives readable behind other apps is now running.</string>
     <string name="log_notifications_allowed">Notifications allowed: mounted drives, Format and Encrypt progress and backup reminders will show in the notification shade.</string>
     <string name="log_notifications_unanswered">The notifications question was closed without an answer; asking again.</string>
+    <string name="notifications_prompt_title">Allow notifications?</string>
+    <string name="notifications_prompt_text">Notifications are off for OTG Master. Without them you will not see that a drive is mounted, the progress of Format and Encrypt, or backup reminders. Drives mount either way.</string>
+    <string name="notifications_prompt_open">Open settings</string>
+    <string name="notifications_prompt_not_now">Not now</string>
+    <string name="log_notifications_settings_opened">Opened OTG Master\'s notification settings; the drive mounts when you come back.</string>
     <string name="log_notifications_off">Notifications are off for OTG Master: drives still mount and stay readable behind other apps, but the mounted-drive notice, Format and Encrypt progress and backup reminders will not show. Turn them on in Android Settings › Apps › OTG Master › Notifications.</string>
     <string name="notification_channel_plugged_in">USB drive plugged in</string>
     <string name="notification_plugged_in_title">%1$s connected</string>
