@@ -318,8 +318,8 @@ class MainActivity : AppCompatActivity() {
      * off, not once ever: the user wants it in front of them each time they mount. Android
      * stops showing its own dialog after two refusals, or once they are turned off in
      * Settings (realme 8: granted=false, USER_SET, and the request returns at once), so then
-     * the app shows its own, which opens OTG Master's notification settings. Either answer
-     * mounts, and the same plug-in is not asked twice.
+     * Allow in the app's own dialog opens OTG Master's notification settings instead. Either
+     * answer mounts, and the same plug-in is not asked twice.
      */
     private fun askForNotificationsFirst(): Boolean {
         if (Build.VERSION.SDK_INT < 33) return false
@@ -334,15 +334,14 @@ class MainActivity : AppCompatActivity() {
         }
         notificationAskedThisPlugIn = true
         notificationAskOpen = true
-        val prefs = getSharedPreferences("otgmaster_prefs", Context.MODE_PRIVATE)
-        val askedBefore = prefs.getBoolean(PREF_ASKED_NOTIFICATIONS, false)
-        // Asked before and no rationale: Android will not show its dialog again.
-        if (askedBefore && !shouldShowRequestPermissionRationale(android.Manifest.permission.POST_NOTIFICATIONS)) {
-            notificationSettingsPrompt.value = true
-        } else {
-            prefs.edit().putBoolean(PREF_ASKED_NOTIFICATIONS, true).apply()
-            notificationPermission.launch(android.Manifest.permission.POST_NOTIFICATIONS)
-        }
+        // Android's dialog text cannot be changed ("Allow OTG Master to send you
+        // notifications?"), so the app's own dialog comes first and says why; its Allow then
+        // brings up Android's, or Settings once Android no longer shows one.
+        val askedBefore = getSharedPreferences("otgmaster_prefs", Context.MODE_PRIVATE)
+            .getBoolean(PREF_ASKED_NOTIFICATIONS, false)
+        notificationPromptNeedsSettings.value = askedBefore &&
+            !shouldShowRequestPermissionRationale(android.Manifest.permission.POST_NOTIFICATIONS)
+        notificationSettingsPrompt.value = true
         return true
     }
 
@@ -353,15 +352,23 @@ class MainActivity : AppCompatActivity() {
     private fun showNotificationsToast() =
         android.widget.Toast.makeText(this, R.string.notifications_toast, android.widget.Toast.LENGTH_LONG).show()
 
-    /** The app's own notifications question, for when Android no longer shows its dialog. */
+    /** The app's own notifications question, which explains why before Android's dialog. */
     private val notificationSettingsPrompt = mutableStateOf(false)
+    /** Android will not show its dialog again (asked before, no rationale): Allow opens Settings. */
+    private val notificationPromptNeedsSettings = mutableStateOf(false)
     /** Reset by each plug-in: one question per plug-in, whatever the answer. */
     private var notificationAskedThisPlugIn = false
 
     private fun answerNotificationSettingsPrompt(openSettings: Boolean) {
         notificationSettingsPrompt.value = false
         notificationAskOpen = false
-        if (openSettings) {
+        if (openSettings && !notificationPromptNeedsSettings.value) {
+            getSharedPreferences("otgmaster_prefs", Context.MODE_PRIVATE).edit()
+                .putBoolean(PREF_ASKED_NOTIFICATIONS, true).apply()
+            notificationAskOpen = true
+            notificationPermission.launch(android.Manifest.permission.POST_NOTIFICATIONS)
+            return
+        } else if (openSettings) {
             appendLog(getString(R.string.log_notifications_settings_opened))
             runCatching {
                 startActivity(Intent(android.provider.Settings.ACTION_APP_NOTIFICATION_SETTINGS)
@@ -603,7 +610,8 @@ class MainActivity : AppCompatActivity() {
                             confirmButton = {
                                 androidx.compose.material3.TextButton(onClick = { answerNotificationSettingsPrompt(true) },
                                     modifier = Modifier.semantics { contentDescription = "notifications_open_settings" }) {
-                                    Text(stringResource(R.string.notifications_prompt_open))
+                                    Text(stringResource(if (notificationPromptNeedsSettings.value)
+                                        R.string.notifications_prompt_open else R.string.notifications_prompt_allow))
                                 }
                             },
                             dismissButton = {
