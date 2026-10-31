@@ -176,9 +176,9 @@ class ExFatRecovery(private val dev: RawBlockDevice) {
     }
 
     /** Writes [file]'s bytes to [out]: its contiguous run, or its FAT chain. */
-    fun read(file: DeletedFile, out: OutputStream) {
+    fun read(file: DeletedFile, out: OutputStream, limit: Long = Long.MAX_VALUE) {
         val cs = clusters(Stream(file.firstCluster, file.size, file.contiguous))
-        var left = file.size
+        var left = minOf(file.size, limit)
         for (c in cs) {
             if (left <= 0) break
             if (!valid(c)) throw IOException("${file.path} runs past the end of the volume")

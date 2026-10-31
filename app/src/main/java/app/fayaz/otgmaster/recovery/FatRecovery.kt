@@ -231,8 +231,8 @@ class FatRecovery(private val dev: RawBlockDevice) {
     }
 
     /** Writes [file]'s bytes, read as consecutive clusters from its first, to [out]. */
-    fun read(file: DeletedFile, out: OutputStream) {
-        var left = file.size
+    fun read(file: DeletedFile, out: OutputStream, limit: Long = Long.MAX_VALUE) {
+        var left = minOf(file.size, limit)
         var c = file.firstCluster
         while (left > 0) {
             if (!valid(c)) throw IOException("${file.path} runs past the end of the volume")
