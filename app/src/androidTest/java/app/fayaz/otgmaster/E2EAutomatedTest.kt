@@ -28,6 +28,9 @@ class E2EAutomatedTest {
     companion object {
         private const val AUTHORITY = "app.fayaz.otgmaster.documents"
         private const val UNMOUNT_WAIT_MS = 15_000L
+        private const val UNMOUNT_SETTLE_MS = 1_000L
+        private const val BACKUP_REPO = "otg_backup_repo"
+        private const val BACKUP_DIALOG_FIELD = "backup_name"
 
         /**
          * The large write-case file: block i is SHA-256("otg-e2e-big-<i>"), 32 bytes,
@@ -92,6 +95,7 @@ class E2EAutomatedTest {
         // @Before, and a fourth method cost every case about 13 s doing nothing.
         if (arguments.getString("disconnect_test", "false") == "true") return runDisconnectCase()
         if (arguments.getString("journal_repair", "false") == "true") return runJournalRepairCase()
+        if (arguments.getString("backup_test", "false") == "true") return runBackupCase()
         val password = arguments.getString("password", "password123")
         val testCase = arguments.getString("testCase", "exfat")
 
@@ -842,6 +846,283 @@ class E2EAutomatedTest {
     }
 
     /**
+     * A repository made by desktop restic, on a plain FAT32 drive, that no job of the app
+     * knows (testdata/backup_mount, made by scripts/make_backup_fixture.py; docs/TEST_DATA.md
+     * §6f), reached the way a user reaches one: Browse for backup, the Files picker, a typed
+     * password.
+     *
+     * The order matters. The Files app comes before this process reads the backup, because
+     * the snapshot list is cached once read and this process needs no grant: read from here
+     * first, a listing that fails for another app would pass. The host then checks that the
+     * drive did not change (scripts/verify_e2e_volume.py, which sees backup.txt).
+     */
+    private fun runBackupCase() {
+        val arguments = InstrumentationRegistry.getArguments()
+        val password = arguments.getString("password", "")
+        val testCase = arguments.getString("testCase", "backup_mount")
+        val context = ApplicationProvider.getApplicationContext<Context>()
+        val expected = device.executeShellCommand("cat /data/local/tmp/testdata/$testCase/backup_expected.txt")
+            .lines().filter { it.isNotBlank() }.map { it.split('\t') }
+        val snapshotIds = expected.filter { it[0] == "snapshot" }.associate { it[1] to it[2] }
+        assertEquals("backup_expected.txt names two snapshots", 2, snapshotIds.size)
+        android.os.SystemClock.sleep(1000)
+
+        findScanButton()!!.click()
+        device.wait(Until.findObject(By.text(java.util.regex.Pattern.compile("(?i)OK|ALLOW"))), 5000L)?.click()
+        if (waitForMounted(60000L) == null) captureScreen("backup_no_source_card")
+        val source = OtgMasterState.mountedDrives.firstOrNull()
+        assertNotNull("the plain drive holding the backup did not mount", source)
+
+        // ── A drive is mounted, so a schedule can be created ─────────────────
+        openBackupsTab("backups_open_schedules")
+        // By tapping: isEnabled on a Compose button's description node cannot say.
+        val create = device.wait(Until.findObject(By.desc("backups_create_schedule")), timeout)
+        assertNotNull("Create schedule missing", create)
+        assertNull("the no-devices message shows with a drive mounted",
+            device.findObject(By.text(context.getString(R.string.backups_create_no_devices))))
+        create!!.click()
+        if (device.wait(Until.findObject(By.desc(BACKUP_DIALOG_FIELD)), timeout) == null) captureScreen("backup_create_no_dialog")
+        assertNotNull("Create schedule did not open its form with a drive mounted", device.findObject(By.desc(BACKUP_DIALOG_FIELD)))
+        device.pressBack()
+        assertTrue("the Create schedule form did not close", device.wait(Until.gone(By.desc(BACKUP_DIALOG_FIELD)), timeout))
+
+        // ── A folder with no repository in it ────────────────────────────────
+        assertTrue("Mount tab missing", clickByDesc("backups_tab_mount"))
+        browseToFolder(source!!.name, "not_a_backup")
+        val none = device.wait(Until.findObject(By.text(context.getString(R.string.backups_browse_none))), 30000L)
+        if (none == null) captureScreen("backup_none_not_shown")
+        assertNotNull("'No backups found' not shown for a folder without a repository", none)
+
+        // ── The repository: a wrong password, then the right one ─────────────
+        browseToFolder(source.name, BACKUP_REPO)
+        typeInto("backups_browse_password", "not-the-password")
+        clickInDialog("backups_browse_mount")
+        val wrong = device.wait(Until.findObject(By.text(context.getString(R.string.backups_browse_wrong))), 60000L)
+        if (wrong == null) captureScreen("backup_wrong_not_shown")
+        assertNotNull("a wrong password was not refused", wrong)
+        val backup = mountBrowsedBackup(password)
+
+        // ── Another app lists it: the Files app, from the card's own button ──
+        returnToMainScreen()
+        val title = "$BACKUP_REPO (backup)"
+        assertEquals("the mounted backup's name", title, backup.name)
+        val card = findScrolling(By.text(title), text = title)
+        if (card == null) captureScreen("backup_no_card")
+        assertNotNull("no card for the mounted backup", card)
+        assertNotNull("the backup's card is not tagged ENCRYPTED", device.wait(Until.findObject(By.text("ENCRYPTED")), timeout))
+        openBackupInFiles(context, title, snapshotIds.getValue("2"))
+        returnToMainScreen()
+
+        // ── Every file of both snapshots ─────────────────────────────────────
+        val snapshots = documentChildren(context, "${backup.id}:/")
+        assertEquals("one folder per snapshot: ${snapshots.keys}", 2, snapshots.size)
+        fun snapshotDoc(number: String): String {
+            val id = snapshotIds.getValue(number)
+            val name = snapshots.keys.firstOrNull { it.contains("($id)") }
+            assertNotNull("snapshot $id not listed: ${snapshots.keys}", name)
+            return snapshots.getValue(name!!)
+        }
+        expected.filter { it[0] == "file" }.forEach { (_, number, sha, path) ->
+            assertEquals("$path in snapshot $number", sha, sha256(context, documentAt(context, snapshotDoc(number), path)))
+        }
+        // Opened at its middle, as a video player does.
+        expected.filter { it[0] == "range" }.forEach { line ->
+            val (number, sha, path) = line.drop(1)
+            val doc = documentAt(context, snapshotDoc(number), path)
+            assertEquals("$path from offset ${line[4]} in snapshot $number", sha,
+                sha256Range(context, doc, line[4].toLong(), line[5].toInt()))
+        }
+        assertFalse("added_later.txt is in the snapshot taken before it existed",
+            "added_later.txt" in documentChildren(context, snapshotDoc("1")))
+
+        // ── Read-only ────────────────────────────────────────────────────────
+        val created = runCatching {
+            DocumentsContract.createDocument(context.contentResolver,
+                DocumentsContract.buildDocumentUri(AUTHORITY, snapshotDoc("2")), "text/plain", "refused.txt")
+        }.getOrNull()
+        assertNull("a file was created in a mounted backup", created)
+
+        // ── Unmount, and mount again ─────────────────────────────────────────
+        doUnmount()
+        assertFalse("the backup is still mounted after Unmount", OtgMasterState.mountedDrives.any { it.id == backup.id })
+        openBackupsTab("backups_open_mount")
+        browseToFolder(source.name, BACKUP_REPO)
+        mountBrowsedBackup(password)
+        returnToMainScreen()
+
+        // ── Pulling the drive takes the backup with it ───────────────────────
+        val key = source.sourceDeviceName
+        assertNotNull("the plain drive has no USB device name", key)
+        requestUsb("unplug")
+        val detach = OtgMasterState.detachRequest
+        assertNotNull("no detach handler installed — is MainActivity running?", detach)
+        detach!!(key!!)
+        val deadline = android.os.SystemClock.uptimeMillis() + UNMOUNT_WAIT_MS
+        while (OtgMasterState.mountedDrives.isNotEmpty() && android.os.SystemClock.uptimeMillis() < deadline) {
+            android.os.SystemClock.sleep(200)
+        }
+        if (OtgMasterState.mountedDrives.isNotEmpty()) captureScreen("backup_outlived_drive")
+        assertTrue("still mounted after the drive was pulled: ${OtgMasterState.mountedDrives.map { it.name }}",
+            OtgMasterState.mountedDrives.isEmpty())
+
+        openBackupsTab("backups_open_schedules")
+        val message = device.wait(Until.findObject(By.text(context.getString(R.string.backups_create_no_devices))), timeout)
+        if (message == null) captureScreen("backup_no_devices_not_shown")
+        assertNotNull("the no-devices message is not shown with nothing mounted", message)
+        val disabled = device.wait(Until.findObject(By.desc("backups_create_schedule")), timeout)
+        assertNotNull("Create schedule missing with nothing mounted", disabled)
+        disabled!!.click()
+        android.os.SystemClock.sleep(1500)
+        assertNull("Create schedule opened its form with nothing mounted", device.findObject(By.desc(BACKUP_DIALOG_FIELD)))
+        requestUsb("replug")
+    }
+
+    /** Opens a part of Manage backups from the main screen. */
+    private fun openBackupsTab(desc: String) {
+        if (device.findObject(By.desc(desc)) == null) clickScrolling("manage_backups_button", "Manage backups missing")
+        clickScrolling(desc, "$desc missing under Manage backups")
+        assertNotNull("Manage backups did not open", device.wait(Until.findObject(By.desc("backups_tab_mount")), timeout))
+    }
+
+    /** Browse for backup: picks [folder] at the top of the drive titled [rootTitle] in the Files picker. */
+    private fun browseToFolder(rootTitle: String, folder: String) {
+        val documentsUi = "com.google.android.documentsui"
+        assertTrue("Browse for backup missing", clickByDesc("backups_browse"))
+        assertTrue("the Files picker did not open", device.wait(Until.hasObject(By.pkg(documentsUi)), timeout))
+        android.os.SystemClock.sleep(1000)
+        fun step(what: String, selector: androidx.test.uiautomator.BySelector, waitMs: Long = 20000L) {
+            val obj = device.wait(Until.findObject(selector), waitMs)
+            if (obj == null) captureScreen("picker_no_$what")
+            assertNotNull("$what not in the Files picker", obj)
+            obj!!.click()
+            android.os.SystemClock.sleep(500)
+        }
+        // The picker reopens where it was last, so go through the drawer every time. A tap
+        // while the drawer slides in only closes it, leaving the picker on the phone's own
+        // storage, so wait for it to settle and open it again if the folder does not show.
+        var row: androidx.test.uiautomator.UiObject2? = null
+        for (attempt in 1..3) {
+            (device.findObject(By.descContains("Show roots")) ?: device.findObject(By.descContains("Open navigation drawer")))?.click()
+            if (device.wait(Until.hasObject(By.text(rootTitle)), 20000L) != true) captureScreen("picker_no_drive")
+            android.os.SystemClock.sleep(1000)
+            device.findObject(By.text(rootTitle))?.click()
+            row = device.wait(Until.findObject(By.text(folder)), 8000L)
+            if (row != null) break
+        }
+        if (row == null) captureScreen("picker_no_folder")
+        assertNotNull("$folder not in the Files picker under $rootTitle", row)
+        row!!.click()
+        android.os.SystemClock.sleep(500)
+        step("use_this_folder", By.text(java.util.regex.Pattern.compile("(?i)use this folder")))
+        step("allow", By.text(java.util.regex.Pattern.compile("(?i)allow")))
+        assertTrue("the Files picker did not return to the app",
+            device.wait(Until.hasObject(By.pkg("app.fayaz.otgmaster")), timeout))
+    }
+
+    /** With the password dialog up: types [password] and returns the backup it mounts. */
+    private fun mountBrowsedBackup(password: String): MountedDrive {
+        typeInto("backups_browse_password", password)
+        clickInDialog("backups_browse_mount")
+        if (!device.wait(Until.gone(By.desc("backups_browse_mount")), 60000L)) captureScreen("backup_password_dialog_stayed")
+        val drive = OtgMasterState.mountedDrives.firstOrNull { it.id.startsWith("bk") }
+        if (drive == null) captureScreen("backup_not_mounted")
+        assertNotNull("the backup did not mount with its password", drive)
+        return drive!!
+    }
+
+    /** Backs out of Manage backups or the Files app, to the main screen. */
+    private fun returnToMainScreen() {
+        repeat(4) {
+            if (device.wait(Until.findObject(By.desc("scan_button")), 1500L) != null) return
+            device.pressBack()
+        }
+        val scan = device.wait(Until.findObject(By.desc("scan_button")), timeout)
+        if (scan == null) captureScreen("backup_not_back_on_main")
+        assertNotNull("did not get back to the main screen", scan)
+    }
+
+    /**
+     * The Files app, another app with its own identity, opens the card titled [title] with the
+     * card's own button, lists the backup and goes into a snapshot. Its calls used to be
+     * checked against an app with no grant on the repository: "Can't load content".
+     */
+    private fun openBackupInFiles(context: Context, title: String, snapshotId: String) {
+        val label = context.getString(R.string.open_files_app)
+        fun button(): androidx.test.uiautomator.UiObject2? {
+            val top = device.findObject(By.text(title))?.visibleBounds?.bottom ?: return null
+            return device.findObjects(By.text(label)).firstOrNull { it.visibleBounds.top > top }
+        }
+        val open = button() ?: run {
+            device.findObject(By.scrollable(true).pkg("app.fayaz.otgmaster"))
+                ?.scroll(androidx.test.uiautomator.Direction.DOWN, 0.4f)
+            button()
+        }
+        if (open == null) captureScreen("backup_no_open_files")
+        assertNotNull("Open Files App not found on the backup's card", open)
+        open!!.click()
+        val row = device.wait(Until.findObject(By.textContains("($snapshotId)")), 30000L)
+        if (row == null) captureScreen("backup_files_no_listing")
+        assertNotNull("the Files app did not list snapshot $snapshotId", row)
+        assertNull("the Files app could not load the backup", device.findObject(By.textContains("load content")))
+        row!!.click()
+        val file = device.wait(Until.findObject(By.text("flower.jpg")), 30000L)
+        if (file == null) captureScreen("backup_files_no_snapshot")
+        assertNotNull("the Files app did not open the snapshot", file)
+    }
+
+    /** Name → document id of a folder's children. */
+    private fun documentChildren(context: Context, docId: String): Map<String, String> {
+        val found = linkedMapOf<String, String>()
+        context.contentResolver.query(DocumentsContract.buildChildDocumentsUri(AUTHORITY, docId), null, null, null, null)
+            ?.use { cur ->
+                val idCol = cur.getColumnIndex(DocumentsContract.Document.COLUMN_DOCUMENT_ID)
+                val nameCol = cur.getColumnIndex(DocumentsContract.Document.COLUMN_DISPLAY_NAME)
+                while (cur.moveToNext()) found[cur.getString(nameCol)] = cur.getString(idCol)
+            }
+        return found
+    }
+
+    /** The document at [path] under folder [docId], one folder listing at a time, as an app walks it. */
+    private fun documentAt(context: Context, docId: String, path: String): String =
+        path.split('/').fold(docId) { folder, name ->
+            documentChildren(context, folder)[name] ?: throw AssertionError("$name not found on the way to $path")
+        }
+
+    private fun sha256(context: Context, docId: String): String {
+        val digest = java.security.MessageDigest.getInstance("SHA-256")
+        val stream = context.contentResolver.openInputStream(DocumentsContract.buildDocumentUri(AUTHORITY, docId))
+        assertNotNull("could not open $docId", stream)
+        stream!!.use { input ->
+            val buffer = ByteArray(1 shl 16)
+            while (true) {
+                val n = input.read(buffer)
+                if (n < 0) break
+                digest.update(buffer, 0, n)
+            }
+        }
+        return digest.digest().joinToString("") { "%02x".format(it) }
+    }
+
+    private fun sha256Range(context: Context, docId: String, offset: Long, length: Int): String {
+        val pfd = context.contentResolver.openFileDescriptor(DocumentsContract.buildDocumentUri(AUTHORITY, docId), "r")
+        assertNotNull("could not open $docId", pfd)
+        val bytes = ByteArray(length)
+        pfd!!.use { fd ->
+            java.io.FileInputStream(fd.fileDescriptor).use { input ->
+                input.channel.position(offset)
+                var read = 0
+                while (read < length) {
+                    val n = input.read(bytes, read, length - read)
+                    if (n < 0) break
+                    read += n
+                }
+                assertEquals("bytes read from offset $offset of $docId", length, read)
+            }
+        }
+        return java.security.MessageDigest.getInstance("SHA-256").digest(bytes).joinToString("") { "%02x".format(it) }
+    }
+
+    /**
      * An ext4 drive whose journal needs recovery (testdata/ext4_journal, made by
      * scripts/make_journal_fixture.py; docs/TEST_DATA.md §6e). It mounts read-only and the
      * repair dialog opens on its own. Before the repair, journal_replayed.txt reads "no"
@@ -1068,7 +1349,7 @@ class E2EAutomatedTest {
         // Read back through the field itself. Password fields are hidden from
         // accessibility; for those, the confirm button enabling (it needs both
         // passwords to match) is the check.
-        if (!desc.startsWith("encrypt_password")) {
+        if (!desc.startsWith("encrypt_password") && desc != "backups_browse_password") {
             val shown = device.findObject(By.desc(desc))?.let { editTextOf(it).text } ?: ""
             if (shown != text) captureScreen("typed_$desc")
             assertEquals("$desc after setting its text", text, shown)
@@ -1163,6 +1444,11 @@ class E2EAutomatedTest {
     }
 
     private fun doUnmount() {
+        // A tap about 300 ms after the card appeared was lost: encrypt_plain_exfat failed both
+        // attempts of 4 runs with no unmountDrive in the log, while a second tap 15 s later
+        // unmounted at once, and a 1 s wait passed. The unmount itself is still held to its
+        // 15 s below, and one tap only, so a button that stays dead still fails.
+        android.os.SystemClock.sleep(UNMOUNT_SETTLE_MS)
         val unmountButton = device.wait(Until.findObject(By.descContains("unmount_button")), timeout)
         assertTrue("Unmount button not found", unmountButton != null)
         unmountButton?.click()
