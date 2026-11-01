@@ -28,6 +28,9 @@ A case with journal.txt (an ext4 drive repaired by replaying its journal) is pla
 ext4: e2fsck clean, needs_recovery cleared and the journal empty, journal_replayed.txt
 replayed, the block the journal revoked still zero, after_repair.txt as the test wrote it.
 
+A case with backup.txt (a backup mounted from this drive) writes nothing, so the drive
+must still be byte for byte the fixture, which restic checked when it was made.
+
 Exit 0 when everything holds; the problems are printed otherwise.
 """
 import hashlib
@@ -235,7 +238,7 @@ def check_erased_files(img, expected_content):
                     problems.append(f"after_erase.txt reads {got!r}, the test wrote {expected_content!r}")
             except OSError as e:
                 problems.append(f"after_erase.txt: {e} (listing: {names})")
-            extra = [n for n in names if n not in ("after_erase.txt", "System Volume Information")]
+            extra = [n for n in names if n not in ("after_erase.txt", "System Volume Information", "lost+found")]
             if extra:
                 problems.append(f"files left over from before the erase: {extra}")
         finally:
@@ -264,7 +267,9 @@ def erase_main(slot, case_dir):
         what.append("old plaintext gone" if full else "quick (old data may remain)")
 
         if action == "format" and plain_case:
-            fs_img, label_want = snapshot, "OTGFAT32" if "fat32" in name else "OTGEXFAT"
+            # make_e2e_matrix.make_fs labels a volume OTG<FS>.
+            label_want = next(f"OTG{fs.upper()}" for fs in ("fat32", "exfat", "ext4", "ntfs") if fs in name)
+            fs_img = snapshot
             label = run("blkid", "-p", "-o", "value", "-s", "LABEL", fs_img).stdout.strip()
             if label != label_want:
                 problems.append(f"label {label!r} after Format, was {label_want!r}")
@@ -275,6 +280,16 @@ def erase_main(slot, case_dir):
             fs_img = os.path.join(work, "plain.img")
             vc_decrypt(snapshot, password, pim, fs_img)
             what.append("same VeraCrypt password opens it")
+        elif spec.get("type") == "luks2":
+            # cryptsetup unlocks the keyslot (it hands luks_payload.py the volume key); the
+            # data segment is then decrypted with Python's cryptography, not the app's code.
+            fs_img = os.path.join(work, "plain.img")
+            p = run(sys.executable, os.path.join(HERE, "luks_payload.py"), "decrypt", snapshot, spec["password"], fs_img)
+            if p.returncode != 0:
+                problems.append(f"cryptsetup could not open the new LUKS2 volume:\n{p.stdout}{p.stderr}")
+                fs_img = None
+            else:
+                what.append("cryptsetup opened the new LUKS2 keyslot, data decrypted in Python")
         elif spec.get("cipher") == "AES" and spec.get("hash") == "SHA-512":
             fs_img = os.path.join(work, "plain.img")
             vc_decrypt(snapshot, spec["password"], int(spec.get("pim", "0") or 0), fs_img)
@@ -289,8 +304,8 @@ def erase_main(slot, case_dir):
 
         if fs_img is not None:
             fs = fs_type(fs_img)
-            want_fs = {"exfat": "exfat", "fat32": "vfat"}.get(spec.get("fs", ""), None)
-            if action == "encrypt" and want_fs and fs != want_fs:
+            want_fs = {"exfat": "exfat", "fat32": "vfat", "ext4": "ext4", "ntfs": "ntfs"}.get(spec.get("fs", ""), None)
+            if want_fs and fs != want_fs:
                 problems.append(f"filesystem inside is {fs!r}, asked for {want_fs!r}")
             problems += check_structure(fs, fs_img)
             problems += check_erased_files(fs_img, expected)
@@ -339,6 +354,27 @@ def journal_main(slot, case_dir):
           f"revoked block untouched, after_repair.txt present")
 
 
+def backup_main(slot, case_dir):
+    """Browsing and mounting a backup must leave its drive exactly as it was."""
+    differing = 0
+    first = None
+    offset = 0
+    with open(os.path.join(case_dir, "test.img"), "rb") as want, open(slot, "rb") as got:
+        while chunk := want.read(1 << 20):
+            other = got.read(len(chunk))
+            if other != chunk:
+                for i, (a, b) in enumerate(zip(chunk, other)):
+                    if a != b:
+                        differing += 1
+                        if first is None:
+                            first = offset + i
+            offset += len(chunk)
+    if differing:
+        print(f"HOST CHECK FAILED: {differing} bytes differ from the fixture, first at {first}")
+        sys.exit(1)
+    print(f"HOST CHECK OK: all {offset} bytes of the drive as they were")
+
+
 def main():
     if len(sys.argv) != 3:
         raise SystemExit(__doc__)
@@ -347,6 +383,8 @@ def main():
         return erase_main(slot, case_dir)
     if os.path.exists(os.path.join(case_dir, "journal.txt")):
         return journal_main(slot, case_dir)
+    if os.path.exists(os.path.join(case_dir, "backup.txt")):
+        return backup_main(slot, case_dir)
     with tempfile.TemporaryDirectory() as work:
         snapshot = os.path.join(work, "slot.img")
         with open(slot, "rb") as src, open(snapshot, "wb") as dst:   # a stable copy

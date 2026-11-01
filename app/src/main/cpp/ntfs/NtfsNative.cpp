@@ -47,6 +47,9 @@ extern "C" {
 #include "unistr.h"
 #include "ntfstime.h"
 #include "logging.h"
+/* ntfs-3g/ntfsprogs/mkntfs.c built as a library (docs/VENDOR_FIXES.md N1). */
+int otg_mkntfs(struct ntfs_device_operations *ops, void *priv, long long num_sectors,
+               long sector_size, long long part_start, const char *label, long cluster_size);
 }
 
 #define LOG_TAG "ntfs-jni"
@@ -381,6 +384,41 @@ Java_app_fayaz_otgmaster_ntfs_NtfsNative_mount(JNIEnv *env, jobject, jobject blo
          vol->cluster_size, (long long) vol->free_clusters,
          NVolReadOnly(vol) ? " (read-only)" : "");
     return (jlong) h;
+}
+
+/*
+ * Writes an empty NTFS over the first sizeBytes of blockDevice with ntfs-3g's own mkntfs
+ * (quick format; the caller zeroes first for a full one). partStart is the boot sector's
+ * hidden-sectors field: the partition's first LBA, or 0 inside a container. Returns 0, or
+ * mkntfs's failure with its reason in the log.
+ */
+extern "C" JNIEXPORT jint JNICALL
+Java_app_fayaz_otgmaster_ntfs_NtfsNative_format(JNIEnv *env, jclass, jobject blockDevice,
+                                                jlong sizeBytes, jint sectorSize, jlong partStart,
+                                                jstring label, jint clusterSize) {
+    ntfs_log_set_handler(log_to_logcat);
+    ntfs_log_clear_levels(NTFS_LOG_LEVEL_INFO | NTFS_LOG_LEVEL_QUIET |
+                          NTFS_LOG_LEVEL_VERBOSE | NTFS_LOG_LEVEL_PROGRESS);
+    ntfs_log_set_levels(NTFS_LOG_LEVEL_WARNING | NTFS_LOG_LEVEL_ERROR |
+                        NTFS_LOG_LEVEL_PERROR | NTFS_LOG_LEVEL_CRITICAL);
+    struct otg_ntfs h = {};
+    env->GetJavaVM(&h.vm);
+    h.blockDevice = env->NewGlobalRef(blockDevice);
+    jclass cls = env->FindClass("app/fayaz/otgmaster/ntfs/NtfsNative");
+    h.nativeClass = (jclass) env->NewGlobalRef(cls);
+    env->DeleteLocalRef(cls);
+    h.preadId = env->GetStaticMethodID(h.nativeClass, "pread",
+            "(Lapp/fayaz/otgmaster/block/RawBlockDevice;JI[B)I");
+    h.pwriteId = env->GetStaticMethodID(h.nativeClass, "pwrite",
+            "(Lapp/fayaz/otgmaster/block/RawBlockDevice;JI[B)I");
+    h.size = sizeBytes;
+    const char *name = label ? env->GetStringUTFChars(label, nullptr) : nullptr;
+    int rc = otg_mkntfs(&otg_dev_ops, &h, (long long) (sizeBytes / sectorSize), sectorSize,
+                        (long long) partStart, name, clusterSize);
+    if (name) env->ReleaseStringUTFChars(label, name);
+    env->DeleteGlobalRef(h.blockDevice);
+    env->DeleteGlobalRef(h.nativeClass);
+    return rc;
 }
 
 extern "C" JNIEXPORT jint JNICALL

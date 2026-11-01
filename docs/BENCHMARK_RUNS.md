@@ -33,6 +33,91 @@ to a row here.
 
 ---
 
+## 2026-11-01 — A desktop restic repository on the Galaxy Tab A9+
+
+Not a benchmark. The `backup_mount` E2E case found that a compressed repository crashed the
+app, and the E2E emulators are x86-64, so the replacement decoder was checked on ARM.
+
+| Field | Value |
+|---|---|
+| Device | Samsung Galaxy Tab A9+ (SM-X210), Android 16 / One UI 8.0, arm64-v8a |
+| Commit | `b1eb85b` |
+| Repository | desktop restic 0.18.1, format 2, compression at its default; `restic check --read-data` clean before it was pushed |
+| Location | the tablet's internal storage, `Documents/otg_desktop_repo`, then removed |
+| Path | Browse for backup, the Files picker, a typed password, the card's Open Files App, Copy to… on the snapshot |
+| Result | Mounted read-only with no crash, card tagged ENCRYPTED and BACKUP. `big.bin` (12 MiB, random), `repeat.txt` (2.4 MB, compresses) and `sub/note.txt`, copied out by the Files app, match the source by SHA-256, 3 of 3 |
+| Mount time | about 9 s from Mount to the card, with no sign of progress but a disabled button |
+| Host `fsck` | not applicable: no USB volume in this run |
+
+The same day, with `b1eb85b`'s test on emulators: `backup_mount` passes with the host finding
+the drive byte for byte unchanged, and fails when either guarded bug is put back
+(`clearCallingIdentity` removed: the Files app does not list the snapshot; reads on the shared
+proxy thread: "Handler must be different from the current thread").
+
+## 2026-11-01 — Backup screens and mounted backups: D5/2 on the Galaxy Tab A9+
+
+Device: Samsung Galaxy Tab A9+ (SM-X210), Android 16 / One UI 8.0, over a USB-C hub with its
+power supply unplugged. Drive: D5/2 (PNY USB 3.2.1 FD, serial 071C48F5FB0EF455), p7 ext4 and
+p8 NTFS, plain. Not a benchmark run: the app's own screens, driven over adb, source folder of 5
+files (20.3 MiB random, a 0-byte file, a nested folder). Each build was committed, built and
+installed before its row. `4672e6d` was then amended to `1fbeeae`, which changes only the wording
+of the failure message: its APK is kept as `matrix/apk-050all-4672e6d.apk`.
+
+| APK | What ran | In-app | Checked |
+|---|---|---|---|
+| `426ad6b` | Incremental, phone folder → p7 | success, 4 files, 20.3 MB | below |
+| `426ad6b` | Mount the backup, open in Files | **"Can't load content"**; no card on the main screen | fixed in `b6dc2c5` |
+| `b6dc2c5` | Browse: p7 root, then p7/otgbk | "No backups found at this location."; mounted with the saved password | |
+| `b6dc2c5` | Copy a.bin out of the mount | **"Couldn't copy 1 item"**, sendfile EBADF | fixed in `b531eae` |
+| `b531eae` | The same copy | 20,971,520 bytes in about 3 s | SHA-256 equals the source |
+| `b531eae` | Unmount from the card | card gone | |
+| `b531eae` | Create schedule, swap, Plain, p7/otgbk → phone | success, 6 files | 5 of 5 hash-named files equal their SHA-256 |
+| `b531eae` | Check on the incremental job | Repository OK | |
+| `b531eae` | Back up now, 5 files in the source | **success, 0 files, 331 B: empty snapshot `089fe875`** | empty in the mount and in restic; see below |
+| `b531eae` | Plain again, phone target listed empty | failed, `provider created 'plainbk (1)'`; the stray folder was removed | the same fault |
+| `4672e6d` | Back up now, fault live, twice | failed, "listed no files", still 2 snapshots | the guard |
+| `4672e6d` | New job on the same folder, then the old job | success, 5 files each; old job 2.1 KB added | fault gone by 09:01 |
+| `1fbeeae` | After 15 idle minutes, screen on | success, 5 files, 0 B added | no fault |
+| `1fbeeae` | Restore newest → p7 | finished | 5 of 5 files equal the source, by SHA-256 |
+| `1fbeeae` | Browse a repository with no job | wrong password: "That password does not open this backup."; right one mounted | |
+| `1fbeeae` | Unplug with a backup mounted, Schedules on screen | backup, p7, p8 unmounted; Create schedule disabled, "No devices mounted to create a backup schedule" | |
+
+The fault: from 08:51 to 08:59 ExternalStorageProvider logged "Error in checking file equality
+check", NoSuchFileException: /storage/emulated, from isRestrictedPath, then FileSystemProvider
+"Queried directory ... is hidden", and returned an empty list with no error. The files were on
+disk and the folder grant intact. Force-stopping the provider did not clear it; the Files picker
+listed the same folder at 09:00; it was gone by 09:01. What starts and ends it is not known. A
+screen-off scheduled run was not tried.
+
+Host check afterwards (read-only; p7 mounted `ro,noload`): `verify_volume.sh` p7 e2fsck -fn CLEAN,
+p8 ntfsfix -n + ntfs_check CLEAN. `restic check --read-data` (0.18.1) no errors on both
+repositories (3 and 2 snapshots). `restic restore latest` on the laptop: 5 of 5 files equal the
+source. `089fe875` lists only its top folder. volume_baseline was not compared: these partitions
+were reformatted on 10-31 and have no baseline since.
+
+## 2026-10-31 — Format and Encrypt write ext4, NTFS and LUKS2: D5/2 on the Galaxy Tab A9+
+
+Device: Samsung Galaxy Tab A9+ (SM-X210), Android 16 / One UI 8.0, over a USB-C hub.
+Drive: D5/2 (PNY USB 3.2.1 FD, serial 071C48F5FB0EF455), its four 2 GiB Format/Encrypt
+partitions. APK `57df1d0` (the build the E2E run below used), installed before the run.
+Each operation was driven through the app's own screens (More actions → Format/Encrypt →
+ERASE), quick, then the new volume was opened in the Files app and a folder created on it.
+The encrypted ones were unlocked with the new password first and unmounted at the end; the
+plain ones were removed by unplugging. Host check afterwards with `verify_volume.sh` (read-only).
+
+| Partition | Before | Operation | In-app | Host check |
+|---|---|---|---|---|
+| p7 FMT_EXFAT | exFAT | Format → ext4, quick | mounted, `device_check_ext4` created | e2fsck -fn CLEAN, 12 inodes (11 reserved + the folder) |
+| p8 FMT_FAT32 | FAT32 | Format → NTFS, quick | mounted, `device_check_ntfs` created | ntfsfix -n + ntfs_check CLEAN |
+| p9 ENC_TO_EXFAT | FAT32 | Encrypt → LUKS2 (AES-XTS, Argon2id), ext4 inside, quick, 28 s | unlocked (Argon2id 10 s), `device_check_luks2` created | opened by cryptsetup/dm-crypt; e2fsck -fn CLEAN, 12 inodes |
+| p10 ENC_TO_FAT32 | exFAT | Encrypt → VeraCrypt AES / SHA-512, NTFS inside, quick, 61 s | unlocked, `device_check_vc_ntfs` created | opened by VeraCrypt (PIM 0); ntfsfix -n + ntfs_check CLEAN |
+
+E2E on the emulators at the same commit: `v0.4.2-73-g57df1d0`, 10 of 10 passed, 0 flaky,
+all host-verified — format_plain_ext4, format_plain_ntfs, encrypt_plain_ext4 (VeraCrypt +
+NTFS), encrypt_plain_ntfs (VeraCrypt + ext4), encrypt_luks2_ext4 (cryptsetup opened it),
+format_vc_exfat, encrypt_plain_exfat, m_luks1_exfat, m_luks2_ext4, m_luks2_4k_ntfs (the
+last three after LUKS2 unlocking moved to the vendored Argon2id).
+
 ## 2026-10-30 — another phone over MTP (M30 with the realme attached)
 
 Galaxy M30 (Android 10), the 0.5.0 build `b3b79f8`, then `a9fc0a2`, with a realme 8 (RMX3085, Android 13)

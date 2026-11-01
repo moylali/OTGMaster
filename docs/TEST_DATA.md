@@ -325,6 +325,34 @@ be seen taking Open, Unmount and More away. Its `disconnect.txt` runs
 - **Before every case** the runner plugs the drive back in if it is missing, so a
   disconnect case that fails half-way does not take the cases after it down too.
 
+## 6f. A repository made by desktop restic (E2E, no root)
+
+`scripts/make_backup_fixture.py` builds the `backup_mount` case with desktop `restic` (on
+`PATH`, in `~/.local/bin`, or named by `RESTIC`) and `udisksctl`. It is 64 MiB of plain FAT32
+holding `otg_backup_repo/`, a format 2 repository with two snapshots and compression at
+restic's default, and `not_a_backup/`, which has a file named `config` but no keys. The
+generator runs `restic check --read-data` on it before it goes on the image.
+
+```sh
+python3 scripts/make_backup_fixture.py      # writes test.img, password.txt, backup_expected.txt
+```
+
+- **The case files.** `backup.txt` runs `E2EAutomatedTest.runBackupCase` (from
+  `testMountUsbDrive`). `plain.txt` marks the drive as auto-mounting. `backup_expected.txt`
+  lists each snapshot's short id and each file's SHA-256, computed from the source tree, plus
+  one 1 MiB range of `big.bin` read from its middle.
+- **Not the app's backup.** No job of the app knows this repository, so the test reaches it
+  the way a user does: Browse for backup, the real Files picker, a typed password. Repositories
+  the app writes are uncompressed, so one of them could not have found the zstd crash that
+  this case found (`docs/VENDOR_FIXES.md`).
+- **In what order.** The Files app lists the backup before the test process reads it. The
+  snapshot list is cached once read, and the test process shares the app's identity, so a
+  read from the test first would hide a listing that fails for another app.
+- **What the host checks.** Reading a backup writes nothing, so `scripts/verify_e2e_volume.py`
+  (it sees `backup.txt`) requires the drive to match `test.img` byte for byte.
+- **Pulling the drive.** The case uses the same unplug and replug requests as `disconnect`
+  (§6d), to see the backup leave with its drive and Create schedule stop opening its form.
+
 ## 6e. An ext4 drive whose journal needs recovery (E2E, no root)
 
 The `ext4_journal` case is plain ext4, 64 MiB with 4 KiB blocks and the usual mount

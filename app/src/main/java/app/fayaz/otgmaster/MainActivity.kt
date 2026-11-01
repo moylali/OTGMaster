@@ -39,6 +39,8 @@ import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.KeyboardArrowDown
 import androidx.compose.material.icons.filled.KeyboardArrowUp
 import androidx.compose.material.icons.filled.Visibility
+import androidx.compose.ui.semantics.contentType
+import androidx.compose.material.icons.filled.Key
 import androidx.compose.material.icons.filled.VisibilityOff
 import androidx.compose.material.icons.filled.Delete
 import androidx.compose.material.icons.filled.ContentCopy
@@ -181,6 +183,18 @@ class MainActivity : AppCompatActivity() {
         const val EXTRA_DRIVE_ID = "app.fayaz.otgmaster.EXTRA_DRIVE_ID"
         private const val SHARE_TARGET_CATEGORY = "app.fayaz.otgmaster.category.SHARE_TARGET"
         private const val PREF_ASKED_NOTIFICATIONS = "asked_notification_permission"
+
+        /** When Android last started this activity for a USB plug-in (elapsedRealtime). */
+        @Volatile private var attachLaunchAt = 0L
+        /** An instance is started (visible); it hears plug-ins through usbReceiver. */
+        @Volatile private var started = false
+
+        /**
+         * Whether a plug-in at [pluggedAt] reached the app: Android started it for the drive (it
+         * is the default app; the start can come just before the broadcast), or it is on screen.
+         * [app.fayaz.otgmaster.usb.UsbPlugInReceiver] posts its notification when neither.
+         */
+        fun handledSince(pluggedAt: Long): Boolean = started || attachLaunchAt >= pluggedAt - 5_000
         private const val PREF_MANUALLY_UNMOUNTED = "manually_unmounted_devices"
         private const val PREF_LAST_BOOT_TIME = "last_boot_time_ms"
         private const val PREF_READ_ONLY_DEFAULT = "read_only_default"
@@ -267,23 +281,110 @@ class MainActivity : AppCompatActivity() {
     }
 
     /**
-     * Android 13+ shows an app's notifications only after it has asked. Asked once, when the
-     * first drive mounts, so MountedDriveService's notification can appear in the shade;
-     * declining changes nothing else (the service runs either way).
+     * Android 13+ shows an app's notifications only after it has asked. Asked once, before
+     * the first drive is opened, and nothing is mounted until it is answered: the mounted-
+     * drive notification, Format and Encrypt progress and backup reminders all need it.
+     * Either answer mounts; declining only hides those (the service runs either way), and
+     * the log says so, so a report shows it.
      */
     private val notificationPermission = registerForActivityResult(
         androidx.activity.result.contract.ActivityResultContracts.RequestPermission()
-    ) { granted -> android.util.Log.i("OTGMaster", "notification permission granted=$granted") }
-
-    private fun askForNotificationsOnce() {
-        if (Build.VERSION.SDK_INT < 33) return
-        if (checkSelfPermission(android.Manifest.permission.POST_NOTIFICATIONS) ==
-            android.content.pm.PackageManager.PERMISSION_GRANTED) return
-        val prefs = getSharedPreferences("otgmaster_prefs", Context.MODE_PRIVATE)
-        if (prefs.getBoolean(PREF_ASKED_NOTIFICATIONS, false)) return
-        prefs.edit().putBoolean(PREF_ASKED_NOTIFICATIONS, true).apply()
-        notificationPermission.launch(android.Manifest.permission.POST_NOTIFICATIONS)
+    ) { granted ->
+        notificationAskOpen = false
+        // Android answers "not granted" also when the question was closed unanswered: a drive
+        // plugged in at the lock screen starts this activity again, which dismissed it on a
+        // Pixel 7 Pro, and the app then took it as a refusal and never asked again. A real
+        // refusal makes the rationale flag true; a dismissal leaves it false. Asked again
+        // once per run at most, so a refusal fixed in Settings (also false) cannot loop.
+        if (!granted && Build.VERSION.SDK_INT >= 33 && !notificationAskRetried &&
+            !shouldShowRequestPermissionRationale(android.Manifest.permission.POST_NOTIFICATIONS)) {
+            notificationAskRetried = true
+            getSharedPreferences("otgmaster_prefs", Context.MODE_PRIVATE).edit()
+                .putBoolean(PREF_ASKED_NOTIFICATIONS, false).apply()
+            appendLog(getString(R.string.log_notifications_unanswered))
+        } else {
+            appendLog(getString(if (granted) R.string.log_notifications_allowed else R.string.log_notifications_off))
+            notificationsOffLogged = !granted
+            if (!granted) showNotificationsToast()
+        }
+        refreshDevices()
     }
+    private var notificationAskRetried = false
+
+    /**
+     * True if the question was put now; [refreshDevices] runs again once it is answered.
+     *
+     * Asked at every plug-in (and at app start with a drive attached) while notifications are
+     * off, not once ever: the user wants it in front of them each time they mount. Android
+     * stops showing its own dialog after two refusals, or once they are turned off in
+     * Settings (realme 8: granted=false, USER_SET, and the request returns at once), so then
+     * Allow in the app's own dialog opens OTG Master's notification settings instead. Either
+     * answer mounts, and the same plug-in is not asked twice.
+     */
+    private fun askForNotificationsFirst(): Boolean {
+        if (Build.VERSION.SDK_INT < 33) return false
+        if (checkSelfPermission(android.Manifest.permission.POST_NOTIFICATIONS) ==
+            android.content.pm.PackageManager.PERMISSION_GRANTED) return false
+        // Still on screen, or dismissed and not yet reported back: the answer runs the refresh.
+        if (notificationAskOpen) return true
+        if (notificationAskedThisPlugIn) {
+            if (!notificationsOffLogged) appendLog(getString(R.string.log_notifications_off))
+            notificationsOffLogged = true
+            return false
+        }
+        notificationAskedThisPlugIn = true
+        notificationAskOpen = true
+        // Android's dialog text cannot be changed ("Allow OTG Master to send you
+        // notifications?"), so the app's own dialog comes first and says why; its Allow then
+        // brings up Android's, or Settings once Android no longer shows one.
+        val askedBefore = getSharedPreferences("otgmaster_prefs", Context.MODE_PRIVATE)
+            .getBoolean(PREF_ASKED_NOTIFICATIONS, false)
+        notificationPromptNeedsSettings.value = askedBefore &&
+            !shouldShowRequestPermissionRationale(android.Manifest.permission.POST_NOTIFICATIONS)
+        notificationSettingsPrompt.value = true
+        return true
+    }
+
+    /**
+     * Says what declining costs, after a refusal only (the user's call, 2026-10-31): shown
+     * alongside the question it competed with the dialog, and a user who allows needs no reason.
+     */
+    private fun showNotificationsToast() =
+        android.widget.Toast.makeText(this, R.string.notifications_toast, android.widget.Toast.LENGTH_LONG).show()
+
+    /** The app's own notifications question, which explains why before Android's dialog. */
+    private val notificationSettingsPrompt = mutableStateOf(false)
+    /** Android will not show its dialog again (asked before, no rationale): Allow opens Settings. */
+    private val notificationPromptNeedsSettings = mutableStateOf(false)
+    /** Reset by each plug-in: one question per plug-in, whatever the answer. */
+    private var notificationAskedThisPlugIn = false
+
+    private fun answerNotificationSettingsPrompt(openSettings: Boolean) {
+        notificationSettingsPrompt.value = false
+        notificationAskOpen = false
+        if (openSettings && !notificationPromptNeedsSettings.value) {
+            getSharedPreferences("otgmaster_prefs", Context.MODE_PRIVATE).edit()
+                .putBoolean(PREF_ASKED_NOTIFICATIONS, true).apply()
+            notificationAskOpen = true
+            notificationPermission.launch(android.Manifest.permission.POST_NOTIFICATIONS)
+            return
+        } else if (openSettings) {
+            appendLog(getString(R.string.log_notifications_settings_opened))
+            runCatching {
+                startActivity(Intent(android.provider.Settings.ACTION_APP_NOTIFICATION_SETTINGS)
+                    .putExtra(android.provider.Settings.EXTRA_APP_PACKAGE, packageName))
+            }.onFailure { OtgMasterState.logFailure("notifications", "Could not open the notification settings", it) }
+        } else {
+            appendLog(getString(R.string.log_notifications_off))
+            showNotificationsToast()
+            notificationsOffLogged = true
+        }
+        // Mounts now, or (Settings in front) when this activity is back on screen.
+        refreshDevices()
+    }
+
+    private var notificationsOffLogged = false
+    private var notificationAskOpen = false
 
     private val permissionIntent: PendingIntent by lazy {
         val flags = PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_MUTABLE
@@ -297,23 +398,34 @@ class MainActivity : AppCompatActivity() {
                 REQUEST_USB_PERMISSION -> {
                     val device = intent.getParcelableExtraCompat<UsbDevice>(UsbManager.EXTRA_DEVICE)
                     val granted = intent.getBooleanExtra(UsbManager.EXTRA_PERMISSION_GRANTED, false)
+                    val waited = device?.let { secondsSince(permissionAskedAt.remove(it.deviceName)) }
                     if (device != null && granted) {
-                        appendLog(getString(R.string.log_usb_permission_granted, device.deviceName))
+                        appendLog(getString(R.string.log_usb_permission_granted, device.deviceName) +
+                            (waited?.let { " " + getString(R.string.log_usb_permission_after, it) } ?: ""))
                         // A phone or camera goes to the MTP path, not the USB-drive one.
                         if (app.fayaz.otgmaster.mtp.MtpSession.isMtpDevice(device) && !UsbDeviceDescriber.isMassStorageDevice(device)) {
                             mountMtpDevices(listOf(device), OtgMasterState.mountedDrives.mapNotNull { it.sourceDeviceName }.toSet())
                         } else openAndProbeUsb()
                     } else {
-                        appendLog(getString(R.string.log_usb_permission_denied))
+                        appendLog(getString(R.string.log_usb_permission_denied_for,
+                            device?.let { UsbDeviceDescriber.friendlyName(it, 0) } ?: "the USB device", waited ?: 0L))
                     }
                 }
+                // Unlocked: a refresh deferred at the lock screen runs now (see onWindowFocusChanged).
+                Intent.ACTION_USER_PRESENT -> if (refreshWaitsForScreen) refreshDevices()
                 UsbManager.ACTION_USB_DEVICE_ATTACHED -> {
                     scanFoundNoDrive.value = false
+                    notificationAskedThisPlugIn = false
+                    notificationsOffLogged = false
                     appendLog(getString(R.string.log_usb_device_attached))
                     refreshDevices()
                 }
                 UsbManager.ACTION_USB_DEVICE_DETACHED -> {
                     val detached = intent.getParcelableExtraCompat<UsbDevice>(UsbManager.EXTRA_DEVICE)
+                    // Unplugged with its permission prompt still unanswered: say so, once.
+                    detached?.let { d -> permissionAskedAt.remove(d.deviceName)?.let { t ->
+                        appendLog(getString(R.string.log_usb_permission_unanswered, UsbDeviceDescriber.friendlyName(d, 0), secondsSince(t) ?: 0L))
+                    } }
                     if (detached != null) {
                         // At detach time, device.serialNumber often throws (device is gone), so
                         // stableKey falls back to the bus path. Keys stored at mount time likely
@@ -342,8 +454,22 @@ class MainActivity : AppCompatActivity() {
         }
     }
 
+    /** This instance closed itself in onCreate, before registering anything; see there. */
+    private var duplicate = false
+
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
+        if (intent?.action == UsbManager.ACTION_USB_DEVICE_ATTACHED) attachLaunchAt = android.os.SystemClock.elapsedRealtime()
+        // A USB attach starts this activity singleTop, which reuses it only when it is on top.
+        // With the notifications question above it, Android made a second MainActivity over
+        // the first (Pixel 7 Pro, Android 17): the second mounted while the first still waited
+        // for the answer, and the question stayed buried under it. A file picker above it does
+        // the same. The first instance hears the attach through usbReceiver, so this one closes.
+        if (!isTaskRoot && intent?.action == UsbManager.ACTION_USB_DEVICE_ATTACHED) {
+            duplicate = true
+            finish()
+            return
+        }
         // Before the first frame, so it is laid out edge-to-edge from the start; the icon
         // colours follow the in-app theme once it is read (applySystemBarAppearance).
         enableEdgeToEdge()
@@ -363,7 +489,6 @@ class MainActivity : AppCompatActivity() {
         // Keeps the process unfrozen while anything is mounted (MountedDriveService).
         OtgMasterState.onMountedChanged = { drives ->
             MountedDriveService.update(applicationContext, drives.map(::driveTitle))
-            if (drives.size == 1) runOnUiThread { if (!isFinishing) askForNotificationsOnce() }
             app.fayaz.otgmaster.provider.VeraCryptDocumentProvider
                 .revokeExtendedGrants(applicationContext, drives.map { it.id }.toSet())
         }
@@ -479,6 +604,26 @@ class MainActivity : AppCompatActivity() {
                     modifier = Modifier.fillMaxSize(),
                     color = MaterialTheme.colorScheme.background
                 ) {
+                    if (notificationSettingsPrompt.value) {
+                        androidx.compose.material3.AlertDialog(
+                            onDismissRequest = { answerNotificationSettingsPrompt(false) },
+                            title = { Text(stringResource(R.string.notifications_prompt_title)) },
+                            text = { Text(stringResource(R.string.notifications_prompt_text)) },
+                            confirmButton = {
+                                androidx.compose.material3.TextButton(onClick = { answerNotificationSettingsPrompt(true) },
+                                    modifier = Modifier.semantics { contentDescription = "notifications_open_settings" }) {
+                                    Text(stringResource(if (notificationPromptNeedsSettings.value)
+                                        R.string.notifications_prompt_open else R.string.notifications_prompt_allow))
+                                }
+                            },
+                            dismissButton = {
+                                androidx.compose.material3.TextButton(onClick = { answerNotificationSettingsPrompt(false) },
+                                    modifier = Modifier.semantics { contentDescription = "notifications_not_now" }) {
+                                    Text(stringResource(R.string.notifications_prompt_not_now))
+                                }
+                            },
+                        )
+                    }
                     OtgMasterApp(
                         deviceCandidates = _deviceCandidates.value,
                         mountedDrives = mountedDrivesState.value,
@@ -578,13 +723,30 @@ class MainActivity : AppCompatActivity() {
         super.onNewIntent(intent)
         setIntent(intent)
         if (intent.action == UsbManager.ACTION_USB_DEVICE_ATTACHED) {
+            attachLaunchAt = android.os.SystemClock.elapsedRealtime()
+            notificationAskedThisPlugIn = false
+            notificationsOffLogged = false
             refreshDevices()
         }
         handleShareIntent(intent)
     }
 
+    override fun onStart() {
+        super.onStart()
+        started = true
+    }
+
+    override fun onStop() {
+        started = false
+        super.onStop()
+    }
+
     override fun onResume() {
         super.onResume()
+        // On screen: a plug-in notice has done its job, whichever way the user got here.
+        app.fayaz.otgmaster.usb.UsbPlugInReceiver.cancel(this)
+        // Manage backups, on top of this screen, mounts and unmounts backups: show their cards.
+        updateMountedDrives()
         // Backstop for a prompt that never delivered a callback — most often because the
         // screen locked while it was up, which dismisses it silently. Once we are resumed
         // there is nothing left to hide the form behind, so clear the flag and put the
@@ -592,6 +754,12 @@ class MainActivity : AppCompatActivity() {
         // was avoiding; not restoring leaves the form permanently missing.
         isAutoMountPromptShowing = false
         restoreDeferredCandidates()
+        if (refreshWaitsForScreen) refreshDevices()
+        // Drives mounted without the service (Android refused it, on an OEM's rules or a race
+        // with the lock screen): on screen is when Android allows it, so ask again.
+        if (OtgMasterState.mountedDrives.isNotEmpty() && !MountedDriveService.isRunning) {
+            MountedDriveService.update(applicationContext, OtgMasterState.mountedDrives.map(::driveTitle))
+        }
     }
 
     // The handlers this instance installed, so onDestroy can tell them apart from a
@@ -602,6 +770,7 @@ class MainActivity : AppCompatActivity() {
     private var installedLogSink: ((String) -> Unit)? = null
 
     override fun onDestroy() {
+        if (duplicate) { super.onDestroy(); return }
         // Clear only what *this* instance installed. Nulling unconditionally let a
         // finishing instance wipe the handlers its replacement had already
         // installed, because onCreate of the new one can run before onDestroy of
@@ -655,6 +824,7 @@ class MainActivity : AppCompatActivity() {
             addAction(REQUEST_USB_PERMISSION)
             addAction(UsbManager.ACTION_USB_DEVICE_ATTACHED)
             addAction(UsbManager.ACTION_USB_DEVICE_DETACHED)
+            addAction(Intent.ACTION_USER_PRESENT)
         }
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
             registerReceiver(usbReceiver, filter, RECEIVER_NOT_EXPORTED)
@@ -718,7 +888,45 @@ class MainActivity : AppCompatActivity() {
         })
     }
 
+    /**
+     * A drive plugged in while the phone is locked, or while this app is behind another, is
+     * opened only once the app is on screen again.
+     *
+     * Android lets [MountedDriveService] start only while the app is visible. Mounting at the
+     * lock screen left the drive with no service ("startForegroundService() not allowed",
+     * Pixel 7 Pro, Android 17), nothing started it later, and Android then froze the process
+     * 30 s after the user went to the Files app, stalling reads from open files. A locked
+     * phone cannot use the files anyway, so waiting costs nothing.
+     */
+    private var refreshWaitsForScreen = false
+
+    /**
+     * onResume alone missed the unlock: on a realme 8 (ColorOS, Android 13) the activity
+     * resumed at 13:07:44.99 while the lock screen was still going away (keyguardDone at
+     * 45.03), so [onScreen] said locked, the refresh waited again, and nothing ran it until
+     * the user tapped Scan USB. Window focus comes once the lock screen is gone (45.42 there),
+     * and ACTION_USER_PRESENT backs it up.
+     */
+    override fun onWindowFocusChanged(hasFocus: Boolean) {
+        super.onWindowFocusChanged(hasFocus)
+        if (hasFocus && refreshWaitsForScreen) refreshDevices()
+    }
+
+    private fun onScreen(): Boolean =
+        lifecycle.currentState.isAtLeast(androidx.lifecycle.Lifecycle.State.STARTED) &&
+            getSystemService(android.app.KeyguardManager::class.java)?.isKeyguardLocked != true
+
     private fun refreshDevices() {
+        if (!onScreen()) {
+            // onCreate's own call lands here too; onResume runs it, so it says nothing.
+            if (!refreshWaitsForScreen && lifecycle.currentState != androidx.lifecycle.Lifecycle.State.INITIALIZED) {
+                appendLog(getString(R.string.log_usb_waits_for_screen))
+            }
+            refreshWaitsForScreen = true
+            return
+        }
+        refreshWaitsForScreen = false
+        if (usbDeviceProvider.getDevices().isNotEmpty() && askForNotificationsFirst()) return
         val devices = usbDeviceProvider.getDevices()
         appendLog(getString(R.string.log_found_usb_devices, devices.size))
 
@@ -786,11 +994,32 @@ class MainActivity : AppCompatActivity() {
 
         val deviceNeedingPermission = candidateDevices.firstOrNull { !usbDeviceProvider.hasPermission(it) }
         if (deviceNeedingPermission != null) {
-            usbDeviceProvider.requestPermission(deviceNeedingPermission, permissionIntent)
-            appendLog(getString(R.string.log_requested_usb_permission))
+            requestUsbPermission(deviceNeedingPermission)
         } else {
             openAndProbeUsb()
         }
+    }
+
+    /** When permission was first asked for each device (by its bus path), until Android answers. */
+    private val permissionAskedAt = java.util.concurrent.ConcurrentHashMap<String, Long>()
+
+    private fun secondsSince(t: Long?) = t?.let { (System.currentTimeMillis() - it + 500) / 1000 }
+
+    /**
+     * Asks for USB permission, and says in the log what is still pending. A report used to
+     * show "Requested USB permission…" and then nothing, which cannot tell a prompt never
+     * answered from one answered late, or from a phone that never showed it.
+     */
+    private fun requestUsbPermission(d: UsbDevice) {
+        val name = UsbDeviceDescriber.friendlyName(d, 0)
+        val asked = permissionAskedAt[d.deviceName]
+        if (asked == null) {
+            permissionAskedAt[d.deviceName] = System.currentTimeMillis()
+            appendLog(getString(R.string.log_requested_usb_permission_for, name))
+        } else {
+            appendLog(getString(R.string.log_usb_permission_still_waiting, name, secondsSince(asked) ?: 0L))
+        }
+        usbDeviceProvider.requestPermission(d, permissionIntent)
     }
 
     /** MTP devices being opened, so a second scan does not open one twice. */
@@ -810,8 +1039,7 @@ class MainActivity : AppCompatActivity() {
             if (key in mountedKeys || !mtpInFlight.add(key)) continue
             if (!has) {
                 mtpInFlight.remove(key)
-                usbDeviceProvider.requestPermission(d, permissionIntent)
-                appendLog(getString(R.string.log_requested_usb_permission))
+                requestUsbPermission(d)
                 return
             }
             lifecycleScope.launch(Dispatchers.IO) {
@@ -1472,6 +1700,9 @@ class MainActivity : AppCompatActivity() {
         drive.sourceDeviceName?.let { key ->
             pendingUnmounts.merge(key, 1) { a, b -> a + b }
         }
+        // A backup mounted from a repository on this drive cannot outlive it.
+        app.fayaz.otgmaster.backup.BackupMounts.dependents(drive.id).forEach { unmountDrive(it, disconnected = disconnected) }
+        app.fayaz.otgmaster.backup.BackupMounts.forget(drive.id)
         OtgMasterState.unmountsInFlight.incrementAndGet()
         val t0 = System.currentTimeMillis()
         OtgMasterState.removeDrive(drive.id)
@@ -1601,7 +1832,7 @@ class MainActivity : AppCompatActivity() {
         drive.isReadOnly -> getString(R.string.action_unavailable_read_only)
         drive.sourceVolumeCandidate?.containerType == app.fayaz.otgmaster.veracrypt.ContainerType.BITLOCKER ->
             getString(R.string.format_unavailable_fs, "BitLocker")
-        drive.filesystemName != "FAT32" && drive.filesystemName != "exFAT" ->
+        drive.filesystemName !in setOf("FAT32", "exFAT", "ext2", "ext3", "ext4", "NTFS") ->
             getString(R.string.format_unavailable_fs, drive.filesystemName)
         drive.blockDevice == null -> getString(R.string.encrypt_unavailable_bounds)
         else -> null
@@ -1738,7 +1969,10 @@ class MainActivity : AppCompatActivity() {
                 // Read before anything is touched: a volume the formatter cannot lay out
                 // again is refused with its files intact.
                 val existing = deviceMutex.withLock {
-                    app.fayaz.otgmaster.format.DriveFormatter.readExisting(device, label)
+                    // A plain partition's boot sector records where it starts; ext4 has no
+                    // such field, so a change to FAT32 or NTFS takes it from the partition table.
+                    app.fayaz.otgmaster.format.DriveFormatter.readExisting(device, label,
+                        partitionStart = if (drive.isPlain) drive.partitionStartBlock ?: 0 else 0)
                 }.copy(label = req.label)
                 val target = req.filesystem
                 detachForErase(drive)
@@ -1771,8 +2005,9 @@ class MainActivity : AppCompatActivity() {
     }
 
     /**
-     * Encrypt: a new VeraCrypt volume over the whole partition, holding a new exFAT or
-     * FAT32, mounted in the old volume's place. Erases the partition.
+     * Encrypt: a new VeraCrypt or LUKS2 volume over the whole partition, holding a new
+     * exFAT, FAT32, ext4 or NTFS, offered for unlock in the old volume's place. Erases the
+     * partition.
      */
     private fun encryptDrive(drive: MountedDrive, req: app.fayaz.otgmaster.ui.EncryptRequest) {
         val title = getString(R.string.operation_encrypt_title, drive.partitionLabel.ifEmpty { drive.name })
@@ -1782,8 +2017,14 @@ class MainActivity : AppCompatActivity() {
         val deviceKey = drive.sourceDeviceName
         driveOperation.value = app.fayaz.otgmaster.ui.DriveOperation(title, getString(R.string.operation_unmounting), null)
         window.addFlags(android.view.WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON)
-        appendLog(getString(R.string.log_encrypt_started, drive.name, req.cipher.displayName, req.hash.displayName,
+        val luks2 = req.type == app.fayaz.otgmaster.ui.EncryptionType.LUKS2
+        // What the volume is encrypted with, as the log and the result say it.
+        val cipherName = if (luks2) "LUKS2 AES-XTS" else req.cipher.displayName
+        val kdfName = if (luks2) "Argon2id" else req.hash.displayName
+        appendLog(getString(R.string.log_encrypt_started, drive.name, cipherName, kdfName,
             req.filesystem.displayName, if (req.full) "full" else "quick"))
+        // Taken before the volume is created: the request's password is wiped afterwards.
+        val passwordToSave = if (req.saveToPasswordManager) String(req.password) else null
         lifecycleScope.launch(Dispatchers.IO) {
             val t0 = System.currentTimeMillis()
             try {
@@ -1794,15 +2035,22 @@ class MainActivity : AppCompatActivity() {
                 val slice = app.fayaz.otgmaster.block.SlicedBlockDevice(raw, start, count)
                 val partition = object : RawBlockDevice by slice { override fun close() {} }
                 val volume = deviceMutex.withLock {
-                    app.fayaz.otgmaster.format.DriveFormatter.encrypt(partition, req.password, req.pim,
-                        req.cipher, req.hash, req.filesystem, req.label, req.full, progressFor(title),
-                        keyfiles = req.keyfiles.map { uri -> { contentResolver.openInputStream(uri) } })
+                    if (luks2) {
+                        app.fayaz.otgmaster.format.DriveFormatter.encryptLuks2(partition, req.password.copyOf(),
+                            req.filesystem, req.label, req.full, progressFor(title))
+                    } else {
+                        app.fayaz.otgmaster.format.DriveFormatter.encrypt(partition, req.password, req.pim,
+                            req.cipher, req.hash, req.filesystem, req.label, req.full, progressFor(title),
+                            keyfiles = req.keyfiles.map { uri -> { contentResolver.openInputStream(uri) } })
+                    }
                 }
-                // Any credentials saved for the old volume would now only fail.
+                // Any credentials saved for the old volume would now only fail. Only this
+                // partition's: the device's other partitions keep theirs, and the session
+                // entry is dropped only when it is this partition's (it holds one per device).
                 if (deviceKey != null) {
                     withContext(Dispatchers.Main) {
                         credentialStore.deletePartition(deviceKey, start)
-                        sessionPlaintextCreds.remove(deviceKey)
+                        if (sessionPlaintextCreds[deviceKey]?.candidateStartBlock == start) sessionPlaintextCreds.remove(deviceKey)
                     }
                 }
                 // Not mounted with the key still in memory. The new volume goes to the unlock
@@ -1812,13 +2060,27 @@ class MainActivity : AppCompatActivity() {
                 // had kept would not open it.
                 volume.close() // wipes the master key; the USB connection stays open
                 val candidate = VolumeCandidate(drive.partitionLabel, start, count,
-                    app.fayaz.otgmaster.veracrypt.ContainerType.VERACRYPT)
+                    if (luks2) app.fayaz.otgmaster.veracrypt.ContainerType.LUKS2
+                    else app.fayaz.otgmaster.veracrypt.ContainerType.VERACRYPT)
                 val secs = ((System.currentTimeMillis() - t0) / 1000).toInt()
+                if (req.saveToPasswordManager && passwordToSave != null) {
+                    // The username is the device and the partition, nothing else (decided
+                    // 10-30): it is what the user sees in the manager and picks in its chooser.
+                    // The rest (PIM, keyfiles, cipher) is theirs to remember.
+                    val device = drive.sourceDeviceDisplayName ?: drive.name
+                    val id = listOf(device, drive.partitionLabel).filter { it.isNotBlank() }.joinToString(" · ")
+                    val saved = withContext(Dispatchers.Main) {
+                        app.fayaz.otgmaster.security.PasswordManager.save(this@MainActivity, id, passwordToSave)
+                    }
+                    withContext(Dispatchers.Main) {
+                        appendLog(getString(if (saved) R.string.log_password_manager_saved else R.string.log_password_manager_not_saved, id))
+                    }
+                }
                 withContext(Dispatchers.Main) {
                     offerForUnlock(drive, raw, candidate)
                     appendLog(getString(R.string.log_encrypt_done, drive.name, secs))
                     driveOperation.value = app.fayaz.otgmaster.ui.DriveOperation(title,
-                        getString(R.string.operation_encrypt_done, req.cipher.displayName, req.hash.displayName,
+                        getString(R.string.operation_encrypt_done, cipherName, kdfName,
                             req.filesystem.displayName), 1f, finished = true)
                 }
             } catch (e: Exception) {
@@ -2684,6 +2946,35 @@ fun OtgMasterApp(
             ) {
                 Text(stringResource(R.string.scan_usb_devices))
             }
+            // Every backup, whichever drives it uses. The button opens into its three parts,
+            // each going straight to that tab of BackupsActivity.
+            val context = androidx.compose.ui.platform.LocalContext.current
+            var backupsOpen by remember { mutableStateOf(false) }
+            Spacer(modifier = Modifier.height(8.dp))
+            Button(
+                onClick = { backupsOpen = !backupsOpen },
+                modifier = Modifier.fillMaxWidth().semantics { contentDescription = "manage_backups_button" },
+            ) {
+                Text(stringResource(R.string.backups_manage_link))
+                Icon(if (backupsOpen) Icons.Default.KeyboardArrowUp else Icons.Default.KeyboardArrowDown, contentDescription = null)
+            }
+            AnimatedVisibility(visible = backupsOpen) {
+                Row(Modifier.fillMaxWidth().padding(top = 8.dp), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                    listOf(
+                        Triple(app.fayaz.otgmaster.ui.BackupsActivity.TAB_SCHEDULES, R.string.backups_tab_schedules, "backups_open_schedules"),
+                        Triple(app.fayaz.otgmaster.ui.BackupsActivity.TAB_HISTORY, R.string.backups_tab_history, "backups_open_history"),
+                        Triple(app.fayaz.otgmaster.ui.BackupsActivity.TAB_MOUNT, R.string.backups_tab_mount, "backups_open_mount"),
+                    ).forEach { (tab, label, id) ->
+                        OutlinedButton(
+                            onClick = {
+                                context.startActivity(Intent(context, app.fayaz.otgmaster.ui.BackupsActivity::class.java)
+                                    .putExtra(app.fayaz.otgmaster.ui.BackupsActivity.EXTRA_TAB, tab))
+                            },
+                            modifier = Modifier.weight(1f).semantics { contentDescription = id },
+                        ) { Text(stringResource(label), maxLines = 1, softWrap = false) }
+                    }
+                }
+            }
         }
         val mountedSection: @Composable (alwaysShowTitle: Boolean) -> Unit = { alwaysShowTitle ->
             if (mountedDrives.isNotEmpty() || disconnectedDrives.isNotEmpty() || alwaysShowTitle) {
@@ -2718,8 +3009,10 @@ fun OtgMasterApp(
                             // minutes, and ext4 reads its superblock from the drive. Read here, a
                             // 2.2 GB write to an NTFS volume on a Pixel 7 Pro made the app "not
                             // responding" at the first touch. Until the first read, no bar.
+                            val isBackup = drive.fileSystem is app.fayaz.otgmaster.backup.restic.ResticFileSystem
+                            // A mounted backup has no capacity of its own: space stays null.
                             val space by produceState<Pair<Long, Long>?>(null, drive.id) {
-                                while (true) {
+                                while (!isBackup) {
                                     value = withContext(Dispatchers.IO) {
                                         runCatching { drive.fileSystem.capacity to drive.fileSystem.freeSpace }.getOrNull()
                                     } ?: value
@@ -2733,7 +3026,9 @@ fun OtgMasterApp(
 
                             // Encryption + filesystem tags
                             Row(horizontalArrangement = Arrangement.spacedBy(6.dp)) {
-                                val encTag = encryptionTag(drive.sourceVolumeCandidate?.containerType)
+                                // A mounted backup has no candidate behind it, and is encrypted.
+                                val encTag = if (isBackup) Pair("ENCRYPTED", Color(0xFF2E7D32))
+                                    else encryptionTag(drive.sourceVolumeCandidate?.containerType)
                                 DriveTag(label = encTag.first, color = encTag.second)
 
                                 if (drive.filesystemName.isNotEmpty()) {
@@ -2803,14 +3098,15 @@ fun OtgMasterApp(
                                         add(app.fayaz.otgmaster.ui.DriveAction("unmount_button", stringResource(R.string.unmount)) { onUnmount(drive) })
                                     }
                                 },
-                                // A phone or camera over MTP is read-only: browsing is all there is.
-                                secondary = if (drive.fileSystem is app.fayaz.otgmaster.mtp.MtpStorageFileSystem) emptyList() else buildList {
+                                // A phone or camera over MTP, or a mounted backup, is read-only: browsing is all there is.
+                                secondary = if (drive.fileSystem is app.fayaz.otgmaster.mtp.MtpStorageFileSystem ||
+                                    drive.fileSystem is app.fayaz.otgmaster.backup.restic.ResticFileSystem) emptyList() else buildList {
                                     add(app.fayaz.otgmaster.ui.DriveAction("format_action", stringResource(R.string.format_drive_menu),
                                         formatUnavailable(drive)) { formatTarget = drive })
                                     add(app.fayaz.otgmaster.ui.DriveAction("encrypt_action", stringResource(R.string.encrypt_drive_menu),
                                         encryptUnavailable(drive)) { encryptTarget = drive })
-                                    add(app.fayaz.otgmaster.ui.DriveAction("backup_action", stringResource(R.string.backup_action),
-                                        if (drive.isReadOnly) stringResource(R.string.backup_read_only) else null) { backupTarget = drive })
+                                    // Offered on a read-only drive too: it can be the source.
+                                    add(app.fayaz.otgmaster.ui.DriveAction("backup_action", stringResource(R.string.backup_action)) { backupTarget = drive })
                                     add(app.fayaz.otgmaster.ui.DriveAction("recovery_action", stringResource(R.string.recovery_action),
                                         app.fayaz.otgmaster.ui.recoveryUnavailable(drive, stringResource(R.string.recovery_not_supported))) { recoveryTarget = drive })
                                     val driveJobs = app.fayaz.otgmaster.ui.jobsForDrive(backupJobs, drive.id)
@@ -2917,12 +3213,17 @@ fun OtgMasterApp(
                 .semantics { testTagsAsResourceId = true }
                 .padding(paddingValues)
                 .consumeWindowInsets(paddingValues)
-                .imePadding()
         ) {
             // Two panes on a tablet, or a phone-sized window in landscape wide enough
             // for both: the unlock form on the left, what is mounted on the right, so a
             // mount is seen landing without scrolling past the form.
+            //
+            // Measured without the keyboard: with imePadding outside, a Galaxy Tab A9+ in
+            // portrait (800×1280 dp) became wider than tall when the keyboard opened for the
+            // password, switched to two panes, rebuilt the form (typed text gone, keyboard
+            // closed), and switched back.
             val twoPane = maxWidth >= 840.dp || (maxWidth > maxHeight && maxWidth >= 600.dp)
+            Box(modifier = Modifier.fillMaxSize().imePadding()) {
             if (twoPane) {
                 Row(
                     modifier = Modifier.fillMaxSize().padding(16.dp),
@@ -2956,6 +3257,7 @@ fun OtgMasterApp(
                     unlockSection()
                     logsSection()
                 }
+            }
             }
         }
     }
@@ -3058,6 +3360,7 @@ fun VeraCryptMountSection(
     var hashExpanded by remember { mutableStateOf(false) }
     val focusManager = androidx.compose.ui.platform.LocalFocusManager.current
     val context = androidx.compose.ui.platform.LocalContext.current
+    val passwordManagerScope = androidx.compose.runtime.rememberCoroutineScope()
 
     val keyfileLauncher = rememberLauncherForActivityResult(
         contract = ActivityResultContracts.OpenMultipleDocuments()
@@ -3101,7 +3404,7 @@ fun VeraCryptMountSection(
                         label = { Text(stringResource(R.string.label_usb_drive)) },
                         trailingIcon = { ExposedDropdownMenuDefaults.TrailingIcon(expanded = deviceExpanded) },
                         colors = ExposedDropdownMenuDefaults.outlinedTextFieldColors(),
-                        modifier = Modifier.menuAnchor().fillMaxWidth().semantics { contentDescription = "device_picker" }
+                        modifier = Modifier.menuAnchor(androidx.compose.material3.MenuAnchorType.PrimaryNotEditable).fillMaxWidth().semantics { contentDescription = "device_picker" }
                     )
                     ExposedDropdownMenu(
                         expanded = deviceExpanded,
@@ -3159,7 +3462,7 @@ fun VeraCryptMountSection(
                     label = { Text(stringResource(R.string.label_volume_to_unlock)) },
                     trailingIcon = { ExposedDropdownMenuDefaults.TrailingIcon(expanded = expanded) },
                     colors = ExposedDropdownMenuDefaults.outlinedTextFieldColors(),
-                    modifier = Modifier.menuAnchor().fillMaxWidth().semantics { contentDescription = "candidate_picker" }
+                    modifier = Modifier.menuAnchor(androidx.compose.material3.MenuAnchorType.PrimaryNotEditable).fillMaxWidth().semantics { contentDescription = "candidate_picker" }
                 )
                 ExposedDropdownMenu(
                     expanded = expanded,
@@ -3264,16 +3567,33 @@ fun VeraCryptMountSection(
                 }),
                 visualTransformation = if (passwordVisible) androidx.compose.ui.text.input.VisualTransformation.None else PasswordVisualTransformation(),
                 trailingIcon = {
-                    IconButton(onClick = { passwordVisible = !passwordVisible }) {
-                        Icon(
-                            imageVector = if (passwordVisible) Icons.Default.Visibility else Icons.Default.VisibilityOff,
-                            contentDescription = if (passwordVisible) stringResource(R.string.cd_hide_password) else stringResource(R.string.cd_show_password)
-                        )
+                    Row {
+                        if (!isPreFilled && app.fayaz.otgmaster.security.PasswordManager.isAvailable) {
+                            IconButton(
+                                onClick = {
+                                    passwordManagerScope.launch {
+                                        app.fayaz.otgmaster.security.PasswordManager.pick(context)?.let { password = it }
+                                    }
+                                },
+                                modifier = Modifier.semantics { contentDescription = "password_manager_fill" },
+                            ) {
+                                Icon(Icons.Default.Key, contentDescription = stringResource(R.string.cd_fill_from_password_manager))
+                            }
+                        }
+                        IconButton(onClick = { passwordVisible = !passwordVisible }) {
+                            Icon(
+                                imageVector = if (passwordVisible) Icons.Default.Visibility else Icons.Default.VisibilityOff,
+                                contentDescription = if (passwordVisible) stringResource(R.string.cd_hide_password) else stringResource(R.string.cd_show_password)
+                            )
+                        }
                     }
                 },
                 modifier = Modifier
                     .fillMaxWidth()
-                    .semantics { contentDescription = "password_input" }
+                    .semantics {
+                        contentDescription = "password_input"
+                        contentType = androidx.compose.ui.autofill.ContentType.Password
+                    }
             )
 
             if (!isLuks) {
@@ -3352,7 +3672,7 @@ fun VeraCryptMountSection(
                     label = { Text(stringResource(R.string.label_encryption_algorithm)) },
                     trailingIcon = { if (!isPreFilled) ExposedDropdownMenuDefaults.TrailingIcon(expanded = cipherExpanded) },
                     colors = ExposedDropdownMenuDefaults.outlinedTextFieldColors(),
-                    modifier = Modifier.menuAnchor().fillMaxWidth().semantics { contentDescription = "cipher_picker" }
+                    modifier = Modifier.menuAnchor(androidx.compose.material3.MenuAnchorType.PrimaryNotEditable).fillMaxWidth().semantics { contentDescription = "cipher_picker" }
                 )
                 if (!isPreFilled) {
                     ExposedDropdownMenu(
@@ -3384,7 +3704,7 @@ fun VeraCryptMountSection(
                     label = { Text(stringResource(R.string.label_hash_algorithm)) },
                     trailingIcon = { if (!isPreFilled) ExposedDropdownMenuDefaults.TrailingIcon(expanded = hashExpanded) },
                     colors = ExposedDropdownMenuDefaults.outlinedTextFieldColors(),
-                    modifier = Modifier.menuAnchor().fillMaxWidth().semantics { contentDescription = "hash_picker" }
+                    modifier = Modifier.menuAnchor(androidx.compose.material3.MenuAnchorType.PrimaryNotEditable).fillMaxWidth().semantics { contentDescription = "hash_picker" }
                 )
                 if (!isPreFilled) {
                     ExposedDropdownMenu(

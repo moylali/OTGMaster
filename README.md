@@ -3,7 +3,7 @@
 [![CI](https://github.com/moylali/OTGMaster/actions/workflows/ci.yml/badge.svg)](https://github.com/moylali/OTGMaster/actions/workflows/ci.yml)
 [![License: GPL v3 or later](https://img.shields.io/badge/license-GPL--3.0--or--later-blue.svg)](LICENSE)
 
-Android app to open encrypted USB mass-storage devices for read/write without root. Supports **VeraCrypt**, **LUKS1**, **LUKS2** and **BitLocker** encrypted volumes with **FAT32**, **exFAT**, **NTFS** and **ext4** filesystems, and reads Mac **APFS** drives, plain or encrypted. It can also **format** a FAT32 or exFAT partition, or **encrypt** one into a new VeraCrypt volume.
+Android app to open encrypted USB mass-storage devices for read/write without root. Supports **VeraCrypt**, **LUKS1**, **LUKS2** and **BitLocker** encrypted volumes with **FAT32**, **exFAT**, **NTFS** and **ext4** filesystems, and reads Mac **APFS** drives, plain or encrypted. It can also **format** a FAT32 or exFAT partition, or **encrypt** one into a new VeraCrypt volume; *from 0.5.0* Format and Encrypt also write **ext4** and **NTFS**, and Encrypt can create **LUKS2**.
 
 <p align="center">
   <a href="https://f-droid.org/packages/app.fayaz.otgmaster/">
@@ -39,18 +39,17 @@ The app cannot perform a kernel mount on non-rooted Android. Instead it:
 5. Feeds the decrypted block device into a userspace filesystem reader (FAT32 via libaums, exFAT via a vendored native `libexfat`, ext4 via a pure-Kotlin driver, NTFS via a vendored `libntfs-3g`, and APFS, read-only, via a vendored `libfsapfs`).
 6. Surfaces files through the app UI and a `DocumentsProvider`, so other apps (Files, Gallery, etc.) can browse the unlocked volume.
 7. *From 0.4.2*, formats and encrypts from a mounted drive's actions (on the card when they fit, else under **More actions**), after the user types ERASE:
-   - **Format** writes an empty FAT32 or exFAT of the same size — the current one by default, or the other — with the label given; a volume inside an encrypted container stays in it, with the same password
-   - **Encrypt** erases the partition and creates a new VeraCrypt volume — any of the ciphers and cascades above, SHA-512 or Argon2id, optional PIM and keyfiles — holding a new FAT32 or exFAT
+   - **Format** writes an empty FAT32, exFAT, ext4 or NTFS (ext4 and NTFS *from 0.5.0*) of the same size — the current one by default, or another — with the label given; a volume inside an encrypted container stays in it, with the same password
+   - **Encrypt** erases the partition and creates a new VeraCrypt volume — any of the ciphers and cascades above, SHA-512 or Argon2id, optional PIM and keyfiles — or, *from 0.5.0*, a LUKS2 volume (AES-XTS, Argon2id) that Linux opens with its own tools; either holds a new FAT32, exFAT, ext4 or NTFS
    - both overwrite every sector by default; **Quick** writes only the filesystem structures, and the old data stays on the drive until overwritten
 8. *From 0.5.0*:
-   - **Back up…** copies a phone folder to a folder on the drive, now and then daily or weekly, as snapshots in the [restic](https://restic.net) repository format — a computer opens them with `restic`, and a repository restic made is backed up into the same way — or as plain dated copies; it reminds you when a backup is overdue and names the drive to plug in
+   - **Back up** copies a folder from a source to a target — the phone's storage or any mounted partition, either way round — now and then daily or weekly, either **Plain** (dated full copies) or **Incremental** (snapshots in the [restic](https://restic.net) repository format: a computer opens them with `restic`, and a repository restic made is backed up into the same way); it reminds you when a backup is overdue and names the drive to plug in. **Manage backups** on the main screen lists every backup's schedule and run history, and mounts an incremental backup read-only, one folder per snapshot, for the Files app
    - **Recover deleted files…** lists the files a FAT32 or exFAT filesystem has deleted (only those) and copies the chosen ones to another drive or the phone; nothing is written to the drive being recovered
    - Another phone or a camera connected over USB (MTP/PTP) shows up as read-only drives, one per storage
 
 ### Roadmap
 
 - **APFS** — write support. APFS is read-only today, plain or encrypted.
-- **Format and encrypt** — NTFS and ext4 formatting, and LUKS2 as an encryption choice. Format and Encrypt cover FAT32 and exFAT, with VeraCrypt, from 0.4.2.
 
 ### Known limitations
 
@@ -129,8 +128,8 @@ GPL-3.0-or-later — see [LICENSE](LICENSE). The app and its source, and the bin
 statically links every component below, are distributed under it. Each component's own
 licence permits this: `libexfat` and `libntfs-3g` are GPL-2.0-or-later, `libfsapfs` and its
 libyal libraries LGPL-3.0-or-later, the Apache-2.0 components (libaums, argon2kt,
-aircompressor, mbedTLS) are compatible with GPL-3.0, and LibTomCrypt's Twofish and the Argon2 reference
-implementation are public domain or dual-licensed with a permissive option.
+mbedTLS) are compatible with GPL-3.0, zstd's decoder is taken under BSD-3-Clause, and LibTomCrypt's Twofish and the
+Argon2 reference implementation are public domain or dual-licensed with a permissive option.
 
 ### Third-party components
 
@@ -143,7 +142,7 @@ implementation are public domain or dual-licensed with a permissive option.
 | [libfsapfs](https://github.com/libyal/libfsapfs) and 16 libyal libraries (`app/src/main/cpp/libfsapfs/`) | LGPL-3.0-or-later | APFS reader, plain and natively encrypted; pinned in [VENDOR_FIXES.md](docs/VENDOR_FIXES.md). LGPL-3.0 code cannot be combined into a GPL-2.0-only binary, which is why the project moved to GPL-3.0-or-later |
 | Serpent from the Linux kernel (`app/src/main/cpp/serpent/serpent_generic.c`) | GPL-2.0-or-later | `crypto/serpent_generic.c` at v6.12, pinned in [VENDOR_FIXES.md](docs/VENDOR_FIXES.md); see [PROVENANCE.md](app/src/main/cpp/serpent/PROVENANCE.md) |
 | [argon2kt](https://github.com/lambdapioneer/argon2kt) (`com.lambdapioneer.argon2kt:argon2kt:1.6.0`) | Apache-2.0 | Argon2id KDF for LUKS2 key derivation; ships native `.so` in the APK |
-| [aircompressor](https://github.com/airlift/aircompressor) (`io.airlift:aircompressor:0.27`) | Apache-2.0 | Pure-Java zstd, to read restic repositories (format 2 compresses blobs and index files) |
+| [zstd](https://github.com/facebook/zstd) decoder (`app/src/main/cpp/zstd/`) | BSD-3-Clause OR GPL-2.0-only | Reads restic's compressed repositories; v1.5.7, pinned in [VENDOR_FIXES.md](docs/VENDOR_FIXES.md) |
 | [LibTomCrypt](https://github.com/libtom/libtomcrypt) Twofish (`app/src/main/cpp/libtomcrypt/`) | Public domain OR WTFPL | Twofish for VeraCrypt volumes and cascades; pinned in [VENDOR_FIXES.md](docs/VENDOR_FIXES.md) |
 | [Argon2 reference implementation](https://github.com/P-H-C/phc-winner-argon2) (`app/src/main/cpp/argon2/`) | CC0-1.0 OR Apache-2.0 | Argon2id KDF for VeraCrypt headers; pinned in [VENDOR_FIXES.md](docs/VENDOR_FIXES.md) |
 

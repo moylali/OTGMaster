@@ -11,10 +11,11 @@ import java.nio.ByteOrder
  * The two erasing operations a mounted card offers, independent of Android so host tests
  * drive exactly the code the app runs:
  *
- * - [reformat]: an empty exFAT or FAT32 of the same size and label (and, for the same kind,
- *   cluster size), written through the device the volume was mounted from — so a volume
- *   inside a container stays in that container, with the same password.
- * - [encrypt]: a new VeraCrypt volume over the whole partition, holding a new exFAT or FAT32.
+ * - [reformat]: an empty exFAT, FAT32, ext4 or NTFS of the same size and label (and, for
+ *   the same kind, cluster size), written through the device the volume was mounted from —
+ *   so a volume inside a container stays in that container, with the same password.
+ * - [encrypt]: a new VeraCrypt or LUKS2 volume over the whole partition, holding a new
+ *   exFAT, FAT32, ext4 or NTFS.
  *
  * Both erase. "Full" overwrites every sector of the volume first (through the container,
  * so on disk it is ciphertext); "quick" writes only the structures, and the old contents
@@ -22,7 +23,8 @@ import java.nio.ByteOrder
  */
 object DriveFormatter {
 
-    enum class Filesystem(val displayName: String) { EXFAT("exFAT"), FAT32("FAT32") }
+    /** [displayName] is also what FilesystemDetector calls a mounted volume of that kind. */
+    enum class Filesystem(val displayName: String) { EXFAT("exFAT"), FAT32("FAT32"), EXT4("ext4"), NTFS("NTFS") }
 
     /** What the volume being reformatted looks like, read from its boot sector. */
     data class Existing(
@@ -41,8 +43,8 @@ object DriveFormatter {
      * Reads the boot sector of the volume on [device], or explains why it cannot be
      * reformatted in place.
      */
-    fun readExisting(device: RawBlockDevice, label: String): Existing {
-        val boot = device.readBlocks(0, 1)
+    fun readExisting(device: RawBlockDevice, label: String, partitionStart: Long = 0): Existing {
+        val boot = device.readBlocks(0, minOf(device.blockCount, maxOf(1L, 4096L / device.blockSize)).toInt())
         val b = ByteBuffer.wrap(boot).order(ByteOrder.LITTLE_ENDIAN)
         val oem = String(boot, 3, 8, Charsets.US_ASCII)
         if (oem == "EXFAT   ") {
@@ -59,7 +61,19 @@ object DriveFormatter {
             val total = if (total16 != 0) total16.toLong() else b.getInt(32).toLong() and 0xFFFF_FFFFL
             return Existing(Filesystem.FAT32, total, bps * spc, label, b.getInt(28).toLong() and 0xFFFF_FFFFL)
         }
-        throw IllegalArgumentException("Only exFAT and FAT32 volumes can be formatted for now.")
+        if (String(boot, 3, 8, Charsets.US_ASCII) == "NTFS    ") {
+            val bps = b.getShort(11).toInt() and 0xFFFF
+            require(bps == device.blockSize) { "NTFS sector size $bps on a ${device.blockSize}-byte device" }
+            // Sectors per cluster: a power of two, or 2^(256-n) above 128 (64 KiB+ clusters).
+            val raw = boot[13].toInt() and 0xFF
+            val spc = if (raw <= 128) raw else 1 shl (256 - raw)
+            return Existing(Filesystem.NTFS, device.blockCount, bps * spc, label, b.getInt(28).toLong() and 0xFFFF_FFFFL)
+        }
+        // ext2/3/4 (all become ext4): the volume fills the device it was mounted from.
+        if (boot.size >= 1082 && app.fayaz.otgmaster.ext4.Ext4FileSystem.hasExtMagic(boot)) {
+            return Existing(Filesystem.EXT4, device.blockCount, Ext4Formatter.BLOCK_SIZE, label, partitionStart)
+        }
+        throw IllegalArgumentException("Only exFAT, FAT32, ext4 and NTFS volumes can be formatted.")
     }
 
     /**
@@ -82,17 +96,12 @@ object DriveFormatter {
         val cluster = existing.clusterBytes.takeIf { target == existing.filesystem }
         // The layout is checked before anything is written, so a volume the formatter
         // cannot lay out (FAT32 under 33 MiB, say) is refused intact rather than half erased.
-        when (target) {
-            Filesystem.FAT32 -> if (cluster != null) Fat32Formatter.layout(device.blockSize, existing.totalSectors, cluster)
-                else Fat32Formatter.layout(device.blockSize, existing.totalSectors)
-            Filesystem.EXFAT -> if (cluster != null) ExFatFormatter.layout(device.blockSize, existing.totalSectors, cluster)
-                else ExFatFormatter.layout(device.blockSize, existing.totalSectors)
-        }
+        checkLayout(target, device.blockSize, existing.totalSectors, cluster)
         if (full) {
             ZeroWriter.zero(device, 0, existing.totalSectors) { progress.update("Overwriting", it) }
         }
         writeFilesystem(device, target, existing.totalSectors, existing.label,
-            cluster, existing.partitionOffset, progress)
+            cluster, existing.partitionOffset, progress, full)
     }
 
     /**
@@ -113,21 +122,65 @@ object DriveFormatter {
     ): RawBlockDevice {
         val dataSectors = VeraCryptVolumeCreator.dataBytes(partition.blockCount) / 512
         // Checked before the headers go on, so a size FAT32 cannot take leaves the drive alone.
-        if (filesystem == Filesystem.FAT32) Fat32Formatter.layout(512, dataSectors)
-        else ExFatFormatter.layout(512, dataSectors)
+        checkLayout(filesystem, 512, dataSectors, null)
         val volume = VeraCryptVolumeCreator.create(partition, password, pim, cipher, hash, keyfiles = keyfiles) {
             progress.update(it, 0f)
         }
         if (full) {
             ZeroWriter.zero(volume, 0, dataSectors) { progress.update("Overwriting", it) }
         }
-        writeFilesystem(volume, filesystem, dataSectors, label, null, 0, progress)
+        writeFilesystem(volume, filesystem, dataSectors, label, null, 0, progress, full)
         return volume
     }
 
-    private fun writeFilesystem(
+    /**
+     * Turns [partition] (the whole partition, raw, 512-byte sectors) into a LUKS2 volume
+     * holding an empty [filesystem], and returns the decrypted data segment. [password] is
+     * wiped. Linux opens it with `cryptsetup open` (see [app.fayaz.otgmaster.luks.LuksVolumeCreator]).
+     */
+    fun encryptLuks2(
+        partition: RawBlockDevice,
+        password: CharArray,
+        filesystem: Filesystem,
+        label: String,
+        full: Boolean,
+        progress: Progress = Progress { _, _ -> },
+    ): RawBlockDevice {
+        val dataSectors = app.fayaz.otgmaster.luks.LuksVolumeCreator.dataBytes(partition.blockCount * 512) / 512
+        checkLayout(filesystem, 512, dataSectors, null)
+        // UTF-8, as cryptsetup takes a passphrase typed on Linux and as the unlock form sends it.
+        val bytes = String(password).toByteArray(Charsets.UTF_8)
+        password.fill('\u0000')
+        val volume = try {
+            app.fayaz.otgmaster.luks.LuksVolumeCreator.create(partition, bytes, label) { progress.update(it, 0f) }
+        } finally {
+            bytes.fill(0)
+        }
+        if (full) {
+            ZeroWriter.zero(volume, 0, dataSectors) { progress.update("Overwriting", it) }
+        }
+        writeFilesystem(volume, filesystem, dataSectors, label, null, 0, progress, full)
+        return volume
+    }
+
+    /** Throws, writing nothing, if [fs] cannot be laid out on [sectors] sectors of [sectorSize]. */
+    internal fun checkLayout(fs: Filesystem, sectorSize: Int, sectors: Long, cluster: Int?) {
+        when (fs) {
+            Filesystem.FAT32 -> if (cluster != null) Fat32Formatter.layout(sectorSize, sectors, cluster)
+                else Fat32Formatter.layout(sectorSize, sectors)
+            Filesystem.EXFAT -> if (cluster != null) ExFatFormatter.layout(sectorSize, sectors, cluster)
+                else ExFatFormatter.layout(sectorSize, sectors)
+            Filesystem.EXT4 -> {
+                require(Ext4Formatter.BLOCK_SIZE % sectorSize == 0) { "ext4 needs sectors of 4 KiB or less" }
+                Ext4Formatter.layout(sectors * sectorSize)
+            }
+            Filesystem.NTFS -> NtfsFormatter.check(sectors * sectorSize)
+        }
+    }
+
+    internal fun writeFilesystem(
         device: RawBlockDevice, filesystem: Filesystem, totalSectors: Long, label: String,
-        clusterBytes: Int?, partitionOffset: Long, progress: Progress,
+        clusterBytes: Int?, partitionOffset: Long, progress: Progress, full: Boolean,
     ) {
         val phase = "Writing ${filesystem.displayName}"
         when (filesystem) {
@@ -135,6 +188,13 @@ object DriveFormatter {
                 hiddenSectors = partitionOffset) { progress.update(phase, it) }
             Filesystem.EXFAT -> ExFatFormatter.format(device, totalSectors, label, clusterBytes,
                 partitionOffset = partitionOffset) { progress.update(phase, it) }
+            // A full format has already zeroed the volume; ext4 then marks every inode table zeroed.
+            Filesystem.EXT4 -> Ext4Formatter.format(device, totalSectors, label, full) { progress.update(phase, it) }
+            Filesystem.NTFS -> {
+                progress.update(phase, 0f)
+                NtfsFormatter.format(device, totalSectors, label, partitionOffset, clusterBytes)
+                progress.update(phase, 1f)
+            }
         }
     }
 }

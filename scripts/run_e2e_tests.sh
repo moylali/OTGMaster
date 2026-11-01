@@ -160,13 +160,20 @@ ensure_testdata() {
 
     # Format and Encrypt from a mounted card (scripts/make_erase_fixtures.py, no root;
     # format_vc_exfat is a copy of the exfat case, so this runs after it exists).
-    for case_name in format_vc_exfat format_plain_fat32 encrypt_plain_fat32 encrypt_plain_exfat disconnect; do
+    for case_name in format_vc_exfat format_plain_fat32 encrypt_plain_fat32 encrypt_plain_exfat disconnect \
+                     format_plain_ext4 format_plain_ntfs encrypt_plain_ext4 encrypt_plain_ntfs encrypt_luks2_ext4; do
         if [ ! -f "$TESTDATA_DIR/$case_name/test.img" ]; then
             echo "Generating the Format/Encrypt fixtures..."
             python3 scripts/make_erase_fixtures.py || { echo "Format/Encrypt fixture generation failed!"; exit 1; }
             break
         fi
     done
+
+    # A repository made by desktop restic (scripts/make_backup_fixture.py, no root).
+    if [ ! -f "$TESTDATA_DIR/backup_mount/test.img" ]; then
+        echo "Generating the backup fixture..."
+        python3 scripts/make_backup_fixture.py || { echo "Backup fixture generation failed!"; exit 1; }
+    fi
 
     # An ext4 drive whose journal needs recovery (scripts/make_journal_fixture.py, no root).
     if [ ! -f "$TESTDATA_DIR/ext4_journal/test.img" ]; then
@@ -399,6 +406,8 @@ for test_dir in "$TESTDATA_DIR"/*/; do
     [ -f "$test_dir/plain.txt" ] && PLAIN_ARG="-e plain_mount true"
     DISCONNECT_ARG=""
     [ -f "$test_dir/disconnect.txt" ] && DISCONNECT_ARG="-e disconnect_test true"
+    BACKUP_ARG=""
+    [ -f "$test_dir/backup.txt" ] && BACKUP_ARG="-e backup_test true"
     JOURNAL_ARG=""
     [ -f "$test_dir/journal.txt" ] && JOURNAL_ARG="-e journal_repair true"
     CASE_ARG=""
@@ -480,7 +489,7 @@ for test_dir in "$TESTDATA_DIR"/*/; do
 
         echo "Running UI Automator Test..."
         WATCHER_PID=""
-        if [ -n "$DISCONNECT_ARG" ]; then
+        if [ -n "$DISCONNECT_ARG$BACKUP_ARG" ]; then
             $CMD_ADB -s $SERIAL shell rm -f "$USB_REQUEST_DIR/otg_e2e_unplug" "$USB_REQUEST_DIR/otg_e2e_replug"
             usb_request_watcher &
             WATCHER_PID=$!
@@ -507,6 +516,7 @@ for test_dir in "$TESTDATA_DIR"/*/; do
             $PLAIN_ARG \
             $CASE_ARG \
             $DISCONNECT_ARG \
+            $BACKUP_ARG \
             $JOURNAL_ARG \
             -e class app.fayaz.otgmaster.E2EAutomatedTest \
             $PACKAGE_NAME.test/androidx.test.runner.AndroidJUnitRunner)
@@ -538,7 +548,7 @@ for test_dir in "$TESTDATA_DIR"/*/; do
         # with the kernel's driver and checks every file the case left behind. The
         # in-app checks above only read the writes back through the same code.
         HOST_CHECK=""
-        if [ $TEST_EXIT_CODE -eq 0 ] && { [ -f "$test_dir/write_test.txt" ] || [ -f "$test_dir/erase.txt" ] || [ -f "$test_dir/journal.txt" ]; }; then
+        if [ $TEST_EXIT_CODE -eq 0 ] && { [ -f "$test_dir/write_test.txt" ] || [ -f "$test_dir/erase.txt" ] || [ -f "$test_dir/journal.txt" ] || [ -f "$test_dir/backup.txt" ]; }; then
             HOST_OUT=$(python3 scripts/verify_e2e_volume.py "$SLOT_FILE" "$test_dir" 2>&1)
             echo "$HOST_OUT"
             if echo "$HOST_OUT" | grep -q "^HOST CHECK OK"; then

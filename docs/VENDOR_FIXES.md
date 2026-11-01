@@ -19,6 +19,7 @@ See `AGENTS.md` for what a new entry must contain and how to record an upstream 
 | `app/src/main/cpp/serpent/serpent_generic.c` | [torvalds/linux](https://github.com/torvalds/linux) `crypto/serpent_generic.c` | `adc2186` (v6.12) | see the section below |
 | `app/src/main/cpp/libtomcrypt/` (Twofish only) | [libtom/libtomcrypt](https://github.com/libtom/libtomcrypt) | `7e7eb69` (v1.18.2) | see the section below |
 | `app/src/main/cpp/argon2/` | [P-H-C/phc-winner-argon2](https://github.com/P-H-C/phc-winner-argon2) | `f57e61e` | see the section below |
+| `app/src/main/cpp/zstd/` (decoder only) | [facebook/zstd](https://github.com/facebook/zstd) | `f8745da` (v1.5.7) | see the section below |
 
 **Licences** are listed in the table in `README.md`, which is authoritative — this
 registry deliberately does not restate them, to avoid the two drifting apart.
@@ -98,6 +99,35 @@ it (AES-Twofish, AES-Twofish-Serpent, Serpent-Twofish-AES, Twofish-Serpent). Dri
 
 ---
 
+# `app/src/main/cpp/zstd/`
+
+zstd's own decoder, for restic repositories: format 2 compresses index files, snapshots and
+blobs. Called from `zstd/ZstdNative.cpp` (not from upstream) through `ZstdNative.kt`.
+
+- **Pinned upstream:** `f8745da6ff1ad1e7bab384bd1f9d742439278e99`, the `v1.5.7` release
+  tag, pinned 2026-11-01.
+- **What was taken:** `lib/zstd.h`, `lib/zstd_errors.h`, `LICENSE`; from `lib/common/`
+  everything but `pool.*` and `threading.*`; from `lib/decompress/` everything but
+  `huf_decompress_amd64.S`. Byte for byte. Left out: the compressor, the dictionary builder
+  and the legacy decoders. The app writes repositories uncompressed, which format 2 allows.
+  Built with `ZSTD_DISABLE_ASM=1` and `ZSTD_LEGACY_SUPPORT=0`.
+- **Why vendored rather than a dependency:** `io.airlift:aircompressor:0.27`, pure Java, came
+  first and passed on the host, but reads `sun.misc.Unsafe.ARRAY_BYTE_BASE_OFFSET`, which
+  Android does not have. The first compressed file crashed the app with `NoSuchFieldError`,
+  and the `backup_mount` E2E case is what found it. `com.github.luben:zstd-jni` would ship
+  prebuilt binaries, which F-Droid's from-source build cannot take. Compiled into
+  `veracrypt-native`, the same decoder runs in the host tests.
+- **Licence:** BSD-3-Clause or GPL-2.0-only, at the user's option; this project takes
+  BSD-3-Clause. See the table in `README.md`.
+
+## Patches
+
+| Area | Patch | Commit |
+|---|---|---|
+| — | none | — |
+
+---
+
 # `app/src/main/cpp/argon2/`
 
 The Password Hashing Competition's reference Argon2, for VeraCrypt's Argon2id header
@@ -138,8 +168,12 @@ and write, used by `app/src/main/cpp/ntfs/NtfsNative.cpp`.
 - **Pinned upstream:** `7f0f841fc52cf719106c5c93bafe465004e36816`, tagged
   `2026.9.28` (upstream's version number), pinned 2026-10-01.
 - **What was taken:** `libntfs-3g/*.c` and `include/ntfs-3g/*.h`, byte for byte, plus
-  `COPYING`, `COPYING.LIB`, `AUTHORS`, `CREDITS` and `README`. Left out: the FUSE
-  driver (`src/`), `libfuse-lite/`, `ntfsprogs/`, the build system, and two library
+  `COPYING`, `COPYING.LIB`, `AUTHORS`, `CREDITS` and `README`. From `ntfsprogs/`, added
+  2026-10-31 at the same pin for Format and Encrypt: `mkntfs.c` and what it links
+  against, `sd.c`/`sd.h`, `attrdef.c`/`attrdef.h`, `boot.c`/`boot.h`, `utils.c`/`utils.h`
+  (patched as below; built with `OTG_MKNTFS_LIBRARY`, so `mkntfs` is a function and has no
+  `main`). Left out: the FUSE driver (`src/`), `libfuse-lite/`, the other ntfsprogs, the
+  build system, and two library
   files — `unix_io.c` (device I/O on a path, which Android apps cannot open; the app
   supplies `ntfs_device_operations` instead) and `win32_io.c`.
 - **Why vendored rather than a dependency:** there is no Android build of libntfs-3g
@@ -163,7 +197,8 @@ and write, used by `app/src/main/cpp/ntfs/NtfsNative.cpp`.
 
 | Area | Patch | Commit |
 |---|---|---|
-| — | none | — |
+| N1 `ntfsprogs/mkntfs.c` | Built as a library (`OTG_MKNTFS_LIBRARY`): the `NO_NTFS_DEVICE_DEFAULT_IO_OPS` `#error` is skipped, `main()` is compiled out, and `otg_mkntfs()` takes the device operations (NtfsNative.cpp's, which read and write through Kotlin) and the options `mkntfs -F -Q -s -p -H 255 -S 63 [-L] [-c]` would set. `mkntfs_open_partition` allocates the device with those ops instead of `ntfs_device_default_io_ops` on a path. | this commit |
+| N2 `ntfsprogs/mkntfs.c` | `mkntfs_cleanup` frees the cluster-allocation list but left `g_allocation` pointing at it (and leaked `g_upcaseinfo`); as a program that never mattered, but a second format in the same app process walked the freed list. Both are now reset. | this commit |
 
 ---
 

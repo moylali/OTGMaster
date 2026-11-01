@@ -10,6 +10,12 @@ import androidx.compose.foundation.layout.ExperimentalLayoutApi
 import androidx.compose.foundation.layout.FlowRow
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
+import androidx.compose.foundation.layout.width
+import androidx.compose.foundation.selection.toggleable
+import androidx.compose.ui.autofill.ContentType
+import androidx.compose.ui.semantics.Role
+import androidx.compose.ui.semantics.contentType
+import app.fayaz.otgmaster.security.PasswordManager
 import androidx.compose.foundation.layout.WindowInsets
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
@@ -90,8 +96,8 @@ data class DriveSummary(
     val serial: String?,
 )
 
-/** What Encrypt can create. VeraCrypt only for now; the form under the picker is the type's own. */
-enum class EncryptionType(val displayName: String) { VERACRYPT("VeraCrypt") }
+/** What Encrypt can create; the form under the picker is the type's own. VeraCrypt opens on Windows, macOS and Linux; LUKS2 is Linux's own (cryptsetup). */
+enum class EncryptionType(val displayName: String) { VERACRYPT("VeraCrypt"), LUKS2("LUKS2") }
 
 /** An Encrypt request from the screen; the activity wipes [password] once used. */
 class EncryptRequest(
@@ -104,6 +110,8 @@ class EncryptRequest(
     val filesystem: DriveFormatter.Filesystem,
     val label: String,
     val full: Boolean,
+    /** Offer the password to the user's password manager once the volume is created. */
+    val saveToPasswordManager: Boolean = false,
 )
 
 /** A Format request from the screen: [filesystem] may differ from the volume's current one. */
@@ -257,14 +265,14 @@ private fun QuickOption(quick: Boolean, onChange: (Boolean) -> Unit) {
 /** A read-only field that opens a menu of [options]; [id] is the test handle. */
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
-private fun <T> Picker(label: String, value: T, options: List<T>, name: (T) -> String, id: String, onPick: (T) -> Unit) {
+internal fun <T> Picker(label: String, value: T, options: List<T>, name: (T) -> String, id: String, onPick: (T) -> Unit) {
     var open by remember { mutableStateOf(false) }
     ExposedDropdownMenuBox(expanded = open, onExpandedChange = { open = it }) {
         OutlinedTextField(
             value = name(value), onValueChange = {}, readOnly = true,
             label = { Text(label) },
             trailingIcon = { ExposedDropdownMenuDefaults.TrailingIcon(expanded = open) },
-            modifier = Modifier.menuAnchor().fillMaxWidth().semantics { contentDescription = id },
+            modifier = Modifier.menuAnchor(androidx.compose.material3.MenuAnchorType.PrimaryNotEditable).fillMaxWidth().semantics { contentDescription = id },
         )
         ExposedDropdownMenu(expanded = open, onDismissRequest = { open = false }) {
             options.forEach { o ->
@@ -290,19 +298,31 @@ private fun PasswordField(value: String, label: String, id: String, onChange: (S
                     contentDescription = stringResource(if (visible) R.string.cd_hide_password else R.string.cd_show_password))
             }
         },
-        modifier = Modifier.fillMaxWidth().semantics { contentDescription = id },
+        // Every password typed here is a new one: password managers offer to save it,
+        // not to fill an old one in.
+        modifier = Modifier.fillMaxWidth().semantics { contentDescription = id; contentType = ContentType.NewPassword },
     )
 }
 
 @Composable
-private fun LabelField(value: String, id: String, onChange: (String) -> Unit) {
+private fun LabelField(value: String, id: String, maxChars: Int, onChange: (String) -> Unit) {
     OutlinedTextField(
-        value = value, onValueChange = { onChange(it.take(11)) },
+        value = value, onValueChange = { onChange(it.take(maxChars)) },
         label = { Text(stringResource(R.string.erase_label)) },
-        supportingText = { Text(stringResource(R.string.erase_label_hint)) },
+        supportingText = { Text(stringResource(R.string.erase_label_hint, maxChars)) },
         singleLine = true,
         modifier = Modifier.fillMaxWidth().semantics { contentDescription = id },
     )
+}
+
+/**
+ * How long a label [fs] keeps: FAT32's 11 bytes and exFAT's 11 characters, ext4's 16 bytes
+ * (16 characters of ASCII), and 32 for NTFS, which Windows shows in full.
+ */
+internal fun labelLimit(fs: DriveFormatter.Filesystem): Int = when (fs) {
+    DriveFormatter.Filesystem.FAT32, DriveFormatter.Filesystem.EXFAT -> 11
+    DriveFormatter.Filesystem.EXT4 -> 16
+    DriveFormatter.Filesystem.NTFS -> 32
 }
 
 /**
@@ -379,7 +399,7 @@ private fun EraseScreen(
 }
 
 /**
- * Format: an empty exFAT or FAT32 of the volume's size, the current one by default;
+ * Format: an empty exFAT, FAT32, ext4 or NTFS of the volume's size, the current one by default;
  * inside a container, the container and its password stay.
  */
 @Composable
@@ -391,7 +411,9 @@ fun FormatScreen(
     onConfirm: (FormatRequest) -> Unit,
     onDismiss: () -> Unit,
 ) {
-    var fs by remember { mutableStateOf(current ?: DriveFormatter.Filesystem.EXFAT) }
+    // ext2 and ext3 volumes are offered ext4, the only ext this app writes.
+    var fs by remember { mutableStateOf(current ?: if (drive.filesystem.startsWith("ext")) DriveFormatter.Filesystem.EXT4
+        else DriveFormatter.Filesystem.EXFAT) }
     var label by remember { mutableStateOf(suggestedLabel) }
     var quick by remember { mutableStateOf(false) }
     var confirming by remember { mutableStateOf(false) }
@@ -403,7 +425,7 @@ fun FormatScreen(
             style = MaterialTheme.typography.bodyMedium)
         Picker(stringResource(R.string.erase_filesystem), fs, DriveFormatter.Filesystem.entries, { it.displayName },
             "format_fs") { fs = it }
-        LabelField(label, "format_label") { label = it }
+        LabelField(label, "format_label", labelLimit(fs)) { label = it }
         QuickOption(quick) { quick = it }
         Button(
             onClick = { confirming = true },
@@ -413,7 +435,7 @@ fun FormatScreen(
     }
     if (confirming) {
         EraseConfirmDialog(drive, stringResource(R.string.format_button),
-            onConfirm = { confirming = false; onConfirm(FormatRequest(fs, label.trim(), !quick)) },
+            onConfirm = { confirming = false; onConfirm(FormatRequest(fs, label.trim().take(labelLimit(fs)), !quick)) },
             onDismiss = { confirming = false })
     }
 }
@@ -421,7 +443,7 @@ fun FormatScreen(
 /**
  * Encrypt: a new encrypted volume over the whole partition. It erases — the old files are
  * not carried into the new volume — and the screen says so before anything else. The type
- * picker decides the form under it; VeraCrypt is the only type for now.
+ * picker decides the form under it: VeraCrypt or LUKS2.
  */
 @Composable
 fun EncryptScreen(
@@ -434,6 +456,8 @@ fun EncryptScreen(
     var password by remember { mutableStateOf("") }
     var confirm by remember { mutableStateOf("") }
     var pimText by remember { mutableStateOf("") }
+    var pimConfirm by remember { mutableStateOf("") }
+    var saveToPasswordManager by remember { mutableStateOf(false) }
     var cipher by remember { mutableStateOf(VeraCryptCipher.AES) }
     var hash by remember { mutableStateOf(VeraCryptHash.SHA512) }
     var keyfiles by remember { mutableStateOf(emptyList<Uri>()) }
@@ -466,11 +490,14 @@ fun EncryptScreen(
 
     val pim = pimText.toIntOrNull()?.takeIf { it > 0 }
     val pimInvalid = pimText.isNotEmpty() && pimText.toIntOrNull() == null
-    val hasCredential = password.isNotEmpty() || keyfiles.isNotEmpty()
+    val luks2 = type == EncryptionType.LUKS2
+    val hasCredential = password.isNotEmpty() || (!luks2 && keyfiles.isNotEmpty())
     val problem = when {
         !hasCredential -> null
+        luks2 -> if (password != confirm) stringResource(R.string.encrypt_passwords_differ) else null
         password != confirm -> stringResource(R.string.encrypt_passwords_differ)
         pimInvalid -> stringResource(R.string.encrypt_pim_invalid)
+        pimText != pimConfirm -> stringResource(R.string.encrypt_pims_differ)
         else -> VeraCryptVolumeCreator.passwordProblem(password.toCharArray(), pim, keyfiles.isNotEmpty())
     }
 
@@ -483,6 +510,16 @@ fun EncryptScreen(
             "encrypt_type") { type = it }
 
         when (type) {
+            EncryptionType.LUKS2 -> {
+                PasswordField(password, stringResource(R.string.encrypt_password), "encrypt_password") { password = it }
+                PasswordField(confirm, stringResource(R.string.encrypt_password_confirm), "encrypt_password_confirm") { confirm = it }
+                if (password.isNotEmpty() && password.length < VeraCryptVolumeCreator.SHORT_PASSWORD_CHARS) {
+                    Text(stringResource(R.string.encrypt_short_password, VeraCryptVolumeCreator.SHORT_PASSWORD_CHARS),
+                        style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                }
+                Text(stringResource(R.string.encrypt_luks2_note), style = MaterialTheme.typography.bodySmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant)
+            }
             EncryptionType.VERACRYPT -> {
                 PasswordField(password, stringResource(R.string.encrypt_password), "encrypt_password") { password = it }
                 PasswordField(confirm, stringResource(R.string.encrypt_password_confirm), "encrypt_password_confirm") { confirm = it }
@@ -525,13 +562,35 @@ fun EncryptScreen(
                     singleLine = true, keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Number),
                     modifier = Modifier.fillMaxWidth().semantics { contentDescription = "encrypt_pim" },
                 )
+                // A mistyped PIM locks the volume as surely as a mistyped password, and the
+                // field shows digits in the clear, which invites the same false confidence.
+                if (pimText.isNotEmpty() || pimConfirm.isNotEmpty()) {
+                    OutlinedTextField(
+                        value = pimConfirm, onValueChange = { pimConfirm = it.filter(Char::isDigit).take(7) },
+                        label = { Text(stringResource(R.string.encrypt_pim_confirm)) },
+                        singleLine = true, keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Number),
+                        modifier = Modifier.fillMaxWidth().semantics { contentDescription = "encrypt_pim_confirm" },
+                    )
+                }
             }
         }
 
         Picker(stringResource(R.string.encrypt_filesystem), fs, DriveFormatter.Filesystem.entries, { it.displayName },
             "encrypt_fs") { fs = it }
-        LabelField(label, "encrypt_label") { label = it }
+        LabelField(label, "encrypt_label", labelLimit(fs)) { label = it }
         QuickOption(quick) { quick = it }
+        if (PasswordManager.isAvailable && password.isNotEmpty()) {
+            Row(
+                verticalAlignment = Alignment.CenterVertically,
+                modifier = Modifier.fillMaxWidth().toggleable(
+                    value = saveToPasswordManager, role = Role.Checkbox, onValueChange = { saveToPasswordManager = it },
+                ).semantics { contentDescription = "encrypt_save_password_manager" },
+            ) {
+                Checkbox(checked = saveToPasswordManager, onCheckedChange = null)
+                Spacer(modifier = Modifier.width(8.dp))
+                Text(stringResource(R.string.encrypt_save_password_manager), style = MaterialTheme.typography.bodyMedium)
+            }
+        }
         problem?.let { Text(it, color = MaterialTheme.colorScheme.error, style = MaterialTheme.typography.bodySmall) }
         Button(
             onClick = { confirming = true },
@@ -544,8 +603,10 @@ fun EncryptScreen(
         EraseConfirmDialog(drive, stringResource(R.string.encrypt_button),
             onConfirm = {
                 confirming = false
-                onConfirm(EncryptRequest(type, password.toCharArray(), pim, cipher, hash, keyfiles, fs, label.trim(), !quick))
-                password = ""; confirm = ""
+                onConfirm(EncryptRequest(type, password.toCharArray(), if (luks2) null else pim, cipher, hash,
+                    if (luks2) emptyList() else keyfiles, fs, label.trim().take(labelLimit(fs)), !quick,
+                    saveToPasswordManager = PasswordManager.isAvailable && saveToPasswordManager && password.isNotEmpty()))
+                password = ""; confirm = ""; pimConfirm = ""
             },
             onDismiss = { confirming = false })
     }

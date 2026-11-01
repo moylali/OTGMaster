@@ -11,6 +11,12 @@ testEraseOperations), without root:
   encrypt_plain_exfat  plain exFAT, 64 MiB -> VeraCrypt Serpent-Twofish-AES / Argon2, PIM 1,
                        FAT32 inside, full. No host tool decrypts Argon2 VeraCrypt; the
                        host check is that no byte of the old files is left on the drive.
+  format_plain_ext4    plain ext4, 64 MiB, Format, quick: the app's own ext4.
+  format_plain_ntfs    plain NTFS, 64 MiB, Format, full: the app's own mkntfs.
+  encrypt_plain_ext4   plain ext4 -> VeraCrypt AES / SHA-512, PIM 1, NTFS inside, full.
+  encrypt_plain_ntfs   plain NTFS -> VeraCrypt AES / SHA-512, PIM 1, ext4 inside, full.
+  encrypt_luks2_ext4   plain FAT32 -> LUKS2 (AES-XTS, Argon2id), ext4 inside, full. The host
+                       has cryptsetup unlock the keyslot and decrypts the data in Python.
   disconnect           the fat32 case's VeraCrypt AES/SHA-512 FAT32 volume (10 MB), for
                        E2EAutomatedTest.runDisconnectCase: not an erase case, but built the same
                        way as format_vc_exfat, so here too. Encrypted, because a plain card
@@ -51,12 +57,15 @@ def main():
             shutil.copyfile(os.path.join(td, source, name), os.path.join(td, case, name))
         print(f"{case}: copy of the {source} case")
     # The plain cases have no password; the runner still reads the file.
-    for case in ("format_plain_fat32", "encrypt_plain_fat32", "encrypt_plain_exfat"):
+    plain_cases = (("format_plain_fat32", "fat32"), ("encrypt_plain_fat32", "fat32"),
+                   ("encrypt_plain_exfat", "exfat"), ("format_plain_ext4", "ext4"),
+                   ("format_plain_ntfs", "ntfs"), ("encrypt_plain_ext4", "ext4"),
+                   ("encrypt_plain_ntfs", "ntfs"), ("encrypt_luks2_ext4", "fat32"))
+    for case, _ in plain_cases:
         with open(os.path.join(td, case, "password.txt"), "w") as f:
             f.write("unused\n")
     with tempfile.TemporaryDirectory() as work:
-        for case, fs in (("format_plain_fat32", "fat32"), ("encrypt_plain_fat32", "fat32"),
-                         ("encrypt_plain_exfat", "exfat")):
+        for case, fs in plain_cases:
             img = os.path.join(td, case, "test.img")
             make_fs(fs, img, SLOT_BYTES, work)
             print(f"{case}: plain {fs}, {SLOT_BYTES >> 20} MiB")

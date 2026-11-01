@@ -4,6 +4,7 @@ import java.util.Properties
 plugins {
     id("com.android.application")
     id("org.jetbrains.kotlin.android")
+    id("org.jetbrains.kotlin.plugin.compose")
 }
 
 // Release signing is optional for local builds: if keystore.properties is absent (the normal
@@ -138,9 +139,6 @@ android {
         // and the generated Stub simply does not exist.
         aidl = true
     }
-    composeOptions {
-        kotlinCompilerExtensionVersion = "1.5.14"
-    }
     testOptions {
         unitTests {
             // Host tests exercise classes that log through android.util.Log, which
@@ -154,7 +152,7 @@ android {
 dependencies {
     implementation(project(":libaums"))
     
-    val composeBom = platform("androidx.compose:compose-bom:2024.04.01")
+    val composeBom = platform("androidx.compose:compose-bom:2025.04.01")
     implementation(composeBom)
     implementation("androidx.compose.ui:ui")
     implementation("androidx.compose.material3:material3")
@@ -164,6 +162,10 @@ dependencies {
     implementation("androidx.activity:activity-compose:1.9.0")
     implementation("androidx.appcompat:appcompat:1.7.0")
     implementation("androidx.biometric:biometric:1.1.0")
+    // Credential Manager without credentials-play-services-auth: no Google Play Services in
+    // the APK (F-Droid), so it reaches password managers on Android 14+ only, where the
+    // framework provides it. Older versions still get autofill in the password fields.
+    implementation("androidx.credentials:credentials:1.5.0")
     implementation("androidx.security:security-crypto:1.1.0-alpha06")
 
     // Argon2id for LUKS2 key derivation. Apache 2.0 — compatible with GPL-3.0-or-later.
@@ -177,8 +179,6 @@ dependencies {
     // without Robolectric.
 
     testImplementation("org.json:json:20240303")
-    // restic compresses blobs and index files with zstd; pure Java, so the app and the host tests share one decoder.
-    implementation("io.airlift:aircompressor:0.27")
     // Scheduled backups and their reminders run when the app is closed. Apache 2.0.
     implementation("androidx.work:work-runtime-ktx:2.9.1")
 

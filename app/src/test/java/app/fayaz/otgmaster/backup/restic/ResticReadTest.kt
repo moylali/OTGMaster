@@ -12,6 +12,11 @@ import java.util.Random
 
 /** Desktop -> app: repositories written by restic itself, read back byte for byte. */
 class ResticReadTest {
+    companion object {
+        @JvmStatic
+        @org.junit.BeforeClass
+        fun loadHostLibrary() = ZstdNativeTest.loadHostLibrary()
+    }
 
     private fun restic(): String? = listOf(System.getenv("RESTIC"), System.getProperty("user.home") + "/.local/bin/restic", "/usr/bin/restic")
         .firstOrNull { it != null && File(it).canExecute() }
