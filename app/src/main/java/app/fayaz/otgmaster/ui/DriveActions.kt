@@ -265,7 +265,7 @@ private fun QuickOption(quick: Boolean, onChange: (Boolean) -> Unit) {
 /** A read-only field that opens a menu of [options]; [id] is the test handle. */
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
-private fun <T> Picker(label: String, value: T, options: List<T>, name: (T) -> String, id: String, onPick: (T) -> Unit) {
+internal fun <T> Picker(label: String, value: T, options: List<T>, name: (T) -> String, id: String, onPick: (T) -> Unit) {
     var open by remember { mutableStateOf(false) }
     ExposedDropdownMenuBox(expanded = open, onExpandedChange = { open = it }) {
         OutlinedTextField(

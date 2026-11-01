@@ -1,4 +1,4 @@
-• New: back up phone folders to a drive in restic format
+• New: backups between phone and drive; mount a backup
 • New: recover deleted files on FAT32 and exFAT drives
 • New: another phone over USB mounts as a read-only drive
 • New: Format/Encrypt with ext4 or NTFS; Encrypt as LUKS2

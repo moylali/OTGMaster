@@ -1698,6 +1698,9 @@ class MainActivity : AppCompatActivity() {
         drive.sourceDeviceName?.let { key ->
             pendingUnmounts.merge(key, 1) { a, b -> a + b }
         }
+        // A backup mounted from a repository on this drive cannot outlive it.
+        app.fayaz.otgmaster.backup.BackupMounts.dependents(drive.id).forEach { unmountDrive(it, disconnected = disconnected) }
+        app.fayaz.otgmaster.backup.BackupMounts.forget(drive.id)
         OtgMasterState.unmountsInFlight.incrementAndGet()
         val t0 = System.currentTimeMillis()
         OtgMasterState.removeDrive(drive.id)
@@ -2941,6 +2944,35 @@ fun OtgMasterApp(
             ) {
                 Text(stringResource(R.string.scan_usb_devices))
             }
+            // Every backup, whichever drives it uses. The button opens into its three parts,
+            // each going straight to that tab of BackupsActivity.
+            val context = androidx.compose.ui.platform.LocalContext.current
+            var backupsOpen by remember { mutableStateOf(false) }
+            Spacer(modifier = Modifier.height(8.dp))
+            Button(
+                onClick = { backupsOpen = !backupsOpen },
+                modifier = Modifier.fillMaxWidth().semantics { contentDescription = "manage_backups_button" },
+            ) {
+                Text(stringResource(R.string.backups_manage_link))
+                Icon(if (backupsOpen) Icons.Default.KeyboardArrowUp else Icons.Default.KeyboardArrowDown, contentDescription = null)
+            }
+            AnimatedVisibility(visible = backupsOpen) {
+                Row(Modifier.fillMaxWidth().padding(top = 8.dp), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                    listOf(
+                        Triple(app.fayaz.otgmaster.ui.BackupsActivity.TAB_SCHEDULES, R.string.backups_tab_schedules, "backups_open_schedules"),
+                        Triple(app.fayaz.otgmaster.ui.BackupsActivity.TAB_HISTORY, R.string.backups_tab_history, "backups_open_history"),
+                        Triple(app.fayaz.otgmaster.ui.BackupsActivity.TAB_MOUNT, R.string.backups_tab_mount, "backups_open_mount"),
+                    ).forEach { (tab, label, id) ->
+                        OutlinedButton(
+                            onClick = {
+                                context.startActivity(Intent(context, app.fayaz.otgmaster.ui.BackupsActivity::class.java)
+                                    .putExtra(app.fayaz.otgmaster.ui.BackupsActivity.EXTRA_TAB, tab))
+                            },
+                            modifier = Modifier.weight(1f).semantics { contentDescription = id },
+                        ) { Text(stringResource(label), maxLines = 1, softWrap = false) }
+                    }
+                }
+            }
         }
         val mountedSection: @Composable (alwaysShowTitle: Boolean) -> Unit = { alwaysShowTitle ->
             if (mountedDrives.isNotEmpty() || disconnectedDrives.isNotEmpty() || alwaysShowTitle) {
@@ -3060,14 +3092,15 @@ fun OtgMasterApp(
                                         add(app.fayaz.otgmaster.ui.DriveAction("unmount_button", stringResource(R.string.unmount)) { onUnmount(drive) })
                                     }
                                 },
-                                // A phone or camera over MTP is read-only: browsing is all there is.
-                                secondary = if (drive.fileSystem is app.fayaz.otgmaster.mtp.MtpStorageFileSystem) emptyList() else buildList {
+                                // A phone or camera over MTP, or a mounted backup, is read-only: browsing is all there is.
+                                secondary = if (drive.fileSystem is app.fayaz.otgmaster.mtp.MtpStorageFileSystem ||
+                                    drive.fileSystem is app.fayaz.otgmaster.backup.restic.ResticFileSystem) emptyList() else buildList {
                                     add(app.fayaz.otgmaster.ui.DriveAction("format_action", stringResource(R.string.format_drive_menu),
                                         formatUnavailable(drive)) { formatTarget = drive })
                                     add(app.fayaz.otgmaster.ui.DriveAction("encrypt_action", stringResource(R.string.encrypt_drive_menu),
                                         encryptUnavailable(drive)) { encryptTarget = drive })
-                                    add(app.fayaz.otgmaster.ui.DriveAction("backup_action", stringResource(R.string.backup_action),
-                                        if (drive.isReadOnly) stringResource(R.string.backup_read_only) else null) { backupTarget = drive })
+                                    // Offered on a read-only drive too: it can be the source.
+                                    add(app.fayaz.otgmaster.ui.DriveAction("backup_action", stringResource(R.string.backup_action)) { backupTarget = drive })
                                     add(app.fayaz.otgmaster.ui.DriveAction("recovery_action", stringResource(R.string.recovery_action),
                                         app.fayaz.otgmaster.ui.recoveryUnavailable(drive, stringResource(R.string.recovery_not_supported))) { recoveryTarget = drive })
                                     val driveJobs = app.fayaz.otgmaster.ui.jobsForDrive(backupJobs, drive.id)
