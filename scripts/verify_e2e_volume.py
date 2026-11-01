@@ -28,6 +28,9 @@ A case with journal.txt (an ext4 drive repaired by replaying its journal) is pla
 ext4: e2fsck clean, needs_recovery cleared and the journal empty, journal_replayed.txt
 replayed, the block the journal revoked still zero, after_repair.txt as the test wrote it.
 
+A case with backup.txt (a backup mounted from this drive) writes nothing, so the drive
+must still be byte for byte the fixture, which restic checked when it was made.
+
 Exit 0 when everything holds; the problems are printed otherwise.
 """
 import hashlib
@@ -351,6 +354,27 @@ def journal_main(slot, case_dir):
           f"revoked block untouched, after_repair.txt present")
 
 
+def backup_main(slot, case_dir):
+    """Browsing and mounting a backup must leave its drive exactly as it was."""
+    differing = 0
+    first = None
+    offset = 0
+    with open(os.path.join(case_dir, "test.img"), "rb") as want, open(slot, "rb") as got:
+        while chunk := want.read(1 << 20):
+            other = got.read(len(chunk))
+            if other != chunk:
+                for i, (a, b) in enumerate(zip(chunk, other)):
+                    if a != b:
+                        differing += 1
+                        if first is None:
+                            first = offset + i
+            offset += len(chunk)
+    if differing:
+        print(f"HOST CHECK FAILED: {differing} bytes differ from the fixture, first at {first}")
+        sys.exit(1)
+    print(f"HOST CHECK OK: all {offset} bytes of the drive as they were")
+
+
 def main():
     if len(sys.argv) != 3:
         raise SystemExit(__doc__)
@@ -359,6 +383,8 @@ def main():
         return erase_main(slot, case_dir)
     if os.path.exists(os.path.join(case_dir, "journal.txt")):
         return journal_main(slot, case_dir)
+    if os.path.exists(os.path.join(case_dir, "backup.txt")):
+        return backup_main(slot, case_dir)
     with tempfile.TemporaryDirectory() as work:
         snapshot = os.path.join(work, "slot.img")
         with open(slot, "rb") as src, open(snapshot, "wb") as dst:   # a stable copy
