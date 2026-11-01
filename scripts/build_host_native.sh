@@ -16,7 +16,7 @@ srcs=("$cpp"/ntfs-3g/libntfs-3g/*.c "$cpp"/ntfs-3g/ntfsprogs/*.c "$cpp"/ntfs-3g/
       "$cpp"/VeraCryptNative.cpp "$cpp"/vc_cascade.cpp "$cpp"/vc_cascade.h "$cpp"/serpent/*.c
       "$cpp"/libtomcrypt/src/ciphers/twofish/*.c "$cpp"/libtomcrypt/src/misc/*.c
       "$cpp"/libtomcrypt/src/misc/crypt/*.c "$cpp"/argon2/src/*.c "$cpp"/argon2/src/blake2/*.c
-      "$cpp"/apfs/ApfsNative.cpp)
+      "$cpp"/apfs/ApfsNative.cpp "$cpp"/zstd/ZstdNative.cpp "$cpp"/zstd/common/*.c "$cpp"/zstd/decompress/*.c)
 apfs_libs=(libfsapfs libbfio libcaes libcdata libcerror libcfile libclocale libcnotify libcpath
            libcsplit libfcache libfdata libfdatetime libfguid libfmos libhmac libuna)
 for l in "${apfs_libs[@]}"; do srcs+=("$cpp"/libfsapfs/"$l"/*.c); done
@@ -90,6 +90,14 @@ done
 g++ -c -std=c++17 -fPIC -O1 -g -w "${apfs_inc[@]}" -Iapp/src/test/cpp \
     -I"$java_home/include" -I"$java_home/include/linux" "$cpp/apfs/ApfsNative.cpp" -o "$obj/ApfsNative.o" & pids+=($!)
 objs+=("$obj/ApfsNative.o")
+# zstd's decoder, with the definitions CMakeLists.txt gives it.
+for f in "$cpp"/zstd/common/*.c "$cpp"/zstd/decompress/*.c; do
+    o="$obj/zstd_$(basename "$f" .c).o"
+    gcc -c -fPIC -O1 -g -w -DZSTD_DISABLE_ASM=1 -DZSTD_LEGACY_SUPPORT=0 -I"$cpp/zstd" -I"$cpp/zstd/common" "$f" -o "$o" & pids+=($!)
+    objs+=("$o")
+done
+g++ -c -std=c++17 "${flags[@]}" -I"$cpp/zstd" "$cpp/zstd/ZstdNative.cpp" -o "$obj/ZstdNative.o" & pids+=($!)
+objs+=("$obj/ZstdNative.o")
 g++ -c -std=c++17 "${flags[@]}" "$cpp/ntfs/NtfsNative.cpp" -o "$obj/NtfsNative.o" & pids+=($!)
 g++ -c -std=c++17 "${flags[@]}" "${mbed[@]}" "$cpp/bitlocker/BitLockerNative.cpp" -o "$obj/BitLockerNative.o" & pids+=($!)
 g++ -c -std=c++17 "${flags[@]}" "${mbed[@]}" "$cpp/VeraCryptNative.cpp" -o "$obj/VeraCryptNative.o" & pids+=($!)

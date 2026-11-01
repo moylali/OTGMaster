@@ -16,6 +16,11 @@ import kotlin.random.Random
  * at random offsets against the originals.
  */
 class ResticFileSystemTest {
+    companion object {
+        @JvmStatic
+        @org.junit.BeforeClass
+        fun loadHostLibrary() = ZstdNativeTest.loadHostLibrary()
+    }
     private fun restic(): String? = listOf(System.getenv("RESTIC"), System.getProperty("user.home") + "/.local/bin/restic", "/usr/bin/restic")
         .firstOrNull { it != null && File(it).canExecute() }
 

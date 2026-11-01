@@ -19,6 +19,7 @@ See `AGENTS.md` for what a new entry must contain and how to record an upstream 
 | `app/src/main/cpp/serpent/serpent_generic.c` | [torvalds/linux](https://github.com/torvalds/linux) `crypto/serpent_generic.c` | `adc2186` (v6.12) | see the section below |
 | `app/src/main/cpp/libtomcrypt/` (Twofish only) | [libtom/libtomcrypt](https://github.com/libtom/libtomcrypt) | `7e7eb69` (v1.18.2) | see the section below |
 | `app/src/main/cpp/argon2/` | [P-H-C/phc-winner-argon2](https://github.com/P-H-C/phc-winner-argon2) | `f57e61e` | see the section below |
+| `app/src/main/cpp/zstd/` (decoder only) | [facebook/zstd](https://github.com/facebook/zstd) | `f8745da` (v1.5.7) | see the section below |
 
 **Licences** are listed in the table in `README.md`, which is authoritative — this
 registry deliberately does not restate them, to avoid the two drifting apart.
@@ -89,6 +90,35 @@ it (AES-Twofish, AES-Twofish-Serpent, Serpent-Twofish-AES, Twofish-Serpent). Dri
   (`VeraCryptCascadeTest`), not assumed.
 - **Licence:** public domain or WTFPL, at the user's option (`LICENSE`); see the table
   in `README.md`.
+
+## Patches
+
+| Area | Patch | Commit |
+|---|---|---|
+| — | none | — |
+
+---
+
+# `app/src/main/cpp/zstd/`
+
+zstd's own decoder, for restic repositories: format 2 compresses index files, snapshots and
+blobs. Called from `zstd/ZstdNative.cpp` (not from upstream) through `ZstdNative.kt`.
+
+- **Pinned upstream:** `f8745da6ff1ad1e7bab384bd1f9d742439278e99`, the `v1.5.7` release
+  tag, pinned 2026-11-01.
+- **What was taken:** `lib/zstd.h`, `lib/zstd_errors.h`, `LICENSE`; from `lib/common/`
+  everything but `pool.*` and `threading.*`; from `lib/decompress/` everything but
+  `huf_decompress_amd64.S`. Byte for byte. Left out: the compressor, the dictionary builder
+  and the legacy decoders. The app writes repositories uncompressed, which format 2 allows.
+  Built with `ZSTD_DISABLE_ASM=1` and `ZSTD_LEGACY_SUPPORT=0`.
+- **Why vendored rather than a dependency:** `io.airlift:aircompressor:0.27`, pure Java, came
+  first and passed on the host, but reads `sun.misc.Unsafe.ARRAY_BYTE_BASE_OFFSET`, which
+  Android does not have. The first compressed file crashed the app with `NoSuchFieldError`,
+  and the `backup_mount` E2E case is what found it. `com.github.luben:zstd-jni` would ship
+  prebuilt binaries, which F-Droid's from-source build cannot take. Compiled into
+  `veracrypt-native`, the same decoder runs in the host tests.
+- **Licence:** BSD-3-Clause or GPL-2.0-only, at the user's option; this project takes
+  BSD-3-Clause. See the table in `README.md`.
 
 ## Patches
 

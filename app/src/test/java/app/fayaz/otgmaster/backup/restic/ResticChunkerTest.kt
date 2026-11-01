@@ -8,6 +8,11 @@ import java.nio.file.Files
 import java.util.Random
 
 class ResticChunkerTest {
+    companion object {
+        @JvmStatic
+        @org.junit.BeforeClass
+        fun loadHostLibrary() = ZstdNativeTest.loadHostLibrary()
+    }
 
     private fun restic(): String? = listOf(System.getenv("RESTIC"), System.getProperty("user.home") + "/.local/bin/restic", "/usr/bin/restic")
         .firstOrNull { it != null && File(it).canExecute() }

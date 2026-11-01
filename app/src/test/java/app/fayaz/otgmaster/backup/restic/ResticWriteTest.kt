@@ -13,6 +13,11 @@ import java.util.Random
 
 /** App -> desktop, and a repository both write to: checked by restic itself. */
 class ResticWriteTest {
+    companion object {
+        @JvmStatic
+        @org.junit.BeforeClass
+        fun loadHostLibrary() = ZstdNativeTest.loadHostLibrary()
+    }
 
     private fun restic(): String? = listOf(System.getenv("RESTIC"), System.getProperty("user.home") + "/.local/bin/restic", "/usr/bin/restic")
         .firstOrNull { it != null && File(it).canExecute() }

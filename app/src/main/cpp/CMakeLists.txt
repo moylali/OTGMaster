@@ -115,6 +115,16 @@ add_library(argon2 STATIC
 target_compile_definitions(argon2 PRIVATE ARGON2_NO_THREADS)
 target_include_directories(argon2 PUBLIC argon2/include)
 
+# zstd's decoder alone, for restic repositories (docs/VENDOR_FIXES.md). No assembly: the
+# one .S file is x86-64 only, and the C path is what every phone runs.
+add_library(zstd STATIC
+        zstd/common/debug.c zstd/common/entropy_common.c zstd/common/error_private.c
+        zstd/common/fse_decompress.c zstd/common/xxhash.c zstd/common/zstd_common.c
+        zstd/decompress/huf_decompress.c zstd/decompress/zstd_ddict.c
+        zstd/decompress/zstd_decompress.c zstd/decompress/zstd_decompress_block.c)
+target_compile_definitions(zstd PRIVATE ZSTD_DISABLE_ASM=1 ZSTD_LEGACY_SUPPORT=0)
+target_include_directories(zstd PUBLIC zstd PRIVATE zstd/common)
+
 # veracrypt-native
 # BitLocker sector crypto, key stretch and AES-CCM unwrap over mbedtls (see bitlocker/).
 add_library(bitlocker STATIC bitlocker/bitlocker_crypto.c)
@@ -122,7 +132,7 @@ target_include_directories(bitlocker PUBLIC bitlocker)
 target_link_libraries(bitlocker mbedcrypto)
 
 add_library(veracrypt-native SHARED VeraCryptNative.cpp vc_cascade.cpp exfat/ExFatNative.cpp ntfs/NtfsNative.cpp
-        bitlocker/BitLockerNative.cpp $<TARGET_OBJECTS:apfs-jni>)
+        bitlocker/BitLockerNative.cpp zstd/ZstdNative.cpp $<TARGET_OBJECTS:apfs-jni>)
 target_compile_definitions(veracrypt-native PRIVATE _FILE_OFFSET_BITS=64)
 if(OTG_IO_STATS)
     target_compile_definitions(veracrypt-native PRIVATE OTG_IO_STATS=1)
@@ -137,4 +147,5 @@ target_link_libraries(veracrypt-native
         serpent
         twofish
         argon2
+        zstd
         log)
