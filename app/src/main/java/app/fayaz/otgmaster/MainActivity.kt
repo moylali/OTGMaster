@@ -3009,8 +3009,10 @@ fun OtgMasterApp(
                             // minutes, and ext4 reads its superblock from the drive. Read here, a
                             // 2.2 GB write to an NTFS volume on a Pixel 7 Pro made the app "not
                             // responding" at the first touch. Until the first read, no bar.
+                            val isBackup = drive.fileSystem is app.fayaz.otgmaster.backup.restic.ResticFileSystem
+                            // A mounted backup has no capacity of its own: space stays null.
                             val space by produceState<Pair<Long, Long>?>(null, drive.id) {
-                                while (true) {
+                                while (!isBackup) {
                                     value = withContext(Dispatchers.IO) {
                                         runCatching { drive.fileSystem.capacity to drive.fileSystem.freeSpace }.getOrNull()
                                     } ?: value
@@ -3024,7 +3026,9 @@ fun OtgMasterApp(
 
                             // Encryption + filesystem tags
                             Row(horizontalArrangement = Arrangement.spacedBy(6.dp)) {
-                                val encTag = encryptionTag(drive.sourceVolumeCandidate?.containerType)
+                                // A mounted backup has no candidate behind it, and is encrypted.
+                                val encTag = if (isBackup) Pair("ENCRYPTED", Color(0xFF2E7D32))
+                                    else encryptionTag(drive.sourceVolumeCandidate?.containerType)
                                 DriveTag(label = encTag.first, color = encTag.second)
 
                                 if (drive.filesystemName.isNotEmpty()) {

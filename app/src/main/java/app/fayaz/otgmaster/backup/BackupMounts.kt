@@ -46,8 +46,12 @@ object BackupMounts {
     }.onFailure { OtgMasterState.logFailure("backup-browse", "Could not read ${VolumeInfo.displayPath(context, folder)}", it) }
         .getOrDefault(false)
 
-    /** The saved password if [folder] is the repository of one of this phone's jobs, else null. */
-    fun savedPassword(context: Context, folder: Uri): String? {
+    /**
+     * If [folder] is the repository of one of this phone's jobs, mounts it as that job, so the
+     * job's row shows it mounted and it cannot be mounted twice. Null if it is no job's, or its
+     * saved password is missing or no longer opens it. Blocking: call off the main thread.
+     */
+    fun mountAsJob(context: Context, folder: Uri): MountedDrive? {
         val chosen = runCatching { DocumentsContract.getTreeDocumentId(folder) }.getOrNull() ?: return null
         val job = JobStore.get(context).jobs.value.firstOrNull { job ->
             val target = Uri.parse(job.destination.uri)
@@ -56,7 +60,9 @@ object BackupMounts {
                     root.trimEnd('/') + "/" + job.destinationFolder == chosen.trimEnd('/')
                 } == true
         } ?: return null
-        return BackupSecrets(context).password(job.id)
+        return runCatching { mount(context, job) }
+            .onFailure { OtgMasterState.log("Backup \"${job.name}\": ${it.message}; asking for the password") }
+            .getOrNull()
     }
 
     /**
@@ -82,7 +88,7 @@ object BackupMounts {
             fileSystem = ResticFileSystem(repo, label),
             blockDevice = null,
             isPlain = false,
-            partitionLabel = label,
+            partitionLabel = "",
             filesystemName = "Backup",
             mountedReadOnly = true,
         )
