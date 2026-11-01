@@ -1,7 +1,5 @@
 package app.fayaz.otgmaster.backup.restic
 
-import io.airlift.compress.zstd.ZstdDecompressor
-import io.airlift.compress.zstd.ZstdInputStream
 import org.json.JSONArray
 import org.json.JSONObject
 import java.io.ByteArrayInputStream
@@ -151,16 +149,8 @@ class ResticRepository private constructor(val backend: ResticBackend, val key: 
         fun unpack(plain: ByteArray): ByteArray =
             if (plain.isNotEmpty() && plain[0].toInt() == 2) zstd(plain, 1, plain.size - 1, null) else plain
 
-        fun zstd(src: ByteArray, off: Int, len: Int, size: Int?): ByteArray {
-            val known = size ?: ZstdDecompressor.getDecompressedSize(src, off, len).takeIf { it >= 0 }?.toInt()
-            if (known != null) {
-                val out = ByteArray(known)
-                val n = ZstdDecompressor().decompress(src, off, len, out, 0, known)
-                if (n != known) throw IOException("zstd gave $n bytes, expected $known")
-                return out
-            }
-            return ZstdInputStream(ByteArrayInputStream(src, off, len)).use { it.readBytes() }
-        }
+        fun zstd(src: ByteArray, off: Int, len: Int, size: Int?): ByteArray =
+            ZstdNative.decompress(src, off, len, size ?: -1)
 
         fun sha256Hex(b: ByteArray): String = MessageDigest.getInstance("SHA-256").digest(b).joinToString("") { "%02x".format(it) }
 

@@ -179,8 +179,6 @@ dependencies {
     // without Robolectric.
 
     testImplementation("org.json:json:20240303")
-    // restic compresses blobs and index files with zstd; pure Java, so the app and the host tests share one decoder.
-    implementation("io.airlift:aircompressor:0.27")
     // Scheduled backups and their reminders run when the app is closed. Apache 2.0.
     implementation("androidx.work:work-runtime-ktx:2.9.1")
 
