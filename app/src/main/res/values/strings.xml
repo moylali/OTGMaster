@@ -252,7 +252,7 @@
     <string name="encrypt_keyfiles_note">Keep a copy of every keyfile: the volume cannot be opened without them. Their order does not matter.</string>
     <string name="erase_filesystem">Filesystem</string>
     <string name="erase_label">Volume label</string>
-    <string name="erase_label_hint">Up to 11 characters. Clear it for no label.</string>
+    <string name="erase_label_hint">Up to %1$d characters. Clear it for no label.</string>
     <string name="erase_confirm_title">Erase this partition?</string>
     <string name="erase_confirm_warning">All data on %1$s (%2$s) will be cleared. This cannot be undone.</string>
     <string name="encrypt_button">Erase and encrypt</string>
