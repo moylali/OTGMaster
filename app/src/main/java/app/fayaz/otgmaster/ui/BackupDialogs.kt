@@ -96,7 +96,7 @@ private data class End(val device: BackupDevice, val folder: Uri? = null)
  */
 @OptIn(ExperimentalLayoutApi::class)
 @Composable
-fun BackupSetupDialog(driveId: String, driveTitle: String, onDismiss: () -> Unit) {
+fun BackupSetupDialog(driveId: String, driveTitle: String, title: Int = R.string.backup_setup_title_new, onDismiss: () -> Unit) {
     val context = LocalContext.current
     val devices = remember { BackupDevice.available(context) }
     val here = devices.firstOrNull { it.driveId == driveId } ?: BackupDevice(driveId, driveTitle)
@@ -149,7 +149,7 @@ fun BackupSetupDialog(driveId: String, driveTitle: String, onDismiss: () -> Unit
 
     AlertDialog(
         onDismissRequest = onDismiss,
-        title = { Text(stringResource(R.string.backup_setup_title_new)) },
+        title = { Text(stringResource(title)) },
         text = {
             Column(Modifier.verticalScroll(rememberScrollState()), verticalArrangement = Arrangement.spacedBy(8.dp)) {
                 EndPicker(stringResource(R.string.backup_source), "source", source) { if (it != source.device) source = End(it) }

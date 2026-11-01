@@ -24,11 +24,13 @@ import androidx.compose.foundation.text.selection.SelectionContainer
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.ArrowBack
 import androidx.compose.material3.AlertDialog
+import androidx.compose.material3.Button
 import androidx.compose.material3.Card
 import androidx.compose.material3.FilterChip
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
+import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Tab
 import androidx.compose.material3.TabRow
@@ -51,7 +53,9 @@ import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.semantics.contentDescription
 import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.text.font.FontFamily
+import androidx.compose.ui.text.input.PasswordVisualTransformation
 import androidx.compose.ui.unit.dp
+import app.fayaz.otgmaster.OtgMasterState
 import app.fayaz.otgmaster.R
 import app.fayaz.otgmaster.applySystemBarAppearance
 import app.fayaz.otgmaster.backup.BackupExecutor
@@ -65,6 +69,7 @@ import app.fayaz.otgmaster.backup.RunRecord
 import app.fayaz.otgmaster.backup.RunStatus
 import app.fayaz.otgmaster.backup.VolumeInfo
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 
@@ -72,11 +77,12 @@ import kotlinx.coroutines.withContext
  * Manage backups, opened from the main screen: every backup job in one place, whichever
  * drives it uses, in two tabs.
  *
- * - **Schedules**: each job's source and target, type and schedule (changeable here), when
+ * - **Schedules**: Create schedule, while a drive is mounted; each job's source and target, type and schedule (changeable here), when
  *   it last ran and how; Back up now, Check, Restore newest, Mount (an incremental backup
  *   as a read-only drive, see [BackupMounts]), its password, Delete.
  * - **History**: every run of every job, newest first — what ran, when, for how long, how
  *   many files and bytes, the snapshot it made, and the message of a failure.
+ * - **Mount backups**: Browse for a backup in any folder, and the incremental jobs of this phone.
  */
 class BackupsActivity : ComponentActivity() {
 
@@ -151,11 +157,30 @@ private fun Schedules() {
         else BackupExecutor.start(context, job.id, BackupExecutor.Op.Restore(snap.id, "", uri, "${job.name} ${Format.dateTime(snap.time).replace(':', '.')}", safety = false))
     }
 
-    if (jobs.isEmpty()) {
-        Text(stringResource(R.string.backups_none), Modifier.padding(16.dp))
-        return
+    // The mounted partitions a schedule can use. A drive can come or go while this tab is up
+    // and nothing here is told, so look again each second.
+    var drives by remember { mutableStateOf(BackupDevice.available(context).filterNot { it.isPhone }) }
+    var creating by remember { mutableStateOf<BackupDevice?>(null) }
+    LaunchedEffect(Unit) {
+        while (true) {
+            delay(1000)
+            drives = BackupDevice.available(context).filterNot { it.isPhone }
+        }
     }
+    creating?.let { d -> BackupSetupDialog(d.driveId!!, d.title, R.string.backups_create_schedule) { creating = null } }
+
     LazyColumn(Modifier.fillMaxSize().padding(horizontal = 12.dp), verticalArrangement = Arrangement.spacedBy(12.dp)) {
+        item {
+            Column(Modifier.padding(top = 8.dp), verticalArrangement = Arrangement.spacedBy(4.dp)) {
+                Button(
+                    enabled = drives.isNotEmpty(),
+                    onClick = { creating = drives.firstOrNull { !it.readOnly } ?: drives.first() },
+                    modifier = Modifier.semantics { contentDescription = "backups_create_schedule" },
+                ) { Text(stringResource(R.string.backups_create_schedule)) }
+                if (drives.isEmpty()) Text(stringResource(R.string.backups_create_no_devices), style = MaterialTheme.typography.bodySmall)
+            }
+        }
+        if (jobs.isEmpty()) item { Text(stringResource(R.string.backups_none), Modifier.padding(vertical = 8.dp)) }
         message?.let { m -> item { Text(m, color = MaterialTheme.colorScheme.error, modifier = Modifier.padding(top = 8.dp)) } }
         items(jobs, key = { it.id }) { job ->
             Card(Modifier.fillMaxWidth().padding(top = 8.dp)) {
@@ -237,13 +262,86 @@ private fun MountBackups() {
     val incremental = jobs.filter { it.type == JobType.INCREMENTAL }
     var message by remember { mutableStateOf<String?>(null) }
     var changed by remember { mutableStateOf(0) }
-    if (incremental.isEmpty()) {
-        Text(stringResource(R.string.backups_mount_none), Modifier.padding(16.dp))
-        return
+    // A browsed folder that holds a backup whose password this phone does not have.
+    var asking by remember { mutableStateOf<Uri?>(null) }
+    var wrongPassword by remember { mutableStateOf(false) }
+
+    /** Mounts the browsed folder; false if the password does not open it. */
+    suspend fun mountBrowsed(folder: Uri, password: String): Boolean = withContext(Dispatchers.IO) {
+        val name = VolumeInfo.displayPath(context, folder)
+        runCatching { BackupMounts.mountFolder(context, folder, password) }.fold(
+            { drive ->
+                if (drive != null) message = context.getString(R.string.backups_mounted, drive.partitionLabel)
+                drive != null
+            },
+            {
+                OtgMasterState.logFailure("backup-browse", "Could not mount the backup at $name", it)
+                message = context.getString(R.string.backups_mount_failed, name, it.message ?: it.javaClass.simpleName)
+                true
+            })
     }
+
+    val browse = rememberLauncherForActivityResult(ActivityResultContracts.OpenDocumentTree()) { uri ->
+        if (uri == null) return@rememberLauncherForActivityResult
+        runCatching { context.contentResolver.takePersistableUriPermission(uri, Intent.FLAG_GRANT_READ_URI_PERMISSION) }
+            .onFailure { OtgMasterState.logFailure("backup-grant", "Could not keep access to the chosen folder", it) }
+        message = context.getString(R.string.backups_browse_opening)
+        scope.launch {
+            val found = withContext(Dispatchers.IO) { BackupMounts.holdsBackup(context, uri) }
+            if (!found) {
+                OtgMasterState.log("No backup found at ${VolumeInfo.displayPath(context, uri)}")
+                message = context.getString(R.string.backups_browse_none)
+                return@launch
+            }
+            val saved = withContext(Dispatchers.IO) { BackupMounts.savedPassword(context, uri) }
+            if (saved == null || !mountBrowsed(uri, saved)) {
+                message = null
+                wrongPassword = false
+                asking = uri
+            }
+            changed++
+        }
+    }
+
+    asking?.let { folder ->
+        var password by remember(folder) { mutableStateOf("") }
+        var opening by remember(folder) { mutableStateOf(false) }
+        AlertDialog(
+            onDismissRequest = { asking = null },
+            title = { Text(stringResource(R.string.backup_password)) },
+            text = {
+                Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                    Text(stringResource(R.string.backups_browse_password, VolumeInfo.displayPath(context, folder)), style = MaterialTheme.typography.bodySmall)
+                    OutlinedTextField(password, { password = it; wrongPassword = false }, singleLine = true,
+                        visualTransformation = PasswordVisualTransformation(),
+                        label = { Text(stringResource(R.string.backup_password)) },
+                        modifier = Modifier.semantics { contentDescription = "backups_browse_password" })
+                    if (wrongPassword) Text(stringResource(R.string.backups_browse_wrong), color = MaterialTheme.colorScheme.error)
+                }
+            },
+            confirmButton = {
+                TextButton(enabled = password.isNotEmpty() && !opening, onClick = {
+                    opening = true
+                    scope.launch {
+                        if (mountBrowsed(folder, password)) asking = null else wrongPassword = true
+                        opening = false
+                        changed++
+                    }
+                }, modifier = Modifier.semantics { contentDescription = "backups_browse_mount" }) { Text(stringResource(R.string.backups_mount)) }
+            },
+            dismissButton = { TextButton(onClick = { asking = null }) { Text(stringResource(R.string.cancel)) } },
+        )
+    }
+
     LazyColumn(Modifier.fillMaxSize().padding(horizontal = 12.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
-        item { Text(stringResource(R.string.backups_mount_help), style = MaterialTheme.typography.bodySmall, modifier = Modifier.padding(top = 8.dp)) }
+        item {
+            Button(onClick = { browse.launch(null) }, modifier = Modifier.padding(top = 8.dp).semantics { contentDescription = "backups_browse" }) {
+                Text(stringResource(R.string.backups_browse))
+            }
+        }
+        item { Text(stringResource(R.string.backups_mount_help), style = MaterialTheme.typography.bodySmall) }
         message?.let { m -> item { Text(m, style = MaterialTheme.typography.bodyMedium) } }
+        if (incremental.isEmpty()) item { Text(stringResource(R.string.backups_mount_none), style = MaterialTheme.typography.bodySmall) }
         items(incremental, key = { it.id }) { job ->
             changed.let { } // read so the state follows a mount
             val mounted = BackupMounts.isMounted(job.id)
