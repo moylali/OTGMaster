@@ -22,7 +22,10 @@ object Preflight {
         /** Bytes the run may add at most. */
         val neededBytes: Long,
         val changedFiles: Long,
-    )
+    ) {
+        /** Nothing was listed at all. Not a folder of empty folders: those still get backed up. */
+        val isEmpty: Boolean get() = files == 0L && dirs == 0L
+    }
 
     /**
      * Walks [source] once. With a restic [repo] and the same folder's tree id in the
