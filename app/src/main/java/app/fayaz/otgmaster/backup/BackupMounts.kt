@@ -5,7 +5,9 @@ import android.net.Uri
 import android.provider.DocumentsContract
 import app.fayaz.otgmaster.MountedDrive
 import app.fayaz.otgmaster.OtgMasterState
+import app.fayaz.otgmaster.backup.restic.FileTreeBackend
 import app.fayaz.otgmaster.backup.restic.ResticFileSystem
+import app.fayaz.otgmaster.backup.restic.ResticRepository
 import app.fayaz.otgmaster.extension.ExtensionContract
 import java.util.concurrent.ConcurrentHashMap
 
@@ -30,21 +32,64 @@ object BackupMounts {
         require(job.type == JobType.INCREMENTAL) { "only incremental backups can be mounted" }
         val id = driveIdFor(job.id)
         OtgMasterState.mountedDrives.firstOrNull { it.id == id }?.let { return it }
-        val repo = BackupRunner(context).repository(job)
+        return add(context, id, job.name, BackupRunner(context).repository(job), Uri.parse(job.destination.uri))
+    }
+
+    /**
+     * Whether the folder the user browsed to holds a restic repository. A repository has no
+     * main file: it is a folder with a `config` file and `keys`, `snapshots`, `index` and
+     * `data` folders. `config` and at least one key are what opening it needs.
+     */
+    fun holdsBackup(context: Context, folder: Uri): Boolean = runCatching {
+        val backend = FileTreeBackend(SafFileTree(context.contentResolver, folder))
+        backend.exists("config") && backend.list("keys").isNotEmpty()
+    }.onFailure { OtgMasterState.logFailure("backup-browse", "Could not read ${VolumeInfo.displayPath(context, folder)}", it) }
+        .getOrDefault(false)
+
+    /** The saved password if [folder] is the repository of one of this phone's jobs, else null. */
+    fun savedPassword(context: Context, folder: Uri): String? {
+        val chosen = runCatching { DocumentsContract.getTreeDocumentId(folder) }.getOrNull() ?: return null
+        val job = JobStore.get(context).jobs.value.firstOrNull { job ->
+            val target = Uri.parse(job.destination.uri)
+            job.type == JobType.INCREMENTAL && target.authority == folder.authority &&
+                runCatching { DocumentsContract.getTreeDocumentId(target) }.getOrNull()?.let { root ->
+                    root.trimEnd('/') + "/" + job.destinationFolder == chosen.trimEnd('/')
+                } == true
+        } ?: return null
+        return BackupSecrets(context).password(job.id)
+    }
+
+    /**
+     * Mounts the repository in a folder the user browsed to. Returns null if [password] does
+     * not open it. Blocking: call off the main thread.
+     */
+    fun mountFolder(context: Context, folder: Uri, password: String): MountedDrive? {
+        val id = "bk" + Integer.toHexString(folder.toString().hashCode())
+        OtgMasterState.mountedDrives.firstOrNull { it.id == id }?.let { return it }
+        val path = VolumeInfo.displayPath(context, folder)
+        val repo = ResticRepository.open(FileTreeBackend(SafFileTree(context.contentResolver, folder)), password.toByteArray())
+        if (repo == null) {
+            OtgMasterState.log("Backup at $path: the password does not open it")
+            return null
+        }
+        return add(context, id, path.trimEnd('/').substringAfterLast('/').ifEmpty { "Backup" }, repo, folder)
+    }
+
+    private fun add(context: Context, id: String, label: String, repo: ResticRepository, location: Uri): MountedDrive {
         val drive = MountedDrive(
             id = id,
-            name = "${job.name} (backup)",
-            fileSystem = ResticFileSystem(repo, job.name),
+            name = "$label (backup)",
+            fileSystem = ResticFileSystem(repo, label),
             blockDevice = null,
             isPlain = false,
-            partitionLabel = job.name,
+            partitionLabel = label,
             filesystemName = "Backup",
             mountedReadOnly = true,
         )
-        VolumeInfo.otgDriveId(Uri.parse(job.destination.uri))?.let { on[id] = it }
+        VolumeInfo.otgDriveId(location)?.let { on[id] = it }
         OtgMasterState.addDrive(drive)
         context.contentResolver.notifyChange(DocumentsContract.buildRootsUri(ExtensionContract.AUTHORITY), null)
-        OtgMasterState.log("Mounted backup \"${job.name}\" read-only: ${repo.snapshots().size} snapshot(s)")
+        OtgMasterState.log("Mounted backup \"$label\" read-only: ${repo.snapshots().size} snapshot(s)")
         return drive
     }
 

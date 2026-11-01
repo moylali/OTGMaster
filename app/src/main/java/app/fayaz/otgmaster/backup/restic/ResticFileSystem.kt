@@ -1,5 +1,6 @@
 package app.fayaz.otgmaster.backup.restic
 
+import android.os.Binder
 import me.jahnen.libaums.core.fs.AbstractUsbFile
 import me.jahnen.libaums.core.fs.FileSystem
 import me.jahnen.libaums.core.fs.UsbFile
@@ -20,9 +21,12 @@ import java.time.format.DateTimeFormatter
  * blobs read are kept, since apps read a file in small sequential pieces and a blob is
  * up to 8 MiB. Every blob read is checked against its hash ([ResticRepository.blob]).
  *
- * All repository access goes through [lock]: the repository's index and its backend
- * (a document tree on another drive) are not thread-safe, and the Files app reads from
- * several threads.
+ * All repository access goes through [access]. It holds [lock], because the repository's
+ * index and its backend (a document tree on another drive) are not thread-safe and the
+ * Files app reads from several threads. It also clears the calling identity: a Files app
+ * request arrives here on a binder thread as the Files app, and the backend's document
+ * calls would be checked against that app, which has no grant on the repository's folder.
+ * The grant is this app's, so they must run as this app.
  */
 class ResticFileSystem(val repo: ResticRepository, private val label: String) : FileSystem {
     internal val lock = Any()
@@ -30,11 +34,20 @@ class ResticFileSystem(val repo: ResticRepository, private val label: String) : 
         override fun removeEldestEntry(eldest: MutableMap.MutableEntry<String, ByteArray>) = size > 4
     }
 
-    internal fun blob(id: String): ByteArray = synchronized(lock) { cache[id] ?: repo.blob(id).also { cache[id] = it } }
-    internal fun tree(id: String): List<ResticRepository.Node> = synchronized(lock) { repo.tree(id) }
-    internal fun blobSize(id: String): Int = synchronized(lock) { repo.blobSize(id) }
+    private inline fun <T> access(block: () -> T): T {
+        val caller = Binder.clearCallingIdentity()
+        try {
+            return synchronized(lock) { block() }
+        } finally {
+            Binder.restoreCallingIdentity(caller)
+        }
+    }
 
-    private val snapshots: List<ResticRepository.Snapshot> by lazy { synchronized(lock) { repo.snapshots() } }
+    internal fun blob(id: String): ByteArray = access { cache[id] ?: repo.blob(id).also { cache[id] = it } }
+    internal fun tree(id: String): List<ResticRepository.Node> = access { repo.tree(id) }
+    internal fun blobSize(id: String): Int = access { repo.blobSize(id) }
+
+    private val snapshots: List<ResticRepository.Snapshot> by lazy { access { repo.snapshots() } }
 
     override val rootDirectory: UsbFile = SnapshotsRoot()
     override val volumeLabel: String get() = label

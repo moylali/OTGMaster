@@ -745,6 +745,8 @@ class MainActivity : AppCompatActivity() {
         super.onResume()
         // On screen: a plug-in notice has done its job, whichever way the user got here.
         app.fayaz.otgmaster.usb.UsbPlugInReceiver.cancel(this)
+        // Manage backups, on top of this screen, mounts and unmounts backups: show their cards.
+        updateMountedDrives()
         // Backstop for a prompt that never delivered a callback — most often because the
         // screen locked while it was up, which dismisses it silently. Once we are resumed
         // there is nothing left to hide the form behind, so clear the flag and put the
