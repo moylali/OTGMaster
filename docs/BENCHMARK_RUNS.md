@@ -33,6 +33,27 @@ to a row here.
 
 ---
 
+## 2026-11-01 — A desktop restic repository on the Galaxy Tab A9+
+
+Not a benchmark. The `backup_mount` E2E case found that a compressed repository crashed the
+app, and the E2E emulators are x86-64, so the replacement decoder was checked on ARM.
+
+| Field | Value |
+|---|---|
+| Device | Samsung Galaxy Tab A9+ (SM-X210), Android 16 / One UI 8.0, arm64-v8a |
+| Commit | `b1eb85b` |
+| Repository | desktop restic 0.18.1, format 2, compression at its default; `restic check --read-data` clean before it was pushed |
+| Location | the tablet's internal storage, `Documents/otg_desktop_repo`, then removed |
+| Path | Browse for backup, the Files picker, a typed password, the card's Open Files App, Copy to… on the snapshot |
+| Result | Mounted read-only with no crash, card tagged ENCRYPTED and BACKUP. `big.bin` (12 MiB, random), `repeat.txt` (2.4 MB, compresses) and `sub/note.txt`, copied out by the Files app, match the source by SHA-256, 3 of 3 |
+| Mount time | about 9 s from Mount to the card, with no sign of progress but a disabled button |
+| Host `fsck` | not applicable: no USB volume in this run |
+
+The same day, with `b1eb85b`'s test on emulators: `backup_mount` passes with the host finding
+the drive byte for byte unchanged, and fails when either guarded bug is put back
+(`clearCallingIdentity` removed: the Files app does not list the snapshot; reads on the shared
+proxy thread: "Handler must be different from the current thread").
+
 ## 2026-11-01 — Backup screens and mounted backups: D5/2 on the Galaxy Tab A9+
 
 Device: Samsung Galaxy Tab A9+ (SM-X210), Android 16 / One UI 8.0, over a USB-C hub with its
