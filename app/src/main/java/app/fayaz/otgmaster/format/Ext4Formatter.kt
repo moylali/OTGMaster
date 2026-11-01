@@ -256,7 +256,10 @@ object Ext4Formatter {
         b.putShort(90, group.toShort())               // s_block_group_nr
         b.putInt(92, COMPAT); b.putInt(96, INCOMPAT); b.putInt(100, RO_COMPAT)
         System.arraycopy(uuid, 0, sb, 104, 16)
-        val name = label.toByteArray(Charsets.UTF_8).copyOf(minOf(16, label.toByteArray(Charsets.UTF_8).size))
+        // 16 bytes of UTF-8, cut at a character boundary rather than through one.
+        var cut = label
+        while (cut.toByteArray(Charsets.UTF_8).size > 16) cut = cut.dropLast(1)
+        val name = cut.toByteArray(Charsets.UTF_8)
         System.arraycopy(name, 0, sb, 120, name.size)
         if (journalInode != null) {
             b.putInt(224, JOURNAL_INO)

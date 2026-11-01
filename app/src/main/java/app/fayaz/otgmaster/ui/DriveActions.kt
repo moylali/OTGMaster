@@ -305,14 +305,24 @@ private fun PasswordField(value: String, label: String, id: String, onChange: (S
 }
 
 @Composable
-private fun LabelField(value: String, id: String, onChange: (String) -> Unit) {
+private fun LabelField(value: String, id: String, maxChars: Int, onChange: (String) -> Unit) {
     OutlinedTextField(
-        value = value, onValueChange = { onChange(it.take(11)) },
+        value = value, onValueChange = { onChange(it.take(maxChars)) },
         label = { Text(stringResource(R.string.erase_label)) },
-        supportingText = { Text(stringResource(R.string.erase_label_hint)) },
+        supportingText = { Text(stringResource(R.string.erase_label_hint, maxChars)) },
         singleLine = true,
         modifier = Modifier.fillMaxWidth().semantics { contentDescription = id },
     )
+}
+
+/**
+ * How long a label [fs] keeps: FAT32's 11 bytes and exFAT's 11 characters, ext4's 16 bytes
+ * (16 characters of ASCII), and 32 for NTFS, which Windows shows in full.
+ */
+internal fun labelLimit(fs: DriveFormatter.Filesystem): Int = when (fs) {
+    DriveFormatter.Filesystem.FAT32, DriveFormatter.Filesystem.EXFAT -> 11
+    DriveFormatter.Filesystem.EXT4 -> 16
+    DriveFormatter.Filesystem.NTFS -> 32
 }
 
 /**
@@ -415,7 +425,7 @@ fun FormatScreen(
             style = MaterialTheme.typography.bodyMedium)
         Picker(stringResource(R.string.erase_filesystem), fs, DriveFormatter.Filesystem.entries, { it.displayName },
             "format_fs") { fs = it }
-        LabelField(label, "format_label") { label = it }
+        LabelField(label, "format_label", labelLimit(fs)) { label = it }
         QuickOption(quick) { quick = it }
         Button(
             onClick = { confirming = true },
@@ -425,7 +435,7 @@ fun FormatScreen(
     }
     if (confirming) {
         EraseConfirmDialog(drive, stringResource(R.string.format_button),
-            onConfirm = { confirming = false; onConfirm(FormatRequest(fs, label.trim(), !quick)) },
+            onConfirm = { confirming = false; onConfirm(FormatRequest(fs, label.trim().take(labelLimit(fs)), !quick)) },
             onDismiss = { confirming = false })
     }
 }
@@ -567,7 +577,7 @@ fun EncryptScreen(
 
         Picker(stringResource(R.string.encrypt_filesystem), fs, DriveFormatter.Filesystem.entries, { it.displayName },
             "encrypt_fs") { fs = it }
-        LabelField(label, "encrypt_label") { label = it }
+        LabelField(label, "encrypt_label", labelLimit(fs)) { label = it }
         QuickOption(quick) { quick = it }
         if (PasswordManager.isAvailable && password.isNotEmpty()) {
             Row(
@@ -594,7 +604,7 @@ fun EncryptScreen(
             onConfirm = {
                 confirming = false
                 onConfirm(EncryptRequest(type, password.toCharArray(), if (luks2) null else pim, cipher, hash,
-                    if (luks2) emptyList() else keyfiles, fs, label.trim(), !quick,
+                    if (luks2) emptyList() else keyfiles, fs, label.trim().take(labelLimit(fs)), !quick,
                     saveToPasswordManager = PasswordManager.isAvailable && saveToPasswordManager && password.isNotEmpty()))
                 password = ""; confirm = ""; pimConfirm = ""
             },
