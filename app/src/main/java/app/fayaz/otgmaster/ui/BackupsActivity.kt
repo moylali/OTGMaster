@@ -161,10 +161,13 @@ private fun Schedules() {
     // and nothing here is told, so look again each second.
     var drives by remember { mutableStateOf(BackupDevice.available(context).filterNot { it.isPhone }) }
     var creating by remember { mutableStateOf<BackupDevice?>(null) }
+    // "Last backup: 19 min ago" is worked out when a card composes, so it has to compose again.
+    var clock by remember { mutableStateOf(0L) }
     LaunchedEffect(Unit) {
         while (true) {
             delay(1000)
             drives = BackupDevice.available(context).filterNot { it.isPhone }
+            clock = System.currentTimeMillis() / 60_000
         }
     }
     creating?.let { d -> BackupSetupDialog(d.driveId!!, d.title, R.string.backups_create_schedule) { creating = null } }
@@ -183,6 +186,7 @@ private fun Schedules() {
         if (jobs.isEmpty()) item { Text(stringResource(R.string.backups_none), Modifier.padding(vertical = 8.dp)) }
         message?.let { m -> item { Text(m, color = MaterialTheme.colorScheme.error, modifier = Modifier.padding(top = 8.dp)) } }
         items(jobs, key = { it.id }) { job ->
+            clock.let { } // read so the times below follow the clock
             Card(Modifier.fillMaxWidth().padding(top = 8.dp)) {
                 Column(Modifier.padding(12.dp), verticalArrangement = Arrangement.spacedBy(4.dp)) {
                     Text(job.name, style = MaterialTheme.typography.titleMedium)
