@@ -271,7 +271,7 @@ private fun MountBackups() {
         val name = VolumeInfo.displayPath(context, folder)
         runCatching { BackupMounts.mountFolder(context, folder, password) }.fold(
             { drive ->
-                if (drive != null) message = context.getString(R.string.backups_mounted, drive.partitionLabel)
+                if (drive != null) message = context.getString(R.string.backups_mounted, drive.name)
                 drive != null
             },
             {
@@ -293,8 +293,10 @@ private fun MountBackups() {
                 message = context.getString(R.string.backups_browse_none)
                 return@launch
             }
-            val saved = withContext(Dispatchers.IO) { BackupMounts.savedPassword(context, uri) }
-            if (saved == null || !mountBrowsed(uri, saved)) {
+            val drive = withContext(Dispatchers.IO) { BackupMounts.mountAsJob(context, uri) }
+            if (drive != null) {
+                message = context.getString(R.string.backups_mounted, drive.name)
+            } else {
                 message = null
                 wrongPassword = false
                 asking = uri

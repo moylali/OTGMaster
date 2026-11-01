@@ -176,6 +176,24 @@ class VeraCryptDocumentProvider : DocumentsProvider() {
         }
 
         /**
+         * Reads from a mounted backup. A backup's files live in a repository on another
+         * drive, so its onRead opens and reads that drive's files through this provider.
+         * Those proxy descriptors are served by [proxyHandler], so this read has to wait on
+         * another thread: Android refuses to open one from its own handler's thread, and if it
+         * did not, the read would wait on itself.
+         */
+        private val backupProxyHandler: android.os.Handler by lazy {
+            val thread = android.os.HandlerThread("BackupProxyFileDescriptorThread")
+            thread.start()
+            android.os.Handler(thread.looper)
+        }
+
+        private fun readHandlerFor(documentId: String?): android.os.Handler {
+            val drive = OtgMasterState.mountedDrives.firstOrNull { it.id == documentId?.substringBefore(':') }
+            return if (drive?.fileSystem is app.fayaz.otgmaster.backup.restic.ResticFileSystem) backupProxyHandler else proxyHandler
+        }
+
+        /**
          * Blocks until all previously-queued proxyHandler messages have run, then returns.
          * Call this on a background thread before unmounting a filesystem to ensure any
          * in-flight onRelease() callbacks (which call file.close()) finish before the
@@ -386,7 +404,7 @@ class VeraCryptDocumentProvider : DocumentsProvider() {
         }
 
         return storageManager.openProxyFileDescriptor(
-            ParcelFileDescriptor.MODE_READ_ONLY, callback, proxyHandler
+            ParcelFileDescriptor.MODE_READ_ONLY, callback, readHandlerFor(documentId)
         )
     }
     
