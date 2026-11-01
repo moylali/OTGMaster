@@ -15,7 +15,7 @@ FEATURES
 • Cipher Selection — AES, Serpent and Twofish, VeraCrypt's five cascades of them, and SHA-512 or Argon2id key derivation
 • Encrypt a Drive — turn a USB partition into a new VeraCrypt volume, with any of those ciphers, a PIM and keyfiles, or a LUKS2 volume for Linux; FAT32, exFAT, ext4 or NTFS inside
 • Format — erase a partition in place as FAT32, exFAT, ext4 or NTFS, keeping its encryption and password
-• Backups — back up phone folders to a drive on a schedule, as snapshots in the standard restic format that restic opens on a computer, or as plain copies; reminders when a backup is overdue
+• Backups — back up folders between the phone and a drive on a schedule, as plain copies or incremental snapshots in the standard restic format that restic opens on a computer; browse a backup as a read-only drive; reminders when one is overdue
 • Recover Deleted Files — find files deleted from FAT32 and exFAT drives and copy them to the phone; only deleted files are listed, and nothing is written to the drive
 • Phones and Cameras — another phone or a camera connected over USB shows up as a drive (read-only)
 • Tablet Layout — on a wide screen, mounted drives sit beside the unlock form

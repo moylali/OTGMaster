@@ -113,6 +113,17 @@ class ResticRepository private constructor(val backend: ResticBackend, val key: 
         return plain
     }
 
+    /**
+     * A blob's plaintext size, from the index alone: its uncompressed length, or the sealed
+     * length less restic's 32 bytes of IV and MAC. Lets a reader seek inside a file without
+     * reading the blobs before the offset.
+     */
+    fun blobSize(id: String): Int {
+        loadIndex()
+        val ref = index[id] ?: throw IOException("blob $id is not in the index")
+        return ref.uncompressedLength ?: (ref.length - 32)
+    }
+
     fun tree(id: String): List<Node> {
         val nodes = JSONObject(String(blob(id), Charsets.UTF_8)).optJSONArray("nodes") ?: JSONArray()
         return (0 until nodes.length()).map { Node(nodes.getJSONObject(it)) }
