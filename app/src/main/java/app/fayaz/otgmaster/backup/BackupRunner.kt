@@ -112,6 +112,13 @@ class BackupRunner(private val context: Context) {
             val scan = Preflight.scan(source, existing, parentTree, excludes, control.isCancelled) { f, b ->
                 control.listener.onProgress(RunProgress("scan", f, b, ""))
             }
+            // An empty listing is not proof of an empty folder. Android's own storage provider
+            // answers one with no error when its check of a path fails ("Queried directory ...
+            // is hidden", seen on a Galaxy Tab on Android 16 with the files still on disk). As a
+            // success that is an empty snapshot, and retention then counts it as a real one and
+            // removes the good ones. So nothing to back up is a failure, and nothing is written.
+            if (scan.isEmpty) return fail("The source folder listed no files, so no backup was made and nothing was removed. " +
+                "If it does have files, Android could not list them just now: run the backup again.", src = srcInfo, dst = dstInfo)
 
             val space = Preflight.checkSpace(scan.neededBytes, dstInfo[VolumeInfo.FREE]?.toLongOrNull(), dstInfo[VolumeInfo.CAPACITY]?.toLongOrNull())
             when (space.verdict) {
