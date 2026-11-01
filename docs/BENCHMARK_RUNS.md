@@ -33,6 +33,29 @@ to a row here.
 
 ---
 
+## 2026-10-31 — Format and Encrypt write ext4, NTFS and LUKS2: D5/2 on the Galaxy Tab A9+
+
+Device: Samsung Galaxy Tab A9+ (SM-X210), Android 16 / One UI 8.0, over a USB-C hub.
+Drive: D5/2 (PNY USB 3.2.1 FD, serial 071C48F5FB0EF455), its four 2 GiB Format/Encrypt
+partitions. APK `57df1d0` (the build the E2E run below used), installed before the run.
+Each operation was driven through the app's own screens (More actions → Format/Encrypt →
+ERASE), quick, then the new volume was opened in the Files app and a folder created on it.
+The encrypted ones were unlocked with the new password first and unmounted at the end; the
+plain ones were removed by unplugging. Host check afterwards with `verify_volume.sh` (read-only).
+
+| Partition | Before | Operation | In-app | Host check |
+|---|---|---|---|---|
+| p7 FMT_EXFAT | exFAT | Format → ext4, quick | mounted, `device_check_ext4` created | e2fsck -fn CLEAN, 12 inodes (11 reserved + the folder) |
+| p8 FMT_FAT32 | FAT32 | Format → NTFS, quick | mounted, `device_check_ntfs` created | ntfsfix -n + ntfs_check CLEAN |
+| p9 ENC_TO_EXFAT | FAT32 | Encrypt → LUKS2 (AES-XTS, Argon2id), ext4 inside, quick, 28 s | unlocked (Argon2id 10 s), `device_check_luks2` created | opened by cryptsetup/dm-crypt; e2fsck -fn CLEAN, 12 inodes |
+| p10 ENC_TO_FAT32 | exFAT | Encrypt → VeraCrypt AES / SHA-512, NTFS inside, quick, 61 s | unlocked, `device_check_vc_ntfs` created | opened by VeraCrypt (PIM 0); ntfsfix -n + ntfs_check CLEAN |
+
+E2E on the emulators at the same commit: `v0.4.2-73-g57df1d0`, 10 of 10 passed, 0 flaky,
+all host-verified — format_plain_ext4, format_plain_ntfs, encrypt_plain_ext4 (VeraCrypt +
+NTFS), encrypt_plain_ntfs (VeraCrypt + ext4), encrypt_luks2_ext4 (cryptsetup opened it),
+format_vc_exfat, encrypt_plain_exfat, m_luks1_exfat, m_luks2_ext4, m_luks2_4k_ntfs (the
+last three after LUKS2 unlocking moved to the vendored Argon2id).
+
 ## 2026-10-30 — another phone over MTP (M30 with the realme attached)
 
 Galaxy M30 (Android 10), the 0.5.0 build `b3b79f8`, then `a9fc0a2`, with a realme 8 (RMX3085, Android 13)
