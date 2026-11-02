@@ -239,6 +239,9 @@
     <string name="encrypt_pim">PIM (optional)</string>
     <string name="encrypt_pim_confirm">Confirm PIM</string>
     <string name="encrypt_pims_differ">The PIMs do not match.</string>
+    <string name="encrypt_pim_too_low">With a password under %2$d characters, the PIM must be at least %1$d, or empty.</string>
+    <string name="encrypt_password_short_for_pim">Too short for this PIM. Use at least %1$d characters, or change the PIM.</string>
+    <string name="encrypt_password_too_long">VeraCrypt passwords are at most %1$d bytes.</string>
     <string name="encrypt_save_password_manager">Save the password in my password manager</string>
     <string name="log_password_manager_saved">Password saved in your password manager as \"%1$s\".</string>
     <string name="log_password_manager_not_saved">The password was not saved in your password manager (%1$s).</string>

@@ -38,7 +38,7 @@ class MountedDriveService : Service() {
         try {
             ServiceCompat.startForeground(this, NOTIFICATION_ID, notification,
                 if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) ServiceInfo.FOREGROUND_SERVICE_TYPE_CONNECTED_DEVICE else 0)
-            running = true
+            synchronized(lock) { startPending = false; running = true }
             if (refused) {
                 refused = false
                 OtgMasterState.log(getString(R.string.log_fgs_started_after_refusal))
@@ -50,8 +50,18 @@ class MountedDriveService : Service() {
             Log.w(TAG, "foreground service refused: ${e.javaClass.simpleName}: ${e.message}")
             OtgMasterState.logFailure("fgs", "Android refused the background service that keeps drives mounted behind other apps", e)
             refused = true
-            running = false
+            synchronized(lock) { startPending = false; running = false }
             stopSelf()
+            return START_NOT_STICKY
+        }
+        // Everything ended while Android was starting us. Only now may it stop: stopping a
+        // service before it has called startForeground crashes the process.
+        synchronized(lock) {
+            if (titles.isEmpty() && operation == null) {
+                running = false
+                stopForeground(STOP_FOREGROUND_REMOVE)
+                stopSelf()
+            }
         }
         return START_NOT_STICKY
     }
@@ -74,6 +84,25 @@ class MountedDriveService : Service() {
         private const val PROGRESS_INTERVAL_MS = 1_000L
 
         @Volatile private var running = false
+        /** startForegroundService was called and onStartCommand has not run yet. */
+        private var startPending = false
+        /** Showing [current] with no service behind it: see [mayRunInForeground]. */
+        private var plainPosted = false
+
+        /**
+         * Android 14 and later refuse a connected-device service unless the app holds permission
+         * for a USB device. Asking anyway is not harmless: startForeground throws, and stopping
+         * the service then crashes the process with ForegroundServiceDidNotStartInTimeException
+         * (seen in E2E). A backup on the phone alone with nothing plugged in gets here.
+         */
+        private fun mayRunInForeground(context: Context): Boolean {
+            if (Build.VERSION.SDK_INT < 34) return true
+            val usb = context.getSystemService(android.hardware.usb.UsbManager::class.java) ?: return false
+            return usb.deviceList.values.any { usb.hasPermission(it) }
+        }
+
+        /** Drives change on the main thread and backups finish on their own. */
+        private val lock = Any()
         /** A start was refused, so the next one that succeeds is worth a log line. */
         @Volatile private var refused = false
         val isRunning: Boolean get() = running
@@ -135,8 +164,14 @@ class MountedDriveService : Service() {
             refresh(app)
         }
 
-        private fun refresh(app: Context) {
+        private fun refresh(app: Context) { synchronized(lock) {
             if (titles.isEmpty() && operation == null) {
+                if (plainPosted) {
+                    plainPosted = false
+                    app.getSystemService(NotificationManager::class.java)?.cancel(NOTIFICATION_ID)
+                }
+                // A start in flight stops itself once it has called startForeground.
+                if (startPending) return
                 if (running) app.stopService(Intent(app, MountedDriveService::class.java))
                 running = false
                 return
@@ -147,14 +182,23 @@ class MountedDriveService : Service() {
                 app.getSystemService(NotificationManager::class.java)?.notify(NOTIFICATION_ID, current(app))
                 return
             }
+            if (startPending) return
+            if (!mayRunInForeground(app)) {
+                // The progress still shows, as an ordinary notification.
+                plainPosted = true
+                app.getSystemService(NotificationManager::class.java)?.notify(NOTIFICATION_ID, current(app))
+                return
+            }
             try {
+                startPending = true
                 app.startForegroundService(Intent(app, MountedDriveService::class.java))
             } catch (e: Exception) {
+                startPending = false
                 Log.w(TAG, "could not start the mounted-drive service: ${e.javaClass.simpleName}: ${e.message}")
                 OtgMasterState.logFailure("fgs", "Could not start the background service that keeps drives mounted", e)
                 refused = true
             }
-        }
+        } }
 
         /** Opens the main screen, and over it the progress dialog of [backupJobId] if there is one. */
         private fun openApp(context: Context, backupJobId: String? = null): PendingIntent = PendingIntent.getActivity(context, backupJobId?.hashCode() ?: 0,

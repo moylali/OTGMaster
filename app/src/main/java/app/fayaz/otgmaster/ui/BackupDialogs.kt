@@ -218,7 +218,8 @@ fun BackupSetupDialog(driveId: String, driveTitle: String, title: Int = R.string
         onDismissRequest = onDismiss,
         title = { Text(stringResource(title)) },
         text = {
-            Column(Modifier.verticalScroll(rememberScrollState()), verticalArrangement = Arrangement.spacedBy(8.dp)) {
+            Column {
+            Column(Modifier.weight(1f, fill = false).verticalScroll(rememberScrollState()), verticalArrangement = Arrangement.spacedBy(8.dp)) {
                 EndPicker(stringResource(R.string.backup_source), "source", source) { if (it != source.device) source = End(it) }
                 Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.Center) {
                     TextButton(onClick = { val s = source; source = target; target = s },
@@ -267,8 +268,14 @@ fun BackupSetupDialog(driveId: String, driveTitle: String, title: Int = R.string
                         Text(stringResource(R.string.backup_password_saved), style = MaterialTheme.typography.bodySmall)
                     }
                 }
-                if (checking) CircularProgressIndicator(Modifier.size(24.dp).semantics { contentDescription = "backup_create_checking" })
-                error?.let { Text(it, color = MaterialTheme.colorScheme.error, modifier = Modifier.semantics { contentDescription = "backup_create_error" }) }
+            }
+            // Under the scrolling part, beside the button: on the long form a refusal at the end of
+            // the list stayed below the fold, and Back up now looked as if it had done nothing.
+            if (checking) CircularProgressIndicator(Modifier.size(24.dp).semantics { contentDescription = "backup_create_checking" })
+            error?.let {
+                Text(it, color = MaterialTheme.colorScheme.error, style = MaterialTheme.typography.bodySmall,
+                    modifier = Modifier.padding(top = 8.dp).semantics { contentDescription = "backup_create_error" })
+            }
             }
         },
         confirmButton = {
@@ -616,8 +623,12 @@ fun JobActionsRow(job: BackupJob, actions: JobActions, runLabel: Int = R.string.
         BackupExecutor.start(context, job.id, op)
         BackupPrompts.showProgress(job.id)
     }
-    val missingPassword = incremental && BackupSecrets(context).password(job.id) == null
-    val folderLost = grantLost(context, job.source) || grantLost(context, job.destination)
+    // Not on every recomposition: opening the encrypted store and asking for grants are slow,
+    // and these rows redraw each second.
+    val secretsChanged by BackupSecrets.changes.collectAsState()
+    val missingPassword = remember(job.id, incremental, secretsChanged) { incremental && BackupSecrets(context).password(job.id) == null }
+    // Keyed on the whole job: choosing the same folder again leaves its URI as it was.
+    val folderLost = remember(job) { grantLost(context, job.source) || grantLost(context, job.destination) }
     if (missingPassword) Text(stringResource(R.string.backup_enter_password_hint), style = MaterialTheme.typography.bodySmall,
         color = MaterialTheme.colorScheme.error, modifier = Modifier.semantics { contentDescription = tag("password_missing") })
     if (folderLost) Text(stringResource(R.string.backup_folder_lost), style = MaterialTheme.typography.bodySmall,

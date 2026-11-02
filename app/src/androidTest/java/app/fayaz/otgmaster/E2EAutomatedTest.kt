@@ -10,6 +10,12 @@ import androidx.test.uiautomator.By
 import androidx.test.uiautomator.UiDevice
 import androidx.test.uiautomator.Until
 import android.util.Log
+import app.fayaz.otgmaster.backup.BackupExecutor
+import app.fayaz.otgmaster.backup.BackupDelays
+import app.fayaz.otgmaster.backup.BackupNotifications
+import app.fayaz.otgmaster.backup.BackupPrompts
+import app.fayaz.otgmaster.backup.BackupRunner
+import app.fayaz.otgmaster.backup.BackupScheduler
 import app.fayaz.otgmaster.backup.BackupJob
 import app.fayaz.otgmaster.backup.BackupMounts
 import app.fayaz.otgmaster.backup.BackupSecrets
@@ -41,6 +47,11 @@ class E2EAutomatedTest {
         private const val UNMOUNT_WAIT_MS = 15_000L
         private const val UNMOUNT_SETTLE_MS = 1_000L
         private const val BACKUP_REPO = "otg_backup_repo"
+        /** As a case's password: it has keyfiles and no password. */
+        private const val NO_PASSWORD = "none"
+        private const val BK_PASSWORD = "otg-backup-run-2026"
+        private const val BK_DESKTOP_PASSWORD = "otg-backup-e2e-2026"
+        private const val PHONE = "/sdcard/Download/otg_e2e"
         private const val BACKUP_DIALOG_FIELD = "backup_name"
 
         /**
@@ -106,6 +117,8 @@ class E2EAutomatedTest {
         // @Before, and a fourth method cost every case about 13 s doing nothing.
         if (arguments.getString("disconnect_test", "false") == "true") return runDisconnectCase()
         if (arguments.getString("journal_repair", "false") == "true") return runJournalRepairCase()
+        if (arguments.getString("backup_flow") == "device") return bkFlowDevice()
+        arguments.getString("backup_flow")?.let { return runBackupFlow(it) }
         if (arguments.getString("backup_test", "false") == "true") return runBackupCase()
         val password = arguments.getString("password", "password123")
         val testCase = arguments.getString("testCase", "exfat")
@@ -194,7 +207,7 @@ class E2EAutomatedTest {
                 repeat(50) { device.executeShellCommand("input keyevent KEYCODE_DEL") }
                 android.os.SystemClock.sleep(200)
             }
-            device.executeShellCommand("input text $password")
+            if (password != NO_PASSWORD) device.executeShellCommand("input text $password")
             android.os.SystemClock.sleep(500)
 
             if (pim.isNotEmpty()) {
@@ -215,32 +228,12 @@ class E2EAutomatedTest {
             device.pressEnter()
             android.os.SystemClock.sleep(500)
 
-            if (keyfile.isNotEmpty()) {
+            keyfile.split(',').filter { it.isNotEmpty() }.forEach { name ->
                 val selectKeyfileBtn = device.wait(Until.findObject(By.textContains("Select keyfile")), timeout)
                 selectKeyfileBtn?.click()
-
-                // Wait for DocumentsUI to open
-                device.wait(Until.hasObject(By.pkg("com.google.android.documentsui")), timeout)
-                android.os.SystemClock.sleep(1000)
-
-                // Try to find the file in current view (Recent); if not found, navigate to Downloads
-                var fileObject = device.findObject(By.textContains(keyfile))
-                if (fileObject == null) {
-                    val hamburger = device.findObject(By.descContains("Show roots"))
-                        ?: device.findObject(By.descContains("Navigate up"))
-                        ?: device.findObject(By.descContains("Open navigation drawer"))
-                    hamburger?.click()
-                    android.os.SystemClock.sleep(500)
-                    val downloadsItem = device.wait(Until.findObject(By.textContains("Download")), timeout)
-                    downloadsItem?.click()
-                    android.os.SystemClock.sleep(500)
-                    fileObject = device.wait(Until.findObject(By.textContains(keyfile)), timeout * 2)
-                }
-                fileObject?.click()
-                // Wait for picker to close and return to our app
-                device.wait(Until.hasObject(By.pkg("app.fayaz.otgmaster")), timeout)
-                android.os.SystemClock.sleep(500)
+                pickKeyfileInFiles(name)
             }
+            if (arguments.getString("read_only_switch", "false") == "true") clickScrolling("read_only_switch", "no read-only switch on the form")
 
             if (cipher.isNotEmpty() && cipher != "AES") pickOption("cipher_picker", cipher)
             if (hash.isNotEmpty() && hash != "SHA-512") pickOption("hash_picker", hash)
@@ -692,10 +685,17 @@ class E2EAutomatedTest {
                 newCipher = arguments.getString("erase_cipher", "AES")
                 newHash = arguments.getString("erase_hash", "SHA-512")
             }
-            typeInto("encrypt_password", newPassword)
-            typeInto("encrypt_password_confirm", newPassword)
-            hideKeyboard()
+            if (newPassword != NO_PASSWORD) {
+                typeInto("encrypt_password", newPassword)
+                typeInto("encrypt_password_confirm", newPassword)
+                hideKeyboard()
+            }
             if (!luks2) {
+                unlockKeyfiles = arguments.getString("erase_keyfiles", "").split(',').filter { it.isNotEmpty() }
+                unlockKeyfiles.forEach { name ->
+                    clickInDialog("encrypt_keyfiles")
+                    pickKeyfileInFiles(name)
+                }
                 if (newCipher != "AES") pickOption("encrypt_cipher", newCipher, inDialog = true)
                 if (newHash != "SHA-512") pickOption("encrypt_kdf", newHash, inDialog = true)
                 if (newPim.isNotEmpty()) {
@@ -973,8 +973,9 @@ class E2EAutomatedTest {
             source = endpoint(tree("not_a_backup")),
             destination = endpoint(tree("")),
             destinationFolder = BACKUP_REPO,
-            schedule = Schedule(intervalHours = 0, autoRun = false),
+            schedule = Schedule(intervalHours = 168, autoRun = true, remindAfterHours = 0),
             retention = Retention(),
+            lastSuccessAt = System.currentTimeMillis(),
         )
         BackupSecrets(context).setPassword(job.id, password)
         jobs.upsert(job)
@@ -1052,11 +1053,1745 @@ class E2EAutomatedTest {
         requestUsb("replug")
     }
 
+    // ═══ Backup flows ═══════════════════════════════════════════════════════════════════
+    // testdata/backup_<flow>, made by scripts/make_backup_run_fixtures.py; docs/TEST_DATA.md §6g.
+    // Time is moved by changing a job's lastSuccessAt and passing `now`, so nothing in the app
+    // needs a test clock. backup_delayed_start also waits out a real 5 minutes.
+
+    private val bkContext: Context get() = ApplicationProvider.getApplicationContext()
+    private val bkStore: JobStore get() = JobStore.get(bkContext)
+    /** Through a real shell: executeShellCommand has no quoting or redirects, and fails silently. */
+    private fun bkShell(cmd: String): String {
+        val pipes = InstrumentationRegistry.getInstrumentation().uiAutomation.executeShellCommandRw("sh")
+        android.os.ParcelFileDescriptor.AutoCloseOutputStream(pipes[1]).use { it.write((cmd + "\n").toByteArray()) }
+        return android.os.ParcelFileDescriptor.AutoCloseInputStream(pipes[0]).use { it.readBytes().toString(Charsets.UTF_8) }
+    }
+
+    private fun bkPhoneSha(path: String): String {
+        val sha = bkShell("sha256sum '$path'").substringBefore(' ').trim()
+        assertEquals("no hash for $path", 64, sha.length)
+        return sha
+    }
+
+    private fun bkHold(): java.util.concurrent.CountDownLatch =
+        java.util.concurrent.CountDownLatch(1).also { BackupExecutor.testHold = it }
+
+    private fun bkRelease() {
+        BackupExecutor.testHold?.countDown()
+        BackupExecutor.testHold = null
+    }
+
+    private fun bkReset() {
+        bkStore.jobs.value.forEach { j ->
+            BackupScheduler.forget(bkContext, j.id)
+            BackupSecrets(bkContext).forget(j.id)
+            bkStore.delete(j.id)
+        }
+        BackupPrompts.answered(); BackupPrompts.showProgress(null); BackupPrompts.askRecreate(null)
+        BackupMounts.testDelayMs = 0
+        BackupExecutor.testProgressDelayMs = 0
+        bkRelease()
+    }
+
+    private fun runBackupFlow(flow: String) {
+        val args = InstrumentationRegistry.getArguments()
+        val password = args.getString("password", "")
+        val pim = args.getString("pim", "")
+        val testCase = args.getString("testCase", "")
+        device.executeShellCommand("pm grant app.fayaz.otgmaster android.permission.POST_NOTIFICATIONS")
+        bkReset()
+        bkShell("rm -rf $PHONE")
+        bkShell("mkdir -p $PHONE/targets $PHONE/restored")
+        bkShell("cp -r /data/local/tmp/testdata/$testCase/phone_src $PHONE/src")
+        android.os.SystemClock.sleep(1000)
+        val drive = bkMount(password, pim, testCase)
+        try {
+            when (flow) {
+                "run_full" -> bkFlowRun(drive, testCase, full = true)
+                "run_core" -> bkFlowRun(drive, testCase, full = false)
+                "due_prompt" -> bkFlowDuePrompt(drive)
+                "delayed_start" -> bkFlowDelayedStart(drive)
+                "due_mounted" -> bkFlowDueMounted(drive)
+                "reminder" -> bkFlowReminder(drive)
+                "target_checks" -> bkFlowTargetChecks(drive)
+                "progress_dialog" -> bkFlowProgressDialog(drive)
+                "mount_progress" -> bkFlowMountProgress(drive)
+                "schedule_status" -> bkFlowScheduleStatus(drive)
+                "remove_schedule" -> bkFlowRemoveSchedule(drive)
+                "manual_history" -> bkFlowManualHistory(drive)
+                "show_password" -> bkFlowShowPassword(drive)
+                "recover_access" -> bkFlowRecoverAccess(drive)
+                "verify_damaged" -> bkFlowVerifyDamaged(drive)
+                "interrupted" -> bkFlowInterrupted(drive)
+                "encrypt_form" -> bkFlowEncryptForm()
+                else -> fail("unknown backup flow $flow")
+            }
+        } catch (t: Throwable) {
+            captureScreen("backup_${flow}_failed")
+            throw t
+        } finally {
+            device.executeShellCommand("cmd statusbar collapse")
+        }
+        returnToMainScreen()
+        bkReset()
+        bkShell("rm -rf $PHONE")
+        // The host reads the drive next: everything has to be on it.
+        OtgMasterState.unmountAllRequest?.invoke()
+        val end = android.os.SystemClock.uptimeMillis() + 60_000L
+        while (OtgMasterState.mountedDrives.isNotEmpty() && android.os.SystemClock.uptimeMillis() < end) android.os.SystemClock.sleep(200)
+        requestUsb("replug")
+    }
+
+    /** Mounts the case's drive: by itself if plain, with its password if not. */
+    private fun bkMount(password: String, pim: String, testCase: String): MountedDrive {
+        android.os.SystemClock.sleep(1000)
+        findScanButton()!!.click()
+        device.wait(Until.findObject(By.text(java.util.regex.Pattern.compile("(?i)OK|ALLOW"))), 5000L)?.click()
+        val plain = InstrumentationRegistry.getArguments().getString("plain_mount", "false") == "true"
+        if (plain) { if (waitForMounted(60000L) == null) captureScreen("backup_no_drive") }
+        else assertTrue("the encrypted drive did not mount", doMount(password, pim, testCase, clearFields = false))
+        val d = OtgMasterState.mountedDrives.firstOrNull()
+        assertNotNull("the drive did not mount", d)
+        return d!!
+    }
+
+    private fun bkTree(drive: MountedDrive, folder: String): android.net.Uri =
+        DocumentsContract.buildTreeDocumentUri(AUTHORITY, "${drive.id}:/$folder")
+
+    /** A job on [drive], made directly: its own provider needs no grant, so no picker. */
+    private fun bkJob(drive: MountedDrive, name: String, source: String = "drive_src", target: String = "",
+                      type: JobType = JobType.INCREMENTAL, interval: Int = 24, agoHours: Long? = 25): BackupJob {
+        val end = { uri: android.net.Uri -> Endpoint(uri.toString(), drive.name, VolumeInfo.kindOf(uri), VolumeInfo.capture(bkContext, uri, withFreeSpace = false)) }
+        val job = BackupJob(name = name, type = type, source = end(bkTree(drive, source)), destination = end(bkTree(drive, target)),
+            destinationFolder = name, schedule = Schedule(intervalHours = interval, autoRun = interval > 0, remindAfterHours = 0),
+            retention = if (type == JobType.INCREMENTAL) Retention(keepLast = 3) else Retention(),
+            lastSuccessAt = agoHours?.let { System.currentTimeMillis() - it * BackupJob.HOUR })
+        if (type == JobType.INCREMENTAL) BackupSecrets(bkContext).setPassword(job.id, BK_PASSWORD)
+        bkStore.upsert(job)
+        return job
+    }
+
+    private fun bkAwait(jobId: String, what: String, ms: Long = 300_000L): RunRecord {
+        val end = android.os.SystemClock.uptimeMillis() + ms
+        android.os.SystemClock.sleep(300)
+        while (BackupExecutor.isBusy(jobId) && android.os.SystemClock.uptimeMillis() < end) android.os.SystemClock.sleep(250)
+        assertFalse("$what still running after ${ms / 1000} s", BackupExecutor.isBusy(jobId))
+        val run = bkStore.history(jobId).lastOrNull()
+        assertNotNull("$what left no history", run)
+        return run!!
+    }
+
+    private fun bkRunNow(job: BackupJob, what: String = "a backup", op: BackupExecutor.Op = BackupExecutor.Op.Backup("manual")): RunRecord {
+        assertTrue("$what did not start", BackupExecutor.start(bkContext, job.id, op))
+        return bkAwait(job.id, what)
+    }
+
+    private fun bkExpectSuccess(run: RunRecord, what: String) {
+        assertEquals("$what: ${run.message}; ${run.errors}", RunStatus.SUCCESS, run.status)
+    }
+
+    private fun bkTitles(): List<String> = bkContext.getSystemService(android.app.NotificationManager::class.java)!!
+        .activeNotifications.map { it.notification.extras.getCharSequence(android.app.Notification.EXTRA_TITLE)?.toString().orEmpty() }
+
+    private fun bkText(id: Int, vararg args: Any): String = bkContext.getString(id, *args)
+
+    private fun bkAssertDesc(desc: String, msg: String, ms: Long = 20000L) {
+        val o = device.wait(Until.findObject(By.desc(desc)), ms)
+        if (o == null) captureScreen("missing_$desc")
+        assertNotNull(msg, o)
+    }
+
+    private fun bkAssertText(text: String, msg: String, ms: Long = 20000L) {
+        val o = device.wait(Until.findObject(By.text(text)), ms)
+        if (o == null) captureScreen("missing_text")
+        assertNotNull("$msg (looking for: $text)", o)
+    }
+
+    private fun bkAssertGone(desc: String, msg: String, ms: Long = 20000L) {
+        if (!device.wait(Until.gone(By.desc(desc)), ms)) captureScreen("not_gone_$desc")
+        assertNull(msg, device.findObject(By.desc(desc)))
+    }
+
+    /** Opens Schedules or another tab fresh, from the main screen. */
+    private fun bkOpenTab(tab: String) {
+        returnToMainScreen()
+        openBackupsTab("backups_open_schedules")
+        assertTrue("$tab missing", clickByDesc(tab))
+    }
+
+    /** Finds [selector] on the current tab, scrolling the list down, then back up. */
+    private fun bkScrollTo(selector: androidx.test.uiautomator.BySelector): androidx.test.uiautomator.UiObject2? {
+        device.wait(Until.findObject(selector), 1500L)?.let { return it }
+        for (direction in listOf(androidx.test.uiautomator.Direction.DOWN, androidx.test.uiautomator.Direction.UP)) {
+            for (step in 1..12) {
+                val list = device.findObject(By.scrollable(true).pkg("app.fayaz.otgmaster")) ?: break
+                // The rows redraw each second, which can leave the list's node stale.
+                val more = try { list.scroll(direction, 0.6f, 1500) } catch (_: androidx.test.uiautomator.StaleObjectException) { true }
+                device.waitForIdle(500)
+                // The accessibility tree this reads can lag the screen: seen with a reason that had
+                // gone from the screenshot and stayed in the tree.
+                InstrumentationRegistry.getInstrumentation().uiAutomation.clearCache()
+                device.wait(Until.findObject(selector), 1000L)?.let { return it }
+                if (!more) break
+            }
+            captureScreen("scrolled_${direction.name.lowercase()}")
+        }
+        return null
+    }
+
+    /** Taps a job's row action, scrolling to it first. */
+    private fun bkRowClick(desc: String) {
+        for (attempt in 1..3) {
+            val o = bkScrollTo(By.desc(desc))
+            if (o == null) captureScreen("missing_$desc")
+            assertNotNull("$desc missing", o)
+            try {
+                o!!.click()
+                return
+            } catch (e: androidx.test.uiautomator.StaleObjectException) {
+                if (attempt == 3) throw e
+            }
+        }
+    }
+
+    /** Unmounts the mounted backup [id], titled [name]: an encrypted drive's card has Unmount too. */
+    private fun bkUnmountBackup(id: String, name: String) {
+        returnToMainScreen()
+        android.os.SystemClock.sleep(UNMOUNT_SETTLE_MS)
+        val title = bkScrollTo(By.textContains(name))
+        assertNotNull("no card for the backup $name", title)
+        var button: androidx.test.uiautomator.UiObject2? = null
+        for (attempt in 1..4) {
+            val top = device.findObject(By.textContains(name))?.visibleBounds?.bottom ?: 0
+            button = device.findObjects(By.descContains("unmount_button")).firstOrNull { it.visibleBounds.top > top }
+            if (button != null) break
+            device.swipe(device.displayWidth / 2, device.displayHeight * 3 / 4, device.displayWidth / 2, device.displayHeight / 2, 25)
+            android.os.SystemClock.sleep(500)
+        }
+        if (button == null) captureScreen("no_backup_unmount")
+        assertNotNull("no Unmount on the backup's card", button)
+        button!!.click()
+        val end = android.os.SystemClock.uptimeMillis() + UNMOUNT_WAIT_MS
+        while (OtgMasterState.mountedDrives.any { it.id == id } && android.os.SystemClock.uptimeMillis() < end) android.os.SystemClock.sleep(200)
+        assertFalse("the backup is still mounted after Unmount", OtgMasterState.mountedDrives.any { it.id == id })
+    }
+
+    /** With the Files picker up: goes to [root] if given, walks [path], and chooses that folder. */
+    private fun bkPick(root: String?, vararg path: String) {
+        val documentsUi = "com.google.android.documentsui"
+        assertTrue("the Files picker did not open", device.wait(Until.hasObject(By.pkg(documentsUi)), 30000L))
+        android.os.SystemClock.sleep(1000)
+        val first = path.firstOrNull()
+        var row: androidx.test.uiautomator.UiObject2? = null
+        for (attempt in 1..3) {
+            if (root != null) {
+                (device.findObject(By.descContains("Show roots")) ?: device.findObject(By.descContains("Open navigation drawer")))?.click()
+                if (device.wait(Until.hasObject(By.text(root)), 20000L) != true) captureScreen("picker_no_root")
+                android.os.SystemClock.sleep(1000)
+                device.findObject(By.text(root))?.click()
+            }
+            if (first == null) {
+                // The drive's top level itself. A tap on the drawer while it slides in only closes
+                // it, leaving the picker on the phone's storage, which has Alarms and the drive not.
+                android.os.SystemClock.sleep(2000)
+                if (root == null || device.findObject(By.text("Alarms")) == null) break
+                if (attempt == 3) { captureScreen("picker_no_drive_top"); fail("the picker did not go to $root") }
+                continue
+            }
+            row = device.wait(Until.findObject(By.text(first)), 8000L)
+            if (row != null) break
+        }
+        for ((i, name) in path.withIndex()) {
+            val o = if (i == 0) row else device.wait(Until.findObject(By.text(name)), 15000L)
+            if (o == null) captureScreen("picker_no_$name")
+            assertNotNull("$name not in the Files picker", o)
+            o!!.click()
+            android.os.SystemClock.sleep(700)
+        }
+        // Tapped again if the confirmation does not come: the first tap can land on a moving drawer.
+        var allow: androidx.test.uiautomator.UiObject2? = null
+        for (attempt in 1..3) {
+            val use = device.wait(Until.findObject(By.text(java.util.regex.Pattern.compile("(?i)use this folder"))), 20000L)
+            if (use == null) captureScreen("picker_no_use")
+            assertNotNull("USE THIS FOLDER missing", use)
+            use!!.click()
+            allow = device.wait(Until.findObject(By.text(java.util.regex.Pattern.compile("(?i)^allow$"))), 8000L)
+            if (allow != null) break
+        }
+        if (allow == null) captureScreen("picker_no_allow")
+        assertNotNull("ALLOW missing", allow)
+        allow!!.click()
+        assertTrue("the Files picker did not return to the app", device.wait(Until.hasObject(By.pkg("app.fayaz.otgmaster")), timeout))
+        android.os.SystemClock.sleep(800)
+    }
+
+    private val bkPhoneRoot: String get() = android.os.Build.MODEL
+
+    data class BkEnd(val root: String?, val path: List<String>)
+
+    /** Fills the create form, which is already open, up to the Create button. */
+    private fun bkFillForm(source: BkEnd, target: BkEnd, name: String, incremental: Boolean, password: String = BK_PASSWORD, interval: Int? = null) {
+        clickInDialog("backup_source_location")
+        bkPick(source.root, *source.path.toTypedArray())
+        clickInDialog("backup_target_location")
+        bkPick(target.root, *target.path.toTypedArray())
+        typeInto("backup_name", name)
+        clickInDialog(if (incremental) "backup_type_incremental" else "backup_type_plain")
+        interval?.let { clickInDialog("backup_interval_$it") }
+        if (incremental) {
+            bkTypePassword("backup_password", password)
+            bkTypePassword("backup_password_confirm", password)
+            clickInDialog("backup_password_saved")
+            android.os.SystemClock.sleep(800)
+        }
+    }
+
+    private fun bkTypePassword(desc: String, text: String) {
+        val field = findInDialog(desc)
+        assertNotNull("$desc not found in the dialog", field)
+        editTextOf(field!!).text = text
+        android.os.SystemClock.sleep(300)
+    }
+
+    /** Create, tapped again if nothing comes: a tap right after the tick can land before the button enables. */
+    private fun bkTapCreate(expect: String) {
+        for (attempt in 1..3) {
+            clickInDialog("backup_create")
+            if (device.wait(Until.findObject(By.desc(expect)), 15000L) != null) return
+            if (device.findObject(By.desc("backup_name")) == null) return
+        }
+    }
+
+    private fun bkOpenCreate() {
+        bkOpenTab("backups_tab_schedules")
+        assertTrue("Create schedule missing", clickByDesc("backups_create_schedule"))
+        assertNotNull("the form did not open", device.wait(Until.findObject(By.desc("backup_name")), timeout))
+    }
+
+    private fun bkCreate(source: BkEnd, target: BkEnd, name: String, incremental: Boolean, password: String = BK_PASSWORD): BackupJob {
+        bkOpenCreate()
+        bkFillForm(source, target, name, incremental, password)
+        bkTapCreate("backup_progress_title")
+        bkAssertDesc("backup_progress_title", "Create did not open the progress dialog", 60000L)
+        val job = bkStore.jobs.value.firstOrNull { it.name == name }
+        assertNotNull("Create made no job named $name", job)
+        return job!!
+    }
+
+    private fun bkCloseProgress() {
+        bkAssertDesc("backup_progress_close", "the run did not finish in its dialog", 300_000L)
+        assertTrue("Close missing", clickByDesc("backup_progress_close"))
+        bkAssertGone("backup_progress_title", "the progress dialog did not close")
+    }
+
+    // ── Back up and restore through the real screens, in every direction ─────────────────
+
+    private fun bkFlowRun(drive: MountedDrive, testCase: String, full: Boolean) {
+        val expected = bkShell("cat /data/local/tmp/testdata/$testCase/phone_expected.txt").lines().filter { it.isNotBlank() }.map { it.split('\t') }
+        assertTrue("phone_expected.txt is empty", expected.isNotEmpty())
+        val phoneSrc = BkEnd(bkPhoneRoot, listOf("Download", "otg_e2e", "src"))
+        val driveTop = BkEnd(drive.name, emptyList())
+
+        // Incremental, phone to drive: the typed password, the first run, its dialog.
+        val inc = bkCreate(phoneSrc, driveTop, "E2E_inc", incremental = true)
+        bkCloseProgress()
+        var run = bkStore.history(inc.id).last()
+        bkExpectSuccess(run, "the first incremental run")
+        assertEquals("files in the first run", expected.size.toLong(), run.stats?.files)
+        assertEquals("the backup's folder holds a repository", true, documentChildren(bkContext, "${drive.id}:/E2E_inc").containsKey("config"))
+
+        // Back up now from the row: nothing changed, so nothing new is stored.
+        bkOpenTab("backups_tab_schedules")
+        bkRowClick("backup_run_now_E2E_inc")
+        bkCloseProgress()
+        run = bkStore.history(inc.id).last()
+        bkExpectSuccess(run, "the second run")
+        assertEquals("unchanged files stored again", 0L, run.stats?.filesNew)
+
+        // One file changes: only that is new.
+        bkShell("echo changed >> '$PHONE/src/${expected.first()[1]}'")
+        android.os.SystemClock.sleep(1100)
+        bkRowClick("backup_run_now_E2E_inc")
+        bkCloseProgress()
+        run = bkStore.history(inc.id).last()
+        bkExpectSuccess(run, "the run after a change")
+        // One other file may be read again: the phone's storage can report a modified time a few
+        // ms off from the one it gave before (seen: .178 then .182). That costs a read, and what
+        // proves nothing was stored twice is how little was added.
+        val stats = run.stats!!
+        assertEquals("a changed file counted as new", 0L, stats.filesNew)
+        assertTrue("files read again: ${stats.filesUnchanged} of ${expected.size} unchanged", stats.filesUnchanged >= expected.size - 2L)
+        assertTrue("stored again: ${stats.bytesAdded} bytes added for one small change", stats.bytesAdded < 64 * 1024)
+        assertEquals("snapshots", 3, bkStore.snapshots(inc.id).size)
+
+        // Verify reads every blob back.
+        bkRowClick("backup_verify_E2E_inc")
+        bkAssertDesc("backup_progress_title", "Verify did not open the progress dialog")
+        bkAssertDesc("backup_progress_result", "Verify showed no result", 300_000L)
+        bkCloseProgress()
+        val verified = bkStore.history(inc.id).last()
+        bkExpectSuccess(verified, "Verify")
+        assertTrue("Verify did not read the data: ${verified.message}", verified.message.contains("read and verified"))
+
+        // Restore newest to a folder on the phone, and compare by hash outside the app.
+        bkRowClick("backup_restore_E2E_inc")
+        bkPick(bkPhoneRoot, "Download", "otg_e2e", "restored")
+        bkCloseProgress()
+        bkExpectSuccess(bkStore.history(inc.id).last(), "the restore")
+        val restoredDir = bkShell("ls $PHONE/restored").lines().first { it.isNotBlank() }.trim()
+        for (row in expected) {
+            val path = row[1]
+            assertEquals("restored $path", bkPhoneSha("$PHONE/src/$path"), bkPhoneSha("$PHONE/restored/$restoredDir/$path"))
+        }
+
+        // Mount it from its row: the repository this app wrote, read through the provider.
+        assertTrue("Mount tab missing", clickByDesc("backups_tab_mount"))
+        bkAssertDesc("backup_mount_E2E_inc", "the backup is not on the Mount tab")
+        android.os.SystemClock.sleep(2500)
+        device.findObject(By.desc("backup_mount_E2E_inc"))!!.click()
+        val mountId = BackupMounts.driveIdFor(inc.id)
+        val mountDeadline = android.os.SystemClock.uptimeMillis() + 60_000L
+        while (OtgMasterState.mountedDrives.none { it.id == mountId } && android.os.SystemClock.uptimeMillis() < mountDeadline) android.os.SystemClock.sleep(200)
+        assertTrue("Mount did not mount the backup", OtgMasterState.mountedDrives.any { it.id == mountId })
+        val snaps = documentChildren(bkContext, "$mountId:/")
+        assertEquals("one folder per snapshot: ${snaps.keys}", 3, snaps.size)
+        bkUnmountBackup(mountId, "E2E_inc")
+
+        // Plain, phone to drive.
+        val plain = bkCreate(phoneSrc, driveTop, "E2E_plain", incremental = false)
+        bkCloseProgress()
+        bkExpectSuccess(bkStore.history(plain.id).last(), "the plain run")
+        val copies = documentChildren(bkContext, "${drive.id}:/E2E_plain")
+        assertEquals("dated copies: ${copies.keys}", 1, copies.size)
+        bkRowClick("backup_verify_E2E_plain")
+        bkCloseProgress()
+        bkExpectSuccess(bkStore.history(plain.id).last(), "Verify of a plain copy")
+        if (!full) return
+
+        // Run again: a second dated folder, the first untouched.
+        android.os.SystemClock.sleep(1100)
+        bkRowClick("backup_run_now_E2E_plain")
+        bkCloseProgress()
+        assertEquals("dated copies after a second run", 2, documentChildren(bkContext, "${drive.id}:/E2E_plain").size)
+
+        // Plain, drive to phone; compare what landed on the phone outside the app.
+        val toPhone = bkCreate(BkEnd(drive.name, listOf("drive_src")), BkEnd(bkPhoneRoot, listOf("Download", "otg_e2e", "targets")), "E2E_to_phone", incremental = false)
+        bkCloseProgress()
+        bkExpectSuccess(bkStore.history(toPhone.id).last(), "the drive-to-phone copy")
+        val dated = bkShell("ls $PHONE/targets/E2E_to_phone").lines().first { it.isNotBlank() }.trim()
+        val driveExpected = bkShell("cat /data/local/tmp/testdata/$testCase/drive_expected.txt").lines().filter { it.isNotBlank() }.map { it.split('\t') }
+        for (row in driveExpected) assertEquals("copied ${row[1]}", row[0], bkPhoneSha("$PHONE/targets/E2E_to_phone/$dated/${row[1]}"))
+
+        // Incremental, drive to phone.
+        val incPhone = bkCreate(BkEnd(drive.name, listOf("drive_src")), BkEnd(bkPhoneRoot, listOf("Download", "otg_e2e", "targets")), "E2E_inc_phone", incremental = true)
+        bkCloseProgress()
+        bkExpectSuccess(bkStore.history(incPhone.id).last(), "the drive-to-phone backup")
+        assertTrue("no repository on the phone", bkShell("ls $PHONE/targets/E2E_inc_phone").contains("config"))
+
+        // Keep rules: only this job's old snapshots go, and what they alone used.
+        bkStore.update(inc.id) { it.copy(retention = Retention(keepLast = 2)) }
+        android.os.SystemClock.sleep(1100)
+        bkExpectSuccess(bkRunNow(inc, "the run with keep rules"), "the run with keep rules")
+        assertEquals("snapshots after the keep rules", 2, bkStore.snapshots(inc.id).size)
+        bkExpectSuccess(bkRunNow(inc, "Verify after pruning", BackupExecutor.Op.Check(true)), "Verify after pruning")
+
+        // A folder inside the source holds the target: the backup does not copy itself.
+        val selfRun = bkRunNow(bkJob(drive, "E2E_self", source = "self_src", target = "self_src"), "a target inside its source")
+        bkExpectSuccess(selfRun, "a target inside its source")
+        assertEquals("the repository was backed up into itself", 1L, selfRun.stats?.files)
+
+        // An empty source writes nothing, and says so.
+        val empty = bkJob(drive, "E2E_empty", source = "empty")
+        val emptyRun = bkRunNow(empty, "a backup of an empty folder")
+        assertEquals("an empty source: ${emptyRun.message}", RunStatus.FAILED, emptyRun.status)
+        assertTrue(emptyRun.message, emptyRun.message.contains("listed no files"))
+        assertNull("an empty source made a folder", documentChildren(bkContext, "${drive.id}:/")["E2E_empty"])
+
+        // Cancel leaves no snapshot and a repository that still verifies.
+        val before = bkStore.snapshots(inc.id).size
+        bkShell("dd if=/dev/urandom of=$PHONE/src/cancel.bin bs=1M count=8 2>/dev/null")
+        assertTrue(BackupExecutor.start(bkContext, inc.id, BackupExecutor.Op.Backup("manual")))
+        BackupExecutor.cancel(inc.id)
+        val cancelled = bkAwait(inc.id, "a cancelled run")
+        assertEquals("the cancelled run: ${cancelled.message}", RunStatus.CANCELLED, cancelled.status)
+        assertEquals("a cancelled run made a snapshot", before, bkStore.snapshots(inc.id).size)
+        bkExpectSuccess(bkRunNow(inc, "Verify after a cancel", BackupExecutor.Op.Check(true)), "Verify after a cancel")
+        bkShell("rm -f $PHONE/src/cancel.bin")
+
+        // Low space: too big is refused; nearly full asks, and both answers work.
+        val free = VolumeInfo.capture(bkContext, bkTree(drive, ""))[VolumeInfo.FREE]!!.toLong()
+        bkShell("mkdir -p $PHONE/big")
+        bkShell("dd if=/dev/zero of=$PHONE/big/big.bin bs=1M count=${(free shr 20) + 8} 2>/dev/null")
+        val big = bkCreate(BkEnd(bkPhoneRoot, listOf("Download", "otg_e2e", "big")), driveTop, "E2E_big", incremental = true)
+        bkCloseProgress()
+        val refused = bkStore.history(big.id).last()
+        assertEquals("too big for the drive: ${refused.message}", RunStatus.FAILED, refused.status)
+        assertTrue(refused.message, refused.message.contains("Not enough space"))
+        bkShell("rm -f $PHONE/big/big.bin")
+        bkShell("dd if=/dev/zero of=$PHONE/big/big.bin bs=1M count=${(free shr 20) - 2} 2>/dev/null")
+        assertTrue(BackupExecutor.start(bkContext, big.id, BackupExecutor.Op.Backup("manual")))
+        val asked = bkAwait(big.id, "the low-space run")
+        assertEquals("nearly full: ${asked.message}", RunStatus.NEEDS_CONFIRMATION, asked.status)
+        val lowTitle = bkText(R.string.backup_low_space_title, "E2E_big")
+        assertTrue("no low-space notification: ${bkTitles()}", bkTitles().contains(lowTitle))
+        bkContext.sendBroadcast(Intent(bkContext, app.fayaz.otgmaster.backup.BackupActionReceiver::class.java)
+            .setAction(app.fayaz.otgmaster.backup.BackupActionReceiver.ACTION_SKIP).putExtra(BackupNotifications.EXTRA_JOB_ID, big.id))
+        android.os.SystemClock.sleep(1500)
+        assertNotNull("Not now did not snooze", bkStore.job(big.id)!!.snoozedUntil)
+        assertFalse("Not now left the question up", bkTitles().contains(lowTitle))
+        bkContext.sendBroadcast(Intent(bkContext, app.fayaz.otgmaster.backup.BackupActionReceiver::class.java)
+            .setAction(app.fayaz.otgmaster.backup.BackupActionReceiver.ACTION_PROCEED).putExtra(BackupNotifications.EXTRA_JOB_ID, big.id))
+        android.os.SystemClock.sleep(1000)
+        bkExpectSuccess(bkAwait(big.id, "the run after Proceed", 600_000L), "the run after Proceed")
+
+        // Remove from the row: the backups stay on the drive.
+        bkOpenTab("backups_tab_schedules")
+        bkRowClick("backup_remove_E2E_plain")
+        bkAssertDesc("backup_remove_confirm", "no confirmation for Remove")
+        assertTrue(clickByDesc("backup_remove_confirm"))
+        android.os.SystemClock.sleep(800)
+        assertNull("the job survived Remove", bkStore.jobs.value.firstOrNull { it.name == "E2E_plain" })
+        assertEquals("Remove touched the copies", 2, documentChildren(bkContext, "${drive.id}:/E2E_plain").size)
+    }
+
+    // ── A due backup when the drive mounts ──────────────────────────────────────────────
+
+    private fun bkFlowDuePrompt(drive: MountedDrive) {
+        val job = bkJob(drive, "E2E_due")
+        val title = bkText(R.string.backup_due_title, BackupScheduler.driveNames(job))
+        returnToMainScreen()
+
+        // Asks, and starts nothing by itself.
+        assertTrue("attach started a backup unasked", BackupScheduler.evaluate(bkContext, "attach").isEmpty())
+        bkAssertDesc("backup_due_title", "mounting did not ask")
+        bkAssertText(title, "the dialog's title")
+        bkAssertText(bkText(R.string.backup_due_question), "the dialog's question")
+        assertFalse("a backup started while asking", BackupExecutor.isBusy(job.id))
+
+        // Not now snoozes a day; a second partition mounting does not ask again.
+        assertTrue(clickByDesc("backup_due_not_now"))
+        bkAssertGone("backup_due_title", "Not now left the dialog up")
+        val snoozed = bkStore.job(job.id)!!.snoozedUntil
+        assertNotNull("Not now did not snooze", snoozed)
+        assertTrue("snoozed for about a day", kotlin.math.abs(snoozed!! - System.currentTimeMillis() - 24 * BackupJob.HOUR) < 60_000L)
+        assertTrue(BackupScheduler.evaluate(bkContext, "attach").isEmpty())
+        android.os.SystemClock.sleep(1500)
+        assertNull("a snoozed backup asked again", device.findObject(By.desc("backup_due_title")))
+        bkStore.update(job.id) { it.copy(snoozedUntil = null) }
+        BackupScheduler.evaluate(bkContext, "attach")
+        android.os.SystemClock.sleep(1500)
+        assertNull("the same mount asked twice", device.findObject(By.desc("backup_due_title")))
+
+        // Each delay: the time is set, the row says it, and nothing runs yet.
+        for (minutes in BackupDelays.CHOICES_MINUTES) {
+            BackupPrompts.ask(BackupPrompts.Due(BackupScheduler.driveNames(job), listOf(job.id)))
+            bkAssertDesc("backup_due_later", "Later missing")
+            android.os.SystemClock.sleep(2500) // past the reachability check that enables it
+            assertTrue(clickByDesc("backup_due_later"))
+            BackupDelays.CHOICES_MINUTES.forEach { bkAssertDesc("backup_later_$it", "no $it minute choice") }
+            assertTrue(clickByDesc("backup_later_$minutes"))
+            bkAssertGone("backup_due_title", "choosing a delay left the dialog up")
+            val at = bkStore.job(job.id)!!.delayedStartAt
+            assertNotNull("no delay was set for $minutes", at)
+            assertTrue("$minutes minutes", kotlin.math.abs(at!! - System.currentTimeMillis() - minutes * 60_000L) < 15_000L)
+            assertFalse("a delay started it at once", BackupExecutor.isBusy(job.id))
+            bkOpenTab("backups_tab_schedules")
+            val next = device.wait(Until.findObject(By.desc("backup_status_E2E_due")), timeout)
+            assertNotNull("no status on the row", next)
+            BackupDelays.clearFor(bkContext, job.id)
+            returnToMainScreen()
+        }
+
+        // Start now: the real run, in its dialog.
+        BackupPrompts.ask(BackupPrompts.Due(BackupScheduler.driveNames(job), listOf(job.id)))
+        bkAssertDesc("backup_due_start", "Start now missing")
+        android.os.SystemClock.sleep(2500)
+        assertTrue(clickByDesc("backup_due_start"))
+        bkAssertDesc("backup_progress_title", "Start now opened no progress dialog")
+        bkCloseProgress()
+        bkExpectSuccess(bkStore.history(job.id).last(), "Start now")
+        assertFalse("just backed up, still due", bkStore.job(job.id)!!.isDue(System.currentTimeMillis()))
+
+        // One end here and the other away: it asks, and says what it needs. The emulator's drive
+        // has no serial, so matching a sibling partition by serial is a unit test and a device check.
+        val sibling = job.copy(id = java.util.UUID.randomUUID().toString(), name = "E2E_sibling", destinationFolder = "E2E_sibling", lastSuccessAt = null,
+            destination = job.destination.copy(uri = DocumentsContract.buildTreeDocumentUri(AUTHORITY, "feedface00:/").toString()))
+        bkStore.upsert(sibling)
+        BackupSecrets(bkContext).setPassword(sibling.id, BK_PASSWORD)
+        assertTrue(BackupScheduler.evaluate(bkContext, "attach").isEmpty())
+        bkAssertDesc("backup_due_missing_E2E_sibling", "the missing other end is not named")
+        android.os.SystemClock.sleep(2500)
+        device.findObject(By.desc("backup_due_start"))?.click()
+        android.os.SystemClock.sleep(1000)
+        assertFalse("Start now ran with an end missing", BackupExecutor.isBusy(sibling.id))
+        assertTrue(clickByDesc("backup_due_not_now"))
+        bkAssertGone("backup_due_title", "Not now left the dialog up")
+        bkStore.delete(sibling.id)
+
+        // Not due, and manual: never asks. The whole path, with the real mount: it does.
+        bkStore.update(job.id) { it.copy(lastSuccessAt = System.currentTimeMillis() - 25 * BackupJob.HOUR) }
+        val manual = bkJob(drive, "E2E_manual", interval = 0)
+        val fresh = bkJob(drive, "E2E_fresh", agoHours = 1)
+        bkPullDrive(drive)
+        bkReplugDrive()
+        bkAssertDesc("backup_due_title", "the real mount did not ask", 60000L)
+        assertNull("a manual backup asked", device.findObject(By.text("E2E_manual")))
+        assertNull("a backup not yet due asked", device.findObject(By.text("E2E_fresh")))
+        bkAssertText("E2E_due", "the due backup is not named")
+        assertTrue(clickByDesc("backup_due_not_now"))
+        assertNotNull(manual); assertNotNull(fresh)
+    }
+
+    private fun bkPullDrive(drive: MountedDrive) {
+        val key = drive.sourceDeviceName
+        assertNotNull("the drive has no USB device name", key)
+        returnToMainScreen()
+        requestUsb("unplug")
+        val detach = OtgMasterState.detachRequest
+        assertNotNull("no detach handler installed", detach)
+        detach!!(key!!)
+        val end = android.os.SystemClock.uptimeMillis() + UNMOUNT_WAIT_MS
+        while (OtgMasterState.mountedDrives.isNotEmpty() && android.os.SystemClock.uptimeMillis() < end) android.os.SystemClock.sleep(200)
+        assertTrue("still mounted after the drive was pulled", OtgMasterState.mountedDrives.isEmpty())
+        android.os.SystemClock.sleep(1500) // the detach evaluation runs on its own thread
+    }
+
+    private fun bkReplugDrive(): MountedDrive {
+        requestUsb("replug")
+        android.os.SystemClock.sleep(3000)
+        returnToMainScreen()
+        if (OtgMasterState.mountedDrives.isEmpty()) {
+            findScanButton()!!.click()
+            device.wait(Until.findObject(By.text(java.util.regex.Pattern.compile("(?i)OK|ALLOW"))), 5000L)?.click()
+        }
+        val end = android.os.SystemClock.uptimeMillis() + 60_000L
+        while (OtgMasterState.mountedDrives.isEmpty() && android.os.SystemClock.uptimeMillis() < end) android.os.SystemClock.sleep(200)
+        val d = OtgMasterState.mountedDrives.firstOrNull()
+        assertNotNull("the drive did not mount again", d)
+        return d!!
+    }
+
+    // ── Later: the delay runs out, or the drive goes first ──────────────────────────────
+
+    private fun bkFlowDelayedStart(drive: MountedDrive) {
+        val job = bkJob(drive, "E2E_later")
+
+        // A real five minutes, on the real alarm.
+        val started = System.currentTimeMillis()
+        BackupDelays.schedule(bkContext, job.id, 5)
+        android.os.SystemClock.sleep(60_000L)
+        assertFalse("it started before its time", BackupExecutor.isBusy(job.id))
+        assertTrue("nothing has run yet", bkStore.history(job.id).isEmpty())
+        val deadline = started + 8 * 60_000L
+        while (bkStore.history(job.id).isEmpty() && System.currentTimeMillis() < deadline) android.os.SystemClock.sleep(1000)
+        val run = bkAwait(job.id, "the delayed run")
+        bkExpectSuccess(run, "the delayed run")
+        assertEquals("what started it", "delayed", run.reason)
+        assertTrue("it started early: ${run.startedAt - started} ms", run.startedAt - started >= 5 * 60_000L - 2000L)
+        assertNull("the delay stayed set", bkStore.job(job.id)!!.delayedStartAt)
+
+        // 15 minutes, with the time moved rather than waited for.
+        bkStore.update(job.id) { it.copy(lastSuccessAt = System.currentTimeMillis() - 25 * BackupJob.HOUR) }
+        BackupDelays.schedule(bkContext, job.id, 15)
+        assertTrue("before its time", BackupScheduler.evaluate(bkContext, "periodic", System.currentTimeMillis() + 14 * 60_000L).isEmpty())
+        assertEquals(listOf(job.id), BackupScheduler.evaluate(bkContext, "periodic", System.currentTimeMillis() + 16 * 60_000L))
+        bkExpectSuccess(bkAwait(job.id, "the 15 minute run"), "the 15 minute run")
+
+        // 30 minutes, and the drive goes while it waits: dropped, with the reason in the log.
+        bkStore.update(job.id) { it.copy(lastSuccessAt = System.currentTimeMillis() - 25 * BackupJob.HOUR) }
+        val runsBefore = bkStore.history(job.id).size
+        BackupDelays.schedule(bkContext, job.id, 30)
+        bkPullDrive(drive)
+        assertNull("the delay outlived the drive", bkStore.job(job.id)!!.delayedStartAt)
+        assertTrue("no log line says why", OtgMasterState.recentLogs().any { it.contains("E2E_later") && it.contains("did not start") })
+        assertTrue("it ran with the drive gone", bkStore.history(job.id).size == runsBefore)
+
+        // Plugged back: the old timer does not come back; it asks again.
+        val again = bkReplugDrive()
+        bkAssertDesc("backup_due_title", "the replug did not ask", 60000L)
+        assertNull("the replug brought the timer back", bkStore.job(job.id)!!.delayedStartAt)
+        assertTrue(clickByDesc("backup_due_not_now"))
+        assertNotNull(again)
+
+        // The time comes with the drive gone and the timer not yet dropped: it checks when it fires.
+        bkStore.update(job.id) { it.copy(lastSuccessAt = System.currentTimeMillis() - 25 * BackupJob.HOUR, snoozedUntil = null,
+            delayedStartAt = System.currentTimeMillis() - 1000L, destination = it.destination.copy(uri = DocumentsContract.buildTreeDocumentUri(AUTHORITY, "feedface00:/").toString())) }
+        assertFalse("it fired with an end missing", BackupDelays.fire(bkContext, job.id))
+        assertNull(bkStore.job(job.id)!!.delayedStartAt)
+    }
+
+    // ── Due with the drive already mounted ──────────────────────────────────────────────
+
+    /** Opens the shade and taps [label] on the notification titled [title]. */
+    private fun bkNotificationTap(title: String, label: String) {
+        device.openNotification()
+        val t = device.wait(Until.findObject(By.text(title)), timeout)
+        if (t == null) captureScreen("shade_no_notification")
+        assertNotNull("no notification titled $title in the shade", t)
+        if (label == title) { t!!.click(); return }
+        var action = device.wait(Until.findObject(By.text(java.util.regex.Pattern.compile("(?i)${java.util.regex.Pattern.quote(label)}"))), 2000L)
+        if (action == null) {
+            // Collapsed, as it is beside another notification of the app: its own arrow opens it.
+            val y = t!!.visibleCenter.y
+            val arrow = device.findObjects(By.desc(java.util.regex.Pattern.compile("(?i)expand.*"))).filter { y in it.visibleBounds.top - 80..it.visibleBounds.bottom + 80 }.firstOrNull()
+            if (arrow != null) arrow.click() else device.drag(t.visibleCenter.x, y, t.visibleCenter.x, y + 400, 20)
+            action = device.wait(Until.findObject(By.text(java.util.regex.Pattern.compile("(?i)${java.util.regex.Pattern.quote(label)}"))), 5000L)
+        }
+        if (action == null) captureScreen("shade_no_$label")
+        assertNotNull("no $label on the notification", action)
+        action!!.click()
+        android.os.SystemClock.sleep(800)
+    }
+
+    private fun bkFlowDueMounted(drive: MountedDrive) {
+        val job = bkJob(drive, "E2E_mounted")
+        val title = bkText(R.string.backup_due_title, BackupScheduler.driveNames(job))
+        returnToMainScreen()
+        val now = System.currentTimeMillis()
+
+        // Comes due overnight with the drive in: a notification, and no run.
+        assertTrue("a USB backup started by itself", BackupScheduler.evaluate(bkContext, "periodic", now).isEmpty())
+        android.os.SystemClock.sleep(800)
+        assertTrue("no due notification: ${bkTitles()}", bkTitles().contains(title))
+        assertFalse(BackupExecutor.isBusy(job.id))
+        val text = bkContext.getSystemService(android.app.NotificationManager::class.java)!!.activeNotifications
+            .first { it.id == BackupNotifications.dueId(job.id) }.notification.extras.getCharSequence(android.app.Notification.EXTRA_TEXT).toString()
+        assertEquals(bkText(R.string.backup_due_text, "E2E_mounted"), text)
+
+        // Dismissed: not back within 20 hours, back after.
+        BackupNotifications.cancelDue(bkContext, job.id)
+        BackupScheduler.evaluate(bkContext, "periodic", now + 19 * BackupJob.HOUR)
+        android.os.SystemClock.sleep(500)
+        assertFalse("back too soon", bkTitles().contains(title))
+        BackupScheduler.evaluate(bkContext, "periodic", now + 21 * BackupJob.HOUR)
+        android.os.SystemClock.sleep(500)
+        assertTrue("not back after 20 hours", bkTitles().contains(title))
+
+        // Not now, from the shade.
+        bkNotificationTap(title, bkText(R.string.backup_due_not_now))
+        device.executeShellCommand("cmd statusbar collapse")
+        assertNotNull("Not now did not snooze", bkStore.job(job.id)!!.snoozedUntil)
+        assertFalse("Not now left it up", bkTitles().contains(title))
+
+        // Later, from the shade: the main screen offers the minutes.
+        fun repost() {
+            bkStore.update(job.id) { it.copy(snoozedUntil = null, delayedStartAt = null, lastReminderAt = null, lastSuccessAt = System.currentTimeMillis() - 25 * BackupJob.HOUR) }
+            BackupScheduler.evaluate(bkContext, "periodic")
+            android.os.SystemClock.sleep(800)
+            assertTrue("no due notification: ${bkTitles()}", bkTitles().contains(title))
+        }
+        repost()
+        bkNotificationTap(title, bkText(R.string.backup_due_later))
+        bkAssertDesc("backup_later_15", "Later opened no choice of minutes", 20000L)
+        assertTrue(clickByDesc("backup_later_15"))
+        android.os.SystemClock.sleep(500)
+        assertNotNull("no delay set", bkStore.job(job.id)!!.delayedStartAt)
+        assertFalse("the notification stayed", bkTitles().contains(title))
+
+        // A tap on its body opens the dialog.
+        repost()
+        bkNotificationTap(title, title)
+        bkAssertDesc("backup_due_title", "the tap opened no dialog", 20000L)
+        assertTrue(clickByDesc("backup_due_not_now"))
+        bkAssertGone("backup_due_title", "Not now left the dialog up")
+
+        // Start now, from the shade: runs, with no dialog in the way.
+        repost()
+        bkNotificationTap(title, bkText(R.string.backup_due_start))
+        device.executeShellCommand("cmd statusbar collapse")
+        bkExpectSuccess(bkAwait(job.id, "Start now from the shade"), "Start now from the shade")
+
+        // The drive goes while it is up: the connect reminder takes its place.
+        repost()
+        bkPullDrive(drive)
+        assertFalse("the due notification outlived the drive", bkTitles().contains(title))
+        val reminder = bkText(R.string.backup_reminder_title, "E2E_mounted")
+        assertTrue("no connect reminder: ${bkTitles()}", bkTitles().contains(reminder))
+        val back = bkReplugDrive()
+        bkAssertDesc("backup_due_title", "the replug did not ask", 60000L)
+        assertTrue(clickByDesc("backup_due_not_now"))
+        BackupNotifications.cancelAll(bkContext, job.id)
+
+        // A backup on the phone alone stays automatic, with no notification.
+        val phone = bkCreate(BkEnd(bkPhoneRoot, listOf("Download", "otg_e2e", "src")), BkEnd(bkPhoneRoot, listOf("Download", "otg_e2e", "targets")), "E2E_phone_only", incremental = false)
+        bkCloseProgress()
+        bkExpectSuccess(bkStore.history(phone.id).last(), "the phone-only backup")
+        val runs = bkStore.history(phone.id).size
+        bkStore.update(phone.id) { it.copy(lastSuccessAt = System.currentTimeMillis() - 25 * BackupJob.HOUR) }
+        assertTrue("a phone-only backup did not start by itself", BackupScheduler.evaluate(bkContext, "periodic").contains(phone.id))
+        bkExpectSuccess(bkAwait(phone.id, "the automatic run"), "the automatic run")
+        assertEquals(runs + 1, bkStore.history(phone.id).size)
+        assertFalse("a phone-only backup asked", bkTitles().contains(bkText(R.string.backup_due_title, "")))
+        assertNotNull(back)
+    }
+
+    // ── Due with no drive ───────────────────────────────────────────────────────────────
+
+    private fun bkFlowReminder(drive: MountedDrive) {
+        val job = bkJob(drive, "E2E_reminder")
+        val never = bkJob(drive, "E2E_never", agoHours = null)
+        val notDue = bkJob(drive, "E2E_not_due", agoHours = 1)
+        val manual = bkJob(drive, "E2E_manual", interval = 0)
+        BackupScheduler.evaluate(bkContext, "attach")
+        bkAssertDesc("backup_due_title", "mounting did not ask", 20000L)
+        assertTrue(clickByDesc("backup_due_not_now"))
+        listOf(job, never).forEach { j -> bkStore.update(j.id) { it.copy(snoozedUntil = null) } }
+        bkPullDrive(drive)
+        BackupNotifications.cancelAll(bkContext, job.id); BackupNotifications.cancelAll(bkContext, never.id)
+        listOf(job, never).forEach { j -> bkStore.update(j.id) { it.copy(lastReminderAt = null) } }
+        val now = System.currentTimeMillis()
+
+        assertTrue("started with the drive gone", BackupScheduler.evaluate(bkContext, "periodic", now).isEmpty())
+        android.os.SystemClock.sleep(800)
+        val title = bkText(R.string.backup_reminder_title, "E2E_reminder")
+        val neverTitle = bkText(R.string.backup_reminder_never, "E2E_never")
+        val titles = bkTitles()
+        assertTrue("no reminder at the due time: $titles", titles.contains(title))
+        assertTrue("no first-run reminder: $titles", titles.contains(neverTitle))
+        assertFalse("a backup not due reminded: $titles", titles.any { it.contains("E2E_not_due") })
+        assertFalse("a manual backup reminded: $titles", titles.any { it.contains("E2E_manual") })
+        val text = bkContext.getSystemService(android.app.NotificationManager::class.java)!!.activeNotifications
+            .first { it.id == BackupNotifications.reminderId(job.id) }.notification.extras.getCharSequence(android.app.Notification.EXTRA_TEXT).toString()
+        assertEquals(bkText(R.string.backup_reminder_connect, VolumeInfo.summary(job.destination.info)), text)
+
+        // Not again for 20 hours, then again.
+        BackupNotifications.cancel(bkContext, BackupNotifications.reminderId(job.id))
+        BackupScheduler.evaluate(bkContext, "periodic", now + 19 * BackupJob.HOUR)
+        android.os.SystemClock.sleep(500)
+        assertFalse("reminded again too soon", bkTitles().contains(title))
+        BackupScheduler.evaluate(bkContext, "periodic", now + 21 * BackupJob.HOUR)
+        android.os.SystemClock.sleep(500)
+        assertTrue("not reminded after 20 hours", bkTitles().contains(title))
+
+        // A tap opens the app; the drive back and a good run clear it.
+        bkNotificationTap(title, title)
+        assertTrue("the tap did not open the app", device.wait(Until.hasObject(By.pkg("app.fayaz.otgmaster")), timeout))
+        bkReplugDrive()
+        bkAssertDesc("backup_due_title", "the replug did not ask", 60000L)
+        android.os.SystemClock.sleep(2500)
+        assertTrue(clickByDesc("backup_due_start"))
+        bkAssertDesc("backup_progress_title", "Start now opened no dialog")
+        bkCloseProgress()
+        assertFalse("the reminder outlived a good backup: ${bkTitles()}", bkTitles().contains(title))
+        assertNotNull(notDue); assertNotNull(manual)
+    }
+
+    // ── What Create refuses, and every part of its form ─────────────────────────────────
+
+    private fun bkExpectRefused(message: String) {
+        bkTapCreate("backup_create_error")
+        val e = device.findObject(By.desc("backup_create_error"))
+        if (e == null) captureScreen("no_refusal")
+        assertNotNull("Create did not refuse: $message", e)
+        bkAssertText(message, "the refusal's wording")
+    }
+
+    private fun bkFlowTargetChecks(drive: MountedDrive) {
+        val src = BkEnd(drive.name, listOf("drive_src"))
+        val top = BkEnd(drive.name, emptyList())
+        val existing = bkJob(drive, "E2E_taken", agoHours = 1)
+        bkExpectSuccess(bkRunNow(existing, "the first job's backup"), "the first job's backup")
+
+        // The form itself.
+        bkOpenCreate()
+        assertNull("Manual on Create schedule", device.findObject(By.desc("backup_interval_0")))
+        bkAssertDesc("backup_interval_24", "no Daily")
+        bkAssertDesc("backup_interval_168", "no Weekly")
+        clickInDialog("backup_learn_more")
+        bkAssertText(bkText(R.string.backup_learn_more_title), "Learn more opened nothing")
+        assertTrue(clickByDesc("backup_learn_more_close"))
+        android.os.SystemClock.sleep(500)
+        // Create does nothing without its folders.
+        device.findObject(By.desc("backup_create"))?.click()
+        android.os.SystemClock.sleep(800)
+        assertNotNull("Create closed the form with no folders", device.findObject(By.desc("backup_name")))
+        // The swap exchanges the ends.
+        clickInDialog("backup_source_location")
+        bkPick(src.root, *src.path.toTypedArray())
+        clickInDialog("backup_swap")
+        android.os.SystemClock.sleep(500)
+        clickInDialog("backup_swap")
+        // Same folder at both ends.
+        clickInDialog("backup_target_location")
+        bkPick(src.root, *src.path.toTypedArray())
+        typeInto("backup_name", "E2E_same")
+        clickInDialog("backup_type_plain")
+        bkExpectRefused(bkText(R.string.backup_same_folder))
+        // A password that differs, or is short, or is not marked saved: nothing happens.
+        clickInDialog("backup_target_location")
+        bkPick(top.root)
+        clickInDialog("backup_type_incremental")
+        bkTypePassword("backup_password", BK_PASSWORD)
+        bkTypePassword("backup_password_confirm", "$BK_PASSWORD-x")
+        clickInDialog("backup_password_saved")
+        bkAssertText(bkText(R.string.encrypt_passwords_differ), "no word about passwords that differ")
+        device.findObject(By.desc("backup_create"))?.click()
+        android.os.SystemClock.sleep(800)
+        assertNotNull("Create went ahead with passwords that differ", device.findObject(By.desc("backup_name")))
+        bkTypePassword("backup_password_confirm", BK_PASSWORD)
+        // Those edits unticked "saved": it does not go ahead until ticked again.
+        device.findObject(By.desc("backup_create"))?.click()
+        android.os.SystemClock.sleep(800)
+        assertNotNull("Create went ahead without the saved tick", device.findObject(By.desc("backup_name")))
+        device.pressBack(); android.os.SystemClock.sleep(500)
+        if (device.findObject(By.desc("backup_name")) != null) device.pressBack()
+
+        // Inside another job's folder.
+        bkOpenCreate()
+        bkFillForm(src, BkEnd(drive.name, listOf("E2E_taken")), "E2E_inside", incremental = false)
+        bkExpectRefused(bkText(R.string.backup_target_inside_job, "E2E_taken"))
+        device.pressBack(); android.os.SystemClock.sleep(500)
+        if (device.findObject(By.desc("backup_name")) != null) device.pressBack()
+
+        // The same folder as another job.
+        bkOpenCreate()
+        bkFillForm(src, top, "E2E_taken", incremental = true)
+        bkExpectRefused(bkText(R.string.backup_target_same_job, "E2E_taken"))
+        device.pressBack(); android.os.SystemClock.sleep(500)
+        if (device.findObject(By.desc("backup_name")) != null) device.pressBack()
+
+        // A folder that is itself a repository: desktop restic's, which no job knows.
+        bkOpenCreate()
+        bkFillForm(src, BkEnd(drive.name, listOf("desktop_repo")), "E2E_in_repo", incremental = false)
+        bkExpectRefused(bkText(R.string.backup_target_is_repository))
+        device.pressBack(); android.os.SystemClock.sleep(500)
+        if (device.findObject(By.desc("backup_name")) != null) device.pressBack()
+
+        // The name lands on that repository. Plain is refused, a wrong password is refused.
+        bkOpenCreate()
+        bkFillForm(src, top, "desktop_repo", incremental = false)
+        bkExpectRefused(bkText(R.string.backup_target_plain_on_repository, "desktop_repo"))
+        device.pressBack(); android.os.SystemClock.sleep(500)
+        if (device.findObject(By.desc("backup_name")) != null) device.pressBack()
+        bkOpenCreate()
+        bkFillForm(src, top, "desktop_repo", incremental = true, password = "not-the-password")
+        bkExpectRefused(bkText(R.string.backup_target_wrong_password, "desktop_repo"))
+        device.pressBack(); android.os.SystemClock.sleep(500)
+        if (device.findObject(By.desc("backup_name")) != null) device.pressBack()
+
+        // The right password continues it; desktop's snapshots stay. The host counts them.
+        val cont = bkCreate(src, top, "desktop_repo", incremental = true, password = BK_DESKTOP_PASSWORD)
+        bkCloseProgress()
+        bkExpectSuccess(bkStore.history(cont.id).last(), "continuing a desktop repository")
+        assertEquals("only this job's snapshots are its own", 1, bkStore.snapshots(cont.id).size)
+
+        // Two backups in one parent: each gets its own folder, and neither loses anything.
+        val a = bkCreate(src, BkEnd(drive.name, listOf("shared")), "E2E_A", incremental = true)
+        bkCloseProgress()
+        bkExpectSuccess(bkStore.history(a.id).last(), "A into the shared folder")
+        val c = bkCreate(BkEnd(drive.name, listOf("other_src")), BkEnd(drive.name, listOf("shared")), "E2E_C", incremental = false)
+        bkCloseProgress()
+        bkExpectSuccess(bkStore.history(c.id).last(), "C into the shared folder")
+        val shared = documentChildren(bkContext, "${drive.id}:/shared").keys - ".keep"
+        assertEquals("one folder each", setOf("E2E_A", "E2E_C"), shared)
+        bkExpectSuccess(bkRunNow(a, "Verify of A after C", BackupExecutor.Op.Check(true)), "Verify of A after C")
+    }
+
+    // ── The progress dialog, from every door ────────────────────────────────────────────
+
+    /** A backup held at its start, so its dialog can be looked at for as long as the test needs. */
+    private fun bkHeldJob(name: String): BackupJob {
+        bkHold()
+        return bkCreate(BkEnd(bkPhoneRoot, listOf("Download", "otg_e2e", "src")), BkEnd(bkPhoneRoot, listOf("Download", "otg_e2e", "targets")), name, incremental = true)
+    }
+
+    private fun bkFlowProgressDialog(drive: MountedDrive) {
+        // From Create: Hide goes to the main screen, the run and its notification carry on.
+        val job = bkHeldJob("E2E_slow")
+        bkAssertDesc("backup_progress_hide", "no Hide while running")
+        bkAssertDesc("backup_progress_cancel", "no Cancel while running")
+        assertTrue(clickByDesc("backup_progress_hide"))
+        assertNotNull("Hide did not go to the main screen", device.wait(Until.findObject(By.desc("scan_button")), timeout))
+        assertTrue("Hide stopped the run", BackupExecutor.isBusy(job.id))
+        val title = "Backing up E2E_slow"
+        assertTrue("the notification went with the dialog: ${bkTitles()}", bkTitles().contains(title))
+
+        // From the notification: the same dialog, on the main screen, still with Hide.
+        bkNotificationTap(title, title)
+        bkAssertDesc("backup_progress_title", "the notification opened no dialog", 20000L)
+        assertTrue(clickByDesc("backup_progress_hide"))
+        bkAssertGone("backup_progress_title", "Hide left the dialog up")
+        assertTrue("the notification went with the dialog: ${bkTitles()}", bkTitles().contains(title))
+
+        // The result waits: it finishes unseen, and a tap on its notification shows it.
+        bkRelease()
+        bkAwait(job.id, "the slow run", 600_000L)
+        bkExpectSuccess(bkStore.history(job.id).last(), "the slow run")
+        val done = bkText(R.string.notification_operation_done, title)
+        assertTrue("no result notification: ${bkTitles()}", bkTitles().contains(done))
+        assertTrue("the notification stayed after the run", bkTitles().none { it == title })
+        bkNotificationTap(done, done)
+        bkAssertDesc("backup_progress_result", "the result did not wait", 20000L)
+        assertTrue(clickByDesc("backup_progress_close"))
+        bkAssertGone("backup_progress_title", "Close left the dialog up")
+
+        // From Back up now, and its Cancel.
+        bkHold()
+        bkOpenTab("backups_tab_schedules")
+        bkRowClick("backup_run_now_E2E_slow")
+        bkAssertDesc("backup_progress_cancel", "Back up now opened no dialog")
+        val snaps = bkStore.snapshots(job.id).size
+        assertTrue(clickByDesc("backup_progress_cancel"))
+        bkRelease()
+        bkAssertDesc("backup_progress_result", "Cancel showed no result", 120_000L)
+        assertEquals("the cancelled run", RunStatus.CANCELLED, bkStore.history(job.id).last().status)
+        assertEquals("a cancelled run made a snapshot", snaps, bkStore.snapshots(job.id).size)
+        bkCloseProgress()
+
+        // The row's link, back into the dialog, and the row's own Cancel showing by itself.
+        bkHold()
+        bkRowClick("backup_run_now_E2E_slow")
+        bkAssertDesc("backup_progress_hide", "no dialog")
+        // Hide leaves Manage backups for the main screen; come back for the link.
+        assertTrue(clickByDesc("backup_progress_hide"))
+        bkOpenTab("backups_tab_schedules")
+        bkAssertDesc("backup_cancel_E2E_slow", "the row's Cancel did not show by itself", 15000L)
+        bkAssertDesc("backup_status_E2E_slow", "no status on the row")
+        device.findObject(By.desc("backup_status_E2E_slow"))!!.click()
+        bkAssertDesc("backup_progress_title", "the link opened no dialog")
+        assertTrue(clickByDesc("backup_progress_cancel"))
+        bkRelease()
+        bkCloseProgress()
+
+        // Restore, Verify: the dialog too, and a failure shows in it.
+        bkRowClick("backup_verify_E2E_slow")
+        bkAssertDesc("backup_progress_title", "Verify opened no dialog")
+        bkCloseProgress()
+        assertNotNull(drive)
+    }
+
+    // ── Signs of life on the Mount tab ──────────────────────────────────────────────────
+
+    private fun bkFlowMountProgress(drive: MountedDrive) {
+        val job = bkJob(drive, "E2E_mp", agoHours = 1)
+        bkExpectSuccess(bkRunNow(job, "the backup to mount"), "the backup to mount")
+        BackupMounts.testDelayMs = 4000
+        bkOpenTab("backups_tab_mount")
+        bkAssertDesc("backup_mount_E2E_mp", "no Mount on the row")
+        android.os.SystemClock.sleep(2500)
+
+        // The row: a sign while it opens, and a second tap does nothing.
+        device.findObject(By.desc("backup_mount_E2E_mp"))!!.click()
+        bkAssertDesc("backup_mount_progress_E2E_mp", "no sign while the row's Mount works", 3000L)
+        device.findObject(By.desc("backup_mount_E2E_mp"))?.click()
+        val id = BackupMounts.driveIdFor(job.id)
+        val end = android.os.SystemClock.uptimeMillis() + 60_000L
+        while (OtgMasterState.mountedDrives.none { it.id == id } && android.os.SystemClock.uptimeMillis() < end) android.os.SystemClock.sleep(200)
+        assertEquals("a second tap mounted it twice", 1, OtgMasterState.mountedDrives.count { it.id == id })
+        bkAssertGone("backup_mount_progress_E2E_mp", "the sign outlived the mount", 20000L)
+        bkAssertText(bkText(R.string.backups_is_mounted), "the row does not say Mounted")
+        returnToMainScreen()
+        doUnmount()
+
+        // After choosing a folder, and in the password dialog.
+        bkOpenTab("backups_tab_mount")
+        assertTrue("Browse for backup missing", clickByDesc("backups_browse"))
+        bkPick(drive.name, "desktop_repo")
+        bkAssertDesc("backups_browse_opening", "no sign after choosing a folder", 3000L)
+        bkAssertDesc("backups_browse_password", "no password dialog", 30000L)
+        bkTypePassword("backups_browse_password", BK_DESKTOP_PASSWORD)
+        clickInDialog("backups_browse_mount")
+        bkAssertDesc("backups_browse_opening", "no sign in the password dialog", 3000L)
+        bkAssertGone("backups_browse_mount", "the password dialog stayed", 60000L)
+        BackupMounts.testDelayMs = 0
+        returnToMainScreen()
+        doUnmount()
+
+        // Not reachable: the Mount button is off and says why.
+        bkPullDrive(drive)
+        openBackupsTab("backups_open_mount")
+        bkAssertText(bkText(R.string.backups_mount_connect, VolumeInfo.summary(job.destination.info)), "no reason with the drive gone")
+        device.findObject(By.desc("backup_mount_E2E_mp"))?.click()
+        android.os.SystemClock.sleep(1500)
+        assertTrue("Mount worked with the drive gone", OtgMasterState.mountedDrives.isEmpty())
+    }
+
+    // ── What each schedule row says ─────────────────────────────────────────────────────
+
+    /** The row of [name] has a status, and [expected] is on the screen. */
+    private fun bkExpectStatus(name: String, expected: String) {
+        val row = bkScrollTo(By.desc("backup_status_$name"))
+        if (row == null) captureScreen("no_status_$name")
+        assertNotNull("no status on the row of $name", row)
+        val text = device.wait(Until.findObject(By.text(expected)), 15_000L)
+        if (text == null) captureScreen("status_$name")
+        assertNotNull("the row of $name does not say: $expected", text)
+    }
+
+    private fun bkFlowScheduleStatus(drive: MountedDrive) {
+        val now = System.currentTimeMillis()
+        val hour = BackupJob.HOUR
+        val next = bkJob(drive, "E2E_next", agoHours = 3)
+        val job = bkStore.job(next.id)!!
+        bkOpenTab("backups_tab_schedules")
+        bkExpectStatus("E2E_next", bkText(R.string.backup_state_next, app.fayaz.otgmaster.backup.Format.whenAt(job.nextRunAt()!!)))
+
+        // A delay and a snooze set the time shown.
+        BackupDelays.schedule(bkContext, job.id, 30)
+        bkExpectStatus("E2E_next", bkText(R.string.backup_state_next, app.fayaz.otgmaster.backup.Format.whenAt(bkStore.job(job.id)!!.delayedStartAt!!)))
+        BackupDelays.clearFor(bkContext, job.id)
+        BackupScheduler.snooze(bkContext, job.id, now)
+        bkExpectStatus("E2E_next", bkText(R.string.backup_state_next, app.fayaz.otgmaster.backup.Format.whenAt(now + 24 * hour)))
+        bkStore.update(job.id) { it.copy(snoozedUntil = null, lastSuccessAt = now - 25 * hour) }
+
+        // Due with the drive here.
+        bkExpectStatus("E2E_next", bkText(R.string.backup_state_due))
+
+        // In progress, and waiting behind it: the one thread takes them in turn.
+        val slow = bkHeldJob("E2E_busy")
+        bkAssertDesc("backup_progress_hide", "no dialog")
+        assertTrue(clickByDesc("backup_progress_hide"))
+        assertTrue("the held run has finished", BackupExecutor.isBusy(slow.id))
+        assertTrue(BackupExecutor.start(bkContext, job.id, BackupExecutor.Op.Backup("manual")))
+        bkOpenTab("backups_tab_schedules")
+        bkExpectStatus("E2E_next", bkText(R.string.backup_state_waiting))
+        bkExpectStatus("E2E_busy", bkText(R.string.backup_state_in_progress))
+        bkRelease()
+        bkAwait(slow.id, "the slow run", 600_000L)
+        bkExpectSuccess(bkAwait(job.id, "the waiting backup", 120_000L), "the waiting backup")
+
+        // Due with the drive gone.
+        bkStore.update(job.id) { it.copy(lastSuccessAt = System.currentTimeMillis() - 25 * hour) }
+        bkPullDrive(drive)
+        openBackupsTab("backups_open_schedules")
+        bkExpectStatus("E2E_next", bkText(R.string.backup_state_due_connect, BackupScheduler.driveNames(job)))
+        // Corrupted says so, whatever else is true.
+        bkStore.update(job.id) { it.copy(corruptedAt = System.currentTimeMillis(), corruptedReason = null) }
+        bkExpectStatus("E2E_next", bkText(R.string.backup_state_corrupted))
+    }
+
+    // ── Remove schedule ─────────────────────────────────────────────────────────────────
+
+    private fun bkFlowRemoveSchedule(drive: MountedDrive) {
+        val job = bkJob(drive, "E2E_rm", agoHours = 25)
+        bkExpectSuccess(bkRunNow(job, "the backup to keep"), "the backup to keep")
+        bkStore.update(job.id) { it.copy(lastSuccessAt = System.currentTimeMillis() - 25 * BackupJob.HOUR) }
+        BackupDelays.schedule(bkContext, job.id, 30)
+        BackupNotifications.reminder(bkContext, bkStore.job(job.id)!!)
+        android.os.SystemClock.sleep(500)
+        assertTrue("no reminder to clear: ${bkTitles()}", bkTitles().contains(bkText(R.string.backup_reminder_title, "E2E_rm")))
+
+        // The dialog warns; Cancel keeps everything.
+        bkOpenTab("backups_tab_schedules")
+        bkRowClick("backup_remove_E2E_rm")
+        bkAssertText(bkText(R.string.backup_delete_job_title, "E2E_rm"), "the dialog's title")
+        bkAssertText(bkText(R.string.backup_delete_job_text), "the password warning")
+        bkAssertDesc("backup_remove_show_password", "no way to see the password first")
+        assertTrue(clickByDesc("backup_remove_cancel"))
+        bkAssertGone("backup_remove_confirm", "Cancel left the dialog up")
+        assertNotNull("Cancel removed it", bkStore.job(job.id))
+
+        // Remove: job, password, delay and notifications go; the backup stays.
+        bkRowClick("backup_remove_E2E_rm")
+        assertTrue(clickByDesc("backup_remove_confirm"))
+        bkAssertGone("backup_remove_confirm", "the dialog stayed")
+        android.os.SystemClock.sleep(800)
+        assertNull("the job survived", bkStore.job(job.id))
+        assertNull("the password survived", BackupSecrets(bkContext).password(job.id))
+        assertFalse("the reminder survived: ${bkTitles()}", bkTitles().contains(bkText(R.string.backup_reminder_title, "E2E_rm")))
+        assertTrue("the backup went with the schedule", documentChildren(bkContext, "${drive.id}:/E2E_rm").containsKey("config"))
+        assertTrue("it is gone from the row", device.wait(Until.gone(By.text("E2E_rm")), timeout))
+        // The delay cannot fire for it.
+        assertFalse(BackupDelays.fire(bkContext, job.id))
+
+        // A phone folder's grant goes with its only job, and stays while another uses it.
+        val phoneSrc = BkEnd(bkPhoneRoot, listOf("Download", "otg_e2e", "src"))
+        val p1 = bkCreate(phoneSrc, BkEnd(drive.name, emptyList()), "E2E_g1", incremental = false)
+        bkCloseProgress()
+        val p2 = bkCreate(phoneSrc, BkEnd(drive.name, emptyList()), "E2E_g2", incremental = false)
+        bkCloseProgress()
+        val uri = p1.source.uri
+        fun granted() = bkContext.contentResolver.persistedUriPermissions.any { it.uri.toString() == uri }
+        assertTrue("no grant to begin with", granted())
+        bkRowClick("backup_remove_E2E_g1")
+        assertTrue(clickByDesc("backup_remove_confirm"))
+        android.os.SystemClock.sleep(800)
+        assertTrue("the grant went while another job uses it", granted())
+        bkRowClick("backup_remove_E2E_g2")
+        assertTrue(clickByDesc("backup_remove_confirm"))
+        android.os.SystemClock.sleep(800)
+        assertFalse("the grant outlived the last job using it", granted())
+        assertNotNull(p2)
+    }
+
+    // ── Manual backups live in History ──────────────────────────────────────────────────
+
+    private fun bkFlowManualHistory(drive: MountedDrive) {
+        // Made from the card's Back up, where Manual is offered.
+        returnToMainScreen()
+        val action = findScrolling(By.text(bkText(R.string.backup_action)), text = bkText(R.string.backup_action))
+        if (action == null) {
+            clickScrolling("more_actions_button", "More actions missing")
+            device.wait(Until.findObject(By.text(bkText(R.string.backup_action))), timeout)!!.click()
+        } else action.click()
+        bkAssertDesc("backup_interval_0", "no Manual on the card's Back up")
+        bkFillForm(BkEnd(drive.name, listOf("drive_src")), BkEnd(drive.name, emptyList()), "E2E_manual", incremental = true, interval = 0)
+        bkTapCreate("backup_progress_title")
+        bkAssertDesc("backup_progress_title", "Create opened no dialog", 60000L)
+        bkCloseProgress()
+        val job = bkStore.jobs.value.first { it.name == "E2E_manual" }
+        assertTrue("not manual", job.schedule.isManual)
+
+        // Not under Schedules.
+        bkOpenTab("backups_tab_schedules")
+        android.os.SystemClock.sleep(1500)
+        assertNull("a manual backup under Schedules", device.findObject(By.text("E2E_manual")))
+        assertNull("no row, no status", device.findObject(By.desc("backup_status_E2E_manual")))
+
+        // Under History, and only its newest entry has the actions.
+        assertTrue(clickByDesc("backups_tab_history"))
+        bkAssertDesc("backup_run_now_E2E_manual", "no Run again on its History entry")
+        bkAssertText(bkText(R.string.backup_run_again), "the button says Run again")
+        for (a in listOf("verify", "restore", "show_password", "remove")) bkAssertDesc("backup_${a}_E2E_manual", "no $a on its History entry")
+        bkRowClick("backup_run_now_E2E_manual")
+        bkCloseProgress()
+        assertEquals("two runs", 2, bkStore.history(job.id).size)
+        assertEquals("only the newest entry has the actions", 1, device.findObjects(By.desc("backup_run_now_E2E_manual")).size)
+        bkRowClick("backup_verify_E2E_manual")
+        bkCloseProgress()
+        bkExpectSuccess(bkStore.history(job.id).last(), "Verify from History")
+
+        // On the Mount tab all the same.
+        assertTrue(clickByDesc("backups_tab_mount"))
+        bkAssertDesc("backup_mount_E2E_manual", "not on the Mount tab")
+
+        // Never due, never reminds.
+        assertFalse(bkStore.job(job.id)!!.isDue(System.currentTimeMillis() + 1000 * BackupJob.HOUR))
+        assertTrue(BackupScheduler.evaluate(bkContext, "attach").isEmpty())
+        android.os.SystemClock.sleep(1000)
+        assertNull("a manual backup asked", device.findObject(By.desc("backup_due_title")))
+
+        // Remove, from History.
+        assertTrue(clickByDesc("backups_tab_history"))
+        bkRowClick("backup_remove_E2E_manual")
+        assertTrue(clickByDesc("backup_remove_confirm"))
+        android.os.SystemClock.sleep(800)
+        assertNull("the job survived", bkStore.job(job.id))
+    }
+
+    // ── Show password needs the phone's lock ────────────────────────────────────────────
+
+    private fun bkFlowShowPassword(drive: MountedDrive) {
+        val job = bkJob(drive, "E2E_pw", agoHours = 1)
+        bkExpectSuccess(bkRunNow(job, "the backup"), "the backup")
+        bkShell("locksettings clear --old 1234")
+
+        // No screen lock: refuses, and shows nothing.
+        bkOpenTab("backups_tab_schedules")
+        bkRowClick("backup_show_password_E2E_pw")
+        bkAssertText(bkText(R.string.backup_password_needs_lock), "no refusal without a screen lock")
+        assertNull("the password showed without a lock", device.findObject(By.desc("backup_password_shown")))
+        assertNull("the password is on the screen", device.findObject(By.text(BK_PASSWORD)))
+        device.pressBack()
+        android.os.SystemClock.sleep(500)
+
+        bkShell("locksettings set-pin 1234")
+        try {
+            // Cancelled: nothing shows.
+            // The PIN screen is a secure window: backing out takes one press for the keyboard
+            // and one for the screen, and nothing behind it can be seen until then.
+            fun leavePinScreen() {
+                repeat(4) {
+                    if (device.findObject(By.desc("backups_tab_mount")) != null) return
+                    device.pressBack()
+                    android.os.SystemClock.sleep(1500)
+                }
+            }
+            bkRowClick("backup_show_password_E2E_pw")
+            android.os.SystemClock.sleep(2000)
+            assertNull("the password showed before the check", device.findObject(By.desc("backup_password_shown")))
+            leavePinScreen()
+            assertNull("the password showed after a cancelled check", device.findObject(By.desc("backup_password_shown")))
+
+            // The PIN: it shows.
+            bkRowClick("backup_show_password_E2E_pw")
+            android.os.SystemClock.sleep(2000)
+            bkShell("input text 1234")
+            bkShell("input keyevent 66")
+            bkAssertDesc("backup_password_shown", "the PIN did not show the password", 20000L)
+            bkAssertText(BK_PASSWORD, "the wrong password showed")
+            assertTrue(clickByDesc("backup_password_close"))
+
+            // From the Remove dialog too.
+            bkRowClick("backup_remove_E2E_pw")
+            assertTrue(clickByDesc("backup_remove_show_password"))
+            android.os.SystemClock.sleep(2000)
+            assertNull("the Remove dialog showed it unchecked", device.findObject(By.desc("backup_password_shown")))
+            leavePinScreen()
+            if (device.findObject(By.desc("backup_remove_cancel")) != null) assertTrue(clickByDesc("backup_remove_cancel"))
+        } finally {
+            bkShell("locksettings clear --old 1234")
+        }
+    }
+
+    // ── What a new phone lacks ──────────────────────────────────────────────────────────
+
+    private fun bkFlowRecoverAccess(drive: MountedDrive) {
+        // The password did not come with the app.
+        val job = bkJob(drive, "E2E_new", agoHours = 1)
+        bkExpectSuccess(bkRunNow(job, "the backup"), "the backup")
+        BackupSecrets(bkContext).forget(job.id)
+        bkOpenTab("backups_tab_schedules")
+        bkAssertDesc("backup_password_missing_E2E_new", "the row does not say the password is missing")
+        bkAssertText(bkText(R.string.backup_enter_password_hint), "the row's wording")
+        val failed = bkRunNow(job, "a backup with no password")
+        assertEquals("with no password: ${failed.message}", RunStatus.FAILED, failed.status)
+        assertTrue(failed.message, failed.message.contains("Enter password"))
+
+        // Checked against the repository before it is saved.
+        bkOpenTab("backups_tab_schedules")
+        bkRowClick("backup_enter_password_E2E_new")
+        bkAssertDesc("backup_enter_password_field", "no password dialog")
+        bkTypePassword("backup_enter_password_field", "not-the-password")
+        assertTrue(clickByDesc("backup_enter_password_save"))
+        bkAssertDesc("backup_enter_password_error", "a wrong password was not refused", 60000L)
+        assertNull("a wrong password was saved", BackupSecrets(bkContext).password(job.id))
+        bkTypePassword("backup_enter_password_field", BK_PASSWORD)
+        assertTrue(clickByDesc("backup_enter_password_save"))
+        bkAssertGone("backup_enter_password_field", "the right password was not accepted", 60000L)
+        assertEquals(BK_PASSWORD, BackupSecrets(bkContext).password(job.id))
+        bkAssertGone("backup_password_missing_E2E_new", "the row still says it is missing", 10000L)
+        bkExpectSuccess(bkRunNow(job, "a backup with the password back"), "a backup with the password back")
+
+        // The phone folder's grant did not come either.
+        val phone = bkCreate(BkEnd(bkPhoneRoot, listOf("Download", "otg_e2e", "src")), BkEnd(drive.name, emptyList()), "E2E_grant", incremental = false)
+        bkCloseProgress()
+        bkContext.contentResolver.releasePersistableUriPermission(android.net.Uri.parse(phone.source.uri),
+            Intent.FLAG_GRANT_READ_URI_PERMISSION or Intent.FLAG_GRANT_WRITE_URI_PERMISSION)
+        bkOpenTab("backups_tab_schedules")
+        assertNotNull("the row does not say the folder is lost", bkScrollTo(By.desc("backup_folder_lost_E2E_grant")))
+        val lost = bkRunNow(phone, "a backup with no grant")
+        assertEquals("with no grant: ${lost.message}", RunStatus.UNAVAILABLE, lost.status)
+        bkOpenTab("backups_tab_schedules")
+        bkRowClick("backup_choose_folder_E2E_grant")
+        bkPick(bkPhoneRoot, "Download", "otg_e2e", "src")
+        bkAssertGone("backup_folder_lost_E2E_grant", "the row still says the folder is lost", 10000L)
+        bkExpectSuccess(bkRunNow(phone, "a backup with the folder back"), "a backup with the folder back")
+    }
+
+    // ── Corrupted, and Recreate ─────────────────────────────────────────────────────────
+
+    /** A folder and what is in it. Some filesystems here refuse to delete a folder that is not empty. */
+    private fun bkDeleteTree(docId: String) {
+        documentChildren(bkContext, docId).values.forEach(::bkDeleteTree)
+        DocumentsContract.deleteDocument(bkContext.contentResolver, DocumentsContract.buildDocumentUri(AUTHORITY, docId))
+    }
+
+    /** Flips bytes in the middle of a file on the drive, keeping its size. */
+    private fun bkDamage(docId: String) {
+        val uri = DocumentsContract.buildDocumentUri(AUTHORITY, docId)
+        val bytes = bkContext.contentResolver.openInputStream(uri)!!.use { it.readBytes() }
+        assertTrue("nothing to damage in $docId", bytes.size > 64)
+        for (i in bytes.size / 2 until bytes.size / 2 + 16) bytes[i] = (bytes[i].toInt() xor 0x5A).toByte()
+        bkContext.contentResolver.openOutputStream(uri, "wt")!!.use { it.write(bytes) }
+    }
+
+    private fun bkFirstPack(drive: MountedDrive, name: String): String {
+        val dirs = documentChildren(bkContext, "${drive.id}:/$name/data")
+        val packs = dirs.values.flatMap { documentChildren(bkContext, it).values }
+        assertTrue("no packs in $name", packs.isNotEmpty())
+        return packs.first()
+    }
+
+    private fun bkFlowVerifyDamaged(drive: MountedDrive) {
+        // Verify finds it: the dialog says Corrupted and offers Recreate.
+        val job = bkJob(drive, "E2E_bad", agoHours = 1)
+        bkExpectSuccess(bkRunNow(job, "the backup"), "the backup")
+        bkExpectSuccess(bkRunNow(job, "Verify of a good backup", BackupExecutor.Op.Check(true)), "Verify of a good backup")
+        assertNull("a good backup is marked corrupted", bkStore.job(job.id)!!.corruptedAt)
+        bkDamage(bkFirstPack(drive, "E2E_bad"))
+        bkOpenTab("backups_tab_schedules")
+        bkRowClick("backup_verify_E2E_bad")
+        bkAssertDesc("backup_progress_corrupted", "Verify did not say Corrupted", 300_000L)
+        assertNotNull("not marked corrupted", bkStore.job(job.id)!!.corruptedAt)
+        assertEquals("the record", RunStatus.CORRUPTED, bkStore.history(job.id).last().status)
+        assertTrue(clickByDesc("backup_progress_close"))
+        bkAssertGone("backup_progress_title", "Close left the dialog up")
+
+        // The row and History say so; it stops asking to run; Back up now is off.
+        bkExpectStatus("E2E_bad", bkText(R.string.backup_state_corrupted))
+        assertNotNull("no reason on the row", device.findObject(By.text(bkStore.job(job.id)!!.corruptedReason!!)))
+        bkStore.update(job.id) { it.copy(lastSuccessAt = System.currentTimeMillis() - 25 * BackupJob.HOUR) }
+        assertFalse("a corrupted backup is due", bkStore.job(job.id)!!.isDue(System.currentTimeMillis()))
+        device.findObject(By.desc("backup_run_now_E2E_bad"))?.click()
+        android.os.SystemClock.sleep(1000)
+        assertFalse("Back up now ran on a corrupted backup", BackupExecutor.isBusy(job.id))
+        assertTrue(clickByDesc("backups_tab_history"))
+        assertNotNull("History does not say corrupted", bkScrollTo(By.textStartsWith("corrupted · ")))
+        assertTrue(clickByDesc("backups_tab_schedules"))
+
+        // The offer, with the source away: it says what it needs, and cannot start.
+        val realSource = bkStore.job(job.id)!!.source
+        bkStore.update(job.id) { it.copy(source = realSource.copy(uri = DocumentsContract.buildTreeDocumentUri(AUTHORITY, "feedface00:/").toString())) }
+        bkRowClick("backup_recreate_E2E_bad")
+        bkAssertDesc("backup_corrupted_title", "Recreate opened no dialog")
+        bkAssertDesc("backup_corrupted_connect", "it does not say the source is missing", 15000L)
+        device.findObject(By.desc("backup_recreate_confirm"))?.click()
+        android.os.SystemClock.sleep(1000)
+        assertFalse("Recreate started with the source away", BackupExecutor.isBusy(job.id))
+        assertTrue(clickByDesc("backup_recreate_not_now"))
+        bkAssertGone("backup_corrupted_title", "Not now left the dialog up")
+        assertNotNull("Not now cleared the state", bkStore.job(job.id)!!.corruptedAt)
+        bkStore.update(job.id) { it.copy(source = realSource) }
+
+        // Recreate: a new good backup, the damaged one kept beside it.
+        bkRowClick("backup_recreate_E2E_bad")
+        bkAssertDesc("backup_recreate_confirm", "no Recreate")
+        android.os.SystemClock.sleep(2500)
+        assertTrue(clickByDesc("backup_recreate_confirm"))
+        bkCloseProgress()
+        bkExpectSuccess(bkStore.history(job.id).last(), "Recreate")
+        assertNull("still corrupted", bkStore.job(job.id)!!.corruptedAt)
+        val top = documentChildren(bkContext, "${drive.id}:/").keys
+        assertTrue("the damaged backup was not kept: $top", top.any { it.startsWith("E2E_bad damaged ") })
+        assertTrue("no new backup: $top", top.contains("E2E_bad"))
+        bkExpectSuccess(bkRunNow(job, "Verify of the new backup", BackupExecutor.Op.Check(true)), "Verify of the new backup")
+        assertEquals("one new snapshot", 1, bkStore.snapshots(job.id).size)
+
+        // A plain copy: a changed file, then a missing one.
+        val plain = bkJob(drive, "E2E_plain_bad", type = JobType.ONE_TIME_COPY, agoHours = 1)
+        bkExpectSuccess(bkRunNow(plain, "the copy"), "the copy")
+        val folder = bkStore.history(plain.id).last().copyFolder!!.substringAfterLast('/')
+        val copied = documentChildren(bkContext, "${drive.id}:/E2E_plain_bad/$folder")
+        val file = copied.entries.first { it.key.endsWith(".bin") }
+        bkDamage(file.value)
+        val checked = bkRunNow(plain, "Verify of a changed copy", BackupExecutor.Op.Check(true))
+        assertEquals("a changed copy: ${checked.message}", RunStatus.CORRUPTED, checked.status)
+        assertNotNull(bkStore.job(plain.id)!!.corruptedAt)
+        BackupPrompts.askRecreate(null)
+        // Recreate a plain one: a new dated copy, nothing renamed.
+        android.os.SystemClock.sleep(1100)
+        bkExpectSuccess(bkRunNow(plain, "recreating the copy", BackupExecutor.Op.Recreate), "recreating the copy")
+        assertNull(bkStore.job(plain.id)!!.corruptedAt)
+        assertEquals("two dated copies", 2, documentChildren(bkContext, "${drive.id}:/E2E_plain_bad").size)
+
+        // A Verify that passes clears the state, when it was wrong to begin with.
+        bkStore.update(job.id) { it.copy(corruptedAt = 1L, corruptedReason = "x") }
+        bkExpectSuccess(bkRunNow(job, "Verify of a good backup", BackupExecutor.Op.Check(true)), "Verify of a good backup")
+        assertNull("a passing Verify left it Corrupted", bkStore.job(job.id)!!.corruptedAt)
+
+        // A repository that is gone altogether.
+        val gone = bkJob(drive, "E2E_gone", agoHours = 1)
+        bkExpectSuccess(bkRunNow(gone, "the backup"), "the backup")
+        val folderDoc = documentChildren(bkContext, "${drive.id}:/")["E2E_gone"]!!
+        DocumentsContract.renameDocument(bkContext.contentResolver, DocumentsContract.buildDocumentUri(AUTHORITY, folderDoc), "E2E_elsewhere")
+        val goneRun = bkRunNow(gone, "Verify with the repository gone", BackupExecutor.Op.Check(true))
+        assertEquals("gone: ${goneRun.message}", RunStatus.CORRUPTED, goneRun.status)
+
+        // Found by a restore, nobody looking: the offer comes up by itself.
+        val found = bkJob(drive, "E2E_found", agoHours = 1)
+        bkExpectSuccess(bkRunNow(found, "the backup"), "the backup")
+        bkDamage(bkFirstPack(drive, "E2E_found"))
+        BackupPrompts.showProgress(null); BackupPrompts.askRecreate(null)
+        returnToMainScreen()
+        val snap = bkStore.snapshots(found.id).last().id
+        bkShell("mkdir -p $PHONE/x")
+        assertTrue(BackupExecutor.start(bkContext, found.id, BackupExecutor.Op.Restore(snap, "", bkTree(drive, "other_src"), "restored_here", false)))
+        bkAwait(found.id, "the restore of a damaged backup")
+        bkAssertDesc("backup_corrupted_title", "finding damage raised no dialog", 20000L)
+        bkAssertText(bkText(R.string.backup_corrupted_title, "E2E_found"), "the title")
+        assertTrue(clickByDesc("backup_recreate_not_now"))
+    }
+
+    // ── On a real phone, over real USB: what the emulator cannot show ───────────────────
+
+    /**
+     * `am instrument -e backup_flow device` on a physical device with a scratch drive. It finds a
+     * writable plain partition, works in a folder of its own, and leaves other jobs
+     * alone: unlike the emulator flows it does not reset the app, whose jobs may be the owner's.
+     */
+    private fun bkFlowDevice() {
+        val tag = "OTGDevice"
+        fun note(text: String) = Log.i(tag, text)
+        val ctx = bkContext
+        val before = bkStore.jobs.value.map { it.id }.toSet()
+        val top = "otg_e2e_device"
+        var drive: MountedDrive? = null
+        try {
+            android.os.SystemClock.sleep(1000)
+            findScanButton()?.click()
+            device.wait(Until.findObject(By.text(java.util.regex.Pattern.compile("(?i)OK|ALLOW"))), 5000L)?.click()
+            val end = android.os.SystemClock.uptimeMillis() + 90_000L
+            fun candidate() = OtgMasterState.mountedDrives.firstOrNull { it.isPlain && !it.isReadOnly && it.filesystemName in listOf("FAT32", "exFAT", "ext4", "NTFS") }
+            while (candidate() == null && android.os.SystemClock.uptimeMillis() < end) android.os.SystemClock.sleep(500)
+            drive = candidate()
+            assertNotNull("no writable plain partition: ${OtgMasterState.mountedDrives.map { it.name }}", drive)
+            val d = drive!!
+            note("drive ${d.name}, key ${d.sourceDeviceName}")
+            val key = app.fayaz.otgmaster.extension.ExtensionContract.parseDeviceKey(d.sourceDeviceName)
+            assertNotNull("a real drive with no serial: ${d.sourceDeviceName}", key.serial)
+
+            // A folder of its own, and a source with real data.
+            val resolver = ctx.contentResolver
+            fun mkdir(parent: String, name: String): String = DocumentsContract.getDocumentId(DocumentsContract.createDocument(resolver,
+                DocumentsContract.buildDocumentUri(AUTHORITY, parent), DocumentsContract.Document.MIME_TYPE_DIR, name)!!)
+            documentChildren(ctx, "${d.id}:/")[top]?.let(::bkDeleteTree)
+            val folder = mkdir("${d.id}:/", top)
+            val src = mkdir(folder, "src")
+            val restored = mkdir(folder, "restored")
+            assertNotNull(restored)
+            val data = java.util.Random(2026).let { r -> ByteArray(32 shl 20).also(r::nextBytes) }
+            val file = DocumentsContract.createDocument(resolver, DocumentsContract.buildDocumentUri(AUTHORITY, src), "application/octet-stream", "data.bin")!!
+            resolver.openOutputStream(file)!!.use { it.write(data) }
+            val want = java.security.MessageDigest.getInstance("SHA-256").digest(data).joinToString("") { "%02x".format(it) }
+            note("source written, sha256 $want")
+
+            // Backup, a run with nothing changed, Verify, restore by hash.
+            val job = bkJob(d, "E2E_device", source = "$top/src", target = top, agoHours = 25)
+            var t0 = android.os.SystemClock.uptimeMillis()
+            bkExpectSuccess(bkRunNow(job, "the first backup over USB"), "the first backup over USB")
+            note("backup: ${android.os.SystemClock.uptimeMillis() - t0} ms: ${bkStore.history(job.id).last().message}")
+            val second = bkRunNow(job, "a second backup over USB")
+            bkExpectSuccess(second, "a second backup over USB")
+            assertEquals("the unchanged file read again", 1L, second.stats?.filesUnchanged)
+            t0 = android.os.SystemClock.uptimeMillis()
+            val verified = bkRunNow(job, "Verify over USB", BackupExecutor.Op.Check(true))
+            bkExpectSuccess(verified, "Verify over USB")
+            note("verify: ${android.os.SystemClock.uptimeMillis() - t0} ms: ${verified.message}")
+            val snap = bkStore.snapshots(job.id).last().id
+            bkExpectSuccess(bkRunNow(job, "a restore over USB", BackupExecutor.Op.Restore(snap, "", bkTree(d, "$top/restored"), "out", false)), "a restore over USB")
+            assertEquals("the restored file", want, sha256(ctx, documentAt(ctx, restored, "out/data.bin")))
+            note("restored file matches by hash")
+
+            // Mount the backup through the provider, and read it back.
+            returnToMainScreen()
+            openBackupsTab("backups_open_mount")
+            bkAssertDesc("backup_mount_E2E_device", "the backup is not on the Mount tab")
+            android.os.SystemClock.sleep(2500) // past the reachability check that enables it
+            device.findObject(By.desc("backup_mount_E2E_device"))!!.click()
+            val mountedId = BackupMounts.driveIdFor(job.id)
+            val mountEnd = android.os.SystemClock.uptimeMillis() + 90_000L
+            while (OtgMasterState.mountedDrives.none { it.id == mountedId } && android.os.SystemClock.uptimeMillis() < mountEnd) android.os.SystemClock.sleep(200)
+            assertTrue("Mount did not mount the backup", OtgMasterState.mountedDrives.any { it.id == mountedId })
+            val snaps = documentChildren(ctx, "$mountedId:/")
+            assertEquals("snapshots on the mounted backup: ${snaps.keys}", 2, snaps.size)
+            // A snapshot holds the source under its label, as `restic snapshots` shows it.
+            val inSnapshot = documentChildren(ctx, snaps.values.last()).values.single()
+            assertEquals("the file in the mounted backup", want, sha256(ctx, documentAt(ctx, inSnapshot, "data.bin")))
+            note("mounted backup reads back by hash")
+            bkUnmountBackup(mountedId, "E2E_device")
+
+            // The dialog, with the real foreground notification.
+            returnToMainScreen()
+            bkHold()
+            assertTrue(BackupExecutor.start(ctx, job.id, BackupExecutor.Op.Backup("manual")))
+            BackupPrompts.showProgress(job.id)
+            bkAssertDesc("backup_progress_hide", "no dialog on the device")
+            val running = "Backing up E2E_device"
+            val titleEnd = android.os.SystemClock.uptimeMillis() + 15_000L
+            while (running !in bkTitles() && android.os.SystemClock.uptimeMillis() < titleEnd) android.os.SystemClock.sleep(300)
+            assertTrue("no progress notification: ${bkTitles()}", running in bkTitles())
+            assertTrue(clickByDesc("backup_progress_hide"))
+            assertTrue("Hide stopped the run", BackupExecutor.isBusy(job.id))
+            // Fired directly: the shade holds the owner's other notifications, so it stays closed here,
+            // and One UI's layout differs. The emulator flows tap the real thing.
+            fun notified(title: String) = ctx.getSystemService(android.app.NotificationManager::class.java)!!.activeNotifications
+                .first { it.notification.extras.getCharSequence(android.app.Notification.EXTRA_TITLE)?.toString() == title }.notification
+            notified(running).contentIntent.send()
+            bkAssertDesc("backup_progress_title", "the notification opened no dialog", 20000L)
+            assertTrue(clickByDesc("backup_progress_hide"))
+            bkRelease()
+            bkExpectSuccess(bkAwait(job.id, "the held backup"), "the held backup")
+            BackupExecutor.clearResult(job.id)
+            note("dialog and foreground notification work")
+
+            // A sibling partition, by real serial: asks, and says the end is missing.
+            val sibling = job.copy(id = java.util.UUID.randomUUID().toString(), name = "E2E_device_sibling", destinationFolder = "E2E_device_sibling", lastSuccessAt = null,
+                source = job.source.copy(uri = DocumentsContract.buildTreeDocumentUri(AUTHORITY, "feedface00:/").toString()),
+                destination = job.destination.copy(uri = DocumentsContract.buildTreeDocumentUri(AUTHORITY, "feedface01:/").toString()))
+            bkStore.upsert(sibling)
+            returnToMainScreen()
+            assertTrue(BackupScheduler.evaluate(ctx, "attach").isEmpty())
+            bkAssertDesc("backup_due_missing_E2E_device_sibling", "the sibling partition did not ask", 20000L)
+            assertTrue(clickByDesc("backup_due_not_now"))
+            bkAssertGone("backup_due_title", "Not now left the dialog up")
+            BackupScheduler.forget(ctx, sibling.id)
+            bkStore.delete(sibling.id)
+            note("sibling partition matched by serial")
+
+            // Due while mounted: a notification with its actions, nothing started.
+            bkStore.update(job.id) { it.copy(lastSuccessAt = System.currentTimeMillis() - 25 * BackupJob.HOUR, lastReminderAt = null, snoozedUntil = null) }
+            assertTrue("a USB backup started by itself", BackupScheduler.evaluate(ctx, "periodic").isEmpty())
+            android.os.SystemClock.sleep(1000)
+            val dueTitle = bkText(R.string.backup_due_title, BackupScheduler.driveNames(job))
+            assertTrue("no due notification: ${bkTitles()}", dueTitle in bkTitles())
+            val dueActions = notified(dueTitle).actions.map { it.title.toString() }
+            assertEquals("the due notification's actions", listOf(bkText(R.string.backup_due_start), bkText(R.string.backup_due_later), bkText(R.string.backup_due_not_now)), dueActions)
+            notified(dueTitle).actions.first { it.title.toString() == bkText(R.string.backup_due_not_now) }.actionIntent.send()
+            android.os.SystemClock.sleep(1500)
+            assertNotNull("Not now did not snooze", bkStore.job(job.id)!!.snoozedUntil)
+            note("due notification and Not now work")
+
+            // Later, 5 minutes, with the screen off: the case a timer alone cannot be trusted with.
+            bkStore.update(job.id) { it.copy(snoozedUntil = null, lastSuccessAt = System.currentTimeMillis() - 25 * BackupJob.HOUR) }
+            val runs = bkStore.history(job.id).size
+            val laterAt = System.currentTimeMillis()
+            BackupDelays.schedule(ctx, job.id, 5)
+            device.sleep()
+            val laterEnd = laterAt + 14 * 60_000L
+            while (bkStore.history(job.id).size == runs && System.currentTimeMillis() < laterEnd) android.os.SystemClock.sleep(2000)
+            device.wakeUp()
+            android.os.SystemClock.sleep(1000)
+            val later = bkAwait(job.id, "the delayed run")
+            assertTrue("no delayed run with the screen off", bkStore.history(job.id).size > runs)
+            bkExpectSuccess(later, "the delayed run with the screen off")
+            assertEquals("delayed", later.reason)
+            note("delayed start with the screen off began ${(later.startedAt - laterAt) / 1000} s after it was chosen")
+
+            // Corrupted on real hardware, and Recreate.
+            val packs = documentChildren(ctx, documentAt(ctx, folder, "E2E_device/data")).values.flatMap { documentChildren(ctx, it).values }
+            assertTrue("no packs", packs.isNotEmpty())
+            bkDamage(packs.first())
+            val bad = bkRunNow(job, "Verify of a damaged backup", BackupExecutor.Op.Check(true))
+            assertEquals("after damage: ${bad.message}", RunStatus.CORRUPTED, bad.status)
+            BackupPrompts.askRecreate(null)
+            BackupExecutor.clearResult(job.id)
+            note("damage reads as Corrupted: ${bad.message.take(80)}")
+            bkExpectSuccess(bkRunNow(job, "Recreate over USB", BackupExecutor.Op.Recreate), "Recreate over USB")
+            assertNull(bkStore.job(job.id)!!.corruptedAt)
+            bkExpectSuccess(bkRunNow(job, "Verify of the new backup", BackupExecutor.Op.Check(true)), "Verify of the new backup")
+            note("recreate made a good backup")
+            note("DEVICE FLOW PASSED")
+        } catch (t: Throwable) {
+            note("DEVICE FLOW FAILED: $t")
+            throw t
+        } finally {
+            bkRelease()
+            device.wakeUp()
+            BackupPrompts.answered(); BackupPrompts.showProgress(null); BackupPrompts.askRecreate(null)
+            bkStore.jobs.value.filter { it.id !in before }.forEach { j ->
+                BackupScheduler.forget(ctx, j.id)
+                BackupSecrets(ctx).forget(j.id)
+                bkStore.delete(j.id)
+            }
+            drive?.let { d ->
+                runCatching { documentChildren(ctx, "${d.id}:/")[top]?.let(::bkDeleteTree) }
+                    .onFailure { note("could not remove the test folder: $it") }
+            }
+            note("cleaned up; jobs left: ${bkStore.jobs.value.size}, before: ${before.size}")
+        }
+    }
+
+    // ── The Encrypt form says what is wrong, beside the field ───────────────────────────
+
+    private fun bkFlowEncryptForm() {
+        returnToMainScreen()
+        val item = device.findObject(By.desc("encrypt_action")) ?: run {
+            val more = findScrolling(By.desc("more_actions_button"), desc = "more_actions_button")
+            assertNotNull("neither Encrypt nor More actions is on the card", more)
+            more!!.click()
+            device.wait(Until.findObject(By.desc("encrypt_action")), timeout)
+        }
+        assertNotNull("Encrypt not on the card", item)
+        item!!.click()
+        assertNotNull("the form did not open", device.wait(Until.findObject(By.desc("encrypt_password")), timeout))
+        fun set(desc: String, text: String) {
+            // findInDialog only scrolls down, and the password fields are at the top of a long form.
+            if (device.findObject(By.desc(desc)) == null) repeat(4) {
+                val h = device.displayHeight
+                device.swipe(device.displayWidth / 2, h / 3, device.displayWidth / 2, h * 3 / 4, 25)
+            }
+            bkTypePassword(desc, text)
+        }
+        fun confirmDoesNothing(why: String) {
+            findScrolling(By.desc("encrypt_confirm_button"), desc = "encrypt_confirm_button")?.click()
+            android.os.SystemClock.sleep(800)
+            assertNull("Encrypt went ahead with $why", device.findObject(By.text(bkText(R.string.erase_confirm_title))))
+        }
+        // Going ahead is the proof a problem has cleared: a reason that went off the screen can
+        // linger in the accessibility tree for a while (seen here, with the screenshot clear).
+        fun confirmGoesAhead(what: String) {
+            hideKeyboard()
+            findScrolling(By.desc("encrypt_confirm_button"), desc = "encrypt_confirm_button")?.click()
+            val dialog = device.wait(Until.findObject(By.text(bkText(R.string.erase_confirm_title))), timeout)
+            if (dialog == null) captureScreen("encrypt_blocked")
+            assertNotNull("Encrypt refused $what", dialog)
+            device.pressBack()
+            assertTrue("the erase dialog did not close", device.wait(Until.gone(By.text(bkText(R.string.erase_confirm_title))), timeout))
+        }
+        val tooLowFor = { min: Int -> bkText(R.string.encrypt_pim_too_low, min, 20) }
+        val shortForPim = bkText(R.string.encrypt_password_short_for_pim, 20)
+
+        // A short password with a low PIM: both fields say so.
+        set("encrypt_password", "short1")
+        set("encrypt_password_confirm", "short1")
+        set("encrypt_pim", "484")
+        set("encrypt_pim_confirm", "484")
+        assertNotNull("no reason under the PIM", findScrolling(By.text(tooLowFor(485)), text = tooLowFor(485)))
+        assertNotNull("no reason under the password", findScrolling(By.text(shortForPim), text = shortForPim))
+        confirmDoesNothing("a PIM too low")
+
+        // The limit itself: 485 passes, and both reasons go.
+        set("encrypt_pim", "485")
+        set("encrypt_pim_confirm", "485")
+        confirmGoesAhead("PIM 485 with a short password")
+
+        // Argon2's limit is its own: 11 is refused, 12 is not, where SHA-512 needs 485.
+        pickOption("encrypt_kdf", "Argon2", inDialog = true)
+        set("encrypt_pim", "11")
+        set("encrypt_pim_confirm", "11")
+        assertNotNull("no reason for Argon2 PIM 11", findScrolling(By.text(tooLowFor(12)), text = tooLowFor(12)))
+        confirmDoesNothing("Argon2 PIM 11")
+        set("encrypt_pim", "12")
+        set("encrypt_pim_confirm", "12")
+        confirmGoesAhead("Argon2 PIM 12 with a short password")
+
+        // A long password needs no such PIM.
+        set("encrypt_password", "a-password-of-twenty-chars")
+        set("encrypt_password_confirm", "a-password-of-twenty-chars")
+        set("encrypt_pim", "1")
+        set("encrypt_pim_confirm", "1")
+        confirmGoesAhead("PIM 1 with a long password")
+
+        // What differs says so under the field that differs.
+        set("encrypt_password_confirm", "something-else")
+        val differ = bkText(R.string.encrypt_passwords_differ)
+        assertNotNull("no reason under the confirm field", findScrolling(By.text(differ), text = differ))
+        confirmDoesNothing("passwords that differ")
+        set("encrypt_password_confirm", "a-password-of-twenty-chars")
+        set("encrypt_pim_confirm", "2")
+        val pimsDiffer = bkText(R.string.encrypt_pims_differ)
+        assertNotNull("no reason under the PIM confirm field", findScrolling(By.text(pimsDiffer), text = pimsDiffer))
+        confirmDoesNothing("PIMs that differ")
+        device.pressBack()
+    }
+
+    // ── The drive is pulled mid-run ─────────────────────────────────────────────────────
+
+    private fun bkFlowInterrupted(drive: MountedDrive) {
+        bkShell("dd if=/dev/urandom of=$PHONE/src/interrupted.bin bs=1M count=24 2>/dev/null")
+        // Slowed at each file, so the drive goes while files are still going onto it.
+        BackupExecutor.testProgressDelayMs = 4000
+        val job = bkCreate(BkEnd(bkPhoneRoot, listOf("Download", "otg_e2e", "src")), BkEnd(drive.name, emptyList()), "E2E_cut", incremental = true)
+        assertTrue(clickByDesc("backup_progress_hide"))
+        val end = android.os.SystemClock.uptimeMillis() + 120_000L
+        while (BackupExecutor.runs.value[job.id]?.phase.orEmpty().let { !it.contains(" of ") } && android.os.SystemClock.uptimeMillis() < end) android.os.SystemClock.sleep(100)
+        assertTrue("the run ended before the drive was pulled", BackupExecutor.isBusy(job.id))
+        bkPullDrive(drive)
+        BackupExecutor.testProgressDelayMs = 0
+        val run = bkAwait(job.id, "the interrupted run")
+        assertTrue("a pulled drive did not read as a failure: ${run.status} ${run.message}", run.status == RunStatus.FAILED || run.status == RunStatus.UNAVAILABLE)
+        assertNull("a pulled drive was called Corrupted", bkStore.job(job.id)!!.corruptedAt)
+        BackupExecutor.clearResult(job.id)
+
+        // Back in: it asks, the run completes on what is there, and every blob reads.
+        val back = bkReplugDrive()
+        bkAssertDesc("backup_due_title", "the replug did not ask", 60000L)
+        android.os.SystemClock.sleep(2500)
+        assertTrue(clickByDesc("backup_due_start"))
+        bkCloseProgress()
+        val second = bkStore.history(job.id).last()
+        bkExpectSuccess(second, "the run after the drive came back")
+        bkExpectSuccess(bkRunNow(job, "Verify after the interruption", BackupExecutor.Op.Check(true)), "Verify after the interruption")
+        assertNull("called Corrupted afterwards", bkStore.job(job.id)!!.corruptedAt)
+        assertNotNull(back)
+    }
+
     /** Opens a part of Manage backups from the main screen. */
     private fun openBackupsTab(desc: String) {
         if (device.findObject(By.desc(desc)) == null) clickScrolling("manage_backups_button", "Manage backups missing")
         clickScrolling(desc, "$desc missing under Manage backups")
-        assertNotNull("Manage backups did not open", device.wait(Until.findObject(By.desc("backups_tab_mount")), timeout))
+        assertNotNull("Manage backups did not open", device.wait(Until.findObject(By.desc("backups_tab_mount")), 30000L))
     }
 
     /** Browse for backup: picks [folder] at the top of the drive titled [rootTitle] in the Files picker. */
@@ -1230,6 +2965,15 @@ class E2EAutomatedTest {
         device.findObject(By.text("Keep read-only"))!!.click()
         assertTrue("the repair dialog did not close", device.wait(Until.gone(By.text(title)), timeout))
         assertNotNull("READ-ONLY tag missing before the repair", device.wait(Until.findObject(By.text("READ-ONLY")), timeout))
+        // A read-only drive can be a backup's source, not its target: the form says so.
+        openBackupsTab("backups_open_schedules")
+        assertTrue("Create schedule missing", clickByDesc("backups_create_schedule"))
+        assertNotNull("the form did not open", device.wait(Until.findObject(By.desc("backup_name")), timeout))
+        val readOnlyNote = findScrolling(By.text(context.getString(R.string.backup_target_read_only)), text = context.getString(R.string.backup_target_read_only))
+        if (readOnlyNote == null) captureScreen("no_read_only_note")
+        assertNotNull("the form does not say a read-only drive cannot be the target", readOnlyNote)
+        device.pressBack()
+        returnToMainScreen()
         clickScrolling("journal_repair_button", "no Repair button on the card of a drive that needs one")
         assertNotNull("the Repair button did not open the dialog", device.wait(Until.findObject(By.text(title)), timeout))
         assertTrue("Repair could not be confirmed", clickByDesc("journal_repair_confirm"))
@@ -1479,7 +3223,7 @@ class E2EAutomatedTest {
             repeat(50) { device.executeShellCommand("input keyevent KEYCODE_DEL") }
             android.os.SystemClock.sleep(200)
         }
-        device.executeShellCommand("input text $password")
+        if (password != NO_PASSWORD) device.executeShellCommand("input text $password")
         android.os.SystemClock.sleep(500)
 
         if (pim.isNotEmpty()) {
@@ -1497,11 +3241,43 @@ class E2EAutomatedTest {
 
         device.pressEnter()
         android.os.SystemClock.sleep(500)
+        // The form keeps what was picked; picking the same file again changes nothing.
+        unlockKeyfiles.forEach { name ->
+            val button = findScrolling(By.textContains("Select keyfile"), text = "Select keyfile")
+            assertNotNull("Select keyfiles not on the unlock form", button)
+            button!!.click()
+            pickKeyfileInFiles(name)
+        }
 
         val clicked = clickMountButton()
         if (clicked != MountClick.CLICKED) return false.also { captureScreen("mount_button_$clicked") }
 
         return waitForMounted(300000L) != null
+    }
+
+    /** Keyfiles doMount picks on the unlock form: what the new volume needs. */
+    private var unlockKeyfiles: List<String> = emptyList()
+
+    /** With the Files picker opening: taps the file named [name], from Recent or Downloads. */
+    private fun pickKeyfileInFiles(name: String) {
+        device.wait(Until.hasObject(By.pkg("com.google.android.documentsui")), timeout)
+        android.os.SystemClock.sleep(1000)
+        var fileObject = device.findObject(By.textContains(name))
+        if (fileObject == null) {
+            val hamburger = device.findObject(By.descContains("Show roots"))
+                ?: device.findObject(By.descContains("Navigate up"))
+                ?: device.findObject(By.descContains("Open navigation drawer"))
+            hamburger?.click()
+            android.os.SystemClock.sleep(500)
+            device.wait(Until.findObject(By.textContains("Download")), timeout)?.click()
+            android.os.SystemClock.sleep(500)
+            fileObject = device.wait(Until.findObject(By.textContains(name)), timeout * 2)
+        }
+        if (fileObject == null) captureScreen("no_keyfile_$name")
+        assertNotNull("keyfile $name not in the Files picker", fileObject)
+        fileObject!!.click()
+        device.wait(Until.hasObject(By.pkg("app.fayaz.otgmaster")), timeout)
+        android.os.SystemClock.sleep(500)
     }
 
     private fun clickByDesc(desc: String, waitMs: Long = timeout, retries: Int = 3): Boolean {

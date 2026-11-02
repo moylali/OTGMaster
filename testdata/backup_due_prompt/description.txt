@@ -1,0 +1,1 @@
+A due backup when a drive mounts: asks and starts nothing. Not now snoozes a day, the same mount does not ask twice, each of 5, 10, 15 and 30 minutes sets its time, Start now runs in its dialog, a partition of this device that is not mounted is named, manual and not-due backups do not ask, and the real replug asks.

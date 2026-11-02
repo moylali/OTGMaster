@@ -54,6 +54,35 @@ the drive byte for byte unchanged, and fails when either guarded bug is put back
 (`clearCallingIdentity` removed: the Files app does not list the snapshot; reads on the shared
 proxy thread: "Handler must be different from the current thread").
 
+## 2026-11-02: Backups over real USB on the Galaxy Tab A9+
+
+Not a benchmark. The E2E emulators have no USB permission and a drive with no serial, so a real
+foreground notification and sibling matching can only be seen on hardware.
+
+| Field | Value |
+|---|---|
+| Device | Samsung Galaxy Tab A9+ (SM-X210), Android 16 / One UI 8.0, arm64-v8a |
+| Drive | Drive 5's second copy, serial `071C48F5FB0EF455`, Partition 7, plain ext4 written by the app's Format |
+| Commit | app `2361a23`, test flow `am instrument -e backup_flow device` |
+| Backup | 32 MiB of random data, 36.9 s, `1 files, 32.0 MB added`; a second run stored nothing |
+| Verify | `Repository OK: 2 snapshots, 23 data blobs read and verified`, 4.3 s |
+| Restore | the restored file matches by SHA-256 |
+| Mount | the Mount tab mounts it, and the file reads back through the provider by SHA-256 |
+| Notification | the real foreground service's notification shows the run; its intent opens the dialog; Hide leaves the run going |
+| Sibling | a job on a partition of this device that is not mounted asks and names what is missing, matched by serial |
+| Due while mounted | a notification with Start now, Later and Not now, and no run; Not now snoozes |
+| Later, screen off | 5 minutes chosen, screen off, began 300 s later |
+| Corrupted | a damaged pack reads as Corrupted; Recreate makes a backup that verifies |
+| Host `fsck` | **not run.** The drive is on the tablet with its owner asleep; `restic check` from the host not run either |
+
+Four earlier attempts stopped on the test's own mistakes, and were on NTFS or ext4 as the drive
+came up: wrong path in a mounted snapshot, a card not refreshed, the notification shade tapped on
+One UI, and a leftover folder. Each passed backup, Verify and restore before stopping. The attempts
+on Partition 8 (NTFS) may have left a folder named `otg_e2e_device` there.
+
+Found on the way, and not fixed: deleting a non-empty folder through the provider fails on ext4
+with "Directory not empty".
+
 ### Commit hashes after the merge of #106
 
 The rows and reports above cite hashes from before the branch was rebased onto `main`, so this table gives both.

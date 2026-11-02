@@ -1,0 +1,1 @@
+Corrupted: Verify on a damaged pack and a changed copy, the state on the row and in History, no more runs asked, the offer with the source away, Recreate keeps the damaged folder and makes a good backup, a missing repository, damage found by a restore raises the offer. Host: the damaged repositories fail restic check and the new ones pass.

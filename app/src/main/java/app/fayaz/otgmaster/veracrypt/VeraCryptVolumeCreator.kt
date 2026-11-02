@@ -32,6 +32,15 @@ object VeraCryptVolumeCreator {
 
     /** VeraCrypt refuses a PIM below this with a password shorter than 20 characters. */
     const val MIN_PIM_FOR_SHORT_PASSWORD = 485
+    /** The same limit for Argon2, whose PIM counts differently: VeraCrypt 1.26 accepts 12 and refuses 11. */
+    const val MIN_ARGON2_PIM_FOR_SHORT_PASSWORD = 12
+
+    fun minPimForShortPassword(hash: VeraCryptHash): Int =
+        if (hash == VeraCryptHash.ARGON2) MIN_ARGON2_PIM_FOR_SHORT_PASSWORD else MIN_PIM_FOR_SHORT_PASSWORD
+
+    /** A short password with too low a PIM, the one rule that needs both fields put right. */
+    fun pimTooLowForPassword(password: CharArray, pim: Int?, hash: VeraCryptHash): Boolean =
+        password.isNotEmpty() && password.size < SHORT_PASSWORD_CHARS && pim != null && pim in 1 until minPimForShortPassword(hash)
     const val SHORT_PASSWORD_CHARS = 20
     /** VeraCrypt's maximum password length, in UTF-8 bytes. */
     const val MAX_PASSWORD_BYTES = 128
@@ -46,7 +55,7 @@ object VeraCryptVolumeCreator {
      * PIM rule for a short password still applies to one that is not, as VeraCrypt 1.26
      * itself refuses "short" with PIM 1 and a keyfile.
      */
-    fun passwordProblem(password: CharArray, pim: Int?, hasKeyfiles: Boolean = false): String? {
+    fun passwordProblem(password: CharArray, pim: Int?, hasKeyfiles: Boolean = false, hash: VeraCryptHash = VeraCryptHash.SHA512): String? {
         val bytes = String(password).toByteArray(Charsets.UTF_8)
         try {
             return when {
@@ -54,9 +63,9 @@ object VeraCryptVolumeCreator {
                 password.isEmpty() -> if (pim != null && pim < 0) "The PIM cannot be negative." else null
                 bytes.size > MAX_PASSWORD_BYTES -> "VeraCrypt passwords are at most $MAX_PASSWORD_BYTES bytes."
                 pim != null && pim < 0 -> "The PIM cannot be negative."
-                pim != null && pim in 1 until MIN_PIM_FOR_SHORT_PASSWORD && password.size < SHORT_PASSWORD_CHARS ->
+                pimTooLowForPassword(password, pim, hash) ->
                     "With a password under $SHORT_PASSWORD_CHARS characters, VeraCrypt requires a PIM of at " +
-                        "least $MIN_PIM_FOR_SHORT_PASSWORD, or none."
+                        "least ${minPimForShortPassword(hash)}, or none."
                 else -> null
             }
         } finally {
@@ -83,7 +92,7 @@ object VeraCryptVolumeCreator {
         require(cipher.isSupported) { "${cipher.displayName} is not supported" }
         require(hash.isSupported) { "${hash.displayName} is not supported" }
         require(partition.blockSize == SECTOR) { "VeraCrypt volumes are created on 512-byte sectors only" }
-        passwordProblem(password, pim, keyfiles.isNotEmpty())?.let { password.fill('\u0000'); throw IllegalArgumentException(it) }
+        passwordProblem(password, pim, keyfiles.isNotEmpty(), hash)?.let { password.fill('\u0000'); throw IllegalArgumentException(it) }
         val hostBytes = partition.blockCount * SECTOR
         val dataBytes = dataBytes(partition.blockCount)
         require(dataBytes >= 1L shl 20) { "The partition is too small for a VeraCrypt volume." }

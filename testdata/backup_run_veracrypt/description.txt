@@ -1,0 +1,1 @@
+Incremental and Plain from the phone onto m_vc_exfat's encrypted drive, through the real form: Back up now, Verify, Restore by hash, Mount. Host: filesystem checker clean, restic check --read-data, copies by hash.

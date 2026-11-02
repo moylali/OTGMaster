@@ -187,6 +187,18 @@ ensure_testdata() {
         python3 scripts/make_e2e_matrix.py || { echo "Matrix fixture generation failed!"; exit 1; }
     fi
 
+    # Backups made through the app; two of them reuse the matrix's encrypted images.
+    if [ ! -f "$TESTDATA_DIR/backup_interrupted/test.img" ] || [ ! -f "$TESTDATA_DIR/backup_run_veracrypt/test.img" ]; then
+        echo "Generating the backup-run fixtures..."
+        python3 scripts/make_backup_run_fixtures.py || { echo "Backup-run fixture generation failed!"; exit 1; }
+    fi
+
+    # One case per option of the VeraCrypt forms (scripts/make_vc_option_fixtures.py, no root).
+    if [ ! -f "$TESTDATA_DIR/enc_opt_baseline/test.img" ] || [ ! -f "$TESTDATA_DIR/unlock_opt_read_only/test.img" ]; then
+        echo "Generating the form-option fixtures..."
+        python3 scripts/make_vc_option_fixtures.py || { echo "Form-option fixture generation failed!"; exit 1; }
+    fi
+
     # APFS, plain and encrypted, case-sensitive and not. Only a Mac can build these
     # (docs/TEST_DATA.md §6b), so they are committed as an archive and unpacked here.
     # --skip-old-files keeps the committed per-case files (description.txt and the
@@ -344,7 +356,7 @@ for test_dir in "$TESTDATA_DIR"/*/; do
     fi
     IMG_FILE=$(find "$test_dir" -maxdepth 1 -name "*.img" | head -n 1)
     PASSWORD_FILE="$test_dir/password.txt"
-    KEYFILE=$(find "$test_dir" -maxdepth 1 -name "*.key" | head -n 1)
+    KEYFILES=$(find "$test_dir" -maxdepth 1 -name "*.key" | sort)
 
     if [ -z "$IMG_FILE" ] || [ ! -f "$PASSWORD_FILE" ]; then
         echo "Skipping $TEST_NAME: missing .img or password.txt"
@@ -360,9 +372,10 @@ for test_dir in "$TESTDATA_DIR"/*/; do
 
     KEYFILE_ARG=""
     KEYFILE_NAME=""
-    if [ -n "$KEYFILE" ]; then
-        KEYFILE_NAME=$(basename "$KEYFILE")
-        KEYFILE_ARG="-e keyfile $KEYFILE_NAME"
+    if [ -n "$KEYFILES" ]; then
+        # Comma-separated: a case may need several. An erase case picks its own by erase.txt.
+        KEYFILE_NAME=$(for k in $KEYFILES; do basename "$k"; done | paste -sd,)
+        [ -f "$test_dir/erase.txt" ] || KEYFILE_ARG="-e keyfile $KEYFILE_NAME"
     fi
 
     EXPECT_MOUNT_ARG="-e expect_mount true"
@@ -402,12 +415,17 @@ for test_dir in "$TESTDATA_DIR"/*/; do
     fi
     READ_ONLY_ARG=""
     [ -f "$test_dir/read_only.txt" ] && READ_ONLY_ARG="-e expect_read_only true"
+    [ -f "$test_dir/read_only_switch.txt" ] && READ_ONLY_ARG="$READ_ONLY_ARG -e read_only_switch true"
     PLAIN_ARG=""
     [ -f "$test_dir/plain.txt" ] && PLAIN_ARG="-e plain_mount true"
     DISCONNECT_ARG=""
     [ -f "$test_dir/disconnect.txt" ] && DISCONNECT_ARG="-e disconnect_test true"
     BACKUP_ARG=""
     [ -f "$test_dir/backup.txt" ] && BACKUP_ARG="-e backup_test true"
+    BACKUP_FLOW_ARG=""
+    [ -f "$test_dir/backup_flow.txt" ] && BACKUP_FLOW_ARG="-e backup_flow $(cat "$test_dir/backup_flow.txt")"
+    CASE_TIMEOUT="${E2E_CASE_TIMEOUT:-900}"
+    [ -f "$test_dir/timeout.txt" ] && CASE_TIMEOUT="$(cat "$test_dir/timeout.txt")"
     JOURNAL_ARG=""
     [ -f "$test_dir/journal.txt" ] && JOURNAL_ARG="-e journal_repair true"
     CASE_ARG=""
@@ -455,13 +473,13 @@ for test_dir in "$TESTDATA_DIR"/*/; do
 
     # Clear any leftover keyfile; push the current test's keyfile if needed
     $CMD_ADB -s $SERIAL shell "rm -f /sdcard/Download/*.key"
-    if [ -n "$KEYFILE" ]; then
-        echo "Pushing keyfile to device..."
+    for KEYFILE in $KEYFILES; do
+        echo "Pushing keyfile to device: $(basename "$KEYFILE")"
         $CMD_ADB -s $SERIAL push "$KEYFILE" /sdcard/Download/
         $CMD_ADB -s $SERIAL shell am broadcast \
             -a android.intent.action.MEDIA_SCANNER_SCAN_FILE \
-            -d "file:///sdcard/Download/$KEYFILE_NAME"
-    fi
+            -d "file:///sdcard/Download/$(basename "$KEYFILE")"
+    done
 
     # Clear logcat so each test's dump is isolated
     $CMD_ADB -s $SERIAL logcat -c
@@ -489,7 +507,7 @@ for test_dir in "$TESTDATA_DIR"/*/; do
 
         echo "Running UI Automator Test..."
         WATCHER_PID=""
-        if [ -n "$DISCONNECT_ARG$BACKUP_ARG" ]; then
+        if [ -n "$DISCONNECT_ARG$BACKUP_ARG$BACKUP_FLOW_ARG" ]; then
             $CMD_ADB -s $SERIAL shell rm -f "$USB_REQUEST_DIR/otg_e2e_unplug" "$USB_REQUEST_DIR/otg_e2e_replug"
             usb_request_watcher &
             WATCHER_PID=$!
@@ -497,7 +515,7 @@ for test_dir in "$TESTDATA_DIR"/*/; do
         # Bounded: when the test runner itself dies before the test starts (a class R8
         # stripped from the app, for one), `am instrument -w` never returns, and the
         # minified run once sat four hours on its first case.
-        TEST_OUT=$(timeout "${E2E_CASE_TIMEOUT:-900}" $CMD_ADB -s $SERIAL shell am instrument -w \
+        TEST_OUT=$(timeout "$CASE_TIMEOUT" $CMD_ADB -s $SERIAL shell am instrument -w \
             -e password "$PASSWORD" \
             -e testCase "$TEST_NAME" \
             $KEYFILE_ARG \
@@ -517,6 +535,7 @@ for test_dir in "$TESTDATA_DIR"/*/; do
             $CASE_ARG \
             $DISCONNECT_ARG \
             $BACKUP_ARG \
+            $BACKUP_FLOW_ARG \
             $JOURNAL_ARG \
             -e class app.fayaz.otgmaster.E2EAutomatedTest \
             $PACKAGE_NAME.test/androidx.test.runner.AndroidJUnitRunner)
@@ -548,7 +567,7 @@ for test_dir in "$TESTDATA_DIR"/*/; do
         # with the kernel's driver and checks every file the case left behind. The
         # in-app checks above only read the writes back through the same code.
         HOST_CHECK=""
-        if [ $TEST_EXIT_CODE -eq 0 ] && { [ -f "$test_dir/write_test.txt" ] || [ -f "$test_dir/erase.txt" ] || [ -f "$test_dir/journal.txt" ] || [ -f "$test_dir/backup.txt" ]; }; then
+        if [ $TEST_EXIT_CODE -eq 0 ] && { [ -f "$test_dir/write_test.txt" ] || [ -f "$test_dir/backup_flow.txt" ] || [ -f "$test_dir/erase.txt" ] || [ -f "$test_dir/journal.txt" ] || [ -f "$test_dir/backup.txt" ]; }; then
             HOST_OUT=$(python3 scripts/verify_e2e_volume.py "$SLOT_FILE" "$test_dir" 2>&1)
             echo "$HOST_OUT"
             if echo "$HOST_OUT" | grep -q "^HOST CHECK OK"; then

@@ -284,12 +284,14 @@ internal fun <T> Picker(label: String, value: T, options: List<T>, name: (T) -> 
 
 /** A password field with the unlock form's show/hide eye; hidden to start with. */
 @Composable
-internal fun PasswordField(value: String, label: String, id: String, newPassword: Boolean = true, onChange: (String) -> Unit) {
+internal fun PasswordField(value: String, label: String, id: String, newPassword: Boolean = true, error: String? = null, onChange: (String) -> Unit) {
     var visible by remember { mutableStateOf(false) }
     OutlinedTextField(
         value = value, onValueChange = onChange,
         label = { Text(label) },
         singleLine = true,
+        isError = error != null,
+        supportingText = error?.let { { Text(it) } },
         visualTransformation = if (visible) VisualTransformation.None else PasswordVisualTransformation(),
         keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Password),
         trailingIcon = {
@@ -494,14 +496,26 @@ fun EncryptScreen(
     val pimInvalid = pimText.isNotEmpty() && pimText.toIntOrNull() == null
     val luks2 = type == EncryptionType.LUKS2
     val hasCredential = password.isNotEmpty() || (!luks2 && keyfiles.isNotEmpty())
-    val problem = when {
-        !hasCredential -> null
-        luks2 -> if (password != confirm) stringResource(R.string.encrypt_passwords_differ) else null
-        password != confirm -> stringResource(R.string.encrypt_passwords_differ)
-        pimInvalid -> stringResource(R.string.encrypt_pim_invalid)
-        pimText != pimConfirm -> stringResource(R.string.encrypt_pims_differ)
-        else -> VeraCryptVolumeCreator.passwordProblem(password.toCharArray(), pim, keyfiles.isNotEmpty())
+    // Each problem shows on the field that has it, in red, with its reason beneath. The one
+    // rule that takes two fields, a short password with a low PIM, marks both.
+    val confirmError = if (hasCredential && password != confirm) stringResource(R.string.encrypt_passwords_differ) else null
+    val pimTooLow = !luks2 && VeraCryptVolumeCreator.pimTooLowForPassword(password.toCharArray(), pim, hash)
+    val minPim = VeraCryptVolumeCreator.minPimForShortPassword(hash)
+    val passwordTooLong = !luks2 && password.toByteArray().size > VeraCryptVolumeCreator.MAX_PASSWORD_BYTES
+    val passwordError = when {
+        passwordTooLong -> stringResource(R.string.encrypt_password_too_long, VeraCryptVolumeCreator.MAX_PASSWORD_BYTES)
+        pimTooLow -> stringResource(R.string.encrypt_password_short_for_pim, VeraCryptVolumeCreator.SHORT_PASSWORD_CHARS)
+        else -> null
     }
+    val pimError = when {
+        luks2 -> null
+        pimInvalid -> stringResource(R.string.encrypt_pim_invalid)
+        pimTooLow -> stringResource(R.string.encrypt_pim_too_low, minPim, VeraCryptVolumeCreator.SHORT_PASSWORD_CHARS)
+        else -> null
+    }
+    val pimConfirmError = if (!luks2 && pimText != pimConfirm) stringResource(R.string.encrypt_pims_differ) else null
+    val problem = confirmError ?: passwordError ?: pimError ?: pimConfirmError ?: if (!hasCredential || luks2) null
+        else VeraCryptVolumeCreator.passwordProblem(password.toCharArray(), pim, keyfiles.isNotEmpty(), hash)
 
     EraseScreen(stringResource(R.string.encrypt_title), onDismiss) {
         Text(stringResource(R.string.encrypt_warning), color = MaterialTheme.colorScheme.error,
@@ -514,7 +528,7 @@ fun EncryptScreen(
         when (type) {
             EncryptionType.LUKS2 -> {
                 PasswordField(password, stringResource(R.string.encrypt_password), "encrypt_password") { password = it }
-                PasswordField(confirm, stringResource(R.string.encrypt_password_confirm), "encrypt_password_confirm") { confirm = it }
+                PasswordField(confirm, stringResource(R.string.encrypt_password_confirm), "encrypt_password_confirm", error = confirmError) { confirm = it }
                 if (password.isNotEmpty() && password.length < VeraCryptVolumeCreator.SHORT_PASSWORD_CHARS) {
                     Text(stringResource(R.string.encrypt_short_password, VeraCryptVolumeCreator.SHORT_PASSWORD_CHARS),
                         style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
@@ -523,8 +537,8 @@ fun EncryptScreen(
                     color = MaterialTheme.colorScheme.onSurfaceVariant)
             }
             EncryptionType.VERACRYPT -> {
-                PasswordField(password, stringResource(R.string.encrypt_password), "encrypt_password") { password = it }
-                PasswordField(confirm, stringResource(R.string.encrypt_password_confirm), "encrypt_password_confirm") { confirm = it }
+                PasswordField(password, stringResource(R.string.encrypt_password), "encrypt_password", error = passwordError) { password = it }
+                PasswordField(confirm, stringResource(R.string.encrypt_password_confirm), "encrypt_password_confirm", error = confirmError) { confirm = it }
                 if (password.isNotEmpty() && password.length < VeraCryptVolumeCreator.SHORT_PASSWORD_CHARS) {
                     Text(stringResource(R.string.encrypt_short_password, VeraCryptVolumeCreator.SHORT_PASSWORD_CHARS),
                         style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
@@ -559,7 +573,8 @@ fun EncryptScreen(
                 OutlinedTextField(
                     value = pimText, onValueChange = { pimText = it.filter(Char::isDigit).take(7) },
                     label = { Text(stringResource(R.string.encrypt_pim)) },
-                    supportingText = { Text(stringResource(
+                    isError = pimError != null,
+                    supportingText = { Text(pimError ?: stringResource(
                         if (hash == VeraCryptHash.ARGON2) R.string.encrypt_pim_hint_argon2 else R.string.encrypt_pim_hint_pbkdf2)) },
                     singleLine = true, keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Number),
                     modifier = Modifier.fillMaxWidth().semantics { contentDescription = "encrypt_pim" },
@@ -570,6 +585,8 @@ fun EncryptScreen(
                     OutlinedTextField(
                         value = pimConfirm, onValueChange = { pimConfirm = it.filter(Char::isDigit).take(7) },
                         label = { Text(stringResource(R.string.encrypt_pim_confirm)) },
+                        isError = pimConfirmError != null,
+                        supportingText = pimConfirmError?.let { { Text(it) } },
                         singleLine = true, keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Number),
                         modifier = Modifier.fillMaxWidth().semantics { contentDescription = "encrypt_pim_confirm" },
                     )
@@ -593,7 +610,6 @@ fun EncryptScreen(
                 Text(stringResource(R.string.encrypt_save_password_manager), style = MaterialTheme.typography.bodyMedium)
             }
         }
-        problem?.let { Text(it, color = MaterialTheme.colorScheme.error, style = MaterialTheme.typography.bodySmall) }
         Button(
             onClick = { confirming = true },
             enabled = hasCredential && problem == null,

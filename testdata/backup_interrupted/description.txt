@@ -1,0 +1,1 @@
+The drive pulled mid-backup: a failure, not Corrupted. Replugged, the next run completes and every blob verifies. Host: restic check on what is left.

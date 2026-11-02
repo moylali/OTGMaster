@@ -1,0 +1,8 @@
+action=encrypt
+quick=true
+cipher=AES
+hash=SHA-512
+fs=exfat
+password=none
+label=ENCOPT
+keyfiles=enc1.key,enc2.key

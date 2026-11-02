@@ -1,0 +1,1 @@
+Later: a real 5 minute wait on the real alarm, 15 minutes with the time moved, 30 minutes with the drive pulled while waiting (dropped, logged, replug does not bring it back), and an end missing when it fires.

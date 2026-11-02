@@ -3,6 +3,7 @@ package app.fayaz.otgmaster.veracrypt
 import app.fayaz.otgmaster.block.RawBlockDevice
 import org.junit.After
 import org.junit.Assert.assertEquals
+import org.junit.Assert.assertFalse
 import org.junit.Assert.assertTrue
 import org.junit.Assert.fail
 import org.junit.Assume.assumeTrue
@@ -164,6 +165,20 @@ class VeraCryptKeyfilesTest {
                 keyfiles = listOf({ k.inputStream() }))
         }
         assertEquals("cryptsetup with the generated keyfile", 0, dump(cryptsetup!!, "", "--key-file", k.absolutePath).first)
+    }
+
+    /** Limits read from desktop VeraCrypt 1.26: it accepts 485 and 12, and refuses 484 and 11. */
+    @Test fun theLowestPimForAShortPasswordDependsOnTheKdf() {
+        val short = "short1".toCharArray()
+        val sha = VeraCryptHash.SHA512
+        val argon = VeraCryptHash.ARGON2
+        assertEquals(null, VeraCryptVolumeCreator.passwordProblem(short, 485, hash = sha))
+        assertTrue(VeraCryptVolumeCreator.passwordProblem(short, 484, hash = sha)!!.contains("485"))
+        assertEquals(null, VeraCryptVolumeCreator.passwordProblem(short, 12, hash = argon))
+        assertTrue(VeraCryptVolumeCreator.passwordProblem(short, 11, hash = argon)!!.contains("12"))
+        assertEquals("no PIM is always allowed", null, VeraCryptVolumeCreator.passwordProblem(short, null, hash = sha))
+        assertFalse(VeraCryptVolumeCreator.pimTooLowForPassword(CharArray(20) { 'x' }, 1, sha))
+        assertFalse("keyfiles alone have no password to be short", VeraCryptVolumeCreator.pimTooLowForPassword(CharArray(0), 1, sha))
     }
 
     @Test fun passwordRulesWithKeyfilesAreVeraCrypts() {
