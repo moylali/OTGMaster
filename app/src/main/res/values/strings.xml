@@ -386,7 +386,6 @@
     <string name="backups_no_snapshot">%1$s has no snapshot yet.</string>
     <string name="backups_mount">Mount</string>
     <string name="backups_is_mounted">Mounted</string>
-    <string name="backups_mounted">%1$s is mounted read-only: open it in the Files app, one folder per snapshot.</string>
     <string name="backups_mount_failed">Could not mount %1$s: %2$s</string>
     <string name="backup_jobs_none">No backups use this drive yet.</string>
     <string name="backup_last_success">Last backup: %1$s</string>

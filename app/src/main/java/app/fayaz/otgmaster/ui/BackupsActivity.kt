@@ -10,6 +10,7 @@ import androidx.activity.enableEdgeToEdge
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.foundation.isSystemInDarkTheme
 import androidx.compose.foundation.layout.Arrangement
+import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.BoxWithConstraints
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.ExperimentalLayoutApi
@@ -117,6 +118,7 @@ class BackupsActivity : androidx.fragment.app.FragmentActivity() {
             LaunchedEffect(dark) { applySystemBarAppearance(dark) }
             MaterialTheme(colorScheme = if (dark) darkColorScheme() else lightColorScheme()) {
                 Surface(Modifier.fillMaxSize(), color = MaterialTheme.colorScheme.background) {
+                    var problem by remember { mutableStateOf<String?>(null) }
                     Column(Modifier.safeDrawingPadding()) {
                         Row(verticalAlignment = Alignment.CenterVertically) {
                             IconButton(onClick = { finish() }) {
@@ -135,9 +137,13 @@ class BackupsActivity : androidx.fragment.app.FragmentActivity() {
                         }
                         when (tab) {
                             TAB_HISTORY -> History()
-                            TAB_MOUNT -> MountBackups()
+                            TAB_MOUNT -> MountBackups(onMounted = { finish() }, onProblem = { problem = it })
                             else -> Schedules()
                         }
+                    }
+                    Box(Modifier.fillMaxSize()) {
+                        StatusToast(problem, isSuccess = false, onDismiss = { problem = null },
+                            modifier = Modifier.align(Alignment.BottomCenter).safeDrawingPadding().padding(16.dp))
                     }
                     // Hide goes back to the main screen, with the run carrying on behind it.
                     BackupPromptHost(onHideProgress = { finish() })
@@ -226,14 +232,14 @@ private fun Schedules() {
 /**
  * Mount backups: each incremental backup, mountable as a read-only drive (one folder per
  * snapshot) for the Files app; a mounted one is unmounted from its card on the main screen.
+ * A mount that works goes to that screen, which announces it; one that fails says why here.
  */
 @Composable
-private fun MountBackups() {
+private fun MountBackups(onMounted: () -> Unit, onProblem: (String) -> Unit) {
     val context = LocalContext.current
     val scope = rememberCoroutineScope()
     val jobs by JobStore.get(context).jobs.collectAsState()
     val incremental = jobs.filter { it.type == JobType.INCREMENTAL }
-    var message by remember { mutableStateOf<String?>(null) }
     var changed by remember { mutableStateOf(0) }
     // A browsed folder that holds a backup whose password this phone does not have.
     var asking by remember { mutableStateOf<Uri?>(null) }
@@ -254,12 +260,12 @@ private fun MountBackups() {
         val name = VolumeInfo.displayPath(context, folder)
         runCatching { BackupMounts.mountFolder(context, folder, password) }.fold(
             { drive ->
-                if (drive != null) message = context.getString(R.string.backups_mounted, drive.name)
+                if (drive != null) withContext(Dispatchers.Main) { onMounted() }
                 drive != null
             },
             {
                 OtgMasterState.logFailure("backup-browse", "Could not mount the backup at $name", it)
-                message = context.getString(R.string.backups_mount_failed, name, it.message ?: it.javaClass.simpleName)
+                onProblem(context.getString(R.string.backups_mount_failed, name, it.message ?: it.javaClass.simpleName))
                 true
             })
     }
@@ -273,22 +279,20 @@ private fun MountBackups() {
         if (uri == null) return@rememberLauncherForActivityResult
         runCatching { context.contentResolver.takePersistableUriPermission(uri, Intent.FLAG_GRANT_READ_URI_PERMISSION) }
             .onFailure { OtgMasterState.logFailure("backup-grant", "Could not keep access to the chosen folder", it) }
-        message = context.getString(R.string.backups_browse_opening)
         openingFolder = true
         scope.launch {
             val found = withContext(Dispatchers.IO) { BackupMounts.holdsBackup(context, uri) }
             if (!found) {
                 OtgMasterState.log("No backup found at ${VolumeInfo.displayPath(context, uri)}")
-                message = context.getString(R.string.backups_browse_none)
+                onProblem(context.getString(R.string.backups_browse_none))
                 openingFolder = false
                 return@launch
             }
             val drive = withContext(Dispatchers.IO) { BackupMounts.mountAsJob(context, uri) }
             openingFolder = false
             if (drive != null) {
-                message = context.getString(R.string.backups_mounted, drive.name)
+                onMounted()
             } else {
-                message = null
                 wrongPassword = false
                 asking = uri
             }
@@ -331,8 +335,12 @@ private fun MountBackups() {
             }
         }
         item { Text(stringResource(R.string.backups_mount_help), style = MaterialTheme.typography.bodySmall) }
-        if (openingFolder) item { LinearProgressIndicator(Modifier.fillMaxWidth().semantics { contentDescription = "backups_browse_opening" }) }
-        message?.let { m -> item { Text(m, style = MaterialTheme.typography.bodyMedium) } }
+        if (openingFolder) item {
+            Column(verticalArrangement = Arrangement.spacedBy(4.dp)) {
+                Text(stringResource(R.string.backups_browse_opening), style = MaterialTheme.typography.bodyMedium)
+                LinearProgressIndicator(Modifier.fillMaxWidth().semantics { contentDescription = "backups_browse_opening" })
+            }
+        }
         if (incremental.isEmpty()) item { Text(stringResource(R.string.backups_mount_none), style = MaterialTheme.typography.bodySmall) }
         items(incremental, key = { it.id }) { job ->
             changed.let { } // read so the state follows a mount
@@ -354,9 +362,9 @@ private fun MountBackups() {
                     TextButton(enabled = !mounted && canReach == true && mounting == null, modifier = Modifier.semantics { contentDescription = "backup_mount_${job.name}" }, onClick = {
                         mounting = job.id
                         scope.launch {
-                            message = withContext(Dispatchers.IO) {
+                            val failure = withContext(Dispatchers.IO) {
                                 runCatching { BackupMounts.mount(context, job) }.fold(
-                                    { context.getString(R.string.backups_mounted, job.name) },
+                                    { null },
                                     {
                                         OtgMasterState.logFailure("backup-mount", "Could not mount the backup \"${job.name}\"", it)
                                         if (BackupRunner.isDamage(it)) {
@@ -368,6 +376,7 @@ private fun MountBackups() {
                             }
                             mounting = null
                             changed++
+                            if (failure == null) onMounted() else onProblem(failure)
                         }
                     }) { Text(stringResource(if (mounted) R.string.backups_is_mounted else R.string.backups_mount)) }
                 }

@@ -903,6 +903,7 @@ class E2EAutomatedTest {
         val none = device.wait(Until.findObject(By.text(context.getString(R.string.backups_browse_none))), 30000L)
         if (none == null) captureScreen("backup_none_not_shown")
         assertNotNull("'No backups found' not shown for a folder without a repository", none)
+        assertTrue("'No backups found' stayed on the screen", device.wait(Until.gone(By.text(context.getString(R.string.backups_browse_none))), 15000L))
 
         // ── The repository: a wrong password, then the right one ─────────────
         browseToFolder(source.name, BACKUP_REPO)
@@ -2079,6 +2080,19 @@ class E2EAutomatedTest {
         bkAssertDesc("backup_mount_E2E_mp", "no Mount on the row")
         android.os.SystemClock.sleep(2500)
 
+        // A mount that fails says why in a toast, and stays here.
+        val secrets = BackupSecrets(bkContext)
+        val realPassword = secrets.password(job.id)!!
+        secrets.setPassword(job.id, "not-the-password")
+        device.findObject(By.desc("backup_mount_E2E_mp"))!!.click()
+        val failedText = bkText(R.string.backups_mount_failed, "E2E_mp", "")
+        val failedToast = device.wait(Until.findObject(By.textStartsWith(failedText)), 60000L)
+        if (failedToast == null) captureScreen("mount_failed_no_toast")
+        assertNotNull("no toast for the failed mount", failedToast)
+        assertNotNull("a failed mount left Manage backups", device.findObject(By.desc("backups_tab_mount")))
+        assertTrue("the failure stayed on the screen", device.wait(Until.gone(By.textStartsWith(failedText)), 15000L))
+        secrets.setPassword(job.id, realPassword)
+
         // The row: a sign while it opens, and a second tap does nothing.
         device.findObject(By.desc("backup_mount_E2E_mp"))!!.click()
         bkAssertDesc("backup_mount_progress_E2E_mp", "no sign while the row's Mount works", 3000L)
@@ -2087,7 +2101,8 @@ class E2EAutomatedTest {
         val end = android.os.SystemClock.uptimeMillis() + 60_000L
         while (OtgMasterState.mountedDrives.none { it.id == id } && android.os.SystemClock.uptimeMillis() < end) android.os.SystemClock.sleep(200)
         assertEquals("a second tap mounted it twice", 1, OtgMasterState.mountedDrives.count { it.id == id })
-        bkAssertGone("backup_mount_progress_E2E_mp", "the sign outlived the mount", 20000L)
+        bkExpectMountAnnounced("E2E_mp (backup)")
+        openBackupsTab("backups_open_mount")
         bkAssertText(bkText(R.string.backups_is_mounted), "the row does not say Mounted")
         returnToMainScreen()
         doUnmount()
@@ -2103,6 +2118,7 @@ class E2EAutomatedTest {
         bkAssertDesc("backups_browse_opening", "no sign in the password dialog", 3000L)
         bkAssertGone("backups_browse_mount", "the password dialog stayed", 60000L)
         BackupMounts.testDelayMs = 0
+        bkExpectMountAnnounced("desktop_repo (backup)")
         returnToMainScreen()
         doUnmount()
 
@@ -2175,6 +2191,19 @@ class E2EAutomatedTest {
         // Corrupted says so, whatever else is true.
         bkStore.update(job.id) { it.copy(corruptedAt = System.currentTimeMillis(), corruptedReason = null) }
         bkExpectStatus("E2E_next", bkText(R.string.backup_state_corrupted))
+    }
+
+    /** A mount from Manage backups lands on the main screen, which highlights it and says so. */
+    private fun bkExpectMountAnnounced(title: String) {
+        val main = device.wait(Until.findObject(By.desc("scan_button")), 60000L)
+        if (main == null) captureScreen("mount_stayed_on_backups")
+        assertNotNull("the mount did not go to the main screen", main)
+        assertNull("Manage backups is still open", device.findObject(By.desc("backups_tab_mount")))
+        val toast = device.wait(Until.findObject(By.text("Mounted: $title")), 10000L)
+        if (toast == null) captureScreen("mount_no_toast")
+        assertNotNull("no toast for the mount of $title", toast)
+        assertNull("the main screen did not take the highlight", BackupMounts.justMounted.value)
+        assertTrue("the toast stayed on the screen", device.wait(Until.gone(By.text("Mounted: $title")), 15000L))
     }
 
     /** Two schedules stack on a phone and sit side by side on an unfolded phone's size of screen. */
