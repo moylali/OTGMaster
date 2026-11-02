@@ -84,6 +84,20 @@ left a folder named `otg_e2e_device` there.
 Found on the way, and not fixed: deleting a non-empty folder through the provider fails on ext4
 with "Directory not empty".
 
+### Commit hashes after the merge of #109
+
+The run above cites a hash from before the rebase-merge, so this table gives both.
+
+| At the PR head (cited) | On `main` | Commit |
+|---|---|---|
+| `c215476` | `32a5bcf` | From and To boxes; Mount needs its drive |
+| `f6a318a` | `79d56c8` | App text reworded |
+| `b9f7d64` | `9179527` | "exactly" and "automatically" restored |
+| `1aa9b67` | `3acc7d2` | Ask before a USB backup; progress dialog; Corrupted; target rules |
+| `872ab40` | `db67bd8` | E2E for backups and the VeraCrypt forms; the bugs they found |
+| `0528657` | `dba6476` | The tablet run names its commit |
+| `f20c122` | `d8c3dc3` | Notification actions fired directly in the test |
+
 ### Commit hashes after the merge of #106
 
 The rows and reports above cite hashes from before the branch was rebased onto `main`, so this table gives both.
