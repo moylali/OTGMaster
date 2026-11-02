@@ -15,6 +15,8 @@ import androidx.compose.foundation.layout.FlowRow
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.heightIn
+import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.text.selection.SelectionContainer
 import androidx.compose.foundation.verticalScroll
@@ -26,6 +28,7 @@ import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.OutlinedTextField
+import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
@@ -36,11 +39,14 @@ import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.graphics.luminance
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.semantics.contentDescription
 import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.text.font.FontFamily
+import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import app.fayaz.otgmaster.R
 import app.fayaz.otgmaster.backup.BackupExecutor
@@ -61,6 +67,49 @@ fun driveTreeUri(driveId: String): Uri = DocumentsContract.buildTreeDocumentUri(
 /** Jobs that use the partition [driveId] at either end. */
 fun jobsForDrive(jobs: List<BackupJob>, driveId: String): List<BackupJob> =
     jobs.filter { VolumeInfo.otgDriveId(Uri.parse(it.destination.uri)) == driveId || VolumeInfo.otgDriveId(Uri.parse(it.source.uri)) == driveId }
+
+/** Where a backup reads from and writes to, each in a box of its own color with its device and folder. */
+@Composable
+fun BackupEnds(job: BackupJob) {
+    Column(verticalArrangement = Arrangement.spacedBy(4.dp)) {
+        FromBox(VolumeInfo.summary(job.source.info), VolumeInfo.folderInside(Uri.parse(job.source.uri)))
+        ToBox(VolumeInfo.summary(job.destination.info), VolumeInfo.folderInside(Uri.parse(job.destination.uri), job.destinationFolder))
+    }
+}
+
+/** A restore runs the other way. Only a restore into the job's own source has a known target: other targets are not recorded. */
+@Composable
+fun RestoreEnds(job: BackupJob, intoSource: Boolean) {
+    Column(verticalArrangement = Arrangement.spacedBy(4.dp)) {
+        FromBox(VolumeInfo.summary(job.destination.info), VolumeInfo.folderInside(Uri.parse(job.destination.uri), job.destinationFolder))
+        if (intoSource) ToBox(VolumeInfo.summary(job.source.info), VolumeInfo.folderInside(Uri.parse(job.source.uri)))
+    }
+}
+
+@Composable
+private fun FromBox(device: String, folder: String?) {
+    val dark = MaterialTheme.colorScheme.surface.luminance() < 0.5f
+    EndBox(R.string.backup_from, if (dark) Color(0xFF12375E) else Color(0xFFDCEBFB), if (dark) Color(0xFFBBDEFB) else Color(0xFF0D47A1), device, folder)
+}
+
+@Composable
+private fun ToBox(device: String, folder: String?) {
+    val dark = MaterialTheme.colorScheme.surface.luminance() < 0.5f
+    EndBox(R.string.backup_to, if (dark) Color(0xFF17401F) else Color(0xFFDFF2E1), if (dark) Color(0xFFC8E6C9) else Color(0xFF1B5E20), device, folder)
+}
+
+@Composable
+private fun EndBox(label: Int, background: Color, content: Color, device: String, folder: String?) {
+    Surface(Modifier.fillMaxWidth(), shape = MaterialTheme.shapes.small, color = background, contentColor = content) {
+        Row(Modifier.padding(horizontal = 8.dp, vertical = 4.dp)) {
+            Text(stringResource(label), Modifier.width(40.dp), style = MaterialTheme.typography.bodySmall, fontWeight = FontWeight.Bold)
+            Column {
+                Text(device, style = MaterialTheme.typography.bodySmall)
+                folder?.let { Text(stringResource(R.string.backup_folder_at, it), style = MaterialTheme.typography.bodySmall) }
+            }
+        }
+    }
+}
 
 /** Where one end of a backup can be: the phone's own storage, or a mounted partition. */
 data class BackupDevice(val driveId: String?, val title: String, val readOnly: Boolean = false) {
@@ -283,7 +332,7 @@ fun BackupJobsDialog(driveId: String, onDismiss: () -> Unit) {
                 jobs.forEach { job ->
                     Column(verticalArrangement = Arrangement.spacedBy(4.dp)) {
                         Text(job.name, style = MaterialTheme.typography.titleMedium)
-                        Text("${VolumeInfo.summary(job.source.info)} → ${job.destinationFolder}", style = MaterialTheme.typography.bodySmall)
+                        BackupEnds(job)
                         Text(stringResource(R.string.backup_last_success, Format.ago(job.lastSuccessAt)), style = MaterialTheme.typography.bodySmall)
                         job.lastMessage?.let { Text("${job.lastStatus?.lowercase() ?: ""}: $it", style = MaterialTheme.typography.bodySmall) }
                         val snaps = store.snapshots(job.id)
