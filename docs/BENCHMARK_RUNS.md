@@ -63,9 +63,9 @@ foreground notification and sibling matching can only be seen on hardware.
 |---|---|
 | Device | Samsung Galaxy Tab A9+ (SM-X210), Android 16 / One UI 8.0, arm64-v8a |
 | Drive | Drive 5's second copy, serial `071C48F5FB0EF455`, Partition 7, plain ext4 written by the app's Format |
-| Commit | app `2361a23`, test flow `am instrument -e backup_flow device` |
-| Backup | 32 MiB of random data, 36.9 s, `1 files, 32.0 MB added`; a second run stored nothing |
-| Verify | `Repository OK: 2 snapshots, 23 data blobs read and verified`, 4.3 s |
+| Commit | `872ab40`, test flow `am instrument -e backup_flow device`; the installed APK matches the build by SHA-256 |
+| Backup | 32 MiB of random data, 37.9 s, `1 files, 32.0 MB added`; a second run stored nothing |
+| Verify | `Repository OK: 2 snapshots, 21 data blobs read and verified`, 4.3 s |
 | Restore | the restored file matches by SHA-256 |
 | Mount | the Mount tab mounts it, and the file reads back through the provider by SHA-256 |
 | Notification | the real foreground service's notification shows the run; its intent opens the dialog; Hide leaves the run going |
@@ -75,10 +75,11 @@ foreground notification and sibling matching can only be seen on hardware.
 | Corrupted | a damaged pack reads as Corrupted; Recreate makes a backup that verifies |
 | Host `fsck` | **not run.** The drive is on the tablet with its owner asleep; `restic check` from the host not run either |
 
-Four earlier attempts stopped on the test's own mistakes, and were on NTFS or ext4 as the drive
-came up: wrong path in a mounted snapshot, a card not refreshed, the notification shade tapped on
-One UI, and a leftover folder. Each passed backup, Verify and restore before stopping. The attempts
-on Partition 8 (NTFS) may have left a folder named `otg_e2e_device` there.
+The same flow also passed on the commit before this one's last test fixes. Before that, attempts
+stopped on the test's own mistakes, on NTFS or ext4 as the drive came up: wrong path in a mounted
+snapshot, a card not refreshed, the notification shade tapped on One UI, a leftover folder. The ones
+that got that far passed backup, Verify and restore. The attempts on Partition 8 (NTFS) may have
+left a folder named `otg_e2e_device` there.
 
 Found on the way, and not fixed: deleting a non-empty folder through the provider fails on ext4
 with "Directory not empty".
