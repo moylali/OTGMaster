@@ -37,13 +37,13 @@ The app cannot perform a kernel mount on non-rooted Android. Instead it:
    - **BitLocker**: password or recovery key; XTS-AES and AES-CBC, with or without the Elephant diffuser
    - **APFS (Encrypted)**: the password goes to the filesystem reader, which unwraps the volume key itself
 5. Feeds the decrypted block device into a userspace filesystem reader (FAT32 via libaums, exFAT via a vendored native `libexfat`, ext4 via a pure-Kotlin driver, NTFS via a vendored `libntfs-3g`, and APFS, read-only, via a vendored `libfsapfs`).
-6. Surfaces files through the app UI and a `DocumentsProvider`, so other apps (Files, Gallery, etc.) can browse the unlocked volume.
+6. Shows files in the app and through a `DocumentsProvider`, so other apps (Files, Gallery, etc.) can browse the unlocked volume.
 7. Formats and encrypts from a mounted drive's actions (on the card when they fit, else under **More actions**), after the user types ERASE:
-   - **Format** writes an empty FAT32, exFAT, ext4 or NTFS (ext4 and NTFS *from 0.5.0*) of the same size (the current one by default, or another) with the label given; a volume inside an encrypted container stays in it, with the same password
-   - **Encrypt** erases the partition and creates a new VeraCrypt volume (any of the ciphers and cascades above, SHA-512 or Argon2id, optional PIM and keyfiles) or, *from 0.5.0*, a LUKS2 volume (AES-XTS, Argon2id) that Linux opens with its own tools; either holds a new FAT32, exFAT, ext4 or NTFS
-   - both overwrite every sector by default; **Quick** writes only the filesystem structures, and the old data stays on the drive until overwritten
+   - **Format** writes an empty filesystem of the same size, with the label you give: FAT32, exFAT, ext4 or NTFS (ext4 and NTFS *from 0.5.0*), the current one by default. A volume inside an encrypted container stays in it, with the same password
+   - **Encrypt** erases the partition and creates a new VeraCrypt volume (any of the ciphers and cascades above, SHA-512 or Argon2id, optional PIM and keyfiles) or, *from 0.5.0*, a LUKS2 volume (AES-XTS, Argon2id) that Linux opens with its own tools. Either holds a new FAT32, exFAT, ext4 or NTFS filesystem
+   - Both overwrite every sector by default; **Quick** writes only the filesystem structures, and the old data stays on the drive until overwritten
 8. *From 0.5.0*:
-   - **Back up** copies a folder from a source to a target (the phone's storage or any mounted partition, either way round) once now and then daily or weekly, either **Plain** (dated full copies) or **Incremental** (snapshots in the [restic](https://restic.net) repository format: a computer opens them with `restic`, and a repository restic made is backed up into the same way); it reminds you when a backup is overdue and names the drive to plug in. **Manage backups** on the main screen lists every backup's schedule and run history, and mounts an incremental backup read-only, one folder per snapshot, for the Files app
+   - **Back up** copies a folder from a source to a target, each either the phone's storage or a mounted partition, once now and then daily or weekly. A backup is **Plain** (dated full copies) or **Incremental** (snapshots in the [restic](https://restic.net) repository format). A computer opens those snapshots with `restic`, and a repository restic made is backed up into the same way. The app reminds you when a backup is overdue and names the drive to plug in. **Manage backups** on the main screen lists every backup's schedule and run history, and mounts an incremental backup read-only, one folder per snapshot, for the Files app
    - **Recover deleted files…** lists the files a FAT32 or exFAT filesystem has deleted (only those) and copies the chosen ones to another drive or the phone; nothing is written to the drive being recovered
    - Another phone or a camera connected over USB (MTP/PTP) shows up as read-only drives, one per storage
 
@@ -64,9 +64,9 @@ The app cannot perform a kernel mount on non-rooted Android. Instead it:
 
 ### Feedback
 
-If you encounter any issues, have feature requests, or just want to share your thoughts, you can open an issue on our [GitHub Issues page](https://github.com/moylali/OTGMaster/issues). 
+You can report issues, request features or share your thoughts on our [GitHub Issues page](https://github.com/moylali/OTGMaster/issues).
 
-If you prefer to share your feedback privately or without a GitHub account, please use our [anonymous feedback form](https://otgmaster-feedback.moylali.workers.dev/).
+To send feedback privately or without a GitHub account, use our [anonymous feedback form](https://otgmaster-feedback.moylali.workers.dev/).
 
 ### Build
 
@@ -75,7 +75,7 @@ If you prefer to share your feedback privately or without a GitHub account, plea
 ```
 
 A signed release build also requires a `keystore.properties` file at the repo root
-(never commit this: see `.gitignore`) with `storeFile`, `storePassword`, `keyAlias`, and
+(never commit it; see `.gitignore`) with `storeFile`, `storePassword`, `keyAlias`, and
 `keyPassword` entries; without it, `assembleRelease` produces an unsigned APK.
 
 ```bash
@@ -110,10 +110,6 @@ generators) is documented in **[docs/TEST_DATA.md](docs/TEST_DATA.md)**.
 
 For measuring a drive's read/write performance and correctness, see [docs/RUNNING_BENCHMARKS.md](docs/RUNNING_BENCHMARKS.md)
 and the reference figures in [docs/BENCHMARK_RESULTS.md](docs/BENCHMARK_RESULTS.md).
-
-
-
-
 
 ### CI/CD
 
