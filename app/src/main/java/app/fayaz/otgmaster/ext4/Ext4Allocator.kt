@@ -259,7 +259,7 @@ internal class Ext4Allocator(private val fs: Ext4FileSystem) {
             // Not enough space — roll back what we allocated.
             freeRuns(runs, updateSuperblock = false)
             throw IOException(
-                "Ext4: out of usable blocks — need $count, got ${count - need}. " +
+                "Ext4: out of usable blocks. Need $count, got ${count - need}. " +
                 "Groups still flagged BLOCK_UNINIT are skipped because their " +
                 "on-disk bitmap is not initialised, so the volume's reported " +
                 "free space is not all reachable yet."

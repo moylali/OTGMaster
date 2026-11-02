@@ -244,12 +244,12 @@ object FeedbackPayload {
             if (c.usbMake.isNotBlank()) appendLine("USB drive: ${c.usbMake}")
             if (c.usbSize.isNotBlank()) appendLine("Capacity: ${c.usbSize}")
             if (c.usbMake.isBlank() && c.usbSize.isBlank()) {
-                appendLine("USB drive: none connected — nothing to share")
+                appendLine("USB drive: none connected, so nothing to share")
             }
         }
         if (sel.partitions) {
             if (c.partitions.isEmpty()) {
-                appendLine("Partitions: none mounted — nothing to share")
+                appendLine("Partitions: none mounted, so nothing to share")
             } else {
                 appendLine("Partitions: ${c.partitions.size}")
                 c.partitions.forEachIndexed { i, p ->

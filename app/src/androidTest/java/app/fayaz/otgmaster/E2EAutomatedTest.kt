@@ -216,7 +216,7 @@ class E2EAutomatedTest {
             android.os.SystemClock.sleep(500)
 
             if (keyfile.isNotEmpty()) {
-                val selectKeyfileBtn = device.wait(Until.findObject(By.textContains("Select Keyfile")), timeout)
+                val selectKeyfileBtn = device.wait(Until.findObject(By.textContains("Select keyfile")), timeout)
                 selectKeyfileBtn?.click()
 
                 // Wait for DocumentsUI to open
@@ -1333,7 +1333,7 @@ class E2EAutomatedTest {
         // Nothing is behind the card any more: no Open, Unmount or More.
         assertNull("Unmount offered on a disconnected card", device.findObject(By.descContains("unmount_button")))
         assertNull("More actions offered on a disconnected card", device.findObject(By.desc("more_actions_button")))
-        assertNull("Open Files App offered on a disconnected card", device.findObject(By.text("Open Files App")))
+        assertNull("Open Files App offered on a disconnected card", device.findObject(By.text("Open Files app")))
         assertNotNull("Dismiss missing on the disconnected card",
             findScrolling(By.desc("dismiss_disconnected_button"), desc = "dismiss_disconnected_button"))
     }
@@ -1654,7 +1654,7 @@ class E2EAutomatedTest {
 
     private fun findMountButton(): androidx.test.uiautomator.UiObject2? =
         findScrolling(By.descContains("mount_button"), desc = "mount_button")
-            ?: findScrolling(By.textContains("Unlock & Mount"), text = "Unlock & Mount", firstWaitMs = 0L)
+            ?: findScrolling(By.textContains("Unlock & mount"), text = "Unlock & mount", firstWaitMs = 0L)
 
     /** Waits up to [timeoutMs] for a mounted card ("Used:"), scrolling up to it. */
     private fun waitForMounted(timeoutMs: Long): androidx.test.uiautomator.UiObject2? {
