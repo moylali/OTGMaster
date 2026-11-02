@@ -9,6 +9,8 @@ import app.fayaz.otgmaster.backup.restic.FileTreeBackend
 import app.fayaz.otgmaster.backup.restic.ResticFileSystem
 import app.fayaz.otgmaster.backup.restic.ResticRepository
 import app.fayaz.otgmaster.extension.ExtensionContract
+import kotlinx.coroutines.flow.MutableStateFlow
+import kotlinx.coroutines.flow.StateFlow
 import java.util.concurrent.ConcurrentHashMap
 
 /**
@@ -23,6 +25,11 @@ object BackupMounts {
     /** Mounted backup's drive id → the drive id its repository lives on (null: the phone). */
     private val on = ConcurrentHashMap<String, String>()
 
+    private val _justMounted = MutableStateFlow<MountedDrive?>(null)
+    /** A backup just mounted, for the main screen to highlight the next time it is on screen. */
+    val justMounted: StateFlow<MountedDrive?> = _justMounted
+    fun announced() { _justMounted.value = null }
+
     /** Debug builds only: holds a mount open long enough for a test to see its progress sign. */
     @Volatile var testDelayMs = 0L
     private fun testDelay() { if (app.fayaz.otgmaster.BuildConfig.DEBUG && testDelayMs > 0) Thread.sleep(testDelayMs) }
@@ -36,7 +43,7 @@ object BackupMounts {
         require(job.type == JobType.INCREMENTAL) { "only incremental backups can be mounted" }
         testDelay()
         val id = driveIdFor(job.id)
-        OtgMasterState.mountedDrives.firstOrNull { it.id == id }?.let { return it }
+        OtgMasterState.mountedDrives.firstOrNull { it.id == id }?.let { _justMounted.value = it; return it }
         return add(context, id, job.name, BackupRunner(context).repository(job), Uri.parse(job.destination.uri))
     }
 
@@ -78,7 +85,7 @@ object BackupMounts {
     fun mountFolder(context: Context, folder: Uri, password: String): MountedDrive? {
         testDelay()
         val id = "bk" + Integer.toHexString(folder.toString().hashCode())
-        OtgMasterState.mountedDrives.firstOrNull { it.id == id }?.let { return it }
+        OtgMasterState.mountedDrives.firstOrNull { it.id == id }?.let { _justMounted.value = it; return it }
         val path = VolumeInfo.displayPath(context, folder)
         val repo = ResticRepository.open(FileTreeBackend(SafFileTree(context.contentResolver, folder)), password.toByteArray())
         if (repo == null) {
@@ -103,6 +110,7 @@ object BackupMounts {
         OtgMasterState.addDrive(drive)
         context.contentResolver.notifyChange(DocumentsContract.buildRootsUri(ExtensionContract.AUTHORITY), null)
         OtgMasterState.log("Mounted backup \"$label\" read-only: ${repo.snapshots().size} snapshot(s)")
+        _justMounted.value = drive
         return drive
     }
 

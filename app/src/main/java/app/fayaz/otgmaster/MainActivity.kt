@@ -18,13 +18,12 @@ import androidx.activity.compose.setContent
 import androidx.activity.enableEdgeToEdge
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.lifecycle.lifecycleScope
+import androidx.lifecycle.repeatOnLifecycle
 import androidx.compose.animation.AnimatedVisibility
 import androidx.compose.animation.core.Animatable
 import androidx.compose.animation.core.tween
 import androidx.compose.animation.slideInHorizontally
 import androidx.compose.animation.slideOutHorizontally
-import androidx.compose.animation.slideInVertically
-import androidx.compose.animation.slideOutVertically
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.ui.graphics.lerp
 import kotlinx.coroutines.delay
@@ -493,6 +492,21 @@ class MainActivity : AppCompatActivity() {
                 .revokeExtendedGrants(applicationContext, drives.map { it.id }.toSet())
         }
         MountedDriveService.update(applicationContext, OtgMasterState.mountedDrives.map(::driveTitle))
+        // A backup mounted from Manage backups lands here like a partition does: toast and
+        // highlight, once this screen is the one being looked at.
+        lifecycleScope.launch {
+            repeatOnLifecycle(androidx.lifecycle.Lifecycle.State.RESUMED) {
+                app.fayaz.otgmaster.backup.BackupMounts.justMounted.collect { drive ->
+                    if (drive == null) return@collect
+                    app.fayaz.otgmaster.backup.BackupMounts.announced()
+                    newlyMountedDriveIds.value = newlyMountedDriveIds.value + drive.id
+                    pendingToastMountNames.add(drive.name)
+                    toastMountHandler.removeCallbacks(toastMountRunnable)
+                    toastMountHandler.postDelayed(toastMountRunnable, 300L)
+                    updateMountedDrives()
+                }
+            }
+        }
         // Format and Encrypt keep the service in the foreground for their whole run, with
         // their progress in its notification, and post a notice when they end.
         lifecycleScope.launch {
@@ -3286,34 +3300,15 @@ fun OtgMasterApp(
         onReadOnlyDefaultChange = onReadOnlyDefaultChange,
     )
 
-    AnimatedVisibility(
-        visible = toastMessage != null,
-        enter = slideInVertically(initialOffsetY = { it }),
-        exit = slideOutVertically(targetOffsetY = { it }),
+    app.fayaz.otgmaster.ui.StatusToast(
+        message = toastMessage,
+        isSuccess = toastIsSuccess,
+        onDismiss = onToastDismiss,
         modifier = Modifier
             .align(Alignment.BottomCenter)
             .navigationBarsPadding()
-            .padding(16.dp)
-    ) {
-        toastMessage?.let { msg ->
-            LaunchedEffect(msg) {
-                delay(2500)
-                onToastDismiss()
-            }
-            Surface(
-                color = if (toastIsSuccess) Color(0xFF2E7D32) else Color(0xFFC62828),
-                shape = RoundedCornerShape(8.dp),
-                shadowElevation = 6.dp
-            ) {
-                Text(
-                    text = msg,
-                    color = Color.White,
-                    modifier = Modifier.padding(horizontal = 20.dp, vertical = 12.dp),
-                    style = MaterialTheme.typography.bodyMedium
-                )
-            }
-        }
-    }
+            .padding(16.dp),
+    )
     }
 }
 
