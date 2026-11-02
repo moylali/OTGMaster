@@ -98,8 +98,9 @@ The full device end-to-end suite (VeraCrypt/LUKS/BitLocker unlock + mount agains
 volumes, run on a QEMU Android emulator) is documented in `scripts/run_e2e_tests.sh` and is not part
 of CI, since it needs real USB-device emulation that isn't available on hosted runners. It covers
 every filesystem in every container the app supports (`scripts/make_e2e_matrix.py`) plus the
-older single-feature cases: 62 in all. `scripts/run_e2e_parallel.sh` runs them across three
-emulators (about 40 minutes) and merges one report; fixtures are built without root
+older single-feature cases, making backups through the app, and one case per option of the
+VeraCrypt forms: 100 in all. `scripts/run_e2e_parallel.sh` runs them across three emulators and
+merges one report; fixtures are built without root
 (see `docs/TEST_DATA.md` §6a).
 
 **Generating test data** (including how to add a fixture for a new cipher, hash,

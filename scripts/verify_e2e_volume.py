@@ -31,11 +31,18 @@ replayed, the block the journal revoked still zero, after_repair.txt as the test
 A case with backup.txt (a backup mounted from this drive) writes nothing, so the drive
 must still be byte for byte the fixture, which restic checked when it was made.
 
+A case with backup_flow.txt (backups made through the app) keeps the filesystem checker,
+then runs desktop restic on every repository on the drive: check --read-data must pass,
+except that a folder with " damaged " in its name, or one named in expect_damaged.txt, must
+fail. desktop_repo must still hold the snapshots desktop restic made, and Plain copies of
+files the test knows must match by hash.
+
 Exit 0 when everything holds; the problems are printed otherwise.
 """
 import hashlib
 import os
 import re
+import shutil
 import struct
 import subprocess
 import sys
@@ -290,7 +297,7 @@ def erase_main(slot, case_dir):
                 fs_img = None
             else:
                 what.append("cryptsetup opened the new LUKS2 keyslot, data decrypted in Python")
-        elif spec.get("cipher") == "AES" and spec.get("hash") == "SHA-512":
+        elif spec.get("cipher") == "AES" and spec.get("hash") == "SHA-512" and not spec.get("keyfiles"):
             fs_img = os.path.join(work, "plain.img")
             vc_decrypt(snapshot, spec["password"], int(spec.get("pim", "0") or 0), fs_img)
             what.append("new VeraCrypt header opened and data decrypted in Python")
@@ -375,6 +382,120 @@ def backup_main(slot, case_dir):
     print(f"HOST CHECK OK: all {offset} bytes of the drive as they were")
 
 
+BACKUP_PASSWORD = "otg-backup-run-2026"
+DESKTOP_PASSWORD = "otg-backup-e2e-2026"
+
+
+def find_restic():
+    for path in (os.environ.get("RESTIC"), shutil.which("restic"), os.path.expanduser("~/.local/bin/restic")):
+        if path and os.access(path, os.X_OK):
+            return path
+    raise SystemExit("restic not found: the backup flows are judged by desktop restic. Install it or set RESTIC.")
+
+
+def restic(binary, repo, password, *args):
+    env = dict(os.environ, RESTIC_PASSWORD=password, RESTIC_REPOSITORY=repo)
+    return subprocess.run([binary, "--no-cache", "--no-lock", *args], env=env, capture_output=True, text=True)
+
+
+def repositories(top):
+    found = []
+    for folder, dirs, files in os.walk(top):
+        if "config" in files and "keys" in dirs:
+            found.append(folder)
+            dirs[:] = []
+    return found
+
+
+def hashes_of(top):
+    out = {}
+    for folder, _, names in os.walk(top):
+        for name in names:
+            path = os.path.join(folder, name)
+            with open(path, "rb") as f:
+                out[os.path.relpath(path, top)] = hashlib.sha256(f.read()).hexdigest()
+    return out
+
+
+def backup_flow_main(slot, case_dir):
+    name = os.path.basename(os.path.normpath(case_dir))
+    binary = find_restic()
+    problems = []
+    notes = []
+    with tempfile.TemporaryDirectory() as work:
+        snapshot = os.path.join(work, "slot.img")
+        shutil.copyfile(slot, snapshot)
+        plain = os.path.join(work, "plain.img")
+        if os.path.exists(os.path.join(case_dir, "plain.txt")):
+            shutil.copyfile(snapshot, plain)
+            container = "plain"
+        else:
+            container = decrypt(snapshot, case_dir, plain)
+        fs = fs_type(plain)
+        problems += check_structure(fs, plain)
+        loop = re.search(r"as (/dev/loop\d+)", run("udisksctl", "loop-setup", "-r", "-f", plain, "--no-user-interaction").stdout)
+        if not loop:
+            raise SystemExit("udisksctl could not attach the image")
+        dev = loop.group(1)
+        try:
+            out = run("udisksctl", "mount", "-b", dev, "--no-user-interaction", "-o", "ro").stdout
+            mnt = re.search(r" at (.+?)\.?$", out.strip())
+            if not mnt:
+                raise SystemExit(f"udisksctl could not mount the image: {out}")
+            top = mnt.group(1)
+            try:
+                expect_damaged = set()
+                path = os.path.join(case_dir, "expect_damaged.txt")
+                if os.path.exists(path):
+                    expect_damaged = set(open(path).read().split())
+                repos = repositories(top)
+                for repo in repos:
+                    rel = os.path.relpath(repo, top)
+                    password = DESKTOP_PASSWORD if os.path.basename(repo) == "desktop_repo" else BACKUP_PASSWORD
+                    p = restic(binary, repo, password, "check", "--read-data")
+                    damaged = " damaged " in rel or os.path.basename(repo) in expect_damaged
+                    if damaged and p.returncode == 0:
+                        problems.append(f"{rel}: restic check passes, but the test damaged it")
+                    if not damaged and p.returncode != 0:
+                        problems.append(f"{rel}: restic check failed:\n{(p.stdout + p.stderr).strip()[-600:]}")
+                    notes.append(f"{rel}: {'damaged, as meant' if damaged else 'restic check clean'}")
+                desktop = os.path.join(top, "desktop_repo")
+                made = os.path.join(case_dir, "desktop_snapshots.json")
+                if os.path.isdir(desktop) and os.path.exists(made):
+                    import json
+                    want = {s["id"] for s in json.load(open(made))}
+                    p = restic(binary, desktop, DESKTOP_PASSWORD, "snapshots", "--json")
+                    have = {s["id"] for s in json.loads(p.stdout or "[]")}
+                    if not want <= have:
+                        problems.append(f"desktop_repo lost snapshots: {sorted(want - have)}")
+                    notes.append(f"desktop_repo: {len(have)} snapshots, desktop's {len(want)} all there")
+                copies = os.path.join(top, "E2E_plain")
+                phone = os.path.join(case_dir, "phone_src")
+                if os.path.isdir(copies) and os.path.isdir(phone):
+                    want = hashes_of(phone)
+                    changed = next(line.strip().split("\t")[1] for line in open(os.path.join(case_dir, "phone_expected.txt")) if line.strip())
+                    with open(os.path.join(phone, changed), "rb") as f:
+                        want[changed] = hashlib.sha256(f.read() + b"changed\n").hexdigest()
+                    for dated in os.listdir(copies):
+                        have = hashes_of(os.path.join(copies, dated))
+                        for rel, sha in want.items():
+                            if have.get(rel) != sha:
+                                problems.append(f"E2E_plain/{dated}/{rel}: not what the phone held")
+                    notes.append(f"E2E_plain: {len(os.listdir(copies))} copies by hash")
+            finally:
+                run("udisksctl", "unmount", "-b", dev, "--no-user-interaction")
+        finally:
+            run("udisksctl", "loop-delete", "-b", dev, "--no-user-interaction")
+    if problems:
+        print(f"HOST CHECK FAILED {name} ({container}, {fs}):")
+        for p in problems:
+            print(f"  - {p}")
+        for n in notes:
+            print(f"    {n}")
+        sys.exit(1)
+    print(f"HOST CHECK OK {name} ({container}, {fs}): checker clean; " + "; ".join(notes))
+
+
 def main():
     if len(sys.argv) != 3:
         raise SystemExit(__doc__)
@@ -383,6 +504,8 @@ def main():
         return erase_main(slot, case_dir)
     if os.path.exists(os.path.join(case_dir, "journal.txt")):
         return journal_main(slot, case_dir)
+    if os.path.exists(os.path.join(case_dir, "backup_flow.txt")):
+        return backup_flow_main(slot, case_dir)
     if os.path.exists(os.path.join(case_dir, "backup.txt")):
         return backup_main(slot, case_dir)
     with tempfile.TemporaryDirectory() as work:

@@ -150,6 +150,7 @@ class BackupRunner(private val context: Context) {
                 }
                 val t0 = System.currentTimeMillis()
                 val id = w.backup(FileTreeSource.root(source).excluding(excludes), snapshotPath(job), tagsOf(job, reason), parent)
+                if (BuildConfig.DEBUG) w.readAgain.forEach { android.util.Log.d(TAG, "${job.name}: read again: $it") }
                 val stats = RunStats(files = w.filesDone, dirs = w.dirsDone, totalBytes = scan.totalBytes, filesNew = w.filesNew,
                     filesUnchanged = w.filesUnchanged, bytesRead = w.bytesRead, bytesAdded = w.bytesAdded,
                     errors = w.errors.size.toLong(), durationMs = System.currentTimeMillis() - t0)

@@ -3381,7 +3381,9 @@ fun VeraCryptMountSection(
                 )
             } catch (_: Exception) {}
         }
-        keyfiles = uris
+        // Adds, as the Encrypt form does: picking one at a time must not drop the ones before.
+        // Every keyfile counts, so a dropped one read as a wrong password. Clear starts over.
+        keyfiles = (keyfiles + uris).distinct()
         focusManager.clearFocus()
     }
 

@@ -1,0 +1,1 @@
+A manual backup: offered on the card, not under Schedules, its newest History entry carries Run again, Verify, Restore, Show password and Remove, it is on the Mount tab, and it never asks.

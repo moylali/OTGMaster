@@ -58,3 +58,11 @@ matrix/
 matrix-mac/
 # Unpacked from testdata/apfs/apfs-images.tar.xz
 testdata/apfs/apfs_*/
+testdata/**/phone_src/
+testdata/**/phone_expected.txt
+testdata/**/drive_expected.txt
+testdata/**/desktop_snapshots.json
+testdata/**/expect_damaged.txt
+attempt*_e2e_*
+e2e_*_e2e_*
+e2e_parallel_*

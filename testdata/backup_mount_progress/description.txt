@@ -1,0 +1,1 @@
+Mount tab: signs of progress on the row, after choosing a folder and in the password dialog; a second tap does nothing; with the drive gone Mount is off and says why.

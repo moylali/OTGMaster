@@ -1,0 +1,1 @@
+Show password: refused with no screen lock, nothing after a cancelled check, shown after the PIN, the same from the Remove dialog.

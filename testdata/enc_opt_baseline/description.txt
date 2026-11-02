@@ -1,0 +1,1 @@
+Encrypt form, one option: The baseline: AES, SHA-512, no PIM, a password, exFAT, quick. Encrypt, remount through the unlock form, host check.

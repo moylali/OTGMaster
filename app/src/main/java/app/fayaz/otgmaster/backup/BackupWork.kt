@@ -19,6 +19,7 @@ import androidx.work.ExistingPeriodicWorkPolicy
 import androidx.work.PeriodicWorkRequestBuilder
 import androidx.work.WorkManager
 import androidx.work.WorkerParameters
+import app.fayaz.otgmaster.BuildConfig
 import app.fayaz.otgmaster.MainActivity
 import app.fayaz.otgmaster.MountedDriveService
 import app.fayaz.otgmaster.OtgMasterState
@@ -70,6 +71,11 @@ object BackupExecutor {
         val message: String? = null,
     )
 
+    /** Debug builds only: holds a started run until a test has looked at its dialog. */
+    @Volatile var testHold: java.util.concurrent.CountDownLatch? = null
+    /** Debug builds only: slows a run at each progress report, so a test can pull a drive mid-run. */
+    @Volatile var testProgressDelayMs = 0L
+
     private val _busy = MutableStateFlow<Set<String>>(emptySet())
     /** Jobs with something queued or running, for screens to follow. */
     val busy: StateFlow<Set<String>> = _busy
@@ -114,6 +120,7 @@ object BackupExecutor {
             try {
                 var last = 0L
                 val control = BackupRunner.Control(isCancelled = { stop.get() }, listener = { p ->
+                    if (BuildConfig.DEBUG && testProgressDelayMs > 0) Thread.sleep(testProgressDelayMs)
                     val now = System.currentTimeMillis()
                     if (now - last >= 1000) {
                         last = now
@@ -129,6 +136,7 @@ object BackupExecutor {
                 })
                 setRun(jobId) { it?.copy(phase = "Starting…", waiting = false) }
                 MountedDriveService.operationProgress(app, MountedDriveService.Operation(title, "Starting…", null, jobId))
+                if (BuildConfig.DEBUG) testHold?.await(5, TimeUnit.MINUTES)
                 val runner = BackupRunner(app)
                 val outcome = when (op) {
                     is Op.Backup -> runner.backup(jobId, op.reason, op.overrideLowSpace, control)
@@ -180,6 +188,8 @@ object BackupExecutor {
  */
 object BackupDelays {
     val CHOICES_MINUTES = listOf(5, 10, 15, 30)
+    private val handler = android.os.Handler(android.os.Looper.getMainLooper())
+    private val timers = ConcurrentHashMap<String, Runnable>()
 
     private fun pending(context: Context, jobId: String): PendingIntent = PendingIntent.getBroadcast(context, jobId.hashCode(),
         Intent(context, BackupActionReceiver::class.java).setAction(BackupActionReceiver.ACTION_DELAYED_START)
@@ -190,14 +200,22 @@ object BackupDelays {
         val at = now + minutes * 60_000L
         val job = JobStore.get(context).update(jobId) { it.copy(delayedStartAt = at, snoozedUntil = null) } ?: return
         BackupNotifications.cancelDue(context, jobId)
+        // Two clocks. Android may run this inexact alarm up to 75% late, so "5 min" could be nearly
+        // 9, measured on an emulator. The timer is on time while the phone is awake, and a mounted
+        // drive keeps this process alive; the alarm covers a phone that has gone to sleep.
         context.getSystemService(android.app.AlarmManager::class.java)
             ?.setAndAllowWhileIdle(android.app.AlarmManager.RTC_WAKEUP, at, pending(context, jobId))
+        val app = context.applicationContext
+        val timer = Runnable { fire(app, jobId) }
+        timers.put(jobId, timer)?.let(handler::removeCallbacks)
+        handler.postDelayed(timer, at - now)
         OtgMasterState.log("Backup \"${job.name}\" will start in $minutes minutes, if its drive stays connected")
     }
 
     /** The field and the alarm, with no log line: the run is starting, or the job is going. */
     fun clearFor(context: Context, jobId: String) {
         context.getSystemService(android.app.AlarmManager::class.java)?.cancel(pending(context, jobId))
+        timers.remove(jobId)?.let(handler::removeCallbacks)
         val store = JobStore.get(context)
         if (store.job(jobId)?.delayedStartAt != null) store.update(jobId) { it.copy(delayedStartAt = null) }
     }
@@ -307,7 +325,8 @@ object BackupScheduler {
             .joinToString(" and ") { VolumeInfo.summary(it.info) }.ifEmpty { "it can no longer be reached" }
             .let { if (it == "it can no longer be reached") it else "$it is not connected" }
 
-    fun driveNames(job: BackupJob): String = job.driveEnds().joinToString(" and ") { VolumeInfo.summary(it.info) }
+    /** Both ends on the same partition is one drive to name. */
+    fun driveNames(job: BackupJob): String = job.driveEnds().map { VolumeInfo.summary(it.info) }.distinct().joinToString(" and ")
 
     /** Whether any partition of the device behind [end] is mounted now. */
     private fun deviceMounted(end: Endpoint): Boolean = end.kind == VolumeInfo.KIND_OTG && OtgMasterState.mountedDrives.any { d ->

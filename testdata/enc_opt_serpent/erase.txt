@@ -1,0 +1,7 @@
+action=encrypt
+quick=true
+cipher=Serpent
+hash=SHA-512
+fs=exfat
+password=otgmaster-encrypt-test-2026
+label=ENCOPT

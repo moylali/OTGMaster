@@ -1,0 +1,1 @@
+The Encrypt form puts each problem on its field, with the reason beneath: a short password with a low PIM marks both, SHA-512's limit is 485 and Argon2's is 12 as desktop VeraCrypt has them, passwords or PIMs that differ. Encrypt does not go ahead. Nothing is written.

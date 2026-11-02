@@ -34,12 +34,19 @@ class BackupSecrets(context: Context) {
     fun setPassword(jobId: String, password: String) {
         val p = prefs ?: throw IllegalStateException("the keystore-backed password store is unavailable")
         check(p.edit().putString(jobId, password).commit()) { "could not save the backup password" }
+        _changes.value++
     }
 
-    fun forget(jobId: String) { prefs?.edit()?.remove(jobId)?.apply() }
+    fun forget(jobId: String) {
+        prefs?.edit()?.remove(jobId)?.commit()
+        _changes.value++
+    }
 
     companion object {
         private const val FILE = "otg_backup_secrets"
+        private val _changes = kotlinx.coroutines.flow.MutableStateFlow(0L)
+        /** Bumped when a password is saved or forgotten, for screens that say one is missing. */
+        val changes: kotlinx.coroutines.flow.StateFlow<Long> = _changes
 
         /** A new repository's password: 24 characters from a 56-letter alphabet without look-alikes (~139 bits). */
         fun generate(random: SecureRandom = SecureRandom()): String {

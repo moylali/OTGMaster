@@ -353,6 +353,70 @@ python3 scripts/make_backup_fixture.py      # writes test.img, password.txt, bac
 - **Pulling the drive.** The case uses the same unplug and replug requests as `disconnect`
   (§6d), to see the backup leave with its drive and Create schedule stop opening its form.
 
+
+## 6g. Backups made through the app (E2E, no root)
+
+`scripts/make_backup_run_fixtures.py` builds a `backup_*` case per flow, plus `backup_run_exfat`,
+`_ext4`, `_ntfs`, `_luks2` and `_veracrypt`, and `encrypt_form_rules`. Each case's
+`description.txt` says what it proves. The encrypted two reuse the support matrix's images, so
+it runs after `scripts/make_e2e_matrix.py`. It needs desktop `restic` and `udisksctl`.
+
+```sh
+python3 scripts/make_backup_run_fixtures.py
+```
+
+- **The case files.** `backup_flow.txt` names the flow in `E2EAutomatedTest.runBackupFlow`.
+  `timeout.txt` overrides the runner's 900 seconds. `phone_src/`, `phone_expected.txt`,
+  `drive_expected.txt` and `desktop_snapshots.json` are generated and gitignored.
+- **Time.** Nothing in the app has a test clock. A flow moves time by changing a job's
+  `lastSuccessAt` and passing `now` to `BackupScheduler.evaluate`. `backup_delayed_start` also
+  waits out one real 5 minutes on the real alarm.
+- **What the host checks.** `scripts/verify_e2e_volume.py` (it sees `backup_flow.txt`) runs the
+  filesystem's checker, then desktop restic on every repository left on the drive:
+  `check --read-data` must pass, except that a folder with " damaged " in its name, or one named
+  in `expect_damaged.txt`, must fail. `desktop_repo` must still hold desktop restic's snapshots.
+- **What the emulator cannot do.** Its drive has no serial and it has no USB permission, so
+  matching a sibling partition by serial and the real foreground notification are covered by
+  `BackupJobsTest` and on a physical device. `am instrument -e backup_flow device`, with a scratch
+  drive plugged in, runs them there, in a folder of its own, leaving other jobs alone.
+
+## 6h. One case per option of the VeraCrypt forms (E2E)
+
+`scripts/make_vc_option_fixtures.py` builds these, after `make_erase_fixtures.py` and
+`generate_testdata.sh`. The rule is one test per choice in the form, each changing one option
+from a baseline, and no combinations.
+
+| Option | Encrypt form | Unlock form |
+|---|---|---|
+| AES | `encrypt_plain_fat32` | `fat32` |
+| Serpent | `enc_opt_serpent` | `serpent` |
+| Twofish | `enc_opt_twofish` | `twofish` |
+| AES-Twofish | `enc_opt_aes_twofish` | `unlock_opt_aes_twofish` |
+| AES-Twofish-Serpent | `enc_opt_aes_twofish_serpent` | `aes_twofish_serpent_argon2` |
+| Serpent-AES | `enc_opt_serpent_aes` | `serpent_aes` |
+| Serpent-Twofish-AES | `encrypt_plain_exfat` | `unlock_opt_serpent_twofish_aes` |
+| Twofish-Serpent | `enc_opt_twofish_serpent` | `unlock_opt_twofish_serpent` |
+| SHA-512 | `enc_opt_baseline` | `fat32` |
+| Argon2 | `encrypt_plain_exfat` | `aes_twofish_serpent_argon2` |
+| No PIM | `enc_opt_baseline` | `unlock_opt_no_pim` |
+| Custom PIM | `encrypt_plain_fat32` | `fat32_keyfile_pim` |
+| Password only | `enc_opt_baseline` | `fat32` |
+| Password + 1 keyfile | `enc_opt_keyfile` | `fat32_keyfile` |
+| Password + 2 keyfiles | `enc_opt_keyfiles_2` | `unlock_opt_keyfiles_2` |
+| Keyfiles only | `enc_opt_keyfiles_only` | `unlock_opt_keyfiles_only` |
+| Read-only switch | n/a | `unlock_opt_read_only` |
+| exFAT, FAT32, ext4, NTFS inside | `encrypt_plain_fat32`, `_exfat`, `_ntfs`, `_ext4` | n/a |
+| Quick, full | `enc_opt_baseline`, `encrypt_plain_fat32` | n/a |
+
+- **Unlock cases that end in a refusal.** Without root, desktop VeraCrypt's own formatter makes
+  FAT16 at this size, and the app refuses to mount FAT16. Reaching `Detected filesystem: FAT16`
+  proves the header and the first data sectors decrypted with that form's choices; it does not
+  prove a mounted filesystem. The Encrypt case for the same option proves that, on a volume the
+  app made.
+- **The host cannot read every Encrypt result.** It decrypts AES with SHA-512 and no keyfiles.
+  For a cascade, Argon2 or keyfiles it only checks the drive no longer reads as plain; the app's
+  remount through the unlock form is the check on those.
+
 ## 6e. An ext4 drive whose journal needs recovery (E2E, no root)
 
 The `ext4_journal` case is plain ext4, 64 MiB with 4 KiB blocks and the usual mount

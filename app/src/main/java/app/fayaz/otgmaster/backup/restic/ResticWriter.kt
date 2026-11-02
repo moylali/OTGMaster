@@ -118,6 +118,9 @@ class ResticWriter(
 
     private fun times(millis: Long) = Instant.ofEpochMilli(millis).toString()
 
+    /** Files the parent snapshot has that were read again, and why: for the log. */
+    val readAgain = ArrayList<String>()
+
     /** Files skipped because the parent snapshot already holds them unchanged. */
     var filesUnchanged = 0L; private set
 
@@ -136,6 +139,8 @@ class ResticWriter(
                 .put("uid", 0).put("gid", 0).put("user", "").put("group", "").put("inode", 0).put("device_id", 0)
                 .put("size", s.size).put("links", 1).put("content", JSONArray(previous.content))
         }
+        if (previous != null) readAgain += "${s.name}: size ${previous.size} -> ${s.size}, modified ${previous.mtime} -> $t, " +
+            "blobs known ${previous.content.all { repo.hasBlob(it) }}"
         val content = JSONArray()
         var size = 0L
         s.open().use { input ->

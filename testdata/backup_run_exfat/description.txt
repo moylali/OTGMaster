@@ -1,0 +1,1 @@
+Incremental and Plain from the phone onto a plain exfat drive, through the real form: Back up now, Verify, Restore by hash, Mount. Host: filesystem checker clean, restic check --read-data, copies by hash.
