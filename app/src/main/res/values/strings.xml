@@ -56,7 +56,7 @@
     <string name="feedback_summary">Report a problem or suggest an improvement</string>
     <string name="feedback_url">https://otgmaster-feedback.moylali.workers.dev/</string>
     <string name="feedback_intro">The form opens in your browser. The app sends nothing: you review the details below and submit the form yourself.</string>
-    <string name="feedback_review_heading">The form will be filled in with this</string>
+    <string name="feedback_review_heading">The form will be filled in with exactly this</string>
     <string name="feedback_choose_heading">Choose what to include</string>
     <string name="feedback_back">Back</string>
     <string name="feedback_include_device">Device model and Android version</string>
@@ -78,7 +78,7 @@
     <string name="cd_copy_version">Copy version</string>
     <string name="cd_close_settings">Close settings</string>
     <string name="auto_mount_title">Auto mount</string>
-    <string name="auto_mount_description">When a known device is connected, OTG Master asks for your device lock, then mounts all recognized encrypted drives. Credentials are encrypted with AES-256 in Android Keystore and cannot be extracted without your device lock.</string>
+    <string name="auto_mount_description">When a known device is connected, OTG Master asks for your device lock, then mounts all recognized encrypted drives automatically. Credentials are encrypted with AES-256 in Android Keystore and cannot be extracted without your device lock.</string>
     <string name="cd_clear_keyfiles">Clear keyfiles</string>
     <string name="auto_mount_prompt_title">Authenticate to mount</string>
     <string name="auto_mount_prompt_subtitle_single">Auto mount %1$s</string>
