@@ -39,17 +39,17 @@ The app cannot perform a kernel mount on non-rooted Android. Instead it:
 5. Feeds the decrypted block device into a userspace filesystem reader (FAT32 via libaums, exFAT via a vendored native `libexfat`, ext4 via a pure-Kotlin driver, NTFS via a vendored `libntfs-3g`, and APFS, read-only, via a vendored `libfsapfs`).
 6. Surfaces files through the app UI and a `DocumentsProvider`, so other apps (Files, Gallery, etc.) can browse the unlocked volume.
 7. Formats and encrypts from a mounted drive's actions (on the card when they fit, else under **More actions**), after the user types ERASE:
-   - **Format** writes an empty FAT32, exFAT, ext4 or NTFS (ext4 and NTFS *from 0.5.0*) of the same size — the current one by default, or another — with the label given; a volume inside an encrypted container stays in it, with the same password
-   - **Encrypt** erases the partition and creates a new VeraCrypt volume — any of the ciphers and cascades above, SHA-512 or Argon2id, optional PIM and keyfiles — or, *from 0.5.0*, a LUKS2 volume (AES-XTS, Argon2id) that Linux opens with its own tools; either holds a new FAT32, exFAT, ext4 or NTFS
+   - **Format** writes an empty FAT32, exFAT, ext4 or NTFS (ext4 and NTFS *from 0.5.0*) of the same size (the current one by default, or another) with the label given; a volume inside an encrypted container stays in it, with the same password
+   - **Encrypt** erases the partition and creates a new VeraCrypt volume (any of the ciphers and cascades above, SHA-512 or Argon2id, optional PIM and keyfiles) or, *from 0.5.0*, a LUKS2 volume (AES-XTS, Argon2id) that Linux opens with its own tools; either holds a new FAT32, exFAT, ext4 or NTFS
    - both overwrite every sector by default; **Quick** writes only the filesystem structures, and the old data stays on the drive until overwritten
 8. *From 0.5.0*:
-   - **Back up** copies a folder from a source to a target — the phone's storage or any mounted partition, either way round — now and then daily or weekly, either **Plain** (dated full copies) or **Incremental** (snapshots in the [restic](https://restic.net) repository format: a computer opens them with `restic`, and a repository restic made is backed up into the same way); it reminds you when a backup is overdue and names the drive to plug in. **Manage backups** on the main screen lists every backup's schedule and run history, and mounts an incremental backup read-only, one folder per snapshot, for the Files app
+   - **Back up** copies a folder from a source to a target (the phone's storage or any mounted partition, either way round) once now and then daily or weekly, either **Plain** (dated full copies) or **Incremental** (snapshots in the [restic](https://restic.net) repository format: a computer opens them with `restic`, and a repository restic made is backed up into the same way); it reminds you when a backup is overdue and names the drive to plug in. **Manage backups** on the main screen lists every backup's schedule and run history, and mounts an incremental backup read-only, one folder per snapshot, for the Files app
    - **Recover deleted files…** lists the files a FAT32 or exFAT filesystem has deleted (only those) and copies the chosen ones to another drive or the phone; nothing is written to the drive being recovered
    - Another phone or a camera connected over USB (MTP/PTP) shows up as read-only drives, one per storage
 
 ### Roadmap
 
-- **APFS** — write support. APFS is read-only today, plain or encrypted.
+- **APFS**: write support. APFS is read-only today, plain or encrypted.
 
 ### Known limitations
 
@@ -74,8 +74,8 @@ If you prefer to share your feedback privately or without a GitHub account, plea
 ./gradlew assembleDebug
 ```
 
-A signed release build additionally requires a `keystore.properties` file at the repo root
-(never commit this — see `.gitignore`) with `storeFile`, `storePassword`, `keyAlias`, and
+A signed release build also requires a `keystore.properties` file at the repo root
+(never commit this: see `.gitignore`) with `storeFile`, `storePassword`, `keyAlias`, and
 `keyPassword` entries; without it, `assembleRelease` produces an unsigned APK.
 
 ```bash
@@ -98,13 +98,13 @@ The full device end-to-end suite (VeraCrypt/LUKS/BitLocker unlock + mount agains
 volumes, run on a QEMU Android emulator) is documented in `scripts/run_e2e_tests.sh` and is not part
 of CI, since it needs real USB-device emulation that isn't available on hosted runners. It covers
 every filesystem in every container the app supports (`scripts/make_e2e_matrix.py`) plus the
-older single-feature cases — 43 in all. `scripts/run_e2e_parallel.sh` runs them across three
+older single-feature cases: 43 in all. `scripts/run_e2e_parallel.sh` runs them across three
 emulators (about 30 minutes instead of 85) and merges one report; fixtures are built without root
 (see `docs/TEST_DATA.md` §6a).
 
-**Generating test data** — including how to add a fixture for a new cipher, hash,
+**Generating test data** (including how to add a fixture for a new cipher, hash,
 filesystem or container format, the per-case file contract, and the traps in the three
-generators — is documented in **[docs/TEST_DATA.md](docs/TEST_DATA.md)**.
+generators) is documented in **[docs/TEST_DATA.md](docs/TEST_DATA.md)**.
 
 #### Read/Write tests
 
@@ -124,7 +124,7 @@ and the reference figures in [docs/BENCHMARK_RESULTS.md](docs/BENCHMARK_RESULTS.
 
 ### License
 
-GPL-3.0-or-later — see [LICENSE](LICENSE). The app and its source, and the binary that
+GPL-3.0-or-later: see [LICENSE](LICENSE). The app and its source, and the binary that
 statically links every component below, are distributed under it. Each component's own
 licence permits this: `libexfat` and `libntfs-3g` are GPL-2.0-or-later, `libfsapfs` and its
 libyal libraries LGPL-3.0-or-later, the Apache-2.0 components (libaums, argon2kt,

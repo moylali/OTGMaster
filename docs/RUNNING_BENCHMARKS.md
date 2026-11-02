@@ -1,10 +1,10 @@
 # Running the benchmarks, and judging the results
 
-How the I/O benchmark and correctness suites are actually driven, and what makes a
+How the I/O benchmark and correctness suites are driven, and what makes a
 result trustworthy. Most of the pitfalls below were discovered by producing a wrong
 answer first.
 
-## Standard procedure — one run, start to finish
+## Standard procedure: one run, start to finish
 
 Every step below exists because skipping it produced a wrong or unusable result
 at least once. Do them in order. `$A` is the device's adb address, `$P` the
@@ -15,7 +15,7 @@ ADB=/home/fayaz/android-sdk-local/platform-tools/adb
 A=192.168.1.9:33057        # from `adb devices -l`
 ```
 
-### 1. Before the run — drive on the host
+### 1. Before the run: drive on the host
 
 Check the volume is healthy, then baseline it if it has no baseline yet. A
 baseline taken over damage records the damage as normal, so the check comes
@@ -60,7 +60,7 @@ Check three things before going on:
 
 - **The candidate line names the right container** (`VERACRYPT`, `LUKS1`,
   `LUKS2`). If there is none, a USB permission dialog or a BiometricPrompt is
-  probably up — dismiss it on the phone.
+  probably up: dismiss it on the phone.
 - **Battery is charging, or above ~40%.** Two drives dropped off the bus today
   on phones at 21% and 26% running on battery; a powered hub fixes it.
 - **The screen is on.** A run that starts with the screen off is flagged
@@ -87,7 +87,7 @@ Within 30 seconds, read the header and confirm:
 $ADB -s $A logcat -d | grep OTGBench | head -20
 ```
 
-- `build: … commit <sha>` is the commit you just built — not an older one, not
+- `build: … commit <sha>` is the commit you just built, not an older one, not
   `-dirty`;
 - `power : interactive=true … powerSave=false`;
 - `mounted:` lists the drive and `volumeLabel` is the one you expect.
@@ -108,13 +108,13 @@ files.
 
 What a problem looks like:
 
-- **One section's counter climbing with no output for several minutes** — the
+- **One section's counter climbing with no output for several minutes**: the
   drive has stopped responding. Check `dumpsys usb | grep product_name`; if the
   drive is gone, reattach it. The run is droppable.
-- **`EIO` / `-5` in read or write errors** — a real device error. Let the run
+- **`EIO` / `-5` in read or write errors**: a real device error. Let the run
   finish rather than pulling the drive mid-write, then `fsck` it on the host
   before anything else touches it.
-- **`*** no mount handler installed ***`** — MainActivity is not alive. Press
+- **`*** no mount handler installed ***`**: MainActivity is not alive. Press
   back, relaunch it, and broadcast again.
 
 The run is done when `=== benchmark finished ===` appears.
@@ -143,7 +143,7 @@ A clean result: `>>> CLEAN` from the checker, and in the comparison only the
 runner's own report and `INDEX.txt` changed, with the allocation table moving by
 a handful of entries. Anything under **"MODIFIED AND NOT EXPLAINED BY THE RUN"**,
 or allocation churn far out of proportion to the ~20 MB a run writes, is a
-finding — stop and investigate before re-running on that drive.
+finding: stop and investigate before re-running on that drive.
 
 ### 7a. Verify over adb instead (NTFS, or when the drive cannot move)
 
@@ -162,7 +162,7 @@ The dump holds the filesystem lock and reads past the block cache. For NTFS it
 copies only clusters `$Bitmap` marks in use; for other filesystems it copies every
 non-zero megabyte, which on a never-zeroed partition is all of it. Files left by
 the `unaligned` and `correct` sections can then be judged through the reference
-driver (`ntfs-3g -o ro ntfs.img mnt`) — the only way to get those verdicts for a
+driver (`ntfs-3g -o ro ntfs.img mnt`): the only way to get those verdicts for a
 plain partition, which the runner cannot remount. It does not replace step 1's
 baseline; say in the row which checks were done this way.
 
@@ -198,7 +198,7 @@ adb shell am broadcast -a app.fayaz.otgmaster.RUN_BENCHMARK \
 Sections available in `--es tests`: `free`, `block`, `dir`, `path`, `seq`,
 `random`, `opens`, `write`, `unaligned`, `correct`, `saf`, `fixtures`.
 
-**Omitting `tests` does not run everything.** It runs the read-only sections only —
+**Omitting `tests` does not run everything.** It runs the read-only sections only:
 `free`, `block`, `dir`, `path`, `seq`, `random`, `opens`. The five that write to the
 drive or take minutes (`write`, `unaligned`, `correct`, `saf`, `fixtures`) are opt-in
 and are skipped **silently**, with no line in the report saying so, so a default run
@@ -216,7 +216,7 @@ both out to run against the mount as it is.
 **`write`, `unaligned` and `correct` need credentials even on an unencrypted volume.**
 Their verdicts are judged after a remount, and the only remount path the runner has is
 `mountRequest`, which takes a password. Without `--es password` they report `PARTIAL`
-or `NOT VERIFIED` rather than a pass — correct, but it means a plain partition's write
+or `NOT VERIFIED` rather than a pass: correct, but it means a plain partition's write
 path cannot be fully judged from the device. Close that gap from the host instead, with
 `e2fsck -fn` on the partition after the run.
 
@@ -225,7 +225,7 @@ runs in sequence by default.
 
 ### On the device, with no adb at all
 
-For phones where adb over wifi is unavailable — Android 9 and earlier have no
+For phones where adb over wifi is unavailable: Android 9 and earlier have no
 Wireless Debugging, and legacy `adb tcpip` does not survive losing the USB
 transport, which is the transport the drive needs.
 
@@ -237,7 +237,7 @@ leaves MainActivity unable to show a USB permission dialog. It detects an unmoun
 drive and says so rather than sitting through a 90-second timeout.
 
 **This flow cannot verify on-disk correctness.** Android destroys the backgrounded
-MainActivity, which nulls the mount handlers, so no remount can be performed — and
+MainActivity, which nulls the mount handlers, so no remount can be performed, and
 the correctness cases are meaningless without one. They report `NOT VERIFIED` with
 the reason. Writes and throughput are unaffected.
 
@@ -248,7 +248,7 @@ Every run writes three copies, and runs accumulate rather than overwrite:
 | Destination | Notes |
 |---|---|
 | `BENCH/reports/otgbench-<model>-<stamp>.txt` on the drive | Travels with the drive; plus an appended `INDEX.txt`, one line per run |
-| `Documents/` via MediaStore | MTP-visible. **API 29+ only** — below that a MediaStore insert needs `WRITE_EXTERNAL_STORAGE` |
+| `Documents/` via MediaStore | MTP-visible. **API 29+ only**; below that a MediaStore insert needs `WRITE_EXTERNAL_STORAGE` |
 | `Android/data/app.fayaz.otgmaster/files/` | `adb pull`, and MTP-readable before Android 11 |
 
 `INDEX.txt` carries the model, Android version, commit, awake/DOZED and the
@@ -260,7 +260,7 @@ correctness and fixtures verdicts, so a set of runs can be read without opening 
 can show exactly what a run touched. It handles LUKS, VeraCrypt and plain
 partitions, is read-only throughout, and works on ext4, exFAT and FAT32.
 
-Take the baseline once, while the volume is believed good — freshly prepared, or
+Take the baseline once, while the volume is believed good: freshly prepared, or
 just checked:
 
 ```sh
@@ -278,15 +278,15 @@ only the allocation tables, taking seconds instead of the ~10 minutes a full
 compare needs on a 54 GB drive.
 
 **What it adds over `fsck` and `fixtures`.** `fsck` validates structure, not
-contents — no filesystem here carries data checksums, so a cluster holding the
+contents: no filesystem here carries data checksums, so a cluster holding the
 wrong bytes inside a structurally valid chain is invisible to it. `fixtures`
 validates contents, but only for the manifest's entries: 14 files of 20,096 on
 the exFAT drive. The FAT32 corruption found on 2026-09-28 lived in exactly that
-gap — in a `FILL/` file no manifest entry covered — so that drive reported
+gap (in a `FILL/` file no manifest entry covered), so that drive reported
 `fixtures: ALL 16 MATCHED` while its allocation table was wrecked.
 
-**Reading the output.** Paths the benchmark owns — `BENCH/reports/`,
-`BENCH_UNALIGNED`, its scratch files — are listed as expected and do not count as
+**Reading the output.** Paths the benchmark owns (`BENCH/reports/`,
+`BENCH_UNALIGNED`, its scratch files) are listed as expected and do not count as
 findings. The signal is a **modified** file the run never wrote, and allocation
 churn out of proportion to what was written. For scale, both measured with this
 tool on the same day:
@@ -312,14 +312,14 @@ produced a false result.
 
 **Install the current build before every run, and confirm it from the report.**
 Every report carries `build: <version> commit <sha>`. Read that line at the start
-of each run rather than trusting that you installed it — a device on an older APK
+of each run rather than trusting that you installed it: a device on an older APK
 produces a complete, plausible row with nothing in it to say so. Devices also
 drift apart from each other: four on three different commits makes every
 cross-device figure meaningless, and that state is invisible until you compare
 the commit lines.
 
 **Confirm the build.** Every report carries `build: <version> commit <sha>`, and
-marks a dirty tree. An A/B was once invalidated by an un-rebuilt APK — the two files
+marks a dirty tree. An A/B was once invalidated by an un-rebuilt APK: the two files
 were byte-identical. **Compare APK hashes before trusting a pre/post comparison.**
 
 **Check the power state at both ends.** Reports record power and CPU MHz at the start
@@ -330,7 +330,7 @@ flags any run that dozed as `*** CONTAMINATED ***`.
 
 Both settings the runner changes (`screen_off_timeout` to 24 h and `deviceidle`
 disabled) **persist after the run**. Restore them on any device you are no longer
-measuring — the "Keeping devices awake for benchmark runs" section below has the enable,
+measuring: the "Keeping devices awake for benchmark runs" section below has the enable,
 disable and check commands.
 
 **Use the block layer as the control.** It reads the uncached device with no
@@ -344,11 +344,11 @@ figure is not sound.
 **Compare within one device.** A third retraction came from generalising a ratio
 measured on one phone. Same code and same drive does not make two devices equivalent.
 
-**Check that a remount actually happened.** Correctness cases are judged after an
+**Check that a remount happened.** Correctness cases are judged after an
 unmount/remount, which is what discards in-memory metadata. `remountAndProve`
 requires the mount list to empty *and* the drive identity to change. Before it
 existed, a null mount handler meant nothing was remounted and the suite still printed
-`ALL PASSED` — an entire device's result was vacuous.
+`ALL PASSED`: an entire device's result was vacuous.
 
 **Distrust a suite that passes when it should not be able to.** Every false pass
 today came from the test's shape, not its logic: aligned-only writes hid two
@@ -367,12 +367,12 @@ done
 ```
 
 **A drive that stops responding usually needs reattaching.** Two failures in one
-session — one inside `ScsiBlockDevice.init`, one at USB enumeration — both cleared on
+session (one inside `ScsiBlockDevice.init`, one at USB enumeration), both cleared on
 a replug with no code change. That is the discriminating test for transport faults.
 
 **Release builds contain no harness.** `BenchmarkReceiver`, `BenchLauncherActivity`
 and the native I/O counters are debug-only, so a Play-signed install cannot run any of
-this — and a debug APK cannot replace it without uninstalling first.
+this, and a debug APK cannot replace it without uninstalling first.
 
 **Watch for crashes as the run goes.** The runner clears the crash buffer, polls every
 three seconds, and aborts immediately with the trace. It previously only noticed a
@@ -381,7 +381,7 @@ dead app after the poll loop expired, wasting the rest of a long run.
 ### Keeping devices awake for benchmark runs
 
 Decryption is CPU-bound, so a device that sleeps mid-run throttles its clocks and the
-result reads as a regression — the block-layer control measured **7.27 MB/s asleep
+result reads as a regression: the block-layer control measured **7.27 MB/s asleep
 against 17.26 MB/s awake** on the same device. `scripts/run_benchmark.sh` therefore
 changes two settings per device, and **both persist after the run ends**:
 
@@ -393,7 +393,7 @@ changes two settings per device, and **both persist after the run ends**:
 Left in place they keep the screen on indefinitely and drain the battery, so revert
 them on any device you are not actively measuring.
 
-**Enable** (what the runner does automatically — only needed for a manual run):
+**Enable** (what the runner does automatically: only needed for a manual run):
 
 ```bash
 adb -s <serial> shell settings put system screen_off_timeout 86400000
@@ -421,5 +421,5 @@ done
 `timeout=86400000` with `doze_enabled=0` means that device is still in run
 configuration. A finished run is also self-reporting: the harness records the power
 state at both the start and the end of every report, and flags any run that dozed as
-`*** CONTAMINATED ***`. The app additionally sets `FLAG_KEEP_SCREEN_ON` while a
+`*** CONTAMINATED ***`. The app also sets `FLAG_KEEP_SCREEN_ON` while a
 benchmark is active, but that one is transient and needs no cleanup.

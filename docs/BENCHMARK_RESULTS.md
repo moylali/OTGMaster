@@ -6,7 +6,7 @@ the narrative of how each finding was reached, including three retracted claims,
 `docs/IO_PERFORMANCE.md`.
 
 **Every figure here is a reference point, not a target.** Before treating a difference
-as a regression, read the comparison rules in §6 — most of the wrong conclusions
+as a regression, read the comparison rules in §6: most of the wrong conclusions
 reached while gathering this data came from comparing numbers that were not
 comparable.
 
@@ -26,7 +26,7 @@ comparison; that one is the raw record.
 All drives: 62 GB PNY USB 3.2.1 FD, VeraCrypt AES/SHA-512, PIM 1, 4096-byte clusters,
 prepared by `scripts/prepare_test_usb.sh`, bulk-filled to ~4 GiB free.
 
-## 2. Block layer — the control
+## 2. Block layer: the control
 
 Reads the uncached decrypted device with no filesystem in the path: USB transport plus
 AES-XTS only. **This is the figure to check first.** It should be unaffected by
@@ -54,7 +54,7 @@ The full ladder, same run, same drive:
 | 4096 KiB | 26.15 MB/s | 11.58 / 11.36 | 11.45 / 11.43 | 8.11 / 7.90 |
 
 A 4 KiB request gets a quarter to a third of what a 64 KiB one gets. That is why the
-block cache uses 64 KiB lines and why V6 (coalescing cluster reads) mattered — both
+block cache uses 64 KiB lines and why V6 (coalescing cluster reads) mattered: both
 are about request size, not about caching.
 
 **The ladder peaks at 512 KiB and falls back at 4 MiB**, on both devices measured
@@ -87,17 +87,17 @@ The measurement that motivated the block cache.
 
 Uncached exFAT cold listings landed at **136–212 s** across several runs (and 297–366 s
 for long names); uncached FAT32 ran **0.9–2.3 s**. On the Samsung both filesystems were
-measured on one phone (see §3.4), giving **211,681 ms against 1,882 ms uncached — 112×**.
+measured on one phone (see §3.4), giving **211,681 ms against 1,882 ms uncached: 112×**.
 With the cache on, exFAT comes down to 3,914 ms against FAT32's 2,083, so the gap closes
 to 1.9×.
 
 The mechanism is measured rather than inferred: libexfat issues **100,844 preads
-averaging 24 bytes** — only 2.3 MiB of real data — for one 10,000-entry listing, where
+averaging 24 bytes** (only 2.3 MiB of real data) for one 10,000-entry listing, where
 FAT32 reads its directory table in bulk. That counter reproduced on three devices and
 three Android versions.
 
 This is why the cache transforms exFAT and does nothing for FAT32: it collapses request
-*count*, not bytes. Amplification measured 1.00× — the cache was never over-reading.
+*count*, not bytes. Amplification measured 1.00×: the cache was never over-reading.
 On FAT32 the cache is worth **nothing** for cold listings (it is marginally negative on
 the Huawei, within noise); its value there is in §3.3.
 
@@ -115,12 +115,12 @@ the Huawei, within noise); its value there is in §3.3.
 | Huawei | FAT32 | 1.54 | 3.88 | 3.86 MB/s |
 
 **The V6 signature is the shape, not the ratio.** Before the fix, throughput ignored
-the caller's buffer size — 4.53, 4.99, 4.97 — because `ClusterChain.read` issued one
+the caller's buffer size (4.53, 4.99, 4.97) because `ClusterChain.read` issued one
 SCSI command per cluster regardless. After, it scales. That shape change appeared in
 *both* cache arms, which is what attributes it to the fix rather than to the cache or
 to session drift.
 
-**On exFAT the cache is worth ~10× on sequential reads** — the Samsung rows above are
+**On exFAT the cache is worth ~10× on sequential reads**: the Samsung rows above are
 the same device, same drive, same session, with a matched block-layer control
 (11.36 vs 11.58 MB/s), so this is the cleanest cache measurement in the set. Note the
 uncached arm does not scale with buffer size at all (0.89/0.84/0.96): libexfat's small
@@ -144,7 +144,7 @@ the point. The Samsung rows establish it on **one phone**: 2.0 → 6.4 ms on exF
 four arms. Before that it was two observations on two different devices, which is not
 the same claim. On FAT32 a random read must walk the FAT chain first, and those lookups are
 what the cache serves. On exFAT a contiguous file needs no chain walk, so a 4 KiB random
-read gains nothing and still pays for a 64 KiB line — 16× the transfer for one useful
+read gains nothing and still pays for a 64 KiB line: 16× the transfer for one useful
 sector.
 
 Do not read the exFAT row as an argument against the cache: the same configuration is
@@ -154,10 +154,10 @@ It is an argument for the large-read bypass and against widening the line furthe
 Opening 50 files in a dense directory: 66–1,277 ms each depending on device and name
 length. **Opens are cache-independent**: the Samsung measured 73.2/91.3 ms with the
 cache and 72.6/91.1 ms without it on exFAT, and 1,140.9/423.4 against 1,159.9/428.7 on
-FAT32 — the cost is per-open metadata work, not I/O the cache can serve.
+FAT32, the cost is per-open metadata work, not I/O the cache can serve.
 
 **Opens are where FAT32 is worst.** On the Samsung a dense-directory open costs
-**1,141 ms on FAT32 against 73 ms on exFAT** — 15.6× — and it is the one metric where
+**1,141 ms on FAT32 against 73 ms on exFAT** (15.6×), and it is the one metric where
 exFAT wins outright. The long-name inversion also shows up strongly here: on FAT32
 `dense_lfn` opens in 423 ms against `dense_short`'s 1,141 ms, so the 8.3-name directory
 is **2.7× more expensive** than the long-name one. On exFAT the order is conventional
@@ -173,7 +173,7 @@ the transport and crypto are held constant.
 
 | | exFAT (on) | exFAT (off) | FAT32 (on) | FAT32 (off) |
 |---|---|---|---|---|
-| Block, 4 MiB — *control* | 11.58 | 11.36 | 11.45 | 11.43 MB/s |
+| Block, 4 MiB: *control* | 11.58 | 11.36 | 11.45 | 11.43 MB/s |
 | Cold list, 10k short | 3,914 ms | 211,681 ms | 2,083 ms | 1,882 ms |
 | Cold list, 10k long | 6,314 ms | 296,683 ms | 1,523 ms | 1,559 ms |
 | Path resolve, depth 10 | 53.8 ms | 97.7 ms | 12.3 ms | 16.4 ms |
@@ -184,10 +184,10 @@ the transport and crypto are held constant.
 | SAF single stream | 4.06 | 0.62 | 5.50 | 5.42 MB/s |
 
 **Read this with one caveat.** The drive was physically swapped between the two
-filesystems, so this is *same phone, different USB stick* — both 62 GB PNY USB 3.2.1 FD,
+filesystems, so this is *same phone, different USB stick*: both 62 GB PNY USB 3.2.1 FD,
 but different units. The 4 MiB control agrees closely, and the 512 KiB figures agree to
 0.5% (13.18 vs 13.21), which is what licenses the comparison. But the small-transfer
-ends of the ladder do **not** agree — 1.70 against 2.78 MB/s at 4 KiB — so treat any
+ends of the ladder do **not** agree (1.70 against 2.78 MB/s at 4 KiB), so treat any
 conclusion that hinges on small-transfer behaviour as drive-confounded rather than
 filesystem-attributable.
 
@@ -197,7 +197,7 @@ What the table supports:
   listing without the cache (211,681 vs 1,882 ms), 1.9× with it. The entire case for
   the block cache is here.
 - **FAT32 is cache-indifferent.** Every FAT32 metric moves by less than noise between
-  arms — listings marginally worse, random marginally better, writes and SAF flat. On
+  arms: listings marginally worse, random marginally better, writes and SAF flat. On
   this device the cache neither helps nor hurts FAT32 measurably; V6 removed the
   fragmentation it used to compensate for.
 - **FAT32 writes ~3× faster** (1.14 vs 0.37 MB/s) and resolves deep paths ~4× faster
@@ -208,7 +208,7 @@ What the table supports:
 So neither filesystem wins outright: FAT32 is consistently mediocre and stable, exFAT is
 excellent at metadata and unusable without the cache.
 
-## 4. SAF — what clients actually get
+## 4. SAF: what clients get
 
 Measured *through* the DocumentsProvider. Everything in §2–§3 calls `UsbFile`
 directly, which no real client does.
@@ -216,7 +216,7 @@ directly, which no real client does.
 **Both arms use 128 KiB requests.** The kernel coalesces FUSE reads to 131,072 bytes
 regardless of what the client asks for (established directly by the FD relay spike), so
 an earlier version issuing 64 KiB in the direct arm produced ratios that mixed provider
-cost with kernel readahead — including one below 1.0, which is what exposed it.
+cost with kernel readahead, including one below 1.0, which is what exposed it.
 
 | Device | Filesystem | Single stream | Direct | Ratio | 2 streams |
 |---|---|---|---|---|---|
@@ -236,17 +236,17 @@ and both extend the low end.) The model:
 > **SAF single ≈ min(a per-device provider ceiling, the direct-path speed).**
 
 The ceiling only binds when the stack underneath is faster than it. On the Huawei the
-transport *is* the constraint, so SAF tracks it and the ratio collapses to 1.11× — the
+transport *is* the constraint, so SAF tracks it and the ratio collapses to 1.11×: the
 same provider behaviour over a much smaller denominator. A high ratio means a fast
 underlying path, not a worse provider.
 
 **The ceiling is not a fixed 6–8 MB/s.** The Samsung establishes this twice over. Its
 exFAT direct path runs at 9.71 MB/s, comfortably above 6–8, so a constant ceiling
-predicts ~6–8 through the provider — it delivers 4.06. The FUSE relay is CPU-bound and
+predicts ~6–8 through the provider: it delivers 4.06. The FUSE relay is CPU-bound and
 that phone's cores sat at 1,248 MHz, so the ceiling tracks device class.
 
 But the FAT32 arm on the *same phone* gets 5.50 MB/s through the provider against a
-6.16 MB/s direct path — a 1.12× ratio, nearly no loss. So on one device, one CPU, the
+6.16 MB/s direct path: a 1.12× ratio, nearly no loss. So on one device, one CPU, the
 provider costs 58% of the direct path on exFAT and 11% on FAT32. **The ceiling is
 per-device *and* per-filesystem**, and any single number for it is wrong. Use the
 absolute figures in the table; the ratio is only meaningful against its own direct arm.
@@ -255,7 +255,7 @@ absolute figures in the table; the ratio is only meaningful against its own dire
 is headroom. That is why replacing the single `ProxyFileDescriptorThread` with
 per-drive threads is **not** justified: one handler thread already carries two streams
 to within 75–92% of direct. Cross-drive concurrency (`saf par cross`) remains
-unmeasured — it needs two volumes on one device.
+unmeasured: it needs two volumes on one device.
 
 ## 5. Writes, and why no figure is quoted as an improvement
 
@@ -272,8 +272,8 @@ every cached line, after a full remount):
 | Samsung | exFAT | **0.37 MB/s** (0.18 with the cache off) |
 
 The Samsung, not the Huawei, is the slowest writer measured. A 16 MiB write takes it
-43 s with the cache and 88 s without. Nothing is wrong with it — the writes verify
-three ways — but it sets the floor for how long a write-heavy run takes.
+43 s with the cache and 88 s without. Nothing is wrong with it (the writes verify
+three ways), but it sets the floor for how long a write-heavy run takes.
 
 **Write throughput is not usable for comparison.** Six repetitions per arm showed a
 single arm spanning 3× on one device (0.78–2.33 MB/s with the cache off). SLC cache
@@ -283,17 +283,17 @@ a ratio between single noisy samples.
 
 ## 6. What to validate
 
-Correctness first — it is the part that means something.
+Correctness first: it is the part that means something.
 
 | Check | Expectation |
 |---|---|
-| `correct` — 11 cases | ALL PASSED, and case B's SHA-256 must be **`ac3e360a187bfe9f…` on every device and filesystem** |
-| `unaligned` — cases A, B | PASS; these are the ones that catch V1 and V2 |
+| `correct`: 11 cases | ALL PASSED, and case B's SHA-256 must be **`ac3e360a187bfe9f…` on every device and filesystem** |
+| `unaligned`: cases A, B | PASS; these are the ones that catch V1 and V2 |
 | `write` | ALL PASSED, three passes; `PARTIAL — 2 of 3` means the remount did not happen |
-| `fixtures` | **Currently reports "nothing to check" everywhere.** The only externally-grounded check, and it has never compared a host-computed hash — the drives carry `-` placeholders |
+| `fixtures` | **Currently reports "nothing to check" everywhere.** The only externally-grounded check, and it has never compared a host-computed hash; the drives carry `-` placeholders |
 | Block layer | Matched across arms, or the comparison is void |
 | Power state | `interactive=true` at *both* ends of the report |
-| Build stamp | `commit <sha>` with no `-dirty` — the Samsung runs carry `4120652-dirty`, so their absolute figures are indicative, not reproducible from a clean tree |
+| Build stamp | `commit <sha>` with no `-dirty`; the Samsung runs carry `4120652-dirty`, so their absolute figures are indicative, not reproducible from a clean tree |
 
 Case B's hash agreeing across devices is what makes the results evidence rather than
 each device merely agreeing with itself.
@@ -305,7 +305,7 @@ each device merely agreeing with itself.
 2. **Same device.** A third came from generalising a ratio measured on one phone. Same
    code and same drive does not make two devices equivalent.
 3. **Check the control.** If the block layer moved, stop.
-4. **Verify the build.** One A/B was invalidated by an un-rebuilt APK — the two files
+4. **Verify the build.** One A/B was invalidated by an un-rebuilt APK: the two files
    were byte-identical. Compare APK hashes.
 5. **Distrust a suite that passes when it should not be able to.** Every false pass
    came from the test's *shape*: aligned-only writes hid two corruption bugs, 4–8 KiB
@@ -317,7 +317,7 @@ each device merely agreeing with itself.
 
 Every figure here was taken from a benchmark report emitted by the harness, checked
 back against the raw run output before being written down. The raw outputs live in a
-session scratchpad and are **not** durable — this document and
+session scratchpad and are **not** durable: this document and
 `docs/IO_PERFORMANCE.md` are the record. When a run produces something worth keeping,
 copy the figure into one of them; do not rely on the logs still being there.
 
@@ -327,8 +327,8 @@ failure mode: the Samsung's write throughput went in as "~1.9 MB/s" after a veri
 until the raw output was re-read. A number that looks plausible is not checked; only
 tracing it to a report line checks it.
 
-Two further figures were dropped while compiling this — a Huawei exFAT cold-listing time and a
-Huawei exFAT block-layer rate — because neither could be traced to any surviving run
+Two further figures were dropped while compiling this (a Huawei exFAT cold-listing time and a
+Huawei exFAT block-layer rate) because neither could be traced to any surviving run
 output. If a number cannot be found in a report, treat it as unverified and re-measure
 rather than reasoning from it.
 
@@ -341,7 +341,7 @@ rather than reasoning from it.
   describes a drive that would provide them.
 - **The Huawei has no exFAT block-layer figure**, so its exFAT results have no control
   to check against. Only FAT32 was measured there (7.90/8.11 MB/s).
-- The uncached exFAT arm on the Huawei is incomplete — it reported `no files in large/`
+- The uncached exFAT arm on the Huawei is incomplete: it reported `no files in large/`
   after 325 s of cold listing, and `ExFatFile.listFiles` could not then distinguish a
   failure from an empty directory. That specific ambiguity is fixed; the figures were
   never re-gathered.
