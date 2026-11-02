@@ -31,6 +31,63 @@ class BackupJobsTest {
     }
 
     @Test
+    fun `next run is the delay, the snooze or the interval`() {
+        val h = BackupJob.HOUR
+        val j = job().copy(createdAt = 0, lastSuccessAt = 10 * h)
+        assertEquals(34 * h, j.nextRunAt())
+        assertEquals(40 * h, j.copy(snoozedUntil = 40 * h).nextRunAt())
+        assertEquals(11 * h, j.copy(delayedStartAt = 11 * h).nextRunAt())
+        assertEquals(null, j.copy(schedule = Schedule(intervalHours = 0)).nextRunAt())
+    }
+
+    @Test
+    fun `times read as today, tomorrow or a date`() {
+        val zone = java.util.TimeZone.getTimeZone("UTC")
+        val at = { s: String -> java.time.Instant.parse(s).toEpochMilli() }
+        val now = at("2026-11-05T12:00:00Z") // a Thursday
+        assertEquals("Today at 10:00 PM", Format.whenAt(at("2026-11-05T22:00:00Z"), now, zone, java.util.Locale.US))
+        assertEquals("Tomorrow at 9:00 AM", Format.whenAt(at("2026-11-06T09:00:00Z"), now, zone, java.util.Locale.US))
+        assertEquals("Sat, Nov 7 at 9:00 AM", Format.whenAt(at("2026-11-07T09:00:00Z"), now, zone, java.util.Locale.US))
+    }
+
+    @Test
+    fun `a target must keep clear of other backups`() {
+        val a = "auth"
+        val other = listOf("Camera" to BackupTargets.folderKey(a, "d1:/Backups", "Camera"))
+        val key = { doc: String, sub: String -> BackupTargets.folderKey(a, doc, sub) }
+        // The same parent is fine: each backup has a folder of its own name in it.
+        assertEquals(null, BackupTargets.conflict(key("d1:/Backups", ""), key("d1:/Backups", "Music"), other))
+        assertEquals(BackupTargets.Conflict.SameAsJob("Camera"), BackupTargets.conflict(key("d1:/Backups", ""), key("d1:/Backups", "Camera"), other))
+        assertEquals(BackupTargets.Conflict.InsideJob("Camera"), BackupTargets.conflict(key("d1:/Backups/Camera", ""), key("d1:/Backups/Camera", "New"), other))
+        assertEquals(BackupTargets.Conflict.InsideJob("Camera"), BackupTargets.conflict(key("d1:/Backups/Camera/data", ""), key("d1:/Backups/Camera/data", "New"), other))
+        // A name that only starts the same is another folder, and another drive is another place.
+        assertEquals(null, BackupTargets.conflict(key("d1:/Backups", ""), key("d1:/Backups", "Camera2"), other))
+        assertEquals(null, BackupTargets.conflict(key("d2:/Backups", ""), key("d2:/Backups", "Camera"), other))
+        // The two spellings of a drive's top level are one folder.
+        assertEquals(key("d1:/", "x"), key("d1:", "x"))
+    }
+
+    @Test
+    fun `a sibling partition is matched by serial, never without one`() {
+        val key = app.fayaz.otgmaster.extension.ExtensionContract.DeviceKey(1, 2, "S1")
+        val info = mapOf("vendor_id" to "1", "product_id" to "2", "serial" to "S1")
+        assertTrue(BackupScheduler.onSameDevice("p2", info, "p1", key))
+        assertTrue("the same partition needs no serial", BackupScheduler.onSameDevice("p1", emptyMap(), "p1", key))
+        assertFalse(BackupScheduler.onSameDevice("p2", info + ("serial" to "S2"), "p1", key))
+        assertFalse(BackupScheduler.onSameDevice("p2", info - "serial", "p1", key.copy(serial = null)))
+    }
+
+    @Test
+    fun `a damaged backup is told apart from a read that failed`() {
+        assertTrue(BackupRunner.isDamage(app.fayaz.otgmaster.backup.restic.DamagedException("x")))
+        assertTrue(BackupRunner.isDamage(RuntimeException(app.fayaz.otgmaster.backup.restic.DamagedException("x"))))
+        assertFalse(BackupRunner.isDamage(java.io.IOException("USB transfer failed")))
+        assertTrue(CopyEngine.isDamage("a/b.txt: ${CopyEngine.DIFFERS}"))
+        assertTrue(CopyEngine.isDamage("a/b.txt: ${CopyEngine.MISSING}"))
+        assertFalse(CopyEngine.isDamage("a/b.txt: I/O error"))
+    }
+
+    @Test
     fun `jobs, history and snapshots survive a reload`() {
         val dir = Files.createTempDirectory("jobs").toFile()
         val a = JobStore(dir)
@@ -55,7 +112,8 @@ class BackupJobsTest {
         val h = BackupJob.HOUR
         val j = job().copy(createdAt = 0, lastSuccessAt = 0)
         assertFalse(j.isDue(23 * h)); assertTrue(j.isDue(24 * h))
-        assertFalse(j.isOverdue(71 * h)); assertTrue(j.isOverdue(72 * h))
+        assertFalse("a chosen delay is not due before its time", j.copy(delayedStartAt = 30 * h).isDue(25 * h))
+        assertFalse("a corrupted backup does not ask to run", j.copy(corruptedAt = 1).isDue(25 * h))
         assertFalse("manual jobs are never due", j.copy(schedule = Schedule(intervalHours = 0)).isDue(1000 * h))
         assertFalse("snoozed", j.copy(snoozedUntil = 30 * h).isDue(25 * h))
     }

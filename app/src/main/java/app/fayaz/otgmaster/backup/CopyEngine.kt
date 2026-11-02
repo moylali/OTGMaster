@@ -145,17 +145,30 @@ object CopyEngine {
         return manifest
     }
 
+    const val DIFFERS = "content differs from the manifest"
+    const val MISSING = "file is missing"
+
+    /** Whether a problem from [verify] means the copy is damaged, as opposed to a read that failed. */
+    fun isDamage(problem: String) = problem.endsWith(DIFFERS) || problem.endsWith(MISSING)
+
     /** Re-hashes every file of a copy against its manifest; returns the problems found. */
     fun verify(target: FileTree, copyDir: String, progress: Progress = Progress.None): List<String> {
-        val manifest = Manifest.fromJson(JSONObject(
-            String(target.openRead(Paths.join(copyDir, MANIFEST)).use { it.readBytes() }, Charsets.UTF_8)))
+        val manifest = try {
+            Manifest.fromJson(JSONObject(String(target.openRead(Paths.join(copyDir, MANIFEST)).use { it.readBytes() }, Charsets.UTF_8)))
+        } catch (e: java.io.FileNotFoundException) {
+            throw app.fayaz.otgmaster.backup.restic.DamagedException("the copy $copyDir has no manifest", e)
+        } catch (e: org.json.JSONException) {
+            throw app.fayaz.otgmaster.backup.restic.DamagedException("the manifest of $copyDir cannot be read", e)
+        }
         val problems = ArrayList<String>()
         for ((i, f) in manifest.files.withIndex()) {
             if (progress.isCancelled()) throw CancelledException()
             progress.update("verify", i.toLong(), 0, f.path)
             val actual = runCatching { sha256Of(target, Paths.join(copyDir, f.path)) }
-            if (actual.isFailure) problems += "${f.path}: ${actual.exceptionOrNull()?.message}"
-            else if (actual.getOrNull() != f.sha256) problems += "${f.path}: content differs from the manifest"
+            val failure = actual.exceptionOrNull()
+            if (failure is java.io.FileNotFoundException) problems += "${f.path}: $MISSING"
+            else if (failure != null) problems += "${f.path}: ${failure.message}"
+            else if (actual.getOrNull() != f.sha256) problems += "${f.path}: $DIFFERS"
         }
         return problems
     }

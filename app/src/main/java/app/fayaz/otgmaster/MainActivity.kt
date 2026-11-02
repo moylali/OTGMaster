@@ -577,6 +577,7 @@ class MainActivity : AppCompatActivity() {
             .mapNotNull { e -> e.substringBeforeLast('|', "").takeIf { it.isNotEmpty() }?.let { it to e.endsWith("|1") } }
             .toMap()
         loadManuallyUnmountedDevices(usbMgr)
+        app.fayaz.otgmaster.backup.BackupPrompts.handleIntent(this, intent)
 
         setContent {
             val themeMode = _themeMode.value
@@ -722,6 +723,7 @@ class MainActivity : AppCompatActivity() {
     override fun onNewIntent(intent: Intent) {
         super.onNewIntent(intent)
         setIntent(intent)
+        app.fayaz.otgmaster.backup.BackupPrompts.handleIntent(this, intent)
         if (intent.action == UsbManager.ACTION_USB_DEVICE_ATTACHED) {
             attachLaunchAt = android.os.SystemClock.elapsedRealtime()
             notificationAskedThisPlugIn = false
@@ -741,8 +743,14 @@ class MainActivity : AppCompatActivity() {
         super.onStop()
     }
 
+    override fun onPause() {
+        app.fayaz.otgmaster.backup.BackupPrompts.mainVisible = false
+        super.onPause()
+    }
+
     override fun onResume() {
         super.onResume()
+        app.fayaz.otgmaster.backup.BackupPrompts.mainVisible = true
         // On screen: a plug-in notice has done its job, whichever way the user got here.
         app.fayaz.otgmaster.usb.UsbPlugInReceiver.cancel(this)
         // Manage backups, on top of this screen, mounts and unmounts backups: show their cards.
@@ -2872,6 +2880,7 @@ fun OtgMasterApp(
     backupsTarget?.let { d ->
         app.fayaz.otgmaster.ui.BackupJobsDialog(d.id, onDismiss = { backupsTarget = null })
     }
+    app.fayaz.otgmaster.ui.BackupPromptHost()
     // The volume label (and, for a drive without a partition table, its capacity) is read
     // under the filesystem's lock, which a long write holds for minutes: read it off the main
     // thread, once per form, and open the form when it is in.
