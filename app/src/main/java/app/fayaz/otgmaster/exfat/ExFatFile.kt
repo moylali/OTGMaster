@@ -163,7 +163,7 @@ class ExFatFile(
             if (n == 0) {
                 throw IOException(
                     "exFAT write stalled at offset ${offset + written} " +
-                    "($written of $size bytes written) — volume full?"
+                    "($written of $size bytes written). Is the volume full?"
                 )
             }
             written += n

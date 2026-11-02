@@ -426,7 +426,7 @@ class Ext4FileSystem private constructor(
         const val MOUNTED_READ_ONLY = "it was mounted read-only"
         private const val NO_EXTENTS = "it is ext2/ext3 (no extents), which this app reads but cannot " +
             "yet write without creating files Linux would report as damaged."
-        const val NEEDS_RECOVERY = "its journal needs recovery — it was not unmounted cleanly. " +
+        const val NEEDS_RECOVERY = "its journal needs recovery because it was not unmounted cleanly. " +
             "Repair it from the drive's card, or check it on a computer (e2fsck)."
 
         /** @param readOnly the user chose to mount this partition read-only. */

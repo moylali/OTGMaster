@@ -4,45 +4,45 @@
     <!-- Top bar / global -->
     <string name="cd_settings">Settings</string>
     <string name="cd_expand">Expand</string>
-    <string name="scan_usb_devices">Scan USB Devices</string>
+    <string name="scan_usb_devices">Scan USB devices</string>
 
     <!-- Mounted devices section -->
-    <string name="mounted_devices">Mounted Devices</string>
-    <string name="open_files_app">Open Files App</string>
+    <string name="mounted_devices">Mounted devices</string>
+    <string name="open_files_app">Open Files app</string>
     <string name="unmount">Unmount</string>
     <string name="used_label">Used: %1$s</string>
     <string name="free_label">Free: %1$s</string>
-    <string name="mounted_drive_name">%1$s — Encrypted Drive (%2$s)</string>
-    <string name="mounted_drive_name_plain">%1$s — %2$s Drive (%3$s)</string>
+    <string name="mounted_drive_name">%1$s · Encrypted drive (%2$s)</string>
+    <string name="mounted_drive_name_plain">%1$s · %2$s drive (%3$s)</string>
 
     <!-- Encrypted drive mount section -->
-    <string name="mount_veracrypt_drive">Mount Encrypted Drive</string>
+    <string name="mount_veracrypt_drive">Mount encrypted drive</string>
     <string name="no_candidates_found">No encrypted volume this app can open was found on this device.</string>
     <string name="label_password">Password</string>
     <string name="label_bitlocker_password">Password or recovery key</string>
     <string name="label_apfs_password">APFS volume password</string>
-    <string name="label_volume_to_unlock">Volume to Unlock</string>
+    <string name="label_volume_to_unlock">Volume to unlock</string>
     <string name="label_veracrypt_password">Password</string>
     <string name="label_pim">PIM (leave blank for default)</string>
-    <string name="select_keyfiles">Select Keyfiles (%1$d)</string>
+    <string name="select_keyfiles">Select keyfiles (%1$d)</string>
     <string name="volume_picker_filtered_note">Only mountable partitions are listed.</string>
-    <string name="label_encryption_algorithm">Encryption Algorithm</string>
-    <string name="label_hash_algorithm">Hash Algorithm</string>
+    <string name="label_encryption_algorithm">Encryption algorithm</string>
+    <string name="label_hash_algorithm">Hash algorithm</string>
     <string name="algorithm_not_supported">%1$s (not yet supported)</string>
     <string name="cd_hide_password">Hide password</string>
     <string name="cd_show_password">Show password</string>
     <string name="cd_fill_from_password_manager">Fill from password manager</string>
     <string name="unlocking_in_progress">Unlocking… This may take a while</string>
-    <string name="unlock_and_mount">Unlock &amp; Mount</string>
-    <string name="label_usb_drive">USB Drive</string>
+    <string name="unlock_and_mount">Unlock &amp; mount</string>
+    <string name="label_usb_drive">USB drive</string>
     <string name="unlocking_drive_label">Unlocking: %1$s</string>
     <string name="no_devices_available">No USB drives available to mount.</string>
-    <string name="qemu_test_disk_label">QEMU Test Disk</string>
+    <string name="qemu_test_disk_label">QEMU test disk</string>
 
     <!-- Logs section -->
     <string name="logs">Logs</string>
-    <string name="cd_clear_logs">Clear Logs</string>
-    <string name="cd_copy_logs">Copy Logs</string>
+    <string name="cd_clear_logs">Clear logs</string>
+    <string name="cd_copy_logs">Copy logs</string>
 
     <!-- Settings dialog -->
     <string name="settings_title">Settings</string>
@@ -55,8 +55,8 @@
     <string name="feedback_title">Report an issue</string>
     <string name="feedback_summary">Report a problem or suggest an improvement</string>
     <string name="feedback_url">https://otgmaster-feedback.moylali.workers.dev/</string>
-    <string name="feedback_intro">The form opens in your browser. Nothing is sent from the app — you review the details below, and submit on the form yourself.</string>
-    <string name="feedback_review_heading">This is exactly what will be filled in</string>
+    <string name="feedback_intro">The form opens in your browser. The app sends nothing: you review the details below and submit the form yourself.</string>
+    <string name="feedback_review_heading">The form will be filled in with this</string>
     <string name="feedback_choose_heading">Choose what to include</string>
     <string name="feedback_back">Back</string>
     <string name="feedback_include_device">Device model and Android version</string>
@@ -74,11 +74,11 @@
     <string name="donate_url">https://ko-fi.com/moylali</string>
     <string name="donate_thank_you">Thank you</string>
     <string name="version_label_short">Version</string>
-    <string name="app_version_label">App Version</string>
+    <string name="app_version_label">App version</string>
     <string name="cd_copy_version">Copy version</string>
     <string name="cd_close_settings">Close settings</string>
     <string name="auto_mount_title">Auto mount</string>
-    <string name="auto_mount_description">When a known device is connected, OTG Master will prompt for your device lock and then mount all recognized encrypted drives automatically. Credentials are stored in AES-256 encrypted form in Android Keystore — they cannot be extracted without your device lock.</string>
+    <string name="auto_mount_description">When a known device is connected, OTG Master asks for your device lock, then mounts all recognized encrypted drives. Credentials are encrypted with AES-256 in Android Keystore and cannot be extracted without your device lock.</string>
     <string name="cd_clear_keyfiles">Clear keyfiles</string>
     <string name="auto_mount_prompt_title">Authenticate to mount</string>
     <string name="auto_mount_prompt_subtitle_single">Auto mount %1$s</string>
@@ -90,7 +90,7 @@
     <string name="share_saved_multiple">Saved %1$d files</string>
     <string name="share_save_failed">Save failed: %1$s</string>
     <string name="clear_cached_credentials">Clear credentials</string>
-    <string name="log_cached_credentials_invalid">Cached credentials invalid for %1$s — cleared. Enter credentials again to re-enable Auto mount.</string>
+    <string name="log_cached_credentials_invalid">The saved credentials for %1$s no longer work, so they were cleared. Enter them again to turn Auto mount back on.</string>
     <string name="auto_mount_exclude_device">Opt out of Auto mount for this device</string>
     <string name="mount_read_only">Mount this partition read-only</string>
     <string name="read_only_mode_title">Read-only mode</string>
@@ -101,7 +101,7 @@
     <!-- Log/status messages -->
     <string name="log_usb_permission_granted">USB permission granted for %1$s.</string>
     <string name="log_usb_permission_denied">USB permission denied.</string>
-    <string name="log_usb_permission_denied_for">USB permission not granted for %1$s (answered after %2$d s: Deny, or the prompt was dismissed). Tap Scan USB Devices to be asked again.</string>
+    <string name="log_usb_permission_denied_for">USB permission not granted for %1$s (answered after %2$d s: Deny, or the prompt was dismissed). Tap Scan USB devices to be asked again.</string>
     <string name="log_usb_permission_unanswered">%1$s was unplugged %2$d s after USB permission was asked for, before it was answered.</string>
     <string name="log_usb_permission_after">(after %1$d s)</string>
     <string name="log_usb_device_attached">USB device attached.</string>
@@ -187,14 +187,14 @@
     <string name="log_no_block_device_opened">No block device opened.</string>
     <string name="log_unlock_attempt">Unlock attempt on %1$s: pim=%2$s, cipher=%3$s, hash=%4$s</string>
     <string name="log_cannot_mount_unsupported">Cannot mount: %1$s is not yet supported.</string>
-    <string name="log_unlock_successful">Unlock successful! Detecting filesystem…</string>
+    <string name="log_unlock_successful">Unlocked. Detecting filesystem…</string>
     <string name="log_detected_filesystem">Detected filesystem: %1$s</string>
     <string name="log_cannot_mount_reason">Cannot mount: %1$s</string>
-    <string name="log_filesystem_unrecognized">Filesystem unrecognized — attempting mount anyway</string>
-    <string name="log_unrecognized_fs_not_mounted">Unrecognized filesystem could not be mounted. Supported: FAT32, exFAT.</string>
+    <string name="log_filesystem_unrecognized">Filesystem not recognized. Trying to mount it anyway.</string>
+    <string name="log_unrecognized_fs_not_mounted">Could not mount this filesystem. Supported: FAT32, exFAT, NTFS, ext4 and APFS.</string>
     <string name="log_failed_to_mount">Failed to mount %1$s: %2$s</string>
-    <string name="log_mounted_successfully">Mounted %1$s successfully. Root capacity: %2$d MB</string>
-    <string name="log_volume_not_encrypted">%1$s is not encrypted — it holds a plain %2$s filesystem. Nothing to unlock.</string>
+    <string name="log_mounted_successfully">Mounted %1$s. Root capacity: %2$d MB</string>
+    <string name="log_volume_not_encrypted">%1$s is not encrypted: it holds a plain %2$s filesystem, so there is nothing to unlock.</string>
     <string name="log_failed_to_unlock">Failed to unlock %1$s: %2$s</string>
     <string name="log_drive_unmounted">Drive \'%1$s\' unmounted securely.</string>
     <string name="log_could_not_open_files_app">Could not open files app directly: %1$s</string>
@@ -356,7 +356,7 @@
     <string name="backup_restore_latest">Restore newest</string>
     <string name="backup_show_password">Password</string>
     <string name="backup_delete_job">Delete</string>
-    <string name="backup_delete_job_title">Delete “%1$s”?</string>
+    <string name="backup_delete_job_title">Delete \"%1$s\"?</string>
     <string name="backup_delete_job_text">The schedule and its history are removed from this phone. The backups on the drive stay, and restic or this app can still open them with the password.</string>
     <string name="backup_password_desktop">On a computer: restic -r &lt;drive&gt;/&lt;folder&gt; snapshots, with this password.</string>
     <string name="backup_password_missing">Not on this phone.</string>
@@ -365,7 +365,7 @@
     <string name="recovery_action">Recover deleted files</string>
     <string name="recovery_not_supported">Recovery works on FAT32 and exFAT</string>
     <string name="recovery_title">Deleted files on %1$s</string>
-    <string name="recovery_scanning">Looking for deleted files… nothing is written to the drive.</string>
+    <string name="recovery_scanning">Looking for deleted files. Nothing is written to the drive.</string>
     <string name="recovery_none">No deleted files found.</string>
     <string name="recovery_help">Only deleted files are listed. They are copied to a folder you choose on the phone or another drive, never to this one, so nothing still recoverable is overwritten.</string>
     <string name="recovery_partly">partly overwritten</string>
@@ -385,5 +385,5 @@
     <string name="recovery_select_none">Select none</string>
     <string name="recovery_same_drive">Choose a folder on the phone or on another drive: writing to this one could overwrite the files being recovered.</string>
     <string name="recovery_progress">Recovering %1$d of %2$d…</string>
-    <string name="recovery_done">Recovered %1$d of %2$d into “%3$s”.</string>
+    <string name="recovery_done">Recovered %1$d of %2$d into \"%3$s\".</string>
 </resources>

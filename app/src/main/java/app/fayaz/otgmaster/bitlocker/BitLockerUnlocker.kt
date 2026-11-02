@@ -83,7 +83,7 @@ class BitLockerUnlocker {
             }
             try {
                 if (!metadataAuthentic(header, vmkKey)) {
-                    throw IOException("BitLocker metadata failed authentication — it does not match its key")
+                    throw IOException("BitLocker metadata failed authentication: it does not match its key")
                 }
                 val raw = unseal(vmkKey, header.fvek) ?: continue
                 return fvekKeyBytes(header, raw).also { raw.fill(0) }

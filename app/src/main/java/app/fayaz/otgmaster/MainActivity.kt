@@ -2315,7 +2315,7 @@ class MainActivity : AppCompatActivity() {
 
         val devices = _deviceCandidates.value
         if (devices.isEmpty()) {
-            val msg = "Mount request: no probed candidates — is a drive attached and permitted?"
+            val msg = "Mount request: no probed candidates. Is a drive attached and permitted?"
             appendLog(msg)
             android.util.Log.w("OTGMaster", msg)
             return
