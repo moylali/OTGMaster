@@ -55,7 +55,7 @@
     .store-note strong { color: var(--fg); }
     .store img.qr { width: 130px; height: 130px; display: block; margin: 8px auto 0; background: #fff; padding: 6px; border-radius: 8px; }
     ol li, ul li { margin: 0.35rem 0; }
-    ol ul { margin-top: 0.35rem; }
+    ol ul, ul ul { margin-top: 0.35rem; }
     .kofi { vertical-align: middle; height: 32px; }
     footer { max-width: 760px; margin: 0 auto; padding: 24px 16px 48px; color: var(--muted); font-size: 0.875rem; border-top: 1px solid var(--border); }
     footer a { color: var(--muted); text-decoration: underline; }
@@ -77,7 +77,21 @@
       <a href="https://github.com/moylali/OTGMaster/blob/main/LICENSE"><img src="https://img.shields.io/badge/license-GPL--3.0--or--later-blue.svg" alt="License: GPL v3 or later"></a>
     </div>
 
-    <p class="lede">Android app to open encrypted USB mass-storage devices for read/write without root. Supports <strong>VeraCrypt</strong>, <strong>LUKS1</strong>, <strong>LUKS2</strong> and <strong>BitLocker</strong> encrypted volumes with <strong>FAT32</strong>, <strong>exFAT</strong>, <strong>NTFS</strong> and <strong>ext4</strong> filesystems, and reads Mac <strong>APFS</strong> drives, plain or encrypted. It can also <strong>format</strong> a FAT32 or exFAT partition, or <strong>encrypt</strong> one into a new VeraCrypt volume. Format and Encrypt also write <strong>ext4</strong> and <strong>NTFS</strong>, and Encrypt can create <strong>LUKS2</strong> volumes (0.5.0 onwards). The app also makes <strong>incremental backups using restic</strong> (0.5.0 onwards), <strong>recovers deleted files</strong> from FAT32 and exFAT drives (0.5.0 onwards), and <strong>browses another phone's files over OTG</strong> (0.5.0 onwards).</p>
+    <p class="lede">Android app to open encrypted USB mass-storage devices for read/write without root.</p>
+    <ul>
+      <li>Read and write encrypted drives
+        <ul>
+          <li>Encryption types: VeraCrypt, LUKS1, LUKS2, BitLocker</li>
+          <li>File systems: FAT32, exFAT, NTFS, ext4</li>
+        </ul>
+      </li>
+      <li>Read Mac APFS drives, plain or encrypted</li>
+      <li>Format a partition as FAT32, exFAT, ext4 (0.5.0 onwards) or NTFS (0.5.0 onwards)</li>
+      <li>Encrypt a partition as VeraCrypt or LUKS2 (0.5.0 onwards), with FAT32, exFAT, ext4 (0.5.0 onwards) or NTFS (0.5.0 onwards) inside</li>
+      <li>Make incremental backups using restic (0.5.0 onwards)</li>
+      <li>Recover deleted files from FAT32 and exFAT drives (0.5.0 onwards)</li>
+      <li>Browse another phone's files over OTG (0.5.0 onwards)</li>
+    </ul>
 
     <div class="stores">
       <div class="store">
