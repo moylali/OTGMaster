@@ -174,6 +174,10 @@ object VolumeInfo {
         else -> info[PATH] ?: "Folder"
     }
 
+    /** What the person calls the drive: the device, without its partition or filesystem. */
+    fun driveName(info: Map<String, String>): String =
+        if (info[KIND] == KIND_OTG) info[OTG_DEVICE] ?: "USB drive" else summary(info)
+
     fun containerName(c: String): String = when (c) {
         "VERACRYPT" -> "VeraCrypt"
         "LUKS1" -> "LUKS1"

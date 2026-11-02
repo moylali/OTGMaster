@@ -381,7 +381,7 @@
     <string name="backups_browse_wrong">That password does not open this backup.</string>
     <string name="backups_none">No backup schedules yet.</string>
     <string name="backups_history_none">No backup has run yet.</string>
-    <string name="backups_history_stats">%1$d files (%2$d new), %3$s; %4$s added</string>
+    <string name="backups_history_stats">%1$s (%2$d new), %3$s; %4$s added</string>
     <string name="backups_history_snapshot">Snapshot %1$s</string>
     <string name="backups_no_snapshot">%1$s has no snapshot yet.</string>
     <string name="backups_mount">Mount</string>

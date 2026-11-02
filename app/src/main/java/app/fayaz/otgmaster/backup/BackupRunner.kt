@@ -154,7 +154,7 @@ class BackupRunner(private val context: Context) {
                 val stats = RunStats(files = w.filesDone, dirs = w.dirsDone, totalBytes = scan.totalBytes, filesNew = w.filesNew,
                     filesUnchanged = w.filesUnchanged, bytesRead = w.bytesRead, bytesAdded = w.bytesAdded,
                     errors = w.errors.size.toLong(), durationMs = System.currentTimeMillis() - t0)
-                var message = "${stats.files} files, ${Format.bytes(stats.bytesAdded)} added"
+                var message = "${Format.files(stats.files)}, ${Format.bytes(stats.bytesAdded)} added"
                 val policy = job.retention.toPolicy()
                 if (!policy.keepsEverything) {
                     val m = ResticMaintenance(repo, hostname, USERNAME)
@@ -184,7 +184,7 @@ class BackupRunner(private val context: Context) {
                     errors = manifest.errors.size.toLong(), durationMs = manifest.durationMs)
                 RunRecord(jobId = job.id, kind = "copy", reason = reason, startedAt = started,
                     finishedAt = System.currentTimeMillis(), status = if (manifest.errors.isEmpty()) RunStatus.SUCCESS else RunStatus.WARNING,
-                    message = "Copied ${manifest.files.size} files (${Format.bytes(manifest.totalBytes)}) to $folder",
+                    message = "Copied ${Format.files(manifest.files.size.toLong())} (${Format.bytes(manifest.totalBytes)}) to $folder",
                     copyFolder = folder, stats = stats, sourceInfo = srcInfo, destinationInfo = dstInfo, errors = manifest.errors)
             }
             store.addRun(record)
@@ -269,7 +269,7 @@ class BackupRunner(private val context: Context) {
                 val node = r.find(snap, inSnapshot) ?: throw IllegalStateException("$subPath is not in that snapshot")
                 if (control.isCancelled()) throw CancelledException()
                 r.restore(node, tree, targetPath.ifEmpty { node.name })
-                RunOutcome.Success(record(RunStatus.SUCCESS, "Restored ${r.filesRestored} files (${Format.bytes(r.bytesRestored)})"))
+                RunOutcome.Success(record(RunStatus.SUCCESS, "Restored ${Format.files(r.filesRestored)} (${Format.bytes(r.bytesRestored)})"))
             } finally {
                 clients.forEach { runCatching { it.close() } }
             }
@@ -353,8 +353,8 @@ class BackupRunner(private val context: Context) {
             val rec = RunRecord(jobId = jobId, kind = "check", reason = "manual", startedAt = started,
                 finishedAt = System.currentTimeMillis(), status = status, message = message, errors = problems.take(CopyEngine.MAX_ERRORS))
             store.addRun(rec)
-            app.fayaz.otgmaster.OtgMasterState.log("Check \"${job.name}\": $message")
-            problems.take(5).forEach { app.fayaz.otgmaster.OtgMasterState.log("Check \"${job.name}\": $it") }
+            app.fayaz.otgmaster.OtgMasterState.log("Verify \"${job.name}\": $message")
+            problems.take(5).forEach { app.fayaz.otgmaster.OtgMasterState.log("Verify \"${job.name}\": $it") }
             if (status == RunStatus.SUCCESS) RunOutcome.Success(rec) else RunOutcome.Failed(message, status)
         } catch (e: CancelledException) {
             store.addRun(RunRecord(jobId = jobId, kind = "check", reason = "manual", startedAt = started,
@@ -367,7 +367,7 @@ class BackupRunner(private val context: Context) {
             RunOutcome.Failed(if (corrupted) e.message ?: "the backup is damaged" else "${e.javaClass.simpleName}: ${e.message}", status).also {
                 store.addRun(RunRecord(jobId = jobId, kind = "check", reason = "manual", startedAt = started,
                     finishedAt = System.currentTimeMillis(), status = status, message = it.message))
-                app.fayaz.otgmaster.OtgMasterState.log("Check \"${job.name}\": failed: ${it.message}")
+                app.fayaz.otgmaster.OtgMasterState.log("Verify \"${job.name}\": failed: ${it.message}")
             }
         }
     }
@@ -499,6 +499,8 @@ class BackupRunner(private val context: Context) {
 }
 
 object Format {
+    fun files(n: Long): String = if (n == 1L) "1 file" else "$n files"
+
     fun bytes(b: Long): String {
         if (b < 1024) return "$b B"
         val units = listOf("KB", "MB", "GB", "TB")
@@ -515,6 +517,7 @@ object Format {
             d < 60_000 -> "just now"
             d < 3_600_000 -> "${d / 60_000} min ago"
             d < 86_400_000 -> "${d / 3_600_000} h ago"
+            d < 2 * 86_400_000 -> "1 day ago"
             else -> "${d / 86_400_000} days ago"
         }
     }
