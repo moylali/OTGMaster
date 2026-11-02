@@ -3,7 +3,7 @@
 [![CI](https://github.com/moylali/OTGMaster/actions/workflows/ci.yml/badge.svg)](https://github.com/moylali/OTGMaster/actions/workflows/ci.yml)
 [![License: GPL v3 or later](https://img.shields.io/badge/license-GPL--3.0--or--later-blue.svg)](LICENSE)
 
-Android app to open encrypted USB mass-storage devices for read/write without root. Supports **VeraCrypt**, **LUKS1**, **LUKS2** and **BitLocker** encrypted volumes with **FAT32**, **exFAT**, **NTFS** and **ext4** filesystems, and reads Mac **APFS** drives, plain or encrypted. It can also **format** a FAT32 or exFAT partition, or **encrypt** one into a new VeraCrypt volume; *from 0.5.0* Format and Encrypt also write **ext4** and **NTFS**, and Encrypt can create **LUKS2**.
+Android app to open encrypted USB mass-storage devices for read/write without root. Supports **VeraCrypt**, **LUKS1**, **LUKS2** and **BitLocker** encrypted volumes with **FAT32**, **exFAT**, **NTFS** and **ext4** filesystems, and reads Mac **APFS** drives, plain or encrypted. It can also **format** a FAT32 or exFAT partition, or **encrypt** one into a new VeraCrypt volume. Format and Encrypt also write **ext4** and **NTFS**, and Encrypt can create **LUKS2** volumes (0.5.0 onwards). The app also makes **incremental backups using restic** (0.5.0 onwards) and **recovers deleted files** from FAT32 and exFAT drives (0.5.0 onwards).
 
 <p align="center">
   <a href="https://f-droid.org/packages/app.fayaz.otgmaster/">
@@ -98,8 +98,8 @@ The full device end-to-end suite (VeraCrypt/LUKS/BitLocker unlock + mount agains
 volumes, run on a QEMU Android emulator) is documented in `scripts/run_e2e_tests.sh` and is not part
 of CI, since it needs real USB-device emulation that isn't available on hosted runners. It covers
 every filesystem in every container the app supports (`scripts/make_e2e_matrix.py`) plus the
-older single-feature cases: 43 in all. `scripts/run_e2e_parallel.sh` runs them across three
-emulators (about 30 minutes instead of 85) and merges one report; fixtures are built without root
+older single-feature cases: 62 in all. `scripts/run_e2e_parallel.sh` runs them across three
+emulators (about 40 minutes) and merges one report; fixtures are built without root
 (see `docs/TEST_DATA.md` §6a).
 
 **Generating test data** (including how to add a fixture for a new cipher, hash,
