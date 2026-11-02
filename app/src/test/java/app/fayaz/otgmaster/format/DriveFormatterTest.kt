@@ -224,13 +224,13 @@ class DriveFormatterTest {
         assertTrue("the refused format changed the volume", bytes.contentEquals(f.readBytes()))
     }
 
-    @Test fun onlyExFatAndFat32CanBeReformatted() {
+    @Test fun onlyKnownFilesystemsCanBeReformatted() {
         val f = image(64L shl 20)
         try {
             ImageDevice(f).use { DriveFormatter.readExisting(it, "") }
             throw AssertionError("an unformatted image was accepted")
         } catch (e: IllegalArgumentException) {
-            assertTrue(e.message!!, e.message!!.contains("exFAT and FAT32"))
+            assertTrue(e.message!!, e.message!!.contains("exFAT, FAT32, ext4 and NTFS"))
         }
     }
 
