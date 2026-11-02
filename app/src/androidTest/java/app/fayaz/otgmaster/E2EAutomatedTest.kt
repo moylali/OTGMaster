@@ -1722,25 +1722,31 @@ class E2EAutomatedTest {
 
     // ── Due with the drive already mounted ──────────────────────────────────────────────
 
-    /** Opens the shade and taps [label] on the notification titled [title]. */
+    /**
+     * The notification titled [title]: [label] is one of its actions, or the title for its body. The
+     * body is tapped in the real shade. An action is fired directly, because grouped with the app's
+     * mounted-drive notification this one stays collapsed and its arrow did not open it reliably.
+     */
     private fun bkNotificationTap(title: String, label: String) {
-        device.openNotification()
-        val t = device.wait(Until.findObject(By.text(title)), timeout)
-        if (t == null) captureScreen("shade_no_notification")
-        assertNotNull("no notification titled $title in the shade", t)
-        if (label == title) { t!!.click(); return }
-        var action = device.wait(Until.findObject(By.text(java.util.regex.Pattern.compile("(?i)${java.util.regex.Pattern.quote(label)}"))), 2000L)
-        if (action == null) {
-            // Collapsed, as it is beside another notification of the app: its own arrow opens it.
-            val y = t!!.visibleCenter.y
-            val arrow = device.findObjects(By.desc(java.util.regex.Pattern.compile("(?i)expand.*"))).filter { y in it.visibleBounds.top - 80..it.visibleBounds.bottom + 80 }.firstOrNull()
-            if (arrow != null) arrow.click() else device.drag(t.visibleCenter.x, y, t.visibleCenter.x, y + 400, 20)
-            action = device.wait(Until.findObject(By.text(java.util.regex.Pattern.compile("(?i)${java.util.regex.Pattern.quote(label)}"))), 5000L)
+        if (label == title) {
+            // Settled first: a heads-up can show the title while the shade is still moving, and a tap
+            // then falls through to whatever is behind it (seen: a debug button on the main screen).
+            bkShell("cmd statusbar expand-notifications")
+            android.os.SystemClock.sleep(2500)
+            val t = device.wait(Until.findObject(By.text(title).pkg("com.android.systemui")), 20000L)
+            if (t == null) captureScreen("shade_no_notification")
+            assertNotNull("no notification titled $title in the shade", t)
+            t!!.click()
+            android.os.SystemClock.sleep(1500)
+            return
         }
-        if (action == null) captureScreen("shade_no_$label")
-        assertNotNull("no $label on the notification", action)
-        action!!.click()
-        android.os.SystemClock.sleep(800)
+        val notification = bkContext.getSystemService(android.app.NotificationManager::class.java)!!.activeNotifications
+            .firstOrNull { it.notification.extras.getCharSequence(android.app.Notification.EXTRA_TITLE)?.toString() == title }?.notification
+        assertNotNull("no notification titled $title: ${bkTitles()}", notification)
+        val action = notification!!.actions?.firstOrNull { it.title.toString().equals(label, ignoreCase = true) }
+        assertNotNull("no $label on the notification: ${notification.actions?.map { it.title }}", action)
+        action!!.actionIntent.send()
+        android.os.SystemClock.sleep(1500)
     }
 
     private fun bkFlowDueMounted(drive: MountedDrive) {
@@ -1788,10 +1794,13 @@ class E2EAutomatedTest {
         assertNotNull("no delay set", bkStore.job(job.id)!!.delayedStartAt)
         assertFalse("the notification stayed", bkTitles().contains(title))
 
-        // A tap on its body opens the dialog.
+        // Its body opens the dialog. Fired rather than tapped: beside the mounted-drive notification
+        // it sits in a group, and a tap on the group's header opens the app's launcher instead.
+        // The reminder and progress flows tap the real thing.
         repost()
-        bkNotificationTap(title, title)
-        bkAssertDesc("backup_due_title", "the tap opened no dialog", 20000L)
+        bkContext.getSystemService(android.app.NotificationManager::class.java)!!.activeNotifications
+            .first { it.id == BackupNotifications.dueId(job.id) }.notification.contentIntent.send()
+        bkAssertDesc("backup_due_title", "its body opened no dialog", 20000L)
         assertTrue(clickByDesc("backup_due_not_now"))
         bkAssertGone("backup_due_title", "Not now left the dialog up")
 
@@ -2113,7 +2122,13 @@ class E2EAutomatedTest {
         val row = bkScrollTo(By.desc("backup_status_$name"))
         if (row == null) captureScreen("no_status_$name")
         assertNotNull("no status on the row of $name", row)
-        val text = device.wait(Until.findObject(By.text(expected)), 15_000L)
+        // The tree can lag the screen when a row's text changes in place, so read it afresh.
+        var text: androidx.test.uiautomator.UiObject2? = null
+        for (attempt in 1..15) {
+            InstrumentationRegistry.getInstrumentation().uiAutomation.clearCache()
+            text = device.wait(Until.findObject(By.text(expected)), 1000L)
+            if (text != null) break
+        }
         if (text == null) captureScreen("status_$name")
         assertNotNull("the row of $name does not say: $expected", text)
     }
