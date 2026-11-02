@@ -104,10 +104,20 @@ class ResticRepository private constructor(val backend: ResticBackend, val key: 
     /** A blob's plaintext, decompressed, after checking it is the blob [id] names. */
     fun blob(id: String): ByteArray {
         loadIndex()
-        val ref = index[id] ?: throw IOException("blob $id is not in the index")
-        val sealed = backend.readRange("data/${ref.pack.substring(0, 2)}/${ref.pack}", ref.offset, ref.length)
-        val plain = key.decrypt(sealed).let { p -> ref.uncompressedLength?.let { zstd(p, 0, p.size, it) } ?: p }
-        if (sha256Hex(plain) != id) throw IOException("blob $id in pack ${ref.pack} does not hash to its id: damaged")
+        val ref = index[id] ?: throw DamagedException("blob $id is not in the index")
+        val path = "data/${ref.pack.substring(0, 2)}/${ref.pack}"
+        val sealed = try {
+            backend.readRange(path, ref.offset, ref.length)
+        } catch (e: java.io.FileNotFoundException) {
+            throw DamagedException("pack ${ref.pack} is missing", e)
+        }
+        val opened = try {
+            key.decrypt(sealed)
+        } catch (e: ResticKey.AuthenticationException) {
+            throw DamagedException("blob $id in pack ${ref.pack} fails its authentication check", e)
+        }
+        val plain = ref.uncompressedLength?.let { zstd(opened, 0, opened.size, it) } ?: opened
+        if (sha256Hex(plain) != id) throw DamagedException("blob $id in pack ${ref.pack} does not hash to its id")
         return plain
     }
 
@@ -118,7 +128,7 @@ class ResticRepository private constructor(val backend: ResticBackend, val key: 
      */
     fun blobSize(id: String): Int {
         loadIndex()
-        val ref = index[id] ?: throw IOException("blob $id is not in the index")
+        val ref = index[id] ?: throw DamagedException("blob $id is not in the index")
         return ref.uncompressedLength ?: (ref.length - 32)
     }
 
@@ -157,3 +167,11 @@ class ResticRepository private constructor(val backend: ResticBackend, val key: 
         private fun JSONArray?.strings(): List<String> = if (this == null) emptyList() else (0 until length()).map { getString(it) }
     }
 }
+
+/**
+ * The repository's own contents are wrong: bytes that were read fine fail their check, or
+ * something it names is not there. A USB read error is deliberately not this: a loose cable
+ * says nothing about what is on the drive, and calling that "Corrupted" would have the user
+ * set aside a good backup.
+ */
+class DamagedException(message: String, cause: Throwable? = null) : IOException(message, cause)

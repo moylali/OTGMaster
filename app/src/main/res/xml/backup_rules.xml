@@ -1,0 +1,7 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- Android 11 and older. These two are encrypted with keys that stay in this phone's keystore,
+     so a copy on another phone can never be read. -->
+<full-backup-content>
+    <exclude domain="sharedpref" path="otg_backup_secrets.xml" />
+    <exclude domain="sharedpref" path="otg_cred_store.xml" />
+</full-backup-content>

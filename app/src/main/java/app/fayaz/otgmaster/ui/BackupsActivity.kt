@@ -17,6 +17,7 @@ import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.safeDrawingPadding
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
@@ -26,9 +27,11 @@ import androidx.compose.material.icons.automirrored.filled.ArrowBack
 import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Button
 import androidx.compose.material3.Card
+import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.FilterChip
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
+import androidx.compose.material3.LinearProgressIndicator
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.Surface
@@ -61,6 +64,8 @@ import app.fayaz.otgmaster.applySystemBarAppearance
 import app.fayaz.otgmaster.backup.BackupExecutor
 import app.fayaz.otgmaster.backup.BackupJob
 import app.fayaz.otgmaster.backup.BackupMounts
+import app.fayaz.otgmaster.backup.BackupPrompts
+import app.fayaz.otgmaster.backup.BackupRunner
 import app.fayaz.otgmaster.backup.BackupSecrets
 import app.fayaz.otgmaster.backup.Format
 import app.fayaz.otgmaster.backup.JobStore
@@ -78,13 +83,13 @@ import kotlinx.coroutines.withContext
  * drives it uses, in two tabs.
  *
  * - **Schedules**: Create schedule, while a drive is mounted; each job's source and target, type and schedule (changeable here), when
- *   it last ran and how; Back up now, Check, Restore newest, Mount (an incremental backup
- *   as a read-only drive, see [BackupMounts]), its password, Delete.
+ *   it last ran and how, where it stands now; Back up now, Verify backup, Restore newest,
+ *   its password, Remove schedule. A manual backup has no schedule, so it is under History.
  * - **History**: every run of every job, newest first — what ran, when, for how long, how
  *   many files and bytes, the snapshot it made, and the message of a failure.
  * - **Mount backups**: Browse for a backup in any folder, and the incremental jobs of this phone.
  */
-class BackupsActivity : ComponentActivity() {
+class BackupsActivity : androidx.fragment.app.FragmentActivity() {
 
     companion object {
         /** Which tab to open on: [TAB_SCHEDULES], [TAB_HISTORY] or [TAB_MOUNT]. */
@@ -129,6 +134,8 @@ class BackupsActivity : ComponentActivity() {
                             else -> Schedules()
                         }
                     }
+                    // Hide goes back to the main screen, with the run carrying on behind it.
+                    BackupPromptHost(onHideProgress = { finish() })
                 }
             }
         }
@@ -140,22 +147,12 @@ class BackupsActivity : ComponentActivity() {
 private fun Schedules() {
     val context = LocalContext.current
     val store = remember { JobStore.get(context) }
-    val jobs by store.jobs.collectAsState()
+    val allJobs by store.jobs.collectAsState()
     store.revision.collectAsState().value // recompose on history changes
-    var showPassword by remember { mutableStateOf<String?>(null) }
-    var confirmDelete by remember { mutableStateOf<BackupJob?>(null) }
-    var restoreJob by remember { mutableStateOf<BackupJob?>(null) }
-    var message by remember { mutableStateOf<String?>(null) }
-
-    val pickRestoreTarget = rememberLauncherForActivityResult(ActivityResultContracts.OpenDocumentTree()) { uri ->
-        val job = restoreJob ?: return@rememberLauncherForActivityResult
-        restoreJob = null
-        if (uri == null) return@rememberLauncherForActivityResult
-        runCatching { context.contentResolver.takePersistableUriPermission(uri, Intent.FLAG_GRANT_READ_URI_PERMISSION or Intent.FLAG_GRANT_WRITE_URI_PERMISSION) }
-        val snap = store.snapshots(job.id).maxByOrNull { it.time }
-        if (snap == null) message = context.getString(R.string.backups_no_snapshot, job.name)
-        else BackupExecutor.start(context, job.id, BackupExecutor.Op.Restore(snap.id, "", uri, "${job.name} ${Format.dateTime(snap.time).replace(':', '.')}", safety = false))
-    }
+    // A manual backup has no schedule: it lives in History.
+    val jobs = allJobs.filterNot { it.schedule.isManual }
+    val actions = rememberJobActions()
+    val reachable = rememberReachableJobs(jobs)
 
     // The mounted partitions a schedule can use. A drive can come or go while this tab is up
     // and nothing here is told, so look again each second.
@@ -170,7 +167,7 @@ private fun Schedules() {
             clock = System.currentTimeMillis() / 60_000
         }
     }
-    creating?.let { d -> BackupSetupDialog(d.driveId!!, d.title, R.string.backups_create_schedule) { creating = null } }
+    creating?.let { d -> BackupSetupDialog(d.driveId!!, d.title, R.string.backups_create_schedule, allowManual = false) { creating = null } }
 
     LazyColumn(Modifier.fillMaxSize().padding(horizontal = 12.dp), verticalArrangement = Arrangement.spacedBy(12.dp)) {
         item {
@@ -184,7 +181,6 @@ private fun Schedules() {
             }
         }
         if (jobs.isEmpty()) item { Text(stringResource(R.string.backups_none), Modifier.padding(vertical = 8.dp)) }
-        message?.let { m -> item { Text(m, color = MaterialTheme.colorScheme.error, modifier = Modifier.padding(top = 8.dp)) } }
         items(jobs, key = { it.id }) { job ->
             clock.let { } // read so the times below follow the clock
             Card(Modifier.fillMaxWidth().padding(top = 8.dp)) {
@@ -193,12 +189,12 @@ private fun Schedules() {
                     Text(stringResource(if (job.type == JobType.INCREMENTAL) R.string.backup_type_incremental else R.string.backup_type_plain),
                         style = MaterialTheme.typography.labelMedium)
                     BackupEnds(job)
+                    JobStatusLine(job, reachable?.contains(job.id))
                     FlowRow(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                        listOf(0 to R.string.backup_manual, 24 to R.string.backup_daily, 168 to R.string.backup_weekly).forEach { (h, label) ->
+                        listOf(24 to R.string.backup_daily, 168 to R.string.backup_weekly).forEach { (h, label) ->
                             FilterChip(job.schedule.intervalHours == h, {
-                                store.update(job.id) { it.copy(schedule = it.schedule.copy(intervalHours = h, autoRun = h > 0,
-                                    remindAfterHours = if (h > 0) h * 3 else 0)) }
-                            }, { Text(stringResource(label)) })
+                                store.update(job.id) { it.copy(schedule = it.schedule.copy(intervalHours = h, autoRun = true)) }
+                            }, { Text(stringResource(label)) }, modifier = Modifier.semantics { contentDescription = "backup_interval_${h}_${job.name}" })
                         }
                     }
                     Text(stringResource(R.string.backup_last_success, Format.ago(job.lastSuccessAt)), style = MaterialTheme.typography.bodySmall)
@@ -206,50 +202,10 @@ private fun Schedules() {
                     val snaps = store.snapshots(job.id)
                     if (snaps.isNotEmpty()) Text(stringResource(R.string.backup_snapshots, snaps.size, Format.dateTime(snaps.last().time)),
                         style = MaterialTheme.typography.bodySmall)
-                    val busy = BackupExecutor.isBusy(job.id)
-                    FlowRow(horizontalArrangement = Arrangement.spacedBy(4.dp)) {
-                        TextButton(enabled = !busy, onClick = { BackupExecutor.start(context, job.id, BackupExecutor.Op.Backup("manual")) }) {
-                            Text(stringResource(R.string.backup_run_now)) }
-                        if (busy) TextButton(onClick = { BackupExecutor.cancel(job.id) }) { Text(stringResource(R.string.cancel)) }
-                        TextButton(enabled = !busy, onClick = { BackupExecutor.start(context, job.id, BackupExecutor.Op.Check(readData = true)) }) {
-                            Text(stringResource(R.string.backup_check)) }
-                        if (job.type == JobType.INCREMENTAL) {
-                            TextButton(enabled = !busy && snaps.isNotEmpty(), onClick = { restoreJob = job; pickRestoreTarget.launch(null) }) {
-                                Text(stringResource(R.string.backup_restore_latest)) }
-                            TextButton(onClick = { showPassword = BackupSecrets(context).password(job.id) ?: "" }) {
-                                Text(stringResource(R.string.backup_show_password)) }
-                        }
-                        TextButton(enabled = !busy, onClick = { confirmDelete = job }) { Text(stringResource(R.string.backup_delete_job)) }
-                    }
+                    JobActionsRow(job, actions)
                 }
             }
         }
-    }
-
-    showPassword?.let { pw ->
-        AlertDialog(
-            onDismissRequest = { showPassword = null },
-            title = { Text(stringResource(R.string.backup_password)) },
-            text = {
-                Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
-                    Text(stringResource(R.string.backup_password_desktop), style = MaterialTheme.typography.bodySmall)
-                    SelectionContainer { Text(pw.ifEmpty { stringResource(R.string.backup_password_missing) }, fontFamily = FontFamily.Monospace) }
-                }
-            },
-            confirmButton = { TextButton(onClick = { showPassword = null }) { Text(stringResource(R.string.close)) } },
-        )
-    }
-    confirmDelete?.let { job ->
-        AlertDialog(
-            onDismissRequest = { confirmDelete = null },
-            title = { Text(stringResource(R.string.backup_delete_job_title, job.name)) },
-            text = { Text(stringResource(R.string.backup_delete_job_text)) },
-            confirmButton = { TextButton(onClick = {
-                store.delete(job.id); BackupSecrets(context).forget(job.id); confirmDelete = null
-                app.fayaz.otgmaster.OtgMasterState.log("Backup \"${job.name}\" deleted (the backups on the drive were kept)")
-            }) { Text(stringResource(R.string.backup_delete_job)) } },
-            dismissButton = { TextButton(onClick = { confirmDelete = null }) { Text(stringResource(R.string.cancel)) } },
-        )
     }
 }
 
@@ -294,19 +250,27 @@ private fun MountBackups() {
             })
     }
 
+    // The job whose Mount is working, and whether a browsed folder is being opened: opening
+    // a repository reads its index, which takes seconds on a slow drive with nothing else to see.
+    var mounting by remember { mutableStateOf<String?>(null) }
+    var openingFolder by remember { mutableStateOf(false) }
+
     val browse = rememberLauncherForActivityResult(ActivityResultContracts.OpenDocumentTree()) { uri ->
         if (uri == null) return@rememberLauncherForActivityResult
         runCatching { context.contentResolver.takePersistableUriPermission(uri, Intent.FLAG_GRANT_READ_URI_PERMISSION) }
             .onFailure { OtgMasterState.logFailure("backup-grant", "Could not keep access to the chosen folder", it) }
         message = context.getString(R.string.backups_browse_opening)
+        openingFolder = true
         scope.launch {
             val found = withContext(Dispatchers.IO) { BackupMounts.holdsBackup(context, uri) }
             if (!found) {
                 OtgMasterState.log("No backup found at ${VolumeInfo.displayPath(context, uri)}")
                 message = context.getString(R.string.backups_browse_none)
+                openingFolder = false
                 return@launch
             }
             val drive = withContext(Dispatchers.IO) { BackupMounts.mountAsJob(context, uri) }
+            openingFolder = false
             if (drive != null) {
                 message = context.getString(R.string.backups_mounted, drive.name)
             } else {
@@ -327,10 +291,8 @@ private fun MountBackups() {
             text = {
                 Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
                     Text(stringResource(R.string.backups_browse_password, VolumeInfo.displayPath(context, folder)), style = MaterialTheme.typography.bodySmall)
-                    OutlinedTextField(password, { password = it; wrongPassword = false }, singleLine = true,
-                        visualTransformation = PasswordVisualTransformation(),
-                        label = { Text(stringResource(R.string.backup_password)) },
-                        modifier = Modifier.semantics { contentDescription = "backups_browse_password" })
+                    PasswordField(password, stringResource(R.string.backup_password), "backups_browse_password", newPassword = false) { password = it; wrongPassword = false }
+                    if (opening) LinearProgressIndicator(Modifier.fillMaxWidth().semantics { contentDescription = "backups_browse_opening" })
                     if (wrongPassword) Text(stringResource(R.string.backups_browse_wrong), color = MaterialTheme.colorScheme.error)
                 }
             },
@@ -355,6 +317,7 @@ private fun MountBackups() {
             }
         }
         item { Text(stringResource(R.string.backups_mount_help), style = MaterialTheme.typography.bodySmall) }
+        if (openingFolder) item { LinearProgressIndicator(Modifier.fillMaxWidth().semantics { contentDescription = "backups_browse_opening" }) }
         message?.let { m -> item { Text(m, style = MaterialTheme.typography.bodyMedium) } }
         if (incremental.isEmpty()) item { Text(stringResource(R.string.backups_mount_none), style = MaterialTheme.typography.bodySmall) }
         items(incremental, key = { it.id }) { job ->
@@ -373,16 +336,23 @@ private fun MountBackups() {
                                 style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.error)
                         }
                     }
-                    TextButton(enabled = !mounted && canReach == true, modifier = Modifier.semantics { contentDescription = "backup_mount_${job.name}" }, onClick = {
+                    if (mounting == job.id) CircularProgressIndicator(Modifier.size(24.dp).semantics { contentDescription = "backup_mount_progress_${job.name}" })
+                    TextButton(enabled = !mounted && canReach == true && mounting == null, modifier = Modifier.semantics { contentDescription = "backup_mount_${job.name}" }, onClick = {
+                        mounting = job.id
                         scope.launch {
                             message = withContext(Dispatchers.IO) {
                                 runCatching { BackupMounts.mount(context, job) }.fold(
                                     { context.getString(R.string.backups_mounted, job.name) },
                                     {
                                         OtgMasterState.logFailure("backup-mount", "Could not mount the backup \"${job.name}\"", it)
+                                        if (BackupRunner.isDamage(it)) {
+                                            BackupRunner(context).markCorrupted(job, it.message ?: "the backup is damaged")
+                                            JobStore.get(context).job(job.id)?.let { j -> BackupPrompts.corruptionFound(context, j) }
+                                        }
                                         context.getString(R.string.backups_mount_failed, job.name, it.message ?: it.javaClass.simpleName)
                                     })
                             }
+                            mounting = null
                             changed++
                         }
                     }) { Text(stringResource(if (mounted) R.string.backups_is_mounted else R.string.backups_mount)) }
@@ -401,23 +371,26 @@ private fun History() {
     val runs = remember(jobs, revision) {
         jobs.flatMap { j -> store.history(j.id).map { j to it } }.sortedByDescending { it.second.startedAt }
     }
+    val actions = rememberJobActions()
     if (runs.isEmpty()) {
         Text(stringResource(R.string.backups_history_none), Modifier.padding(16.dp))
         return
     }
+    // A manual backup has no row under Schedules, so its newest entry here carries its actions.
+    val newestOfManual = runs.filter { it.first.schedule.isManual }.distinctBy { it.first.id }.map { it.second.id }.toSet()
     LazyColumn(Modifier.fillMaxSize().padding(horizontal = 12.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
-        items(runs, key = { it.second.id }) { (job, run) -> RunRow(job, run) }
+        items(runs, key = { it.second.id }) { (job, run) -> RunRow(job, run, if (run.id in newestOfManual) actions else null) }
     }
 }
 
 @Composable
-private fun RunRow(job: BackupJob, run: RunRecord) {
+private fun RunRow(job: BackupJob, run: RunRecord, actions: JobActions? = null) {
     Card(Modifier.fillMaxWidth().padding(top = 8.dp)) {
         Column(Modifier.padding(12.dp), verticalArrangement = Arrangement.spacedBy(2.dp)) {
             val color = when (run.status) {
                 RunStatus.SUCCESS -> MaterialTheme.colorScheme.primary
                 RunStatus.WARNING, RunStatus.NEEDS_CONFIRMATION, RunStatus.CANCELLED -> MaterialTheme.colorScheme.tertiary
-                RunStatus.FAILED, RunStatus.UNAVAILABLE -> MaterialTheme.colorScheme.error
+                RunStatus.FAILED, RunStatus.UNAVAILABLE, RunStatus.CORRUPTED -> MaterialTheme.colorScheme.error
             }
             Text("${job.name} · ${run.kind}", style = MaterialTheme.typography.titleSmall)
             if (run.kind == "restore") RestoreEnds(job, intoSource = run.reason == "switch") else BackupEnds(job)
@@ -431,6 +404,10 @@ private fun RunRow(job: BackupJob, run: RunRecord) {
             run.copyFolder?.let { Text(it, style = MaterialTheme.typography.bodySmall) }
             if (run.message.isNotBlank()) Text(run.message, style = MaterialTheme.typography.bodySmall)
             run.errors.take(5).forEach { Text("• $it", style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.error) }
+            actions?.let { a ->
+                JobStatusLine(job, null)
+                JobActionsRow(job, a, runLabel = R.string.backup_run_again)
+            }
         }
     }
 }

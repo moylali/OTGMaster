@@ -284,7 +284,7 @@ internal fun <T> Picker(label: String, value: T, options: List<T>, name: (T) -> 
 
 /** A password field with the unlock form's show/hide eye; hidden to start with. */
 @Composable
-private fun PasswordField(value: String, label: String, id: String, onChange: (String) -> Unit) {
+internal fun PasswordField(value: String, label: String, id: String, newPassword: Boolean = true, onChange: (String) -> Unit) {
     var visible by remember { mutableStateOf(false) }
     OutlinedTextField(
         value = value, onValueChange = onChange,
@@ -298,9 +298,11 @@ private fun PasswordField(value: String, label: String, id: String, onChange: (S
                     contentDescription = stringResource(if (visible) R.string.cd_hide_password else R.string.cd_show_password))
             }
         },
-        // Every password typed here is a new one: password managers offer to save it,
-        // not to fill an old one in.
-        modifier = Modifier.fillMaxWidth().semantics { contentDescription = id; contentType = ContentType.NewPassword },
+        // A new password: password managers offer to save it. An existing one: they offer to fill it in.
+        modifier = Modifier.fillMaxWidth().semantics {
+            contentDescription = id
+            contentType = if (newPassword) ContentType.NewPassword else ContentType.Password
+        },
     )
 }
 

@@ -111,17 +111,29 @@ data class BackupJob(
     val snoozedUntil: Long? = null,
     /** The restic repository's config id, to recognise the same repository later. */
     val repositoryId: String? = null,
+    /** "Later" on a due backup: it starts by itself at this time, if both ends are still there. */
+    val delayedStartAt: Long? = null,
+    /** When the backup was found damaged. It stays so until a Verify passes or it is recreated. */
+    val corruptedAt: Long? = null,
+    val corruptedReason: String? = null,
 ) {
     val intervalMs: Long get() = schedule.intervalHours * HOUR
     val remindAfterMs: Long get() = schedule.remindAfterHours * HOUR
 
-    /** Due for a scheduled run. */
-    fun isDue(now: Long): Boolean = !schedule.isManual && (snoozedUntil == null || now >= snoozedUntil) &&
+    /** Due for a scheduled run. A chosen delay has its own time, so it is not due before that. */
+    fun isDue(now: Long): Boolean = !schedule.isManual && delayedStartAt == null && corruptedAt == null &&
+        (snoozedUntil == null || now >= snoozedUntil) &&
         (lastSuccessAt == null || now - lastSuccessAt >= intervalMs)
 
-    /** Old enough that the user should be reminded to plug the drive in. */
-    fun isOverdue(now: Long): Boolean =
-        schedule.remindAfterHours > 0 && now - (lastSuccessAt ?: createdAt) >= remindAfterMs
+    /** When this job next runs or asks to; null for a manual one with no delay pending. */
+    fun nextRunAt(): Long? = delayedStartAt ?: if (schedule.isManual) null else
+        maxOf(snoozedUntil ?: 0L, lastSuccessAt?.let { it + intervalMs } ?: createdAt)
+
+    /** Either end is on a USB drive. Such a backup never starts unasked: it slows the drive. */
+    val usesUsb: Boolean get() = source.kind == VolumeInfo.KIND_OTG || destination.kind == VolumeInfo.KIND_OTG
+
+    /** The ends on USB drives, as the user knows them. */
+    fun driveEnds(): List<Endpoint> = listOf(source, destination).filter { it.kind == VolumeInfo.KIND_OTG }
 
     fun toJson(): JSONObject = JSONObject().apply {
         put("id", id); put("name", name); put("type", type.name)
@@ -134,6 +146,8 @@ data class BackupJob(
         putOpt("lastMessage", lastMessage); putOpt("lastReminderAt", lastReminderAt)
         putOpt("pendingConfirmation", pendingConfirmation?.toJson())
         putOpt("snoozedUntil", snoozedUntil); putOpt("repositoryId", repositoryId)
+        putOpt("delayedStartAt", delayedStartAt)
+        putOpt("corruptedAt", corruptedAt); putOpt("corruptedReason", corruptedReason)
     }
 
     companion object {
@@ -158,11 +172,14 @@ data class BackupJob(
             pendingConfirmation = PendingConfirmation.fromJson(o.optJSONObject("pendingConfirmation")),
             snoozedUntil = o.optLongOrNull("snoozedUntil"),
             repositoryId = o.optStringOrNull("repositoryId"),
+            delayedStartAt = o.optLongOrNull("delayedStartAt"),
+            corruptedAt = o.optLongOrNull("corruptedAt"),
+            corruptedReason = o.optStringOrNull("corruptedReason"),
         )
     }
 }
 
-enum class RunStatus { SUCCESS, WARNING, FAILED, CANCELLED, NEEDS_CONFIRMATION, UNAVAILABLE }
+enum class RunStatus { SUCCESS, WARNING, FAILED, CANCELLED, NEEDS_CONFIRMATION, UNAVAILABLE, CORRUPTED }
 
 /** Counts for one run, shown in history and the timeline. */
 data class RunStats(

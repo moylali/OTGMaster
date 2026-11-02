@@ -6,6 +6,8 @@ import android.net.Uri
 import android.os.Build
 import android.provider.DocumentsContract
 import app.fayaz.otgmaster.BuildConfig
+import app.fayaz.otgmaster.backup.restic.ResticKey
+import app.fayaz.otgmaster.backup.restic.DamagedException
 import app.fayaz.otgmaster.backup.restic.CancelledException
 import app.fayaz.otgmaster.backup.restic.FileTreeBackend
 import app.fayaz.otgmaster.backup.restic.FileTreeSource
@@ -61,7 +63,7 @@ class BackupRunner(private val context: Context) {
         val dst = Uri.parse(job.destination.uri)
         if (!VolumeInfo.isAvailable(context, dst)) throw IllegalStateException(unavailableMessage("Destination", job.destination.info))
         val password = secrets.password(job.id)
-            ?: throw IllegalStateException("The password of this job's backups is not on this phone. Enter it in the job's settings.")
+            ?: throw IllegalStateException("The password of this backup is not on this phone. Use Enter password on its row.")
         val root = SafFileTree(context.contentResolver, dst)
         val backend = FileTreeBackend(SubTree(root, job.destinationFolder))
         if (backend.exists("config")) {
@@ -198,6 +200,10 @@ class BackupRunner(private val context: Context) {
             android.util.Log.e(TAG, "backup ${job.name} failed", e)
             val reachable = VolumeInfo.isAvailable(context, srcUri) && VolumeInfo.isAvailable(context, dstUri)
             val why = "${e.javaClass.simpleName}: ${e.message}" + (e.cause?.let { " (cause: ${it.javaClass.simpleName}: ${it.message})" } ?: "")
+            if (reachable && isDamage(e)) {
+                markCorrupted(job, e.message ?: why)
+                return fail(e.message ?: why, RunStatus.CORRUPTED)
+            }
             return fail(if (reachable) why else "A drive went away during the run: $why")
         } finally {
             clients.forEach { runCatching { it.close() } }
@@ -270,7 +276,10 @@ class BackupRunner(private val context: Context) {
             RunOutcome.Failed("Cancelled", RunStatus.CANCELLED).also { record(RunStatus.CANCELLED, "Cancelled") }
         } catch (e: Exception) {
             android.util.Log.e(TAG, "restore failed", e)
-            RunOutcome.Failed("${e.javaClass.simpleName}: ${e.message}").also { record(RunStatus.FAILED, it.message) }
+            if (isDamage(e) && VolumeInfo.isAvailable(context, Uri.parse(job.destination.uri))) {
+                markCorrupted(job, e.message ?: "the backup is damaged")
+                RunOutcome.Failed(e.message ?: "the backup is damaged", RunStatus.CORRUPTED).also { record(RunStatus.CORRUPTED, it.message) }
+            } else RunOutcome.Failed("${e.javaClass.simpleName}: ${e.message}").also { record(RunStatus.FAILED, it.message) }
         }
     }
 
@@ -285,22 +294,37 @@ class BackupRunner(private val context: Context) {
         val started = System.currentTimeMillis()
         return try {
             val problems = ArrayList<String>()
+            var damaged = false
             val message: String
             if (job.type == JobType.INCREMENTAL) {
+                // A backup that has run and now has no repository did not lose it to a read error.
+                if (job.lastSuccessAt != null && VolumeInfo.isAvailable(context, Uri.parse(job.destination.uri)) &&
+                    SafFileTree(context.contentResolver, Uri.parse(job.destination.uri)).stat(Paths.join(job.destinationFolder, "config")) == null) {
+                    throw DamagedException("the repository in ${job.destinationFolder} is gone")
+                }
                 val repo = repository(job)
                 val seen = HashSet<String>()
                 var blobs = 0L
                 fun walk(treeId: String) {
                     if (control.isCancelled()) throw CancelledException()
                     if (!seen.add(treeId)) return
-                    val nodes = runCatching { repo.tree(treeId) }.getOrElse { problems += "tree ${treeId.take(8)}: ${it.message}"; return }
+                    val nodes = runCatching { repo.tree(treeId) }.getOrElse {
+                        if (isDamage(it)) damaged = true
+                        problems += "tree ${treeId.take(8)}: ${it.message}"
+                        return
+                    }
                     for (n in nodes) {
                         n.subtree?.let(::walk)
                         for (id in n.content) {
                             if (!seen.add(id)) continue
                             blobs++
-                            if (!repo.hasBlob(id)) problems += "${n.name}: blob ${id.take(8)} missing from the index"
-                            else if (readData) runCatching { repo.blob(id) }.onFailure { problems += "${n.name}: ${it.message}" }
+                            if (!repo.hasBlob(id)) {
+                                damaged = true
+                                problems += "${n.name}: blob ${id.take(8)} missing from the index"
+                            } else if (readData) runCatching { repo.blob(id) }.onFailure {
+                                if (isDamage(it)) damaged = true
+                                problems += "${n.name}: ${it.message}"
+                            }
                             if (blobs % 100 == 0L) control.listener.onProgress(RunProgress("check", blobs, 0, n.name))
                         }
                     }
@@ -313,22 +337,80 @@ class BackupRunner(private val context: Context) {
                 val last = store.history(jobId).lastOrNull { it.copyFolder != null } ?: return RunOutcome.Failed("No copy to verify yet")
                 val root = SafFileTree(context.contentResolver, Uri.parse(job.destination.uri))
                 problems += CopyEngine.verify(root, last.copyFolder!!, progressBridge(control))
+                damaged = problems.any(CopyEngine::isDamage)
                 message = if (problems.isEmpty()) "Copy ${last.copyFolder} verified" else "${problems.size} file(s) differ"
             }
-            val status = if (problems.isEmpty()) RunStatus.SUCCESS else RunStatus.FAILED
+            // Unreadable is not damaged. A bad cable must not send a good backup to Recreate.
+            val reachable = VolumeInfo.isAvailable(context, Uri.parse(job.destination.uri))
+            val status = when {
+                problems.isEmpty() -> RunStatus.SUCCESS
+                damaged && reachable -> RunStatus.CORRUPTED
+                else -> RunStatus.FAILED
+            }
+            if (status == RunStatus.CORRUPTED) markCorrupted(job, problems.first())
+            else if (status == RunStatus.SUCCESS && job.corruptedAt != null) store.update(jobId) { it.copy(corruptedAt = null, corruptedReason = null) }
             val rec = RunRecord(jobId = jobId, kind = "check", reason = "manual", startedAt = started,
                 finishedAt = System.currentTimeMillis(), status = status, message = message, errors = problems.take(CopyEngine.MAX_ERRORS))
             store.addRun(rec)
             app.fayaz.otgmaster.OtgMasterState.log("Check \"${job.name}\": $message")
             problems.take(5).forEach { app.fayaz.otgmaster.OtgMasterState.log("Check \"${job.name}\": $it") }
-            if (status == RunStatus.SUCCESS) RunOutcome.Success(rec) else RunOutcome.Failed(message)
+            if (status == RunStatus.SUCCESS) RunOutcome.Success(rec) else RunOutcome.Failed(message, status)
+        } catch (e: CancelledException) {
+            store.addRun(RunRecord(jobId = jobId, kind = "check", reason = "manual", startedAt = started,
+                finishedAt = System.currentTimeMillis(), status = RunStatus.CANCELLED, message = "Cancelled"))
+            RunOutcome.Failed("Cancelled", RunStatus.CANCELLED)
         } catch (e: Exception) {
-            RunOutcome.Failed("${e.javaClass.simpleName}: ${e.message}").also {
+            val corrupted = isDamage(e) && VolumeInfo.isAvailable(context, Uri.parse(job.destination.uri))
+            if (corrupted) markCorrupted(job, e.message ?: "the backup is damaged")
+            val status = if (corrupted) RunStatus.CORRUPTED else RunStatus.FAILED
+            RunOutcome.Failed(if (corrupted) e.message ?: "the backup is damaged" else "${e.javaClass.simpleName}: ${e.message}", status).also {
                 store.addRun(RunRecord(jobId = jobId, kind = "check", reason = "manual", startedAt = started,
-                    finishedAt = System.currentTimeMillis(), status = RunStatus.FAILED, message = it.message))
+                    finishedAt = System.currentTimeMillis(), status = status, message = it.message))
                 app.fayaz.otgmaster.OtgMasterState.log("Check \"${job.name}\": failed: ${it.message}")
             }
         }
+    }
+
+    /** Records that the backup is damaged. It stops asking to run until it is recreated or a Verify passes. */
+    fun markCorrupted(job: BackupJob, reason: String) {
+        store.update(job.id) { it.copy(corruptedAt = System.currentTimeMillis(), corruptedReason = reason, delayedStartAt = null) }
+        app.fayaz.otgmaster.OtgMasterState.log("Backup \"${job.name}\" is corrupted: $reason")
+    }
+
+    /**
+     * Makes the backup again from its source. The damaged repository is renamed, never deleted:
+     * snapshots in it may still read, and it may be the only copy of something the source has
+     * since lost. The user deletes it when they are sure. A Plain backup's dated copies are
+     * separate folders already, so it simply makes a new one.
+     */
+    fun recreate(jobId: String, control: Control = Control()): RunOutcome {
+        val job = store.job(jobId) ?: return RunOutcome.Failed("job no longer exists")
+        val src = Uri.parse(job.source.uri)
+        val dst = Uri.parse(job.destination.uri)
+        fun refuse(message: String, status: RunStatus): RunOutcome {
+            store.addRun(RunRecord(jobId = job.id, kind = "recreate", reason = "recreate", startedAt = System.currentTimeMillis(),
+                finishedAt = System.currentTimeMillis(), status = status, message = message))
+            app.fayaz.otgmaster.OtgMasterState.log("Recreate \"${job.name}\": $message")
+            return RunOutcome.Failed(message, status)
+        }
+        if (!VolumeInfo.isAvailable(context, src)) return refuse(unavailableMessage("Source", job.source.info), RunStatus.UNAVAILABLE)
+        if (!VolumeInfo.isAvailable(context, dst)) return refuse(unavailableMessage("Destination", job.destination.info), RunStatus.UNAVAILABLE)
+        if (job.type == JobType.INCREMENTAL) {
+            if (secrets.password(job.id) == null) return refuse("The password of this backup is not on this phone. Use Enter password on its row.", RunStatus.FAILED)
+            val root = SafFileTree(context.contentResolver, dst)
+            if (root.stat(job.destinationFolder) != null) {
+                val kept = "${job.destinationFolder} damaged ${copyFolderName(System.currentTimeMillis())}"
+                try {
+                    root.rename(job.destinationFolder, kept)
+                } catch (e: Exception) {
+                    return refuse("Could not set the damaged backup aside, so nothing was changed: ${e.message}", RunStatus.FAILED)
+                }
+                app.fayaz.otgmaster.OtgMasterState.log("Backup \"${job.name}\": the damaged backup is kept in \"$kept\"")
+            }
+            store.setSnapshots(job.id, emptyList())
+        }
+        store.update(job.id) { it.copy(corruptedAt = null, corruptedReason = null, lastSnapshotId = null, repositoryId = null, lastSuccessAt = null) }
+        return backup(jobId, "recreate", control = control)
     }
 
     private fun subtreeAt(repo: ResticRepository, root: String, path: String): String? {
@@ -358,6 +440,16 @@ class BackupRunner(private val context: Context) {
         const val USERNAME = "otgmaster"
 
         fun kindOf(job: BackupJob) = if (job.type == JobType.INCREMENTAL) "backup" else "copy"
+
+        /** The data itself is wrong or gone: as opposed to a read that failed, which says nothing about it. */
+        fun isDamage(t: Throwable?): Boolean {
+            var e = t
+            while (e != null) {
+                if (e is DamagedException || e is ResticKey.AuthenticationException) return true
+                e = e.cause
+            }
+            return false
+        }
 
         /** The tag that marks a job's snapshots, so its keep rules never touch anyone else's. */
         fun jobTag(job: BackupJob) = "otg-job:${job.id}"
@@ -423,6 +515,24 @@ object Format {
             d < 3_600_000 -> "${d / 60_000} min ago"
             d < 86_400_000 -> "${d / 3_600_000} h ago"
             else -> "${d / 86_400_000} days ago"
+        }
+    }
+
+    /** "Today at 10:00 PM", "Tomorrow at 9:00 AM", "Sat, Nov 7 at 9:00 AM". */
+    fun whenAt(ms: Long, now: Long = System.currentTimeMillis(), zone: java.util.TimeZone = java.util.TimeZone.getDefault(),
+               locale: Locale = Locale.getDefault()): String {
+        fun format(p: String) = SimpleDateFormat(p, locale).apply { timeZone = zone }.format(Date(ms))
+        fun dayOf(t: Long) = java.util.Calendar.getInstance(zone).run {
+            timeInMillis = t
+            get(java.util.Calendar.YEAR) * 1000 + get(java.util.Calendar.DAY_OF_YEAR)
+        }
+        val today = dayOf(now)
+        val tomorrow = dayOf(java.util.Calendar.getInstance(zone).run { timeInMillis = now; add(java.util.Calendar.DAY_OF_YEAR, 1); timeInMillis })
+        val time = format("h:mm a")
+        return when (dayOf(ms)) {
+            today -> "Today at $time"
+            tomorrow -> "Tomorrow at $time"
+            else -> "${format("EEE, MMM d")} at $time"
         }
     }
 

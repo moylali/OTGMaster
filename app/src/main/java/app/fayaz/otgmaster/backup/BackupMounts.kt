@@ -23,6 +23,10 @@ object BackupMounts {
     /** Mounted backup's drive id → the drive id its repository lives on (null: the phone). */
     private val on = ConcurrentHashMap<String, String>()
 
+    /** Debug builds only: holds a mount open long enough for a test to see its progress sign. */
+    @Volatile var testDelayMs = 0L
+    private fun testDelay() { if (app.fayaz.otgmaster.BuildConfig.DEBUG && testDelayMs > 0) Thread.sleep(testDelayMs) }
+
     fun isMounted(jobId: String): Boolean = OtgMasterState.mountedDrives.any { it.id == driveIdFor(jobId) }
 
     fun driveIdFor(jobId: String): String = "bk" + jobId.filter { it.isLetterOrDigit() }.take(8)
@@ -30,6 +34,7 @@ object BackupMounts {
     /** Opens the job's repository with its saved password and mounts it. Blocking: call off the main thread. */
     fun mount(context: Context, job: BackupJob): MountedDrive {
         require(job.type == JobType.INCREMENTAL) { "only incremental backups can be mounted" }
+        testDelay()
         val id = driveIdFor(job.id)
         OtgMasterState.mountedDrives.firstOrNull { it.id == id }?.let { return it }
         return add(context, id, job.name, BackupRunner(context).repository(job), Uri.parse(job.destination.uri))
@@ -41,6 +46,7 @@ object BackupMounts {
      * `data` folders. `config` and at least one key are what opening it needs.
      */
     fun holdsBackup(context: Context, folder: Uri): Boolean = runCatching {
+        testDelay()
         val backend = FileTreeBackend(SafFileTree(context.contentResolver, folder))
         backend.exists("config") && backend.list("keys").isNotEmpty()
     }.onFailure { OtgMasterState.logFailure("backup-browse", "Could not read ${VolumeInfo.displayPath(context, folder)}", it) }
@@ -70,6 +76,7 @@ object BackupMounts {
      * not open it. Blocking: call off the main thread.
      */
     fun mountFolder(context: Context, folder: Uri, password: String): MountedDrive? {
+        testDelay()
         val id = "bk" + Integer.toHexString(folder.toString().hashCode())
         OtgMasterState.mountedDrives.firstOrNull { it.id == id }?.let { return it }
         val path = VolumeInfo.displayPath(context, folder)

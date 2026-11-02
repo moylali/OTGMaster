@@ -62,7 +62,7 @@ class MountedDriveService : Service() {
     }
 
     /** A Format or Encrypt in progress, shown in place of the mounted-drive text. */
-    data class Operation(val title: String, val phase: String, val fraction: Float?)
+    data class Operation(val title: String, val phase: String, val fraction: Float?, val backupJobId: String? = null)
 
     companion object {
         private const val TAG = "OTGMaster"
@@ -83,10 +83,13 @@ class MountedDriveService : Service() {
 
         fun update(context: Context, titles: List<String>) {
             val added = titles.any { it !in this.titles }
+            val removed = this.titles.any { it !in titles }
             this.titles = titles
             refresh(context.applicationContext)
-            // A drive just mounted: a backup that was waiting for it can run now.
+            // A drive just mounted: a backup that was waiting for it can ask now. One went:
+            // what was asked about it, or waiting to start on it, has to change.
             if (added) app.fayaz.otgmaster.backup.BackupScheduler.evaluateSoon(context, "attach")
+            else if (removed) app.fayaz.otgmaster.backup.BackupScheduler.evaluateSoon(context, "detach")
         }
 
         /**
@@ -110,7 +113,7 @@ class MountedDriveService : Service() {
         }
 
         /** The operation ended: a separate notice says how, and the ongoing one goes back to drives. */
-        fun operationFinished(context: Context, title: String, message: String, failed: Boolean) {
+        fun operationFinished(context: Context, title: String, message: String, failed: Boolean, jobId: String? = null) {
             val app = context.applicationContext
             operation = null
             val nm = app.getSystemService(NotificationManager::class.java)
@@ -125,7 +128,7 @@ class MountedDriveService : Service() {
                         if (failed) R.string.notification_operation_failed else R.string.notification_operation_done, title))
                     .setContentText(message)
                     .setStyle(NotificationCompat.BigTextStyle().bigText(message))
-                    .setContentIntent(openApp(app))
+                    .setContentIntent(openApp(app, jobId))
                     .setAutoCancel(true)
                     .build())
             }
@@ -153,8 +156,11 @@ class MountedDriveService : Service() {
             }
         }
 
-        private fun openApp(context: Context): PendingIntent = PendingIntent.getActivity(context, 0,
-            Intent(context, MainActivity::class.java).addFlags(Intent.FLAG_ACTIVITY_SINGLE_TOP),
+        /** Opens the main screen, and over it the progress dialog of [backupJobId] if there is one. */
+        private fun openApp(context: Context, backupJobId: String? = null): PendingIntent = PendingIntent.getActivity(context, backupJobId?.hashCode() ?: 0,
+            Intent(context, MainActivity::class.java).addFlags(Intent.FLAG_ACTIVITY_SINGLE_TOP).apply {
+                backupJobId?.let { putExtra(app.fayaz.otgmaster.backup.BackupNotifications.EXTRA_PROGRESS_JOB, it) }
+            },
             PendingIntent.FLAG_IMMUTABLE or PendingIntent.FLAG_UPDATE_CURRENT)
 
         private fun current(context: Context): Notification {
@@ -173,6 +179,7 @@ class MountedDriveService : Service() {
                 .setForegroundServiceBehavior(NotificationCompat.FOREGROUND_SERVICE_IMMEDIATE)
             val op = operation
             if (op != null) {
+                op.backupJobId?.let { b.setContentIntent(openApp(context, it)) }
                 return b.setContentTitle(op.title)
                     .setContentText(op.phase.ifEmpty { context.getString(R.string.notification_operation_keep_attached) })
                     .setSubText(context.getString(R.string.notification_operation_keep_attached))
