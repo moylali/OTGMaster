@@ -3231,7 +3231,7 @@ fun OtgMasterApp(
             // portrait (800×1280 dp) became wider than tall when the keyboard opened for the
             // password, switched to two panes, rebuilt the form (typed text gone, keyboard
             // closed), and switched back.
-            val twoPane = maxWidth >= 840.dp || (maxWidth > maxHeight && maxWidth >= 600.dp)
+            val twoPane = app.fayaz.otgmaster.ui.isTwoPaneWindow(maxWidth, maxHeight)
             Box(modifier = Modifier.fillMaxSize().imePadding()) {
             if (twoPane) {
                 Row(

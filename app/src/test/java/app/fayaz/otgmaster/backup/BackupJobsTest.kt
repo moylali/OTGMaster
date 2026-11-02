@@ -20,6 +20,28 @@ class BackupJobsTest {
     )
 
     @Test
+    fun `counts read as one file and one day`() {
+        assertEquals("1 file", Format.files(1))
+        assertEquals("0 files", Format.files(0))
+        assertEquals("5 files", Format.files(5))
+        val now = 10 * 86_400_000L
+        assertEquals("1 day ago", Format.ago(now - 86_400_000L, now))
+        assertEquals("1 day ago", Format.ago(now - 2 * 86_400_000L + 1, now))
+        assertEquals("2 days ago", Format.ago(now - 2 * 86_400_000L, now))
+    }
+
+    @Test
+    fun `a due drive is named by its device alone`() {
+        fun end(partition: String, device: String = "SanDisk Ultra") = Endpoint("content://x/tree/$partition", partition, "otg", mapOf(
+            VolumeInfo.KIND to VolumeInfo.KIND_OTG, VolumeInfo.OTG_DEVICE to device, VolumeInfo.OTG_PARTITION to partition,
+            VolumeInfo.OTG_CONTAINER to "VERACRYPT", VolumeInfo.OTG_FILESYSTEM to "exFAT"))
+        val siblings = job().copy(source = end("Partition 1"), destination = end("Partition 2"))
+        assertEquals("SanDisk Ultra", BackupScheduler.driveNames(siblings))
+        val two = job().copy(source = end("Partition 1"), destination = end("Whole device", "PNY FD"))
+        assertEquals("SanDisk Ultra and PNY FD", BackupScheduler.driveNames(two))
+    }
+
+    @Test
     fun `a folder is named by its path inside the volume`() {
         assertEquals("/DCIM/Camera", VolumeInfo.folderInside("primary:DCIM/Camera"))
         assertEquals("/DCIM/Camera", VolumeInfo.folderInside("abc:/DCIM/Camera"))

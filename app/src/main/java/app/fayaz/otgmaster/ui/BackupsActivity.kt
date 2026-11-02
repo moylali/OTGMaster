@@ -10,6 +10,7 @@ import androidx.activity.enableEdgeToEdge
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.foundation.isSystemInDarkTheme
 import androidx.compose.foundation.layout.Arrangement
+import androidx.compose.foundation.layout.BoxWithConstraints
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.ExperimentalLayoutApi
 import androidx.compose.foundation.layout.FlowRow
@@ -20,6 +21,10 @@ import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.safeDrawingPadding
 import androidx.compose.foundation.lazy.LazyColumn
+import androidx.compose.foundation.lazy.grid.GridCells
+import androidx.compose.foundation.lazy.grid.GridItemSpan
+import androidx.compose.foundation.lazy.grid.LazyVerticalGrid
+import androidx.compose.foundation.lazy.grid.items
 import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.text.selection.SelectionContainer
 import androidx.compose.material.icons.Icons
@@ -169,40 +174,49 @@ private fun Schedules() {
     }
     creating?.let { d -> BackupSetupDialog(d.driveId!!, d.title, R.string.backups_create_schedule, allowManual = false) { creating = null } }
 
-    LazyColumn(Modifier.fillMaxSize().padding(horizontal = 12.dp), verticalArrangement = Arrangement.spacedBy(12.dp)) {
-        item {
-            Column(Modifier.padding(top = 8.dp), verticalArrangement = Arrangement.spacedBy(4.dp)) {
-                Button(
-                    enabled = drives.isNotEmpty(),
-                    onClick = { creating = drives.firstOrNull { !it.readOnly } ?: drives.first() },
-                    modifier = Modifier.semantics { contentDescription = "backups_create_schedule" },
-                ) { Text(stringResource(R.string.backups_create_schedule)) }
-                if (drives.isEmpty()) Text(stringResource(R.string.backups_create_no_devices), style = MaterialTheme.typography.bodySmall)
+    // Two columns where the main screen shows two panes, so an unfolded phone or a tablet
+    // shows more than one and a half schedules at a time.
+    BoxWithConstraints(Modifier.fillMaxSize()) {
+        LazyVerticalGrid(
+            GridCells.Fixed(if (isTwoPaneWindow(maxWidth, maxHeight)) 2 else 1),
+            Modifier.fillMaxSize().padding(horizontal = 12.dp),
+            verticalArrangement = Arrangement.spacedBy(12.dp),
+            horizontalArrangement = Arrangement.spacedBy(12.dp),
+        ) {
+            item(span = { GridItemSpan(maxLineSpan) }) {
+                Column(Modifier.padding(top = 8.dp), verticalArrangement = Arrangement.spacedBy(4.dp)) {
+                    Button(
+                        enabled = drives.isNotEmpty(),
+                        onClick = { creating = drives.firstOrNull { !it.readOnly } ?: drives.first() },
+                        modifier = Modifier.semantics { contentDescription = "backups_create_schedule" },
+                    ) { Text(stringResource(R.string.backups_create_schedule)) }
+                    if (drives.isEmpty()) Text(stringResource(R.string.backups_create_no_devices), style = MaterialTheme.typography.bodySmall)
+                }
             }
-        }
-        if (jobs.isEmpty()) item { Text(stringResource(R.string.backups_none), Modifier.padding(vertical = 8.dp)) }
-        items(jobs, key = { it.id }) { job ->
-            clock.let { } // read so the times below follow the clock
-            Card(Modifier.fillMaxWidth().padding(top = 8.dp)) {
-                Column(Modifier.padding(12.dp), verticalArrangement = Arrangement.spacedBy(4.dp)) {
-                    Text(job.name, style = MaterialTheme.typography.titleMedium)
-                    Text(stringResource(if (job.type == JobType.INCREMENTAL) R.string.backup_type_incremental else R.string.backup_type_plain),
-                        style = MaterialTheme.typography.labelMedium)
-                    BackupEnds(job)
-                    JobStatusLine(job, reachable?.contains(job.id))
-                    FlowRow(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                        listOf(24 to R.string.backup_daily, 168 to R.string.backup_weekly).forEach { (h, label) ->
-                            FilterChip(job.schedule.intervalHours == h, {
-                                store.update(job.id) { it.copy(schedule = it.schedule.copy(intervalHours = h, autoRun = true)) }
-                            }, { Text(stringResource(label)) }, modifier = Modifier.semantics { contentDescription = "backup_interval_${h}_${job.name}" })
+            if (jobs.isEmpty()) item(span = { GridItemSpan(maxLineSpan) }) { Text(stringResource(R.string.backups_none), Modifier.padding(vertical = 8.dp)) }
+            items(jobs, key = { it.id }) { job ->
+                clock.let { } // read so the times below follow the clock
+                Card(Modifier.fillMaxWidth().padding(top = 8.dp)) {
+                    Column(Modifier.padding(12.dp), verticalArrangement = Arrangement.spacedBy(4.dp)) {
+                        Text(job.name, style = MaterialTheme.typography.titleMedium)
+                        Text(stringResource(if (job.type == JobType.INCREMENTAL) R.string.backup_type_incremental else R.string.backup_type_plain),
+                            style = MaterialTheme.typography.labelMedium)
+                        BackupEnds(job)
+                        JobStatusLine(job, reachable?.contains(job.id))
+                        FlowRow(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                            listOf(24 to R.string.backup_daily, 168 to R.string.backup_weekly).forEach { (h, label) ->
+                                FilterChip(job.schedule.intervalHours == h, {
+                                    store.update(job.id) { it.copy(schedule = it.schedule.copy(intervalHours = h, autoRun = true)) }
+                                }, { Text(stringResource(label)) }, modifier = Modifier.semantics { contentDescription = "backup_interval_${h}_${job.name}" })
+                            }
                         }
+                        Text(stringResource(R.string.backup_last_success, Format.ago(job.lastSuccessAt)), style = MaterialTheme.typography.bodySmall)
+                        job.lastMessage?.let { Text("${job.lastStatus?.lowercase() ?: ""}: $it", style = MaterialTheme.typography.bodySmall) }
+                        val snaps = store.snapshots(job.id)
+                        if (snaps.isNotEmpty()) Text(stringResource(R.string.backup_snapshots, snaps.size, Format.dateTime(snaps.last().time)),
+                            style = MaterialTheme.typography.bodySmall)
+                        JobActionsRow(job, actions)
                     }
-                    Text(stringResource(R.string.backup_last_success, Format.ago(job.lastSuccessAt)), style = MaterialTheme.typography.bodySmall)
-                    job.lastMessage?.let { Text("${job.lastStatus?.lowercase() ?: ""}: $it", style = MaterialTheme.typography.bodySmall) }
-                    val snaps = store.snapshots(job.id)
-                    if (snaps.isNotEmpty()) Text(stringResource(R.string.backup_snapshots, snaps.size, Format.dateTime(snaps.last().time)),
-                        style = MaterialTheme.typography.bodySmall)
-                    JobActionsRow(job, actions)
                 }
             }
         }
@@ -397,7 +411,7 @@ private fun RunRow(job: BackupJob, run: RunRecord, actions: JobActions? = null) 
             Text("${run.status.name.lowercase().replace('_', ' ')} · ${Format.dateTime(run.startedAt)} · " +
                 "${((run.finishedAt - run.startedAt) / 1000).coerceAtLeast(0)} s", color = color, style = MaterialTheme.typography.bodySmall)
             run.stats?.let { s ->
-                Text(stringResource(R.string.backups_history_stats, s.files, s.filesNew, Format.bytes(s.totalBytes), Format.bytes(s.bytesAdded)),
+                Text(stringResource(R.string.backups_history_stats, Format.files(s.files), s.filesNew, Format.bytes(s.totalBytes), Format.bytes(s.bytesAdded)),
                     style = MaterialTheme.typography.bodySmall)
             }
             run.snapshotId?.let { Text(stringResource(R.string.backups_history_snapshot, it.take(8)), style = MaterialTheme.typography.bodySmall) }

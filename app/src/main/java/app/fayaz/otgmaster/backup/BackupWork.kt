@@ -126,9 +126,9 @@ object BackupExecutor {
                         last = now
                         val fraction = if (p.totalBytes > 0) (p.bytes.toFloat() / p.totalBytes).coerceIn(0f, 1f) else null
                         val phase = when {
-                            p.phase == "scan" -> "Measuring: ${p.files} files"
-                            p.totalFiles > 0 -> "${p.files} of ${p.totalFiles} files · ${Format.bytes(p.bytes)}"
-                            else -> "${p.phase}: ${p.files} files"
+                            p.phase == "scan" -> "Measuring: ${Format.files(p.files)}"
+                            p.totalFiles > 0 -> "${p.files} of ${Format.files(p.totalFiles)} · ${Format.bytes(p.bytes)}"
+                            else -> "${p.phase}: ${Format.files(p.files)}"
                         }
                         setRun(jobId) { it?.copy(phase = phase, fraction = fraction, waiting = false) }
                         MountedDriveService.operationProgress(app, MountedDriveService.Operation(title, phase, fraction, jobId))
@@ -325,8 +325,8 @@ object BackupScheduler {
             .joinToString(" and ") { VolumeInfo.summary(it.info) }.ifEmpty { "it can no longer be reached" }
             .let { if (it == "it can no longer be reached") it else "$it is not connected" }
 
-    /** Both ends on the same partition is one drive to name. */
-    fun driveNames(job: BackupJob): String = job.driveEnds().map { VolumeInfo.summary(it.info) }.distinct().joinToString(" and ")
+    /** Both ends on one device is one drive to name, whichever partitions they use. */
+    fun driveNames(job: BackupJob): String = job.driveEnds().map { VolumeInfo.driveName(it.info) }.distinct().joinToString(" and ")
 
     /** Whether any partition of the device behind [end] is mounted now. */
     private fun deviceMounted(end: Endpoint): Boolean = end.kind == VolumeInfo.KIND_OTG && OtgMasterState.mountedDrives.any { d ->

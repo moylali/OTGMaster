@@ -2165,6 +2165,8 @@ class E2EAutomatedTest {
         bkAwait(slow.id, "the slow run", 600_000L)
         bkExpectSuccess(bkAwait(job.id, "the waiting backup", 120_000L), "the waiting backup")
 
+        bkExpectScheduleColumns("E2E_next", "E2E_busy")
+
         // Due with the drive gone.
         bkStore.update(job.id) { it.copy(lastSuccessAt = System.currentTimeMillis() - 25 * hour) }
         bkPullDrive(drive)
@@ -2173,6 +2175,37 @@ class E2EAutomatedTest {
         // Corrupted says so, whatever else is true.
         bkStore.update(job.id) { it.copy(corruptedAt = System.currentTimeMillis(), corruptedReason = null) }
         bkExpectStatus("E2E_next", bkText(R.string.backup_state_corrupted))
+    }
+
+    /** Two schedules stack on a phone and sit side by side on an unfolded phone's size of screen. */
+    private fun bkExpectScheduleColumns(first: String, second: String) {
+        fun lefts(): Pair<Int, Int> {
+            for (attempt in 1..15) {
+                InstrumentationRegistry.getInstrumentation().uiAutomation.clearCache()
+                val a = device.wait(Until.findObject(By.desc("backup_status_$first")), 1000L)
+                val b = device.findObject(By.desc("backup_status_$second"))
+                val pair = runCatching { if (a != null && b != null) a.visibleBounds.left to b.visibleBounds.left else null }.getOrNull()
+                if (pair != null) return pair
+            }
+            captureScreen("schedule_columns")
+            throw AssertionError("$first and $second are not both on the screen")
+        }
+        val (narrowA, narrowB) = lefts()
+        assertEquals("the phone layout is not one column", narrowA, narrowB)
+        try {
+            device.executeShellCommand("wm size 2208x1840")
+            device.executeShellCommand("wm density 420")
+            device.waitForIdle()
+            android.os.SystemClock.sleep(1500)
+            val (wideA, wideB) = lefts()
+            if (kotlin.math.abs(wideA - wideB) < device.displayWidth / 3) captureScreen("schedule_columns")
+            assertTrue("no second column at ${device.displayWidth} px: $wideA and $wideB", kotlin.math.abs(wideA - wideB) >= device.displayWidth / 3)
+        } finally {
+            device.executeShellCommand("wm density reset")
+            device.executeShellCommand("wm size reset")
+            device.waitForIdle()
+            android.os.SystemClock.sleep(1500)
+        }
     }
 
     // ── Remove schedule ─────────────────────────────────────────────────────────────────
