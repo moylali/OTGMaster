@@ -54,6 +54,50 @@ the drive byte for byte unchanged, and fails when either guarded bug is put back
 (`clearCallingIdentity` removed: the Files app does not list the snapshot; reads on the shared
 proxy thread: "Handler must be different from the current thread").
 
+### Commit hashes after the merge of #106
+
+The rows and reports above cite hashes from before the branch was rebased onto `main`, so this table gives both.
+
+| Before the rebase (cited) | At the PR head | On `main` | PR | Commit |
+|---|---|---|---|---|
+| none | `7bbc625` | `eed1ca9` | #106 | test: fix the two unit tests CI failed on PR #106; CI installs the checkers |
+| `db7d3a8` | `4e76342` | `7d60708` | #106 | docs: record the desktop restic repository on the tablet |
+| `b1eb85b` | `305d284` | `886e20e` | #106 | test(e2e): backup_mount, a desktop restic repository browsed to and mounted |
+| `d5bbb40` | `3b70d53` | `b482879` | #106 | fix(backup): read compressed restic repositories on Android |
+| `e7fd7e6` | `6c2381a` | `f6413e6` | #106 | docs: record the tablet run of the backup screens and mounted backups |
+| `21d607e` | `184742f` | `59f60a6` | #106 | fix(backup): "Last backup" follows the clock on the Schedules tab |
+| `1fbeeae` | `2febcfe` | `707bd66` | #106 | fix(backup): a source that lists nothing fails the run, instead of an empty snapshot |
+| `b531eae` | `ccdd716` | `a9f7fcb` | #106 | fix(backup): files can be read from a mounted backup; its card says what it is |
+| `b6dc2c5` | `393de27` | `33e347a` | #106 | fix(backup): a mounted backup opens in the Files app and has its card; Create schedule, Browse for backup |
+| `426ad6b` | `49f8d53` | `4c12b9c` | #106 | feat(backup): source and target ends, Plain/Incremental, Manage backups, mount a backup |
+| `18e2713` | `93f01e3` | `2311028` | #106 | ui: the volume-label limit follows the chosen filesystem |
+| `6589dc5` | `f848fb1` | `7e025f2` | #106 | docs: record the ext4/NTFS/LUKS2 Format and Encrypt device run |
+| `57df1d0` | `356e00e` | `025c916` | #106 | feat: Format and Encrypt write ext4 and NTFS, and Encrypt creates LUKS2 |
+| `c973eea` | `91072e5` | `4282eb2` | #106 | feat(format): ext4 and NTFS formatters, and a LUKS2 volume creator |
+| `ac41ffd` | `d35c3f2` | `1746784` | #106 | fix(usb): a failed transfer waits a second before the drive is asked again |
+| `01af1f5` | `ea03a7c` | `869906c` | #106 | ui: action labels without a trailing ellipsis |
+| `d59650a` | `c5c1bf4` | `b89bb26` | #106 | fix(ui): the tablet layout no longer flips to two panes when the keyboard opens |
+| `7b86f3d` | `65c5d45` | `fd15a57` | #106 | fix: a drive plugged in at the lock screen is picked up on unlock without Scan USB |
+| `0f20e12` | `a231f2e` | `f8a42bd` | #106 | ui: shorter notifications dialog text |
+| `570be97` | `9126197` | `37af1f6` | #106 | feat: OTG Master explains why before Android asks for notifications |
+| `f942d88` | `51d7a98` | `8ea4f63` | #106 | fix: the notifications toast shows only after a refusal |
+| `2791fe9` | `6d69b25` | `3e52fce` | #106 | ui: the notifications toast in the user's wording |
+| `8ac02b5` | `25fd610` | `c9958b2` | #106 | feat: a toast says why notifications are asked for, alongside the question |
+| `9c6f0f1` | `19fce65` | `8fe32ba` | #106 | feat: notifications are asked for at every plug-in while they are off, with the app's own dialog when Android no longer shows one |
+| `6b48b3e` | `9bccf1c` | `ac0decd` | #106 | feat: a drive plugged in that Android did not open OTG Master for gets a notification to open it |
+| `38d92f0` | `5585cb3` | `bf1374d` | #106 | test(e2e): tap a picker again when its menu did not open |
+| `4c7bdc0` | `b7a3805` | `87d9134` | #106 | fix(ui): pickers open on the first tap after another picker was used |
+| `f3d79d3` | `e7c153c` | `f814b6d` | #106 | test(e2e): save a screen when a picker's option is missing |
+| `229819b` | `725a628` | `e44730a` | #106 | test(e2e): pickers in the Encrypt dialog scroll into view before they are opened |
+| `41b754b` | `fbb7408` | `447c565` | #106 | fix: a USB plug-in no longer opens a second copy of the app over a dialog |
+| `a8482a5` | `b96db72` | `a6c3218` | #106 | fix: a notifications question closed unanswered is asked again, and mounts wait while it is open |
+| `5311c48` | `4abf21d` | `e8a09af` | #106 | fix: a drive plugged in at the lock screen waits for unlock; notifications asked before the first mount |
+| `3d2310b` | `55636ce` | `2b04fba` | #106 | ui(recovery): scan progress with Stop, why nothing was found, type filters, PDF thumbnails |
+| `eee357f` | `07e9221` | `089ea3c` | #106 | ui(recovery): full screen, Select all / Select none, and photo thumbnails |
+| `7aeeaac` | `ce9a562` | `de3a118` | #106 | feat: password fields work with password managers; Compose 1.8 for autofill |
+| `9a5e7f5` | `f84912d` | `c27e855` | #106 | feat(encrypt): confirm the PIM; clear only the encrypted partition's credentials |
+| `1a3bc04` | `494322a` | `b3e4a33` | #106 | feat(log): USB permission says what is pending: asked for which device, still waiting, granted after how long, denied, or unplugged unanswered |
+
 ## 2026-11-01 — Backup screens and mounted backups: D5/2 on the Galaxy Tab A9+
 
 Device: Samsung Galaxy Tab A9+ (SM-X210), Android 16 / One UI 8.0, over a USB-C hub with its
