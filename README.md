@@ -31,14 +31,14 @@ The app cannot perform a kernel mount on non-rooted Android. Instead it:
 2. Reads raw sectors through a userspace USB Mass Storage adapter ([libaums](libaums/)).
 3. Probes MBR/GPT partitions and detects the encryption type (VeraCrypt, LUKS1, LUKS2, BitLocker or encrypted APFS) on each.
 4. Unlocks the volume header and exposes a decrypted block-device wrapper:
-   - **VeraCrypt**: AES or Serpent, SHA-512 header KDF; *from 0.4.2*, also Twofish, the cascades AES-Twofish, AES-Twofish-Serpent, Serpent-AES, Serpent-Twofish-AES and Twofish-Serpent, and the Argon2id header KDF
+   - **VeraCrypt**: AES or Serpent, SHA-512 header KDF; also Twofish, the cascades AES-Twofish, AES-Twofish-Serpent, Serpent-AES, Serpent-Twofish-AES and Twofish-Serpent, and the Argon2id header KDF
    - **LUKS1**: PBKDF2-based KDF, AES-XTS bulk decryption
    - **LUKS2**: Argon2id-based KDF, AES-XTS bulk decryption
    - **BitLocker**: password or recovery key; XTS-AES and AES-CBC, with or without the Elephant diffuser
    - **APFS (Encrypted)**: the password goes to the filesystem reader, which unwraps the volume key itself
 5. Feeds the decrypted block device into a userspace filesystem reader (FAT32 via libaums, exFAT via a vendored native `libexfat`, ext4 via a pure-Kotlin driver, NTFS via a vendored `libntfs-3g`, and APFS, read-only, via a vendored `libfsapfs`).
 6. Surfaces files through the app UI and a `DocumentsProvider`, so other apps (Files, Gallery, etc.) can browse the unlocked volume.
-7. *From 0.4.2*, formats and encrypts from a mounted drive's actions (on the card when they fit, else under **More actions**), after the user types ERASE:
+7. Formats and encrypts from a mounted drive's actions (on the card when they fit, else under **More actions**), after the user types ERASE:
    - **Format** writes an empty FAT32, exFAT, ext4 or NTFS (ext4 and NTFS *from 0.5.0*) of the same size — the current one by default, or another — with the label given; a volume inside an encrypted container stays in it, with the same password
    - **Encrypt** erases the partition and creates a new VeraCrypt volume — any of the ciphers and cascades above, SHA-512 or Argon2id, optional PIM and keyfiles — or, *from 0.5.0*, a LUKS2 volume (AES-XTS, Argon2id) that Linux opens with its own tools; either holds a new FAT32, exFAT, ext4 or NTFS
    - both overwrite every sector by default; **Quick** writes only the filesystem structures, and the old data stays on the drive until overwritten
