@@ -46,6 +46,7 @@ class E2EAutomatedTest {
         private const val AUTHORITY = "app.fayaz.otgmaster.documents"
         private const val UNMOUNT_WAIT_MS = 15_000L
         private const val UNMOUNT_SETTLE_MS = 1_000L
+        private const val EMULATOR_LAUNCHER = "com.google.android.apps.nexuslauncher"
         private const val BACKUP_REPO = "otg_backup_repo"
         /** As a case's password: it has keyfiles and no password. */
         private const val NO_PASSWORD = "none"
@@ -716,6 +717,7 @@ class E2EAutomatedTest {
         confirm.click()
         // The erase itself is confirmed in a dialog: nothing starts until ERASE is typed.
         val eraseNow = device.wait(Until.findObject(By.desc("erase_dialog_confirm")), timeout)
+        if (eraseNow == null) captureScreen("erase_dialog_missing")
         assertNotNull("the ERASE confirmation dialog did not open", eraseNow)
         // Tapped before ERASE is typed, it must do nothing. (Its isEnabled cannot say: the
         // accessibility node uiautomator gets for the Compose button reads enabled either way.)
@@ -1862,7 +1864,7 @@ class E2EAutomatedTest {
         assertFalse("a manual backup reminded: $titles", titles.any { it.contains("E2E_manual") })
         val text = bkContext.getSystemService(android.app.NotificationManager::class.java)!!.activeNotifications
             .first { it.id == BackupNotifications.reminderId(job.id) }.notification.extras.getCharSequence(android.app.Notification.EXTRA_TEXT).toString()
-        assertEquals(bkText(R.string.backup_reminder_connect, VolumeInfo.summary(job.destination.info)), text)
+        assertEquals(bkText(R.string.backup_reminder_connect, VolumeInfo.driveName(job.destination.info)), text)
 
         // Not again for 20 hours, then again.
         BackupNotifications.cancel(bkContext, BackupNotifications.reminderId(job.id))
@@ -2232,8 +2234,17 @@ class E2EAutomatedTest {
         } finally {
             device.executeShellCommand("wm density reset")
             device.executeShellCommand("wm size reset")
+            // A display this wide makes the launcher show its taskbar, and it keeps showing it
+            // after the reset. On the phone screen that bar covers the bottom of every later
+            // case on this emulator: swipes starting there do nothing, so forms stop scrolling.
+            // Restarting the launcher is what clears it.
+            device.executeShellCommand("am force-stop $EMULATOR_LAUNCHER")
             device.waitForIdle()
             android.os.SystemClock.sleep(1500)
+        }
+        if (!device.wait(Until.gone(By.pkg(EMULATOR_LAUNCHER)), 15000L)) {
+            captureScreen("taskbar_left_behind")
+            throw AssertionError("the launcher's taskbar is still on screen after the size reset")
         }
     }
 
@@ -3580,6 +3591,7 @@ class E2EAutomatedTest {
         // Crypto is slow on emulator; allow up to 120s for decryption + detection
         // Unsupported filesystems log "Cannot mount: <reason>" (log_cannot_mount_reason).
         val errorLog = device.wait(Until.findObject(By.textContains("Cannot mount:")), 120000L)
+        if (errorLog == null) captureScreen("cannot_mount_missing")
         assertTrue("Expected 'Cannot mount:' in app log but it did not appear", errorLog != null)
 
         if (expectedFs.isNotEmpty()) {
