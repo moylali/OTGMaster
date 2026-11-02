@@ -6,8 +6,8 @@ needed to verify an implementation on real hardware.
 ## 1. What the proposal gets right
 
 **Generalising `NativeDecryptedBlockDevice` into a `CryptoBlockDevice`** is the
-correct shape. Everything above it — `CachedBlockDevice`, libaums, libexfat, the
-DocumentsProvider — depends only on `RawBlockDevice`, so a new encryption format
+correct shape. Everything above it (`CachedBlockDevice`, libaums, libexfat, the
+DocumentsProvider) depends only on `RawBlockDevice`, so a new encryption format
 inherits the readahead, the write-through patching and the SCSI serialisation for
 free. That layering is also already load-bearing: the block cache took exFAT
 directory listing from 164 s to 2 s, and none of it is format-specific.
@@ -30,7 +30,7 @@ used for VeraCrypt headers.
 These are the things I would not discover until the implementation failed on a real
 drive.
 
-### 2.1 Argon2 memory cost is a hard constraint on a phone — the biggest risk
+### 2.1 Argon2 memory cost is a hard constraint on a phone: the biggest risk
 
 LUKS2 defaults its Argon2id parameters to roughly *half the RAM of the machine that
 formatted the volume*, capped around 4 GB. A container created on a 32 GB desktop can
@@ -58,7 +58,7 @@ this project's GPL-3.0-or-later grant and added to the table in `README.md` and 
 ### 2.2 Key size and sector size are hardcoded today
 
 `xtsCrypt` in `VeraCryptNative.cpp` calls `mbedtls_aes_xts_setkey_dec(&ctx, key64,
-512)` — a fixed 512-bit key — and `cryptSectorsInPlace` assumes **512-byte sectors**
+512)` (a fixed 512-bit key) and `cryptSectorsInPlace` assumes **512-byte sectors**
 throughout.
 
 LUKS breaks both:
@@ -94,7 +94,7 @@ Without that check a wrong password yields a wrong master key, which decrypts th
 filesystem to noise. libexfat or libaums then reads that noise as metadata. Given
 this codebase has just spent a long time fixing cases where corrupt metadata caused
 crashes and cross-linked writes, **mounting with an unverified key is the single most
-dangerous thing on this list** — and it is a write-capable mount.
+dangerous thing on this list**, and it is a write-capable mount.
 
 VeraCrypt gets this for free because its decrypted header contains a magic value. LUKS
 needs the digest comparison done explicitly.
@@ -103,7 +103,7 @@ needs the digest comparison done explicitly.
 
 LUKS1 has 8 keyslots; LUKS2 has an arbitrary number. A password may match *any* of
 them. The unlock path must iterate active keyslots and stop at the first whose derived
-key satisfies the digest — not assume slot 0.
+key satisfies the digest, not assume slot 0.
 
 ### 2.6 Authenticated encryption must be detected and refused
 
@@ -116,7 +116,7 @@ Detect an `integrity` field in the segment and refuse clearly.
 
 There are **two header copies** (primary and secondary), each with a **SHA-256
 checksum** over the header and JSON area. A correct reader validates the checksum and
-falls back to the secondary copy when the primary is damaged — which is precisely the
+falls back to the secondary copy when the primary is damaged, which is precisely the
 case a recovery-minded user will have.
 
 ### 2.8 Detached headers and keyfiles
@@ -141,7 +141,7 @@ volume".
 
 **LUKS volumes cannot be created on macOS.** It is a Linux device-mapper construct;
 there is no `cryptsetup` for macOS and no Homebrew formula. Docker Desktop cannot help
-either, because it runs Linux in a VM with no raw USB passthrough — a privileged
+either, because it runs Linux in a VM with no raw USB passthrough: a privileged
 container sees the VM's disks, not `/dev/disk4`.
 
 One of these is required:
@@ -152,13 +152,13 @@ One of these is required:
 2. **A Linux machine or Raspberry Pi** on the same network.
 3. **Manual execution** of §5 on any Linux host.
 
-Reading and unlocking, once prepared, is entirely the app's job on the phone — no
+Reading and unlocking, once prepared, is entirely the app's job on the phone: no
 Linux needed for the actual testing.
 
 ## 5. Test-data preparation
 
 **Moved.** The preparation commands live in
-[docs/TEST_DATA.md](TEST_DATA.md) §8–§12 — partitioning, `luksFormat` for both header
+[docs/TEST_DATA.md](TEST_DATA.md) §8–§12: partitioning, `luksFormat` for both header
 formats, the filesystems, the fixture tree, the host-computed manifest and teardown.
 
 They were duplicated here and there is now one copy, because two copies of a
@@ -182,9 +182,9 @@ missing all along:
   against a real second partition. A collision means a remount-and-verify section
   could check the *wrong* volume and report a pass that means nothing.
 - **The `drive` selector** (`--es drive 0,2`), likewise unexercised.
-- **`saf par cross`** — cross-drive SAF concurrency, the last open question on whether
+- **`saf par cross`**: cross-drive SAF concurrency, the last open question on whether
   per-drive handler threads would buy anything. Two mounted volumes are enough.
-- **Per-partition `unmountDrive` behaviour** — the raw USB connection must be closed
+- **Per-partition `unmountDrive` behaviour**: the raw USB connection must be closed
   only when the *last* partition is unmounted. That branch exists and has never run.
 
 ## 7. Acceptance criteria
@@ -196,7 +196,7 @@ An implementation is verified when, on at least two devices:
 2. A wrong password is **refused by digest check**, not mounted.
 3. All eleven correctness cases pass on each partition, judged after a proven remount.
 4. The 16 MiB write verification passes all three passes on each partition.
-5. `fixtures` **matches the host-computed hashes** — the first time this check will
+5. `fixtures` **matches the host-computed hashes**: the first time this check will
    have established anything.
 6. A LUKS2 volume formatted with desktop-default Argon2 memory is refused with a clear
    message on a low-memory device, rather than OOMing.

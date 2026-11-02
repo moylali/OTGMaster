@@ -10,5 +10,5 @@ BitLocker volumes created on Windows, from cryptsetup's test suite.
   in the APK.
 
 `images.conf` inside gives, per image, its password, recovery password and the
-SHA-256 of the whole decrypted volume as cryptsetup maps it — the expected
+SHA-256 of the whole decrypted volume as cryptsetup maps it: the expected
 answers `BitLockerCompatTest` checks against. Registered in `docs/VENDOR_FIXES.md`.

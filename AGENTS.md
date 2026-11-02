@@ -1,4 +1,4 @@
-# OTG Master — working agreements
+# OTG Master: working agreements
 
 Read by every coding agent. `CLAUDE.md` only imports this file, so Claude Code
 loads it too; edit the rules here.
@@ -11,13 +11,13 @@ These apply to every commit, without being asked.
    `fastlane/metadata/android/en-US/changelogs/<versionCode>.txt`, where
    `versionCode` is the current value in `app/build.gradle.kts`. It accumulates
    **all user-facing changes since the last tagged commit**, not just the change
-   being committed — so each commit rewrites the whole file rather than appending
+   being committed, so each commit rewrites the whole file rather than appending
    one line. Check `git log <last-tag>..HEAD` to rebuild it.
 
    **The versionCode must be bumped immediately after a tag**, so that value always
    names an *unreleased* build. This rule was followed literally while the version
    still said 44 after `v0.3.11` had shipped at 44, and a changelog describing
-   unreleased work was written into the released version's file — where F-Droid and
+   unreleased work was written into the released version's file, where F-Droid and
    Play would have shown it against a build that did not contain any of it. Before
    editing a changelog, confirm the current `versionCode` is higher than the one the
    last tag was built with:
@@ -37,12 +37,12 @@ These apply to every commit, without being asked.
    the condensed file at `distribution/whatsnew/whatsnew-en-US`. 
    **Both files must be ≤ 500 characters**, otherwise F-Droid will silently truncate it 
    mid-sentence and Google Play will reject the upload! Use `wc -c` to verify lengths.
-   Additionally, if the commit adds major user-facing features (e.g. new 
+   Also, if the commit adds major user-facing features (e.g. new
    filesystems, encryption formats), you **MUST update the main Play Store description** 
    at `fastlane/metadata/android/en-US/full_description.txt` to advertise the new capabilities.
 
 2. **Every commit message carries a summary of changes.** A subject line alone is
-   not enough. State what changed, and why — including the reasoning or evidence
+   not enough. State what changed, and why, including the reasoning or evidence
    that justified it, so the commit stands on its own later.
 
 3. **A tagging commit must attach a regression test report covering at least three
@@ -66,7 +66,7 @@ These apply to every commit, without being asked.
    Keep the names and the size; add a shot rather than overloading one.
 
    How to take them without clutter:
-   - Status bar in demo mode — `adb shell settings put global
+   - Status bar in demo mode: `adb shell settings put global
      sysui_demo_allowed 1`, then `am broadcast -a com.android.systemui.demo -e
      command enter`, `… clock -e hhmm 1200`, `… battery -e level 100 -e plugged
      false`, `… notifications -e visible false`; `-e command exit` afterwards.
@@ -74,7 +74,7 @@ These apply to every commit, without being asked.
      otgmaster_prefs.xml` via `run-as` (force-stop first). Save the file before
      and write it back after, so the device is left as it was.
    - The fingerprint prompt (auto mount, quick unlock) is a secure window and
-     screenshots come out black while it is up — dismiss it with Back.
+     screenshots come out black while it is up: dismiss it with Back.
    - Check both themes whenever colours are involved: the dark-on-dark status bar
      fixed in `d19f5b7` was visible only in the dark shots.
 
@@ -142,7 +142,7 @@ fdroiddata's entry is `UpdateCheckMode: Tags ^v[0-9]+\.[0-9]+\.[0-9]+$`, so
 `fdroid checkupdates` walks the five most recent tags whose *name* matches that
 pattern, reads `versionCode` out of each tagged tree, and auto-generates a build
 entry pinned to the highest one. `main` always carries an unreleased
-`versionCode` — the bump happens straight after a tag — so any tag landing on
+`versionCode` (the bump happens straight after a tag), so any tag landing on
 mainline work hands F-Droid a version that was never released.
 
 Test builds shared with issue reporters go out as GitHub pre-releases, and a
@@ -156,14 +156,14 @@ an APK built from some other commit. Run `scripts/bump-version.sh <name>` first
 and tag the bump commit, never a later one.
 
 `.github/workflows/tag-guard.yml` checks both of these on every tag push. It
-cannot block the push — GitHub has no server-side hook for that — so it fails
+cannot block the push (GitHub has no server-side hook for that), so it fails
 on the tag instead, while deleting and re-pushing still costs nothing.
 
 This is issue #103. Two `test-*` pre-release tags were pushed at commits
 carrying `versionCode 49` / `versionName 0.4.2`, while the real `v0.4.2` tag
 carries `versionCode 48`. fdroiddata had a bare `UpdateCheckMode: Tags` with no
 pattern at the time, so checkupdates took `versionCode 49` off a test tag,
-pinned the build to that commit, and diffed it against the v0.4.2 release APK —
+pinned the build to that commit, and diffed it against the v0.4.2 release APK,
 built from the v0.4.2 commit. The reproducible build failed on `classes.dex`,
 both baseline profiles and all four `libveracrypt-native.so`, which reads like
 non-determinism in the NDK output and was nothing of the kind: the two trees
@@ -174,18 +174,18 @@ reproducible build fails.
 ## Benchmarking and verification
 
 **To run a benchmark, follow "Standard procedure" at the top of
-`docs/RUNNING_BENCHMARKS.md`** — host check and baseline, build and install,
+`docs/RUNNING_BENCHMARKS.md`**: host check and baseline, build and install,
 device preparation, start, monitor, collect, host verification, record. Each
 step is there because skipping it produced a wrong or unusable result.
 
-Before changing anything in the I/O path — the block cache, the crypto layer, libaums,
-libexfat, or the DocumentsProvider — read these:
+Before changing anything in the I/O path (the block cache, the crypto layer, libaums,
+libexfat, or the DocumentsProvider) read these:
 
-- `docs/RUNNING_BENCHMARKS.md` — how to trigger runs by both paths, how reports are
+- `docs/RUNNING_BENCHMARKS.md`: how to trigger runs by both paths, how reports are
   retrieved, and what makes a result trustworthy.
-- `docs/BENCHMARK_RESULTS.md` — reference figures across four devices and both
+- `docs/BENCHMARK_RESULTS.md`: reference figures across four devices and both
   filesystems, what to validate, and the comparison rules.
-- `docs/IO_PERFORMANCE.md` — the narrative, including three retracted claims and why
+- `docs/IO_PERFORMANCE.md`: the narrative, including three retracted claims and why
   each was wrong.
 
 **A fix is not verified until a test that fails on the old code passes on the new one,
@@ -197,15 +197,15 @@ logic.
 **Any I/O path change must be validated on at least one physical device before the
 commit is pushed to the remote.** "Validated" means a relevant E2E test or manual
 exercise completes successfully on a real device with a real (or emulator-backed)
-filesystem — not just a clean build and install. Do not push until this is done.
+filesystem, not just a clean build and install. Do not push until this is done.
 
 **Benchmark runs must cover at least three devices before a release is tagged.**
 Commit rule 3 (the tagging regression report) is the gate; this reinforces it:
 the three-device bar applies to benchmark figures, not just smoke checks. (It was
-four until 0.4.1, which was tagged on three — OnePlus 7, Pixel 7 Pro, Samsung M30 — with
+four until 0.4.1, which was tagged on three (OnePlus 7, Pixel 7 Pro, Samsung M30) with
 the Huawei P20 Lite's partial run kept in the report but not counted.)
 
-**A content hash does not verify a filesystem write — run the filesystem's own
+**A content hash does not verify a filesystem write: run the filesystem's own
 checker.** A write path must leave the volume structurally valid, and SHA-256 over
 the bytes just written cannot see otherwise. The ext4 write support reported
 `write verify: ALL PASSED` with matching hashes on all three passes (cached,
@@ -218,9 +218,9 @@ was one fixture directory reading back as a regular file.
 So for any filesystem write change:
 
 - keep a host-side test that drives the real write code against a loopback image
-  and asserts the checker is clean — `Ext4WriteFsckTest` does this with
+  and asserts the checker is clean: `Ext4WriteFsckTest` does this with
   `mkfs.ext4` + `e2fsck -fn`, and it reproduced in seconds what cost a drive;
-- **after every device run, re-check that volume from the host** — not just after
+- **after every device run, re-check that volume from the host**: not just after
   a run that looked wrong, and not just for ext4.
   `scripts/verify_volume.sh /dev/sdX1` opens whatever container is
   there (LUKS, VeraCrypt or plain), asks `blkid` what is inside, and runs that
@@ -228,7 +228,7 @@ So for any filesystem write change:
   device path goes through the crypto layer that host tests cannot cover.
 
   This is not optional diligence, it is the only check that can see the failure.
-  **The app never verifies a checksum it reads** — `Ext4Crc` appears throughout
+  **The app never verifies a checksum it reads**: `Ext4Crc` appears throughout
   the ext4 code and every use computes a value to *write*; there is no
   comparison anywhere. So a volume whose every superblock, inode, bitmap, group
   descriptor and directory checksum is invalid reads back perfectly through the
@@ -243,7 +243,7 @@ So for any filesystem write change:
   an allocation table against a known-good copy.
 
   It exists because the two checks above both have blind spots that a real
-  corruption walked straight through. `fsck` validates structure, not contents —
+  corruption walked straight through. `fsck` validates structure, not contents:
   no filesystem here carries data checksums, so a cluster holding the wrong bytes
   inside a valid chain is invisible to `e2fsck`, `fsck.exfat` and `fsck.vfat`
   alike. `fixtures` validates contents, but only for manifest entries: 14 files of
@@ -264,7 +264,7 @@ So for any filesystem write change:
   `--metadata-only` for a quick pass after routine runs; it diffs the allocation
   tables in seconds and is the half that catches damage of that shape.
 
-  Take the baseline when you have reason to believe the volume is good — freshly
+  Take the baseline when you have reason to believe the volume is good: freshly
   prepared, or just checked. A baseline taken over damage records the damage as
   normal, and the tool then passes forever. It refuses to overwrite an existing
   baseline for that reason.
@@ -280,11 +280,11 @@ happen as far as the repo is concerned: logcat is cleared between runs, the on-d
 `BENCH/reports/` travels with the drive rather than the code, and neither can be
 diffed against the commit it was meant to justify. One row per run, and the row names
 the device, Android version, container, filesystem, the commit the APK was built from,
-the sections that actually ran, and each verdict.
+the sections that ran, and each verdict.
 
 **Commit the code before building the APK you benchmark.** The report stamps itself
 with `git describe` at build time, so an APK built from a dirty tree is labelled with
-the commit it is *not* — it carries uncommitted work the label does not name. This
+the commit it is *not*: it carries uncommitted work the label does not name. This
 happened on the first day the log existed: a run was recorded against `6d33f88` while
 the APK it measured contained the changes committed afterwards as `654ceda`, which
 would have sent a later reader to the wrong diff to explain the numbers. A run whose
@@ -293,7 +293,7 @@ then run. If a dirty run happens anyway, the row states what the APK actually
 contained rather than repeating the label.
 
 **Install the current build on the device before every run.** Not "if it looks
-out of date" — before every run, and confirm it from the report's own `commit`
+out of date": before every run, and confirm it from the report's own `commit`
 line rather than from memory of having installed it.
 
 A device left on an older APK still produces a complete, plausible-looking row.
@@ -311,7 +311,7 @@ withdrawn later rather than one that obviously failed.
 
 **A run that did not complete can be dropped; a run that completed must be recorded.**
 If the drive stopped responding, the USB handle died, the app crashed or the run was
-interrupted, there is no result and nothing to log — delete it and start again. The
+interrupted, there is no result and nothing to log: delete it and start again. The
 exemption is for runs that produced no result, **not** for runs that produced an
 unwelcome one. A completed run with bad numbers, a `FAILED` section, a `PARTIAL`
 verdict or a `*** CONTAMINATED ***` flag is a result and goes in the log with that
@@ -327,7 +327,7 @@ before:
   skips the five write sections silently. A row that does not say what ran cannot be
   distinguished from a row where the write path was never exercised.
 - **`PARTIAL` and `NOT VERIFIED` are recorded as themselves**, never rounded up to a
-  pass and never left out. They mean the suite could not support a verdict — which is
+  pass and never left out. They mean the suite could not support a verdict, which is
   information, not a gap to tidy away.
 - **Whether the host `e2fsck` was run afterwards, and its result.** Hash-clean is not
   fsck-clean.
@@ -353,7 +353,7 @@ invocation gets pasted; `LUKS_SUPPORT.md` now holds the design evaluation only.
 - **Do not push to mainline** unless explicitly asked. Commit to the working
   branch.
 - Unless a tag is created, nothing reaches F-Droid or Google Play, so landing
-  fixes on `main` is safe; tagging is the gate — and every tag goes through it,
+  fixes on `main` is safe; tagging is the gate, and every tag goes through it,
   test builds included, so see "Tags" before pushing one.
 
 ## Destructive commands
@@ -380,11 +380,11 @@ vendored without an entry there.
 - the upstream repository URL;
 - the exact upstream commit pinned, full SHA, not a tag or a branch;
 - the date pinned, and the upstream version if it has one;
-- **why** it is vendored rather than consumed as a dependency — this is the part
+- **why** it is vendored rather than consumed as a dependency: this is the part
   that gets lost, and without it a later maintainer cannot judge whether the reason
   still holds;
 - the licence, and whether it is compatible with this project's GPL-3.0-or-later
-  grant (the licence table in `README.md` is the authoritative list — add the new
+  grant (the licence table in `README.md` is the authoritative list: add the new
   entry there, and reference it from the registry rather than restating it);
 - an empty patch table, ready for the first local change.
 
@@ -402,6 +402,6 @@ The in-file marker matters more than it looks: it is what stops a future upstrea
 merge from silently reverting a fix. A patch with no marker will be lost.
 
 **Pulling upstream.** Follow the shape of `b03705d`: name the old and new commits,
-summarise the source changes that actually affect this project, and state explicitly
+summarise the source changes that affect this project, and state explicitly
 for each local patch whether it still applies, was absorbed upstream, or had to be
 re-applied. Update the pin in the registry in the same commit.
