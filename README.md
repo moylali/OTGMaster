@@ -3,7 +3,17 @@
 [![CI](https://github.com/moylali/OTGMaster/actions/workflows/ci.yml/badge.svg)](https://github.com/moylali/OTGMaster/actions/workflows/ci.yml)
 [![License: GPL v3 or later](https://img.shields.io/badge/license-GPL--3.0--or--later-blue.svg)](LICENSE)
 
-Android app to open encrypted USB mass-storage devices for read/write without root. Supports **VeraCrypt**, **LUKS1**, **LUKS2** and **BitLocker** encrypted volumes with **FAT32**, **exFAT**, **NTFS** and **ext4** filesystems, and reads Mac **APFS** drives, plain or encrypted. It can also **format** a FAT32 or exFAT partition, or **encrypt** one into a new VeraCrypt volume. Format and Encrypt also write **ext4** and **NTFS**, and Encrypt can create **LUKS2** volumes (0.5.0 onwards). The app also makes **incremental backups using restic** (0.5.0 onwards), **recovers deleted files** from FAT32 and exFAT drives (0.5.0 onwards), and **browses another phone's files over OTG** (0.5.0 onwards).
+Android app to open encrypted USB mass-storage devices for read/write without root.
+
+- Read and write encrypted drives
+  - Encryption types: VeraCrypt, LUKS1, LUKS2, BitLocker
+  - File systems: FAT32, exFAT, NTFS, ext4
+- Read Mac APFS drives, plain or encrypted
+- Format a partition as FAT32, exFAT, ext4 (0.5.0 onwards) or NTFS (0.5.0 onwards)
+- Encrypt a partition as VeraCrypt or LUKS2 (0.5.0 onwards), with FAT32, exFAT, ext4 (0.5.0 onwards) or NTFS (0.5.0 onwards) inside
+- Make incremental backups using restic (0.5.0 onwards)
+- Recover deleted files from FAT32 and exFAT drives (0.5.0 onwards)
+- Browse another phone's files over OTG (0.5.0 onwards)
 
 <p align="center">
   <a href="https://f-droid.org/packages/app.fayaz.otgmaster/">
