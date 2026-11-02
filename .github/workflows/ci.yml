@@ -28,6 +28,11 @@ jobs:
         run: |
           "$ANDROID_HOME/cmdline-tools/latest/bin/sdkmanager" "ndk;26.1.10909125" "cmake;3.22.1"
 
+      - name: Install filesystem checkers
+        # The write tests prove a volume with the filesystem's own checker. Without these
+        # they skip, and nothing in CI would look at what the formatters write.
+        run: sudo apt-get update && sudo apt-get install -y e2fsprogs dosfstools exfatprogs ntfs-3g cryptsetup python3-cryptography
+
       - name: Run JVM unit tests
         # Scoped to :app — :libaums's own pre-existing unit tests have a broken
         # Mockito dependency unrelated to this project's code (see UsbFileInputStreamTest).

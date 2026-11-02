@@ -46,7 +46,7 @@ class LuksVolumeCreatorTest {
 
         @BeforeClass @JvmStatic
         fun setUp() {
-            if (run("sh", "-c", "command -v gcc && command -v cryptsetup && python3 -c 'import cryptography'").first != 0) return
+            if (run("sh", "-c", "command -v gcc && command -v cryptsetup && command -v ntfsfix && test -x /usr/sbin/e2fsck && test -x /usr/sbin/fsck.exfat && test -x /usr/sbin/fsck.vfat && python3 -c 'import cryptography'").first != 0) return
             val lib = File(repo, "app/build/host-native/libotg-host.so")
             val (rc, out) = run(File(repo, "scripts/build_host_native.sh").path, lib.path)
             if (rc != 0) throw AssertionError("host native build failed:\n$out")
