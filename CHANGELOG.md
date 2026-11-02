@@ -8,7 +8,7 @@
 ## [v0.3.9] - 2026-07-03
 
 ### Added
-- **Unencrypted USB support**: Plain FAT32 and exFAT drives are now auto-mounted on plug-in and shown in the Mounted Devices card, with no password and no VeraCrypt form. The drive is accessible immediately via the Files app.
+- **Unencrypted USB support**: Plain FAT32 and exFAT drives are now auto-mounted on plug-in and shown in the Mounted Devices card — no password needed and no VeraCrypt form shown. The drive is accessible immediately via the Files app.
 
 ## [v0.3.8] - 2026-06-30
 
@@ -60,7 +60,7 @@
 ## [v0.3.0] - 2026-06-26
 
 ### Added
-- **exFAT Write Support**: Implemented write capabilities for exFAT filesystems on VeraCrypt volumes.
+- **exFAT Write Support**: Implemented comprehensive write capabilities for exFAT filesystems on VeraCrypt volumes.
 
 ### Fixed
 - Fixed an `ActivityManager` freeze/IPC crash occurring during successive mounting operations, caused by a double free of `node->name` in the JNI layer.

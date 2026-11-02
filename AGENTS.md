@@ -134,6 +134,13 @@ These apply to every commit, without being asked.
    otherwise docs-only PR means the whole PR runs the tests. Decide from
    `git diff --name-only origin/main...HEAD`, not from memory of what changed.
 
+7. **Every user-facing string goes through the humanizer skill before it is
+   committed.** That covers `strings.xml`, text hardcoded in Kotlin that reaches
+   the screen, a notification or the app log, the store listing and the changelogs,
+   the README and the site. Run `/humanizer:humanizer` on new or changed text, keep
+   its meaning, placeholders and technical terms, and say in the commit that it was
+   done. Wording the owner dictated stays as dictated.
+
 ## Tags
 
 **Only a real release may be named `vX.Y.Z`, and every other tag is named
