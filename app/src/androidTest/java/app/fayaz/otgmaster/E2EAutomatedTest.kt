@@ -10,6 +10,17 @@ import androidx.test.uiautomator.By
 import androidx.test.uiautomator.UiDevice
 import androidx.test.uiautomator.Until
 import android.util.Log
+import app.fayaz.otgmaster.backup.BackupJob
+import app.fayaz.otgmaster.backup.BackupMounts
+import app.fayaz.otgmaster.backup.BackupSecrets
+import app.fayaz.otgmaster.backup.Endpoint
+import app.fayaz.otgmaster.backup.JobStore
+import app.fayaz.otgmaster.backup.JobType
+import app.fayaz.otgmaster.backup.Retention
+import app.fayaz.otgmaster.backup.RunRecord
+import app.fayaz.otgmaster.backup.RunStatus
+import app.fayaz.otgmaster.backup.Schedule
+import app.fayaz.otgmaster.backup.VolumeInfo
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
 import org.junit.Assert.assertNotNull
@@ -950,6 +961,59 @@ class E2EAutomatedTest {
         mountBrowsedBackup(password)
         returnToMainScreen()
 
+        // ── A job on this drive: each end's folder shown, Mount from its row ─
+        val tree = { folder: String -> DocumentsContract.buildTreeDocumentUri(AUTHORITY, "${source.id}:/$folder") }
+        val jobs = JobStore.get(context)
+        val endpoint = { uri: android.net.Uri ->
+            Endpoint(uri.toString(), source.name, VolumeInfo.kindOf(uri), VolumeInfo.capture(context, uri, withFreeSpace = false))
+        }
+        val job = BackupJob(
+            name = "E2E row",
+            type = JobType.INCREMENTAL,
+            source = endpoint(tree("not_a_backup")),
+            destination = endpoint(tree("")),
+            destinationFolder = BACKUP_REPO,
+            schedule = Schedule(intervalHours = 0, autoRun = false),
+            retention = Retention(),
+        )
+        BackupSecrets(context).setPassword(job.id, password)
+        jobs.upsert(job)
+        openBackupsTab("backups_open_schedules")
+        assertNotNull("the job's row does not say From", device.wait(Until.findObject(By.text(context.getString(R.string.backup_from))), timeout))
+        assertNotNull("the job's row does not say To", device.findObject(By.text(context.getString(R.string.backup_to))))
+        assertNotNull("the job's row does not name its source folder",
+            device.findObject(By.text(context.getString(R.string.backup_folder_at, "/not_a_backup"))))
+        assertNotNull("the job's row does not name its target folder",
+            device.findObject(By.text(context.getString(R.string.backup_folder_at, "/$BACKUP_REPO"))))
+        // History: a backup shows both ends. A restore runs from the backup, and its target
+        // is not recorded unless it went into the job's own source.
+        val sourceFolder = context.getString(R.string.backup_folder_at, "/not_a_backup")
+        val targetFolder = context.getString(R.string.backup_folder_at, "/$BACKUP_REPO")
+        val now = System.currentTimeMillis()
+        jobs.addRun(RunRecord(jobId = job.id, kind = "restore", reason = "restore", startedAt = now, finishedAt = now, status = RunStatus.SUCCESS))
+        assertTrue("History tab missing", clickByDesc("backups_tab_history"))
+        assertNotNull("a restore's row does not name the backup it came from", device.wait(Until.findObject(By.text(targetFolder)), timeout))
+        assertNull("a restore's row names the source as its target", device.findObject(By.text(sourceFolder)))
+        jobs.addRun(RunRecord(jobId = job.id, kind = "backup", reason = "manual", startedAt = now + 1, finishedAt = now + 1, status = RunStatus.SUCCESS))
+        assertNotNull("a backup's row does not name its source folder", device.wait(Until.findObject(By.text(sourceFolder)), timeout))
+        assertTrue("Mount tab missing", clickByDesc("backups_tab_mount"))
+        assertNotNull("the Mount row does not name its source folder", device.wait(Until.findObject(By.text(sourceFolder)), timeout))
+        assertNotNull("the Mount row does not name its target folder", device.findObject(By.text(targetFolder)))
+        val unreachableText = context.getString(R.string.backups_mount_connect, VolumeInfo.summary(job.destination.info))
+        val rowMount = "backup_mount_${job.name}"
+        assertNotNull("the job's Mount button is missing", device.wait(Until.findObject(By.desc(rowMount)), timeout))
+        android.os.SystemClock.sleep(2500) // past the first reachability check
+        assertNull("the row says its drive is missing with the drive mounted", device.findObject(By.text(unreachableText)))
+        device.findObject(By.desc(rowMount))!!.click()
+        val jobDrive = BackupMounts.driveIdFor(job.id)
+        val mountDeadline = android.os.SystemClock.uptimeMillis() + 60_000L
+        while (OtgMasterState.mountedDrives.none { it.id == jobDrive } && android.os.SystemClock.uptimeMillis() < mountDeadline) {
+            android.os.SystemClock.sleep(200)
+        }
+        if (OtgMasterState.mountedDrives.none { it.id == jobDrive }) captureScreen("backup_row_mount_failed")
+        assertTrue("Mount on the job's row did not mount it", OtgMasterState.mountedDrives.any { it.id == jobDrive })
+        returnToMainScreen()
+
         // ── Pulling the drive takes the backup with it ───────────────────────
         val key = source.sourceDeviceName
         assertNotNull("the plain drive has no USB device name", key)
@@ -974,6 +1038,17 @@ class E2EAutomatedTest {
         disabled!!.click()
         android.os.SystemClock.sleep(1500)
         assertNull("Create schedule opened its form with nothing mounted", device.findObject(By.desc(BACKUP_DIALOG_FIELD)))
+
+        // ── With its drive gone, the row's Mount says why and does nothing ───
+        assertTrue("Mount tab missing", clickByDesc("backups_tab_mount"))
+        val gone = device.wait(Until.findObject(By.text(unreachableText)), timeout)
+        if (gone == null) captureScreen("backup_mount_no_reason")
+        assertNotNull("the row does not say its drive is missing", gone)
+        device.findObject(By.desc(rowMount))!!.click()
+        android.os.SystemClock.sleep(1500)
+        assertTrue("Mount worked with the drive gone: ${OtgMasterState.mountedDrives.map { it.name }}", OtgMasterState.mountedDrives.isEmpty())
+        jobs.delete(job.id)
+        BackupSecrets(context).forget(job.id)
         requestUsb("replug")
     }
 

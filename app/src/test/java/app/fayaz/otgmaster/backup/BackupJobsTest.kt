@@ -20,6 +20,17 @@ class BackupJobsTest {
     )
 
     @Test
+    fun `a folder is named by its path inside the volume`() {
+        assertEquals("/DCIM/Camera", VolumeInfo.folderInside("primary:DCIM/Camera"))
+        assertEquals("/DCIM/Camera", VolumeInfo.folderInside("abc:/DCIM/Camera"))
+        assertEquals("/", VolumeInfo.folderInside("primary:"))
+        assertEquals("/", VolumeInfo.folderInside("abc:/"))
+        assertEquals("/Camera", VolumeInfo.joinFolder("/", "Camera"))
+        assertEquals("/Backups/Camera", VolumeInfo.joinFolder("/Backups", "Camera"))
+        assertEquals("/Backups", VolumeInfo.joinFolder("/Backups", ""))
+    }
+
+    @Test
     fun `jobs, history and snapshots survive a reload`() {
         val dir = Files.createTempDirectory("jobs").toFile()
         val a = JobStore(dir)

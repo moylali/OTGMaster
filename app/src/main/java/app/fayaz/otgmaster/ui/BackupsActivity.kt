@@ -192,8 +192,7 @@ private fun Schedules() {
                     Text(job.name, style = MaterialTheme.typography.titleMedium)
                     Text(stringResource(if (job.type == JobType.INCREMENTAL) R.string.backup_type_incremental else R.string.backup_type_plain),
                         style = MaterialTheme.typography.labelMedium)
-                    Text("${VolumeInfo.summary(job.source.info)}\n→ ${VolumeInfo.summary(job.destination.info)} / ${job.destinationFolder}",
-                        style = MaterialTheme.typography.bodySmall)
+                    BackupEnds(job)
                     FlowRow(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
                         listOf(0 to R.string.backup_manual, 24 to R.string.backup_daily, 168 to R.string.backup_weekly).forEach { (h, label) ->
                             FilterChip(job.schedule.intervalHours == h, {
@@ -269,6 +268,16 @@ private fun MountBackups() {
     // A browsed folder that holds a backup whose password this phone does not have.
     var asking by remember { mutableStateOf<Uri?>(null) }
     var wrongPassword by remember { mutableStateOf(false) }
+    // Backups whose drive or folder can be read right now; null until first checked.
+    var reachable by remember { mutableStateOf<Set<String>?>(null) }
+    LaunchedEffect(incremental) {
+        while (true) {
+            reachable = withContext(Dispatchers.IO) {
+                incremental.filter { VolumeInfo.isAvailable(context, Uri.parse(it.destination.uri)) }.map { it.id }.toSet()
+            }
+            delay(2000)
+        }
+    }
 
     /** Mounts the browsed folder; false if the password does not open it. */
     suspend fun mountBrowsed(folder: Uri, password: String): Boolean = withContext(Dispatchers.IO) {
@@ -351,18 +360,28 @@ private fun MountBackups() {
         items(incremental, key = { it.id }) { job ->
             changed.let { } // read so the state follows a mount
             val mounted = BackupMounts.isMounted(job.id)
+            val canReach = reachable?.contains(job.id)
             Card(Modifier.fillMaxWidth().padding(top = 8.dp)) {
                 Row(Modifier.padding(12.dp), verticalAlignment = Alignment.CenterVertically) {
                     Column(Modifier.weight(1f)) {
                         Text(job.name, style = MaterialTheme.typography.titleMedium)
-                        Text("${VolumeInfo.summary(job.destination.info)} / ${job.destinationFolder}", style = MaterialTheme.typography.bodySmall)
+                        BackupEnds(job)
+                        if (!mounted && canReach == false) {
+                            Text(
+                                if (job.destination.kind == VolumeInfo.KIND_OTG) stringResource(R.string.backups_mount_connect, VolumeInfo.summary(job.destination.info))
+                                else stringResource(R.string.backups_mount_unreachable),
+                                style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.error)
+                        }
                     }
-                    TextButton(enabled = !mounted, modifier = Modifier.semantics { contentDescription = "backup_mount_${job.name}" }, onClick = {
+                    TextButton(enabled = !mounted && canReach == true, modifier = Modifier.semantics { contentDescription = "backup_mount_${job.name}" }, onClick = {
                         scope.launch {
                             message = withContext(Dispatchers.IO) {
                                 runCatching { BackupMounts.mount(context, job) }.fold(
                                     { context.getString(R.string.backups_mounted, job.name) },
-                                    { context.getString(R.string.backups_mount_failed, job.name, it.message ?: it.javaClass.simpleName) })
+                                    {
+                                        OtgMasterState.logFailure("backup-mount", "Could not mount the backup \"${job.name}\"", it)
+                                        context.getString(R.string.backups_mount_failed, job.name, it.message ?: it.javaClass.simpleName)
+                                    })
                             }
                             changed++
                         }
@@ -380,19 +399,19 @@ private fun History() {
     val jobs by store.jobs.collectAsState()
     val revision by store.revision.collectAsState()
     val runs = remember(jobs, revision) {
-        jobs.flatMap { j -> store.history(j.id).map { j.name to it } }.sortedByDescending { it.second.startedAt }
+        jobs.flatMap { j -> store.history(j.id).map { j to it } }.sortedByDescending { it.second.startedAt }
     }
     if (runs.isEmpty()) {
         Text(stringResource(R.string.backups_history_none), Modifier.padding(16.dp))
         return
     }
     LazyColumn(Modifier.fillMaxSize().padding(horizontal = 12.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
-        items(runs, key = { it.second.id }) { (name, run) -> RunRow(name, run) }
+        items(runs, key = { it.second.id }) { (job, run) -> RunRow(job, run) }
     }
 }
 
 @Composable
-private fun RunRow(jobName: String, run: RunRecord) {
+private fun RunRow(job: BackupJob, run: RunRecord) {
     Card(Modifier.fillMaxWidth().padding(top = 8.dp)) {
         Column(Modifier.padding(12.dp), verticalArrangement = Arrangement.spacedBy(2.dp)) {
             val color = when (run.status) {
@@ -400,7 +419,8 @@ private fun RunRow(jobName: String, run: RunRecord) {
                 RunStatus.WARNING, RunStatus.NEEDS_CONFIRMATION, RunStatus.CANCELLED -> MaterialTheme.colorScheme.tertiary
                 RunStatus.FAILED, RunStatus.UNAVAILABLE -> MaterialTheme.colorScheme.error
             }
-            Text("$jobName · ${run.kind}", style = MaterialTheme.typography.titleSmall)
+            Text("${job.name} · ${run.kind}", style = MaterialTheme.typography.titleSmall)
+            if (run.kind == "restore") RestoreEnds(job, intoSource = run.reason == "switch") else BackupEnds(job)
             Text("${run.status.name.lowercase().replace('_', ' ')} · ${Format.dateTime(run.startedAt)} · " +
                 "${((run.finishedAt - run.startedAt) / 1000).coerceAtLeast(0)} s", color = color, style = MaterialTheme.typography.bodySmall)
             run.stats?.let { s ->

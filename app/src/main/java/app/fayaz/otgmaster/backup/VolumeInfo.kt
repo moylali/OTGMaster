@@ -66,6 +66,16 @@ object VolumeInfo {
         else -> KIND_OTHER
     }
 
+    /** A tree's folder inside its volume, "/" for the top: "primary:DCIM/Camera" and "id:/DCIM/Camera" give "/DCIM/Camera". */
+    fun folderInside(treeDocumentId: String): String = "/" + treeDocumentId.substringAfter(':', "").trim('/')
+
+    /** [folderInside] of the tree at [uri], followed by [subfolder]. Null if [uri] is not a tree. */
+    fun folderInside(uri: Uri, subfolder: String = ""): String? =
+        runCatching { DocumentsContract.getTreeDocumentId(uri) }.getOrNull()?.let { joinFolder(folderInside(it), subfolder) }
+
+    fun joinFolder(folder: String, subfolder: String): String =
+        if (subfolder.isEmpty()) folder else folder.trimEnd('/') + "/" + subfolder.trim('/')
+
     /** "Internal storage/DCIM/Camera" or "drive-id:/Backups" style path for display. */
     fun displayPath(context: Context, uri: Uri): String {
         val docId = runCatching { DocumentsContract.getTreeDocumentId(uri) }.getOrNull() ?: return uri.toString()

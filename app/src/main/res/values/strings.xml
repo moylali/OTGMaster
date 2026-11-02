@@ -292,6 +292,11 @@
     <string name="backup_action">Back up</string>
     <string name="backups_action">Backups (%1$d)</string>
     <string name="backup_setup_title_new">Back up</string>
+    <string name="backup_from">From</string>
+    <string name="backup_to">To</string>
+    <string name="backup_folder_at">Folder: %1$s</string>
+    <string name="backups_mount_connect">Connect and unlock %1$s to mount this backup.</string>
+    <string name="backups_mount_unreachable">This phone can no longer open this folder. Use Browse for backup to choose it again.</string>
     <string name="backup_source">Source</string>
     <string name="backup_target">Target</string>
     <string name="backup_device">Device</string>
