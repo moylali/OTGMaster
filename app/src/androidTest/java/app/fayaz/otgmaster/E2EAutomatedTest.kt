@@ -1498,10 +1498,13 @@ class E2EAutomatedTest {
         assertTrue("no repository on the phone", bkShell("ls $PHONE/targets/E2E_inc_phone").contains("config"))
 
         // Keep rules: only this job's old snapshots go, and what they alone used.
+        // With something new to store as well: that run's own new tree once read as damage to its prune.
         bkStore.update(inc.id) { it.copy(retention = Retention(keepLast = 2)) }
+        bkShell("echo new-for-this-run > $PHONE/src/new_with_keep_rules.txt")
         android.os.SystemClock.sleep(1100)
         bkExpectSuccess(bkRunNow(inc, "the run with keep rules"), "the run with keep rules")
         assertEquals("snapshots after the keep rules", 2, bkStore.snapshots(inc.id).size)
+        bkShell("rm $PHONE/src/new_with_keep_rules.txt")
         bkExpectSuccess(bkRunNow(inc, "Verify after pruning", BackupExecutor.Op.Check(true)), "Verify after pruning")
 
         // A folder inside the source holds the target: the backup does not copy itself.
@@ -3896,12 +3899,13 @@ class E2EAutomatedTest {
         // closer to real user behavior.
         // Crypto is slow on emulator; allow up to 120s for decryption + detection
         // Unsupported filesystems log "Cannot mount: <reason>" (log_cannot_mount_reason).
-        // Scrolled again each time round: the form can change height while it unlocks, moving the log.
         var errorLog: androidx.test.uiautomator.UiObject2? = null
         val logDeadline = android.os.SystemClock.uptimeMillis() + 120_000L
+        device.swipe(device.displayWidth / 2, device.displayHeight * 3 / 4, device.displayWidth / 2, device.displayHeight / 4, 20)
         while (errorLog == null && android.os.SystemClock.uptimeMillis() < logDeadline) {
-            device.swipe(device.displayWidth / 2, device.displayHeight * 3 / 4, device.displayWidth / 2, device.displayHeight / 4, 20)
-            errorLog = device.wait(Until.findObject(By.textContains("Cannot mount:")), 5000L)
+            // The tree can lag the screen: seen with this line on the screen and not in the tree for 2 minutes.
+            InstrumentationRegistry.getInstrumentation().uiAutomation.clearCache()
+            errorLog = device.wait(Until.findObject(By.textContains("Cannot mount:")), 3000L)
         }
         if (errorLog == null) captureScreen("cannot_mount_missing")
         assertTrue("Expected 'Cannot mount:' in app log but it did not appear", errorLog != null)

@@ -74,6 +74,12 @@ class ResticRepository private constructor(val backend: ResticBackend, val key: 
     /** Decrypts an "unpacked" file (config, index, snapshot, lock) and undoes v2 compression. */
     fun readUnpacked(path: String): ByteArray = unpack(key.decrypt(backend.read(path)))
 
+    /** Drops the index in memory: the next read loads what is on the drive now. */
+    fun forgetLoadedIndex() {
+        index.clear()
+        indexLoaded = false
+    }
+
     fun loadIndex() {
         if (indexLoaded) return
         for (name in backend.list("index")) {

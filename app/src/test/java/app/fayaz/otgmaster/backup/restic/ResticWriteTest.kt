@@ -166,6 +166,35 @@ class ResticWriteTest {
         tmp.deleteRecursively()
     }
 
+    /**
+     * BackupRunner backs up and prunes through one repository object. The writer's new index file
+     * did not reach the index that object had loaded, so a run that stored anything new and had a
+     * snapshot to drop found its own new tree "not in the index", and marked the backup Corrupted.
+     */
+    @Test
+    fun `prune on the object that just backed up sees what that backup wrote`() {
+        val restic = restic(); assumeTrue("restic not installed", restic != null)
+        val tmp = Files.createTempDirectory("restic-prune-same").toFile()
+        val src = tmp.resolve("src").also { it.mkdirs() }
+        tree(src, 11)
+        val repoDir = tmp.resolve("repo").also { it.mkdirs() }
+        val first = ResticWriter.init(LocalBackend(repoDir), "pw".toByteArray(), "phone", "otg")
+        ResticWriter(first, "phone", "otg", "t").backup(FileSource(src), "/p")
+
+        val repo = ResticRepository.open(LocalBackend(repoDir), "pw".toByteArray())!!
+        val parent = repo.snapshots().single()
+        src.resolve("changed.txt").writeText("something the first run has not seen")
+        val keepId = ResticWriter(repo, "phone", "otg", "t").backup(FileSource(src), "/p", parent = parent)
+        val m = ResticMaintenance(repo, "phone", "otg")
+        m.forget(listOf(parent.id))
+        m.prune()
+
+        assertEquals(keepId, repo.snapshots().single().id)
+        val check = run(restic!!, "-r", repoDir.path, "check", "--read-data")
+        assertTrue(check, check.contains("no errors were found"))
+        tmp.deleteRecursively()
+    }
+
     @Test
     fun `forget and prune free what only old snapshots used, and restic still checks clean`() {
         val restic = restic(); assumeTrue("restic not installed", restic != null)
