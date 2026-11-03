@@ -68,7 +68,10 @@ class ResticMaintenance(private val repo: ResticRepository, private val hostname
             // Someone may have locked at the same moment: theirs wins, as restic resolves it.
             if (backend.list("locks").any { it != lockName }) throw IOException("another process locked the repository; prune skipped")
 
-            // Every blob any snapshot reaches.
+            // Every blob any snapshot reaches. From the index on the drive: a writer sharing this
+            // repository object wrote its own index file, which the one in memory does not have,
+            // and a snapshot's new tree then read as damage.
+            repo.forgetLoadedIndex()
             val used = HashSet<String>()
             fun mark(treeId: String) {
                 if (!used.add(treeId)) return
