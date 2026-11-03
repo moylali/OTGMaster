@@ -359,3 +359,11 @@ internal fun JSONObject?.toStringMap(): Map<String, String> =
 internal fun JSONObject.optLongOrNull(key: String): Long? = if (has(key) && !isNull(key)) getLong(key) else null
 
 internal fun JSONObject.optStringOrNull(key: String): String? = if (has(key) && !isNull(key)) getString(key) else null
+
+/**
+ * What the bell on the main screen lists: due backups waiting on the user. A phone-only backup
+ * starts by itself, so it counts only once it has raised a reminder for not being able to.
+ */
+fun List<BackupJob>.waitingOnUser(busy: Set<String>, now: Long): List<BackupJob> = filter {
+    it.isDue(now) && it.pendingConfirmation == null && it.id !in busy && (it.usesUsb || it.lastReminderAt != null)
+}

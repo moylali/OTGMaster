@@ -284,10 +284,11 @@ internal fun <T> Picker(label: String, value: T, options: List<T>, name: (T) -> 
 
 /** A password field with the unlock form's show/hide eye; hidden to start with. */
 @Composable
-internal fun PasswordField(value: String, label: String, id: String, newPassword: Boolean = true, error: String? = null, onChange: (String) -> Unit) {
+internal fun PasswordField(value: String, label: String, id: String, newPassword: Boolean = true, error: String? = null, enabled: Boolean = true, onChange: (String) -> Unit) {
     var visible by remember { mutableStateOf(false) }
     OutlinedTextField(
         value = value, onValueChange = onChange,
+        enabled = enabled,
         label = { Text(label) },
         singleLine = true,
         isError = error != null,

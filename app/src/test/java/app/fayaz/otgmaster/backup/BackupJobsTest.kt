@@ -73,6 +73,38 @@ class BackupJobsTest {
     }
 
     @Test
+    fun `an existing backup must sit directly in the target`() {
+        val key = { doc: String -> BackupTargets.folderKey("auth", doc) }
+        assertEquals("repo", BackupTargets.childOf(key("d1:/Backups"), key("d1:/Backups/repo")))
+        assertEquals("repo", BackupTargets.childOf(key("d1:/"), key("d1:/repo")))
+        assertEquals("deeper, in a folder of its own", null, BackupTargets.childOf(key("d1:/Backups"), key("d1:/Backups/a/repo")))
+        assertEquals("the target itself", null, BackupTargets.childOf(key("d1:/Backups"), key("d1:/Backups")))
+        assertEquals("beside the target", null, BackupTargets.childOf(key("d1:/Backups"), key("d1:/Backups2/repo")))
+        assertEquals("another drive", null, BackupTargets.childOf(key("d1:/Backups"), key("d2:/Backups/repo")))
+        assertEquals("another provider", null, BackupTargets.childOf(key("d1:/Backups"), BackupTargets.folderKey("other", "d1:/Backups/repo")))
+    }
+
+    @Test
+    fun `the bell lists due backups waiting on the user`() {
+        val now = 1_000 * BackupJob.HOUR
+        val usb = job().destination
+        val phone = job().source
+        val due = job().copy(id = "due", pendingConfirmation = null, schedule = Schedule(intervalHours = 24, autoRun = true, remindAfterHours = 0), source = usb, destination = usb, lastSuccessAt = now - 25 * BackupJob.HOUR)
+        fun listed(j: BackupJob, busy: Set<String> = emptySet()) = listOf(j).waitingOnUser(busy, now).isNotEmpty()
+        assertTrue("due, on a drive", listed(due))
+        assertTrue("never run", listed(due.copy(lastSuccessAt = null)))
+        assertFalse("not due yet", listed(due.copy(lastSuccessAt = now - BackupJob.HOUR)))
+        assertFalse("waiting on a low-space answer", listed(due.copy(pendingConfirmation = job().pendingConfirmation)))
+        assertFalse("running", listed(due, busy = setOf("due")))
+        assertFalse("snoozed", listed(due.copy(snoozedUntil = now + BackupJob.HOUR)))
+        assertFalse("a delay chosen", listed(due.copy(delayedStartAt = now + BackupJob.HOUR)))
+        assertFalse("manual", listed(due.copy(schedule = Schedule(intervalHours = 0, autoRun = false, remindAfterHours = 0))))
+        val phoneOnly = due.copy(source = phone, destination = phone)
+        assertFalse("starts by itself", listed(phoneOnly))
+        assertTrue("could not start, and said so", listed(phoneOnly.copy(lastReminderAt = now - BackupJob.HOUR)))
+    }
+
+    @Test
     fun `a target must keep clear of other backups`() {
         val a = "auth"
         val other = listOf("Camera" to BackupTargets.folderKey(a, "d1:/Backups", "Camera"))

@@ -119,6 +119,7 @@ class E2EAutomatedTest {
         if (arguments.getString("disconnect_test", "false") == "true") return runDisconnectCase()
         if (arguments.getString("journal_repair", "false") == "true") return runJournalRepairCase()
         if (arguments.getString("backup_flow") == "device") return bkFlowDevice()
+        if (arguments.getString("backup_flow") == "main_screen") return runMainScreenCase()
         arguments.getString("backup_flow")?.let { return runBackupFlow(it) }
         if (arguments.getString("backup_test", "false") == "true") return runBackupCase()
         val password = arguments.getString("password", "password123")
@@ -166,6 +167,7 @@ class E2EAutomatedTest {
             }
 
             if (!plainMount) {
+            closeSlider()
             // The app might default to the dummy drive which has no candidates.
             // Wait up to 15s to see if password input appears. If not, and there's a device picker, pick the other one.
             var passwordField = device.wait(Until.findObject(By.descContains("password_input")), 15000L)
@@ -367,6 +369,7 @@ class E2EAutomatedTest {
 
         // A plain drive has no Unmount button by design: it was auto-mounted, and is
         // released by unplugging. Its card must still be there after the viewer.
+        openSlider()
         if (plainMount) {
             assertNotNull("plain drive card gone after returning from the viewer",
                 device.wait(Until.findObject(By.textContains("Used:")), timeout))
@@ -654,6 +657,7 @@ class E2EAutomatedTest {
         assertTrue("flower.jpg not on the volume before $action", listRoot(context).any { it.endsWith("flower.jpg") })
 
         // ── The card's action, as a button if it fits on the row, else in More actions ──
+        openSlider()
         val item = device.findObject(By.desc("${action}_action")) ?: run {
             val more = findScrolling(By.desc("more_actions_button"), desc = "more_actions_button")
             assertNotNull("neither $action nor More actions is on the mounted card", more)
@@ -1155,6 +1159,8 @@ class E2EAutomatedTest {
         else assertTrue("the encrypted drive did not mount", doMount(password, pim, testCase, clearFields = false))
         val d = OtgMasterState.mountedDrives.firstOrNull()
         assertNotNull("the drive did not mount", d)
+        android.os.SystemClock.sleep(1000)
+        closeSlider()
         return d!!
     }
 
@@ -1260,6 +1266,7 @@ class E2EAutomatedTest {
     /** Unmounts the mounted backup [id], titled [name]: an encrypted drive's card has Unmount too. */
     private fun bkUnmountBackup(id: String, name: String) {
         returnToMainScreen()
+        openSlider("mounted_tab_backups")
         android.os.SystemClock.sleep(UNMOUNT_SETTLE_MS)
         val title = bkScrollTo(By.textContains(name))
         assertNotNull("no card for the backup $name", title)
@@ -1347,6 +1354,23 @@ class E2EAutomatedTest {
             clickInDialog("backup_password_saved")
             android.os.SystemClock.sleep(800)
         }
+    }
+
+    /** Finds [desc] in the form, which waits for it to stop moving, and taps it. */
+    private fun bkTapSettled(desc: String) {
+        val found = findInDialog(desc)
+        assertNotNull("$desc not in the form", found)
+        found!!.click()
+    }
+
+    /** The form scrolls, and [findInDialog] only looks downward. */
+    private fun bkFormToTop() {
+        repeat(5) {
+            val h = device.displayHeight
+            device.swipe(device.displayWidth / 2, h / 3, device.displayWidth / 2, h * 3 / 4, 25)
+            device.waitForIdle()
+        }
+        android.os.SystemClock.sleep(500)
     }
 
     private fun bkTypePassword(desc: String, text: String) {
@@ -1559,14 +1583,45 @@ class E2EAutomatedTest {
 
     // ── A due backup when the drive mounts ──────────────────────────────────────────────
 
+    /** Nothing popped up: the bell shows [count], and the dialog waits to be asked for. */
+    private fun bkAssertAsksQuietly(count: Int, why: String) {
+        closeSlider()
+        var bell: androidx.test.uiautomator.UiObject2? = null
+        for (attempt in 1..20) {
+            // The tree can lag the screen: seen drawing 1 while it said 0 for 20 s.
+            InstrumentationRegistry.getInstrumentation().uiAutomation.clearCache()
+            bell = device.wait(Until.findObject(By.desc(bkText(R.string.cd_backups_due, count))), 1000L)
+            if (bell != null) break
+        }
+        if (bell == null) captureScreen("bell_not_$count")
+        assertNotNull("$why: the bell does not show $count", bell)
+        assertNull("$why: a dialog opened by itself", device.findObject(By.desc("backup_due_title")))
+    }
+
+    /** From the bell's list: the dialog for this one backup. */
+    private fun bkOpenDueFromBell(name: String) {
+        closeSlider()
+        InstrumentationRegistry.getInstrumentation().uiAutomation.clearCache()
+        val bell = device.wait(Until.findObject(By.descStartsWith("Backups due:")), timeout)
+        assertNotNull("no bell on the top bar", bell)
+        bell!!.click()
+        bkAssertDesc("backup_due_item_$name", "$name is not in the bell's list")
+        assertTrue(clickByDesc("backup_due_item_$name"))
+        bkAssertDesc("backup_due_title", "choosing $name opened no dialog")
+        bkAssertText(name, "the dialog does not name $name")
+    }
+
     private fun bkFlowDuePrompt(drive: MountedDrive) {
         val job = bkJob(drive, "E2E_due")
         val title = bkText(R.string.backup_due_title, BackupScheduler.driveNames(job))
         returnToMainScreen()
 
-        // Asks, and starts nothing by itself.
+        // Asks, starts nothing, and interrupts nothing: the notification and the bell say so.
         assertTrue("attach started a backup unasked", BackupScheduler.evaluate(bkContext, "attach").isEmpty())
-        bkAssertDesc("backup_due_title", "mounting did not ask")
+        android.os.SystemClock.sleep(1500)
+        bkAssertAsksQuietly(1, "a mount with a backup due")
+        assertTrue("no notification: ${bkTitles()}", bkTitles().contains(title))
+        bkOpenDueFromBell("E2E_due")
         bkAssertText(title, "the dialog's title")
         bkAssertText(bkText(R.string.backup_due_question), "the dialog's question")
         assertFalse("a backup started while asking", BackupExecutor.isBusy(job.id))
@@ -1577,6 +1632,11 @@ class E2EAutomatedTest {
         val snoozed = bkStore.job(job.id)!!.snoozedUntil
         assertNotNull("Not now did not snooze", snoozed)
         assertTrue("snoozed for about a day", kotlin.math.abs(snoozed!! - System.currentTimeMillis() - 24 * BackupJob.HOUR) < 60_000L)
+        bkAssertAsksQuietly(0, "after Not now")
+        device.findObject(By.descStartsWith("Backups due:")).click()
+        bkAssertDesc("backup_due_none", "the empty list says nothing")
+        device.pressBack()
+        android.os.SystemClock.sleep(500)
         assertTrue(BackupScheduler.evaluate(bkContext, "attach").isEmpty())
         android.os.SystemClock.sleep(1500)
         assertNull("a snoozed backup asked again", device.findObject(By.desc("backup_due_title")))
@@ -1584,6 +1644,7 @@ class E2EAutomatedTest {
         BackupScheduler.evaluate(bkContext, "attach")
         android.os.SystemClock.sleep(1500)
         assertNull("the same mount asked twice", device.findObject(By.desc("backup_due_title")))
+        assertFalse("the same mount notified twice: ${bkTitles()}", bkTitles().contains(title))
 
         // Each delay: the time is set, the row says it, and nothing runs yet.
         for (minutes in BackupDelays.CHOICES_MINUTES) {
@@ -1622,6 +1683,9 @@ class E2EAutomatedTest {
         bkStore.upsert(sibling)
         BackupSecrets(bkContext).setPassword(sibling.id, BK_PASSWORD)
         assertTrue(BackupScheduler.evaluate(bkContext, "attach").isEmpty())
+        android.os.SystemClock.sleep(1500)
+        bkAssertAsksQuietly(1, "a backup with an end away")
+        bkOpenDueFromBell("E2E_sibling")
         bkAssertDesc("backup_due_missing_E2E_sibling", "the missing other end is not named")
         android.os.SystemClock.sleep(2500)
         device.findObject(By.desc("backup_due_start"))?.click()
@@ -1637,12 +1701,22 @@ class E2EAutomatedTest {
         val fresh = bkJob(drive, "E2E_fresh", agoHours = 1)
         bkPullDrive(drive)
         bkReplugDrive()
-        bkAssertDesc("backup_due_title", "the real mount did not ask", 60000L)
-        assertNull("a manual backup asked", device.findObject(By.text("E2E_manual")))
-        assertNull("a backup not yet due asked", device.findObject(By.text("E2E_fresh")))
-        bkAssertText("E2E_due", "the due backup is not named")
+        bkAwaitDueNotification(title, "the real mount did not ask")
+        bkAssertAsksQuietly(1, "the real mount")
+        device.findObject(By.descStartsWith("Backups due:")).click()
+        bkAssertDesc("backup_due_item_E2E_due", "the due backup is not in the list")
+        assertNull("a manual backup asked", device.findObject(By.desc("backup_due_item_E2E_manual")))
+        assertNull("a backup not yet due asked", device.findObject(By.desc("backup_due_item_E2E_fresh")))
+        assertTrue(clickByDesc("backup_due_item_E2E_due"))
+        bkAssertDesc("backup_due_title", "choosing it opened no dialog")
         assertTrue(clickByDesc("backup_due_not_now"))
         assertNotNull(manual); assertNotNull(fresh)
+    }
+
+    private fun bkAwaitDueNotification(title: String, why: String) {
+        val end = android.os.SystemClock.uptimeMillis() + 60_000L
+        while (android.os.SystemClock.uptimeMillis() < end && !bkTitles().contains(title)) android.os.SystemClock.sleep(500)
+        assertTrue("$why: ${bkTitles()}", bkTitles().contains(title))
     }
 
     private fun bkPullDrive(drive: MountedDrive) {
@@ -1711,8 +1785,9 @@ class E2EAutomatedTest {
 
         // Plugged back: the old timer does not come back; it asks again.
         val again = bkReplugDrive()
-        bkAssertDesc("backup_due_title", "the replug did not ask", 60000L)
+        bkAwaitDueNotification(bkText(R.string.backup_due_title, BackupScheduler.driveNames(job)), "the replug did not ask")
         assertNull("the replug brought the timer back", bkStore.job(job.id)!!.delayedStartAt)
+        bkOpenDueFromBell("E2E_later")
         assertTrue(clickByDesc("backup_due_not_now"))
         assertNotNull(again)
 
@@ -1820,7 +1895,8 @@ class E2EAutomatedTest {
         val reminder = bkText(R.string.backup_reminder_title, "E2E_mounted")
         assertTrue("no connect reminder: ${bkTitles()}", bkTitles().contains(reminder))
         val back = bkReplugDrive()
-        bkAssertDesc("backup_due_title", "the replug did not ask", 60000L)
+        bkAwaitDueNotification(title, "the replug did not ask")
+        bkOpenDueFromBell("E2E_mounted")
         assertTrue(clickByDesc("backup_due_not_now"))
         BackupNotifications.cancelAll(bkContext, job.id)
 
@@ -1845,9 +1921,7 @@ class E2EAutomatedTest {
         val notDue = bkJob(drive, "E2E_not_due", agoHours = 1)
         val manual = bkJob(drive, "E2E_manual", interval = 0)
         BackupScheduler.evaluate(bkContext, "attach")
-        bkAssertDesc("backup_due_title", "mounting did not ask", 20000L)
-        assertTrue(clickByDesc("backup_due_not_now"))
-        listOf(job, never).forEach { j -> bkStore.update(j.id) { it.copy(snoozedUntil = null) } }
+        bkAssertAsksQuietly(2, "mounting with two due")
         bkPullDrive(drive)
         BackupNotifications.cancelAll(bkContext, job.id); BackupNotifications.cancelAll(bkContext, never.id)
         listOf(job, never).forEach { j -> bkStore.update(j.id) { it.copy(lastReminderAt = null) } }
@@ -1879,7 +1953,7 @@ class E2EAutomatedTest {
         bkNotificationTap(title, title)
         assertTrue("the tap did not open the app", device.wait(Until.hasObject(By.pkg("app.fayaz.otgmaster")), timeout))
         bkReplugDrive()
-        bkAssertDesc("backup_due_title", "the replug did not ask", 60000L)
+        bkOpenDueFromBell("E2E_reminder")
         android.os.SystemClock.sleep(2500)
         assertTrue(clickByDesc("backup_due_start"))
         bkAssertDesc("backup_progress_title", "Start now opened no dialog")
@@ -1906,13 +1980,30 @@ class E2EAutomatedTest {
 
         // The form itself.
         bkOpenCreate()
-        assertNull("Manual on Create schedule", device.findObject(By.desc("backup_interval_0")))
-        bkAssertDesc("backup_interval_24", "no Daily")
-        bkAssertDesc("backup_interval_168", "no Weekly")
         clickInDialog("backup_learn_more")
         bkAssertText(bkText(R.string.backup_learn_more_title), "Learn more opened nothing")
         assertTrue(clickByDesc("backup_learn_more_close"))
         android.os.SystemClock.sleep(500)
+        assertNotNull("no Backup reminders heading", findInDialog("backup_reminders_heading"))
+        assertNotNull("no Daily", findInDialog("backup_interval_24"))
+        assertNotNull("no Weekly", findInDialog("backup_interval_168"))
+        assertNotNull("no Monthly", findInDialog("backup_interval_720"))
+        assertNull("Manual on Create schedule", device.findObject(By.desc("backup_interval_0")))
+        assertTrue("the heading is not above the choices",
+            device.findObject(By.desc("backup_reminders_heading")).visibleBounds.bottom <= device.findObject(By.desc("backup_interval_24")).visibleBounds.top + 40)
+        bkTapSettled(bkText(R.string.cd_backup_reminders_info))
+        bkAssertDesc("backup_reminders_info", "the info icon opened no dialog")
+        assertNull("Create schedule's info mentions Manual, which it does not offer",
+            device.findObject(By.text(bkText(R.string.backup_reminders_info) + " " + bkText(R.string.backup_reminders_info_manual))))
+        assertTrue(clickByDesc("backup_reminders_info_close"))
+        bkAssertGone("backup_reminders_info", "Close left the info up")
+        assertNull("the password's details are still on the form", device.findObject(By.text(bkText(R.string.backup_password_help))))
+        bkTapSettled(bkText(R.string.cd_backup_password_info))
+        bkAssertDesc("backup_password_info", "the password's info icon opened no dialog")
+        bkAssertText(bkText(R.string.backup_password_help), "the dialog does not hold the password's details")
+        assertTrue(clickByDesc("backup_password_info_close"))
+        bkAssertGone("backup_password_info", "Close left the password's info up")
+        bkFormToTop()
         // Create does nothing without its folders.
         device.findObject(By.desc("backup_create"))?.click()
         android.os.SystemClock.sleep(800)
@@ -1981,8 +2072,51 @@ class E2EAutomatedTest {
         device.pressBack(); android.os.SystemClock.sleep(500)
         if (device.findObject(By.desc("backup_name")) != null) device.pressBack()
 
-        // The right password continues it; desktop's snapshots stay. The host counts them.
-        val cont = bkCreate(src, top, "desktop_repo", incremental = true, password = BK_DESKTOP_PASSWORD)
+        // Select existing, in the form: a folder outside the target and one with no backup are
+        // refused; the password is asked once, a wrong one refused, and the field then locks.
+        bkOpenCreate()
+        clickInDialog("backup_source_location")
+        bkPick(src.root, *src.path.toTypedArray())
+        clickInDialog("backup_target_location")
+        bkPick(top.root, "shared")
+        clickInDialog("backup_select_existing")
+        bkPick(top.root, "desktop_repo")
+        bkAssertDesc("backup_create_error", "a backup outside the target was accepted", 20000L)
+        assertNotNull("no reason for a folder outside the target", device.wait(Until.findObject(By.textContains("directly inside")), timeout))
+        clickInDialog("backup_target_location")
+        bkPick(top.root)
+        clickInDialog("backup_select_existing")
+        bkPick(top.root, "not_a_backup")
+        bkAssertText(bkText(R.string.backups_browse_none), "a folder with no backup was accepted")
+        clickInDialog("backup_select_existing")
+        bkPick(top.root, "desktop_repo")
+        bkAssertDesc("backup_start_new", "selecting a backup changed nothing", 20000L)
+        assertNull("the confirm field is still asked for", device.findObject(By.desc("backup_password_confirm")))
+        assertNull("the saved tick is still asked for", device.findObject(By.desc("backup_password_saved")))
+        assertNotNull("the name was not filled in", device.findObject(By.text("desktop_repo")))
+        bkTypePassword("backup_password", "not-the-password")
+        clickInDialog("backup_existing_check")
+        bkAssertText(bkText(R.string.backup_target_wrong_password, "desktop_repo"), "a wrong password was accepted")
+        assertNull("a wrong password passed", device.findObject(By.desc("backup_existing_checked")))
+        bkTypePassword("backup_password", BK_DESKTOP_PASSWORD)
+        clickInDialog("backup_existing_check")
+        bkAssertDesc("backup_existing_checked", "the right password was refused", 30000L)
+        assertNull("Check password stayed", device.findObject(By.desc("backup_existing_check")))
+        // Start new puts the normal form back.
+        clickInDialog("backup_start_new")
+        bkAssertDesc("backup_password_confirm", "Start new did not bring the form back")
+        assertNull("Start new left the name", device.findObject(By.text("desktop_repo")))
+
+        // Selected again and created: it continues desktop's repository, whose snapshots stay. The host counts them.
+        clickInDialog("backup_select_existing")
+        bkPick(top.root, "desktop_repo")
+        bkAssertDesc("backup_start_new", "selecting the backup again changed nothing", 20000L)
+        bkTypePassword("backup_password", BK_DESKTOP_PASSWORD)
+        clickInDialog("backup_existing_check")
+        bkAssertDesc("backup_existing_checked", "the right password was refused", 30000L)
+        bkTapCreate("backup_progress_title")
+        bkAssertDesc("backup_progress_title", "Create did not open the progress dialog", 60000L)
+        val cont = bkStore.jobs.value.firstOrNull { it.name == "desktop_repo" }!!
         bkCloseProgress()
         bkExpectSuccess(bkStore.history(cont.id).last(), "continuing a desktop repository")
         assertEquals("only this job's snapshots are its own", 1, bkStore.snapshots(cont.id).size)
@@ -2195,17 +2329,25 @@ class E2EAutomatedTest {
         bkExpectStatus("E2E_next", bkText(R.string.backup_state_corrupted))
     }
 
-    /** A mount from Manage backups lands on the main screen, which highlights it and says so. */
+    /** A mount from Manage backups leaves it for the slider, open on the Backups tab, which highlights it and says so. */
     private fun bkExpectMountAnnounced(title: String) {
-        val main = device.wait(Until.findObject(By.desc("scan_button")), 60000L)
-        if (main == null) captureScreen("mount_stayed_on_backups")
-        assertNotNull("the mount did not go to the main screen", main)
+        val slider = device.wait(Until.findObject(By.desc("mounted_drawer")), 60000L)
+        if (slider == null) captureScreen("mount_stayed_on_backups")
+        assertNotNull("the mount did not open the slider", slider)
         assertNull("Manage backups is still open", device.findObject(By.desc("backups_tab_mount")))
         val toast = device.wait(Until.findObject(By.text("Mounted: $title")), 10000L)
         if (toast == null) captureScreen("mount_no_toast")
         assertNotNull("no toast for the mount of $title", toast)
+        // The tab's own node reads selected=false either way, so what is showing says which tab is up.
+        if (device.wait(Until.findObject(By.textContains(title)), timeout) == null) captureScreen("mount_not_on_backups")
+        assertNotNull("the slider did not open on Backups, with the backup in it", device.findObject(By.textContains(title)))
         assertNull("the main screen did not take the highlight", BackupMounts.justMounted.value)
         assertTrue("the toast stayed on the screen", device.wait(Until.gone(By.text("Mounted: $title")), 15000L))
+        assertTrue(clickByDesc("mounted_tab_drives"))
+        assertTrue("the backup is listed under Drives too", device.wait(Until.gone(By.textContains(title)), timeout))
+        assertTrue(clickByDesc("mounted_tab_backups"))
+        assertNotNull("the backup left Backups", device.wait(Until.findObject(By.textContains(title)), timeout))
+        closeSlider()
     }
 
     /** Two schedules stack on a phone and sit side by side on an unfolded phone's size of screen. */
@@ -2223,14 +2365,21 @@ class E2EAutomatedTest {
         }
         val (narrowA, narrowB) = lefts()
         assertEquals("the phone layout is not one column", narrowA, narrowB)
+        onWideScreen {
+            val (wideA, wideB) = lefts()
+            if (kotlin.math.abs(wideA - wideB) < device.displayWidth / 3) captureScreen("schedule_columns")
+            assertTrue("no second column at ${device.displayWidth} px: $wideA and $wideB", kotlin.math.abs(wideA - wideB) >= device.displayWidth / 3)
+        }
+    }
+
+    /** Runs [check] at an unfolded phone's size of screen, and leaves the emulator as it was. */
+    private fun onWideScreen(check: () -> Unit) {
         try {
             device.executeShellCommand("wm size 2208x1840")
             device.executeShellCommand("wm density 420")
             device.waitForIdle()
             android.os.SystemClock.sleep(1500)
-            val (wideA, wideB) = lefts()
-            if (kotlin.math.abs(wideA - wideB) < device.displayWidth / 3) captureScreen("schedule_columns")
-            assertTrue("no second column at ${device.displayWidth} px: $wideA and $wideB", kotlin.math.abs(wideA - wideB) >= device.displayWidth / 3)
+            check()
         } finally {
             device.executeShellCommand("wm density reset")
             device.executeShellCommand("wm size reset")
@@ -2312,7 +2461,12 @@ class E2EAutomatedTest {
             clickScrolling("more_actions_button", "More actions missing")
             device.wait(Until.findObject(By.text(bkText(R.string.backup_action))), timeout)!!.click()
         } else action.click()
-        bkAssertDesc("backup_interval_0", "no Manual on the card's Back up")
+        assertNotNull("no Manual on the card's Back up", findInDialog("backup_interval_0"))
+        bkTapSettled(bkText(R.string.cd_backup_reminders_info))
+        bkAssertText(bkText(R.string.backup_reminders_info) + " " + bkText(R.string.backup_reminders_info_manual), "the info does not cover Manual")
+        assertTrue(clickByDesc("backup_reminders_info_close"))
+        bkAssertGone("backup_reminders_info", "Close left the info up")
+        bkFormToTop()
         bkFillForm(BkEnd(drive.name, listOf("drive_src")), BkEnd(drive.name, emptyList()), "E2E_manual", incremental = true, interval = 0)
         bkTapCreate("backup_progress_title")
         bkAssertDesc("backup_progress_title", "Create opened no dialog", 60000L)
@@ -2690,6 +2844,7 @@ class E2EAutomatedTest {
             bkStore.upsert(sibling)
             returnToMainScreen()
             assertTrue(BackupScheduler.evaluate(ctx, "attach").isEmpty())
+            bkOpenDueFromBell("E2E_device_sibling")
             bkAssertDesc("backup_due_missing_E2E_device_sibling", "the sibling partition did not ask", 20000L)
             assertTrue(clickByDesc("backup_due_not_now"))
             bkAssertGone("backup_due_title", "Not now left the dialog up")
@@ -2764,6 +2919,7 @@ class E2EAutomatedTest {
 
     private fun bkFlowEncryptForm() {
         returnToMainScreen()
+        openSlider()
         val item = device.findObject(By.desc("encrypt_action")) ?: run {
             val more = findScrolling(By.desc("more_actions_button"), desc = "more_actions_button")
             assertNotNull("neither Encrypt nor More actions is on the card", more)
@@ -2945,6 +3101,7 @@ class E2EAutomatedTest {
      * checked against an app with no grant on the repository: "Can't load content".
      */
     private fun openBackupInFiles(context: Context, title: String, snapshotId: String) {
+        openSlider("mounted_tab_backups")
         val label = context.getString(R.string.open_files_app)
         fun button(): androidx.test.uiautomator.UiObject2? {
             val top = device.findObject(By.text(title))?.visibleBounds?.bottom ?: return null
@@ -3126,6 +3283,7 @@ class E2EAutomatedTest {
         var goneAt = 0L
         val deadline = android.os.SystemClock.uptimeMillis() + UNMOUNT_WAIT_MS
         while (android.os.SystemClock.uptimeMillis() < deadline) {
+            InstrumentationRegistry.getInstrumentation().uiAutomation.clearCache()
             if (device.findObject(By.textContains(banner)) != null) sawWarning = true
             if (device.findObject(By.textStartsWith("Unmounted:")) != null) sawUnmounted = true
             if (goneAt == 0L && device.findObject(By.descContains("unmount_button")) == null) {
@@ -3139,6 +3297,123 @@ class E2EAutomatedTest {
         assertTrue("the mounted card did not go when its drive was pulled", goneAt != 0L)
         assertTrue("disconnect warning '$banner' not shown", sawWarning)
         assertFalse("a green 'Unmounted' banner replaced the disconnect warning", sawUnmounted)
+    }
+
+    /**
+     * The main screen around a mount: one unlock per partition whichever path starts it, Manage
+     * backups below the form, the bell beside Settings, and the slider that a mount opens.
+     */
+    private fun runMainScreenCase() {
+        val arguments = InstrumentationRegistry.getArguments()
+        val context = ApplicationProvider.getApplicationContext<Context>()
+        val password = arguments.getString("password", "password123")
+        val pim = arguments.getString("pim", "")
+        android.os.SystemClock.sleep(1000)
+        findScanButton()!!.click()
+        device.wait(Until.findObject(By.text(java.util.regex.Pattern.compile("(?i)OK|ALLOW"))), 5000L)?.click()
+        assertNotNull("the form did not offer the drive", device.wait(Until.findObject(By.desc("password_input")), 30000L))
+
+        // The bell is left of Settings, and nothing is due.
+        val bell = device.wait(Until.findObject(By.desc(context.getString(R.string.cd_backups_due, 0))), timeout)
+        assertNotNull("no bell showing 0", bell)
+        val settings = device.findObject(By.desc(context.getString(R.string.cd_settings)))
+        assertTrue("the bell is not left of Settings", bell!!.visibleBounds.right <= settings.visibleBounds.left)
+
+        // Manage backups is below the form: scrolled to, Unlock & mount is above it or gone upward.
+        val manage = findScrolling(By.desc("manage_backups_button"), desc = "manage_backups_button")
+        assertNotNull("no Manage backups", manage)
+        device.findObject(By.desc("mount_button"))?.let {
+            assertTrue("Manage backups is not below the form", it.visibleBounds.bottom <= manage!!.visibleBounds.top)
+        }
+        scrollToTop()
+
+        // An unlock the form did not start, as auto mount's is: the form says so for this partition.
+        val attempts = { OtgMasterState.recentLogs().count { it.contains("is already being unlocked") } }
+        val hold = java.util.concurrent.CountDownLatch(1)
+        OtgMasterState.testUnlockHold = hold
+        try {
+            val request = OtgMasterState.mountRequest
+            assertNotNull("no mount request handler", request)
+            val cipher = app.fayaz.otgmaster.veracrypt.VeraCryptCipher.DEFAULT.name
+            val hash = app.fayaz.otgmaster.veracrypt.VeraCryptHash.DEFAULT.name
+            request!!.mount(password, pim.toIntOrNull(), cipher, hash, null)
+            val busyText = context.getString(R.string.unlocking_in_progress)
+            val busy = findScrolling(By.text(busyText), text = busyText)
+            if (busy == null) captureScreen("form_not_busy")
+            assertNotNull("the form does not say an unlock is in progress", busy)
+            // Its isEnabled cannot say: the accessibility node reads enabled either way. A tap can.
+            device.findObject(By.desc("mount_button"))?.click()
+            android.os.SystemClock.sleep(1000)
+            assertEquals("the tap on the busy button started an unlock", 0, attempts())
+            // A second path asking for the same partition is refused, and says so.
+            request.mount(password, pim.toIntOrNull(), cipher, hash, null)
+            val end = android.os.SystemClock.uptimeMillis() + 20_000L
+            while (attempts() == 0 && android.os.SystemClock.uptimeMillis() < end) android.os.SystemClock.sleep(200)
+            assertEquals("a second unlock of the same partition was not refused", 1, attempts())
+        } finally {
+            hold.countDown()
+            OtgMasterState.testUnlockHold = null
+        }
+
+        // One mount, and it opens the slider on Drives over everything else.
+        val slider = device.wait(Until.findObject(By.desc("mounted_drawer")), 120_000L)
+        if (slider == null) captureScreen("no_slider")
+        assertNotNull("the mount did not open the slider", slider)
+        android.os.SystemClock.sleep(3000)
+        assertEquals("the partition mounted twice", 1, OtgMasterState.mountedDrives.size)
+        assertNotNull("the slider did not open on Drives, with the card in it", device.wait(Until.findObject(By.textContains("Used:")), timeout))
+        assertNull("the main screen is still offered behind the slider", device.findObject(By.desc("scan_button")))
+        assertTrue("the slider does not come from the right", slider!!.visibleBounds.right == device.displayWidth && slider.visibleBounds.left > 0)
+
+        // The tabs count what is mounted. Backups has nothing, and says so.
+        val tabCount = { id: Int, n: Int -> context.getString(id, n) }
+        assertNotNull("Drives does not count 1", device.findObject(By.text(tabCount(R.string.mounted_tab_drives, 1))))
+        assertNotNull("Backups does not count 0", device.findObject(By.text(tabCount(R.string.mounted_tab_backups, 0))))
+        assertTrue(clickByDesc("mounted_tab_backups"))
+        bkAssertTextIn(context.getString(R.string.no_backups_mounted))
+        assertNull("the drive is listed under Backups", device.findObject(By.textContains("Used:")))
+
+        // Back closes it; the tab at the edge brings it back, by a tap or a drag to the left.
+        closeSlider()
+        assertNotNull("Back did not return to the main screen", device.wait(Until.findObject(By.desc("scan_button")), timeout))
+        assertNull("the mounted card stayed on the main screen", device.findObject(By.textContains("Used:")))
+        val handle = device.findObject(By.desc("mounted_handle"))
+        assertNotNull("no tab at the edge with the slider closed", handle)
+        assertTrue("the tab is not at the right edge", handle.visibleBounds.right == device.displayWidth)
+        openSlider()
+        assertNotNull("the tab opened no card", device.wait(Until.findObject(By.textContains("Used:")), timeout))
+        assertNull("the tab stayed with the slider open", device.findObject(By.desc("mounted_handle")))
+        // The close button, and a drag towards the edge.
+        device.findObject(By.desc(context.getString(R.string.cd_close_mounted))).click()
+        assertTrue("Close left the slider open", device.wait(Until.gone(By.desc("mounted_drawer")), timeout))
+        android.os.SystemClock.sleep(500)
+        openSlider()
+        val h = device.displayHeight / 2
+        device.swipe(device.displayWidth / 4, h, device.displayWidth - 20, h, 20)
+        assertTrue("a drag did not close the slider", device.wait(Until.gone(By.desc("mounted_drawer")), timeout))
+        android.os.SystemClock.sleep(500)
+        val edge = device.wait(Until.findObject(By.desc("mounted_handle")), timeout)!!.visibleBounds
+        device.swipe(edge.centerX(), edge.centerY(), device.displayWidth / 2, edge.centerY(), 20)
+        assertNotNull("a drag on the tab did not open the slider", device.wait(Until.findObject(By.desc("mounted_drawer")), timeout))
+        closeSlider()
+
+        // On a wide screen what is mounted is always there, with the same tabs and no slider.
+        onWideScreen {
+            assertNotNull("no pane on a wide screen", device.wait(Until.findObject(By.desc("mounted_pane")), timeout))
+            assertNull("a slider on a wide screen", device.findObject(By.desc("mounted_drawer")))
+            assertNull("the slider's tab on a wide screen", device.findObject(By.desc("mounted_handle")))
+            assertNotNull("no card in the pane", device.wait(Until.findObject(By.textContains("Used:")), timeout))
+            assertTrue(clickByDesc("mounted_tab_backups"))
+            bkAssertTextIn(context.getString(R.string.no_backups_mounted))
+            assertTrue(clickByDesc("mounted_tab_drives"))
+            assertNotNull("the pane lost its card", device.wait(Until.findObject(By.textContains("Used:")), timeout))
+        }
+        doUnmount()
+    }
+
+    private fun bkAssertTextIn(text: String) {
+        if (device.wait(Until.findObject(By.text(text)), timeout) == null) captureScreen("missing_text")
+        assertNotNull("'$text' not on the screen", device.findObject(By.text(text)))
     }
 
     /** Asks the runner to unplug or replug the USB drive, and waits until it has. */
@@ -3225,10 +3500,18 @@ class E2EAutomatedTest {
      * it shows. The dialog is its own window, so the page scroller behind it is no help.
      */
     private fun findInDialog(desc: String): androidx.test.uiautomator.UiObject2? {
+        var swiped = false
         repeat(8) {
-            device.wait(Until.findObject(By.desc(desc)), 1500L)?.let { return it }
+            device.wait(Until.findObject(By.desc(desc)), 1500L)?.let { found ->
+                if (!swiped) return found
+                // A tap on a form still moving from the swipe only stops it, and nothing else happens:
+                // a chip stayed unselected, and encrypt_luks2_ext4's Erase opened no dialog.
+                android.os.SystemClock.sleep(800)
+                return device.findObject(By.desc(desc)) ?: found
+            }
             val h = device.displayHeight
             device.swipe(device.displayWidth / 2, h * 3 / 4, device.displayWidth / 2, h / 3, 25)
+            swiped = true
             device.waitForIdle()
         }
         captureScreen("dialog_missing_$desc")
@@ -3279,6 +3562,7 @@ class E2EAutomatedTest {
     // ── helpers ──────────────────────────────────────────────────────────────
 
     private fun doMount(password: String, pim: String, testCase: String, clearFields: Boolean): Boolean {
+        closeSlider()
         // First pass: check if password field is visible; if not, try the device picker.
         if (device.wait(Until.findObject(By.descContains("password_input")), 15000L) == null) {
             val devicePicker = device.findObject(By.descContains("device_picker"))
@@ -3388,7 +3672,7 @@ class E2EAutomatedTest {
         // unmounted at once, and a 1 s wait passed. The unmount itself is still held to its
         // 15 s below, and one tap only, so a button that stays dead still fails.
         android.os.SystemClock.sleep(UNMOUNT_SETTLE_MS)
-        val unmountButton = device.wait(Until.findObject(By.descContains("unmount_button")), timeout)
+        val unmountButton = findInSlider(By.descContains("unmount_button"))
         assertTrue("Unmount button not found", unmountButton != null)
         unmountButton?.click()
         val gone = device.wait(Until.gone(By.descContains("unmount_button")), UNMOUNT_WAIT_MS)
@@ -3413,6 +3697,12 @@ class E2EAutomatedTest {
         // only while it is up, since Back with no keyboard would leave the app.
         hideKeyboard()
         device.findObject(selector)?.let { return it }
+        // Cards are in the slider, and everything else behind it, out of the tree while it is open.
+        if (sliderOpen()) {
+            findInSlider(selector)?.let { return it }
+            closeSlider()
+            device.wait(Until.findObject(selector), 1000L)?.let { return it }
+        }
         // Scroll the app's own container (a ScrollView covering the screen) rather
         // than swiping — a swipe near the top pulled down the notification shade.
         // Then *wait* for the element: after a programmatic scroll the accessibility
@@ -3426,8 +3716,51 @@ class E2EAutomatedTest {
             device.waitForIdle()
             device.wait(Until.findObject(selector), 5000L)?.let { return it }
         }
+        if (OtgMasterState.mountedDrives.isNotEmpty() || OtgMasterState.disconnectedDrives.value.isNotEmpty()) {
+            openSlider()
+            findInSlider(selector)?.let { return it }
+        }
         // Not found: the loop has left the page at the top again.
         captureScreen("not_found_after_scrolling")
+        return null
+    }
+
+    private fun sliderOpen() = device.findObject(By.desc("mounted_drawer")) != null
+
+    private fun closeSlider() {
+        if (!sliderOpen()) return
+        device.pressBack()
+        assertTrue("Back did not close the slider", device.wait(Until.gone(By.desc("mounted_drawer")), timeout))
+        android.os.SystemClock.sleep(500)
+    }
+
+    /** Opens the slider from its tab at the screen's edge, on [tab]. */
+    private fun openSlider(tab: String = "mounted_tab_drives") {
+        if (!sliderOpen()) {
+            val handle = device.wait(Until.findObject(By.desc("mounted_handle")), timeout)
+            if (handle == null) captureScreen("no_mounted_handle")
+            assertNotNull("no tab at the screen's edge", handle)
+            handle!!.click()
+            assertNotNull("the tab did not open the slider", device.wait(Until.findObject(By.desc("mounted_drawer")), timeout))
+        }
+        val chosen = device.wait(Until.findObject(By.desc(tab)), timeout)
+        assertNotNull("no $tab", chosen)
+        chosen!!.click()
+        android.os.SystemClock.sleep(400)
+    }
+
+    private fun findInSlider(selector: androidx.test.uiautomator.BySelector): androidx.test.uiautomator.UiObject2? {
+        for (tab in listOf("mounted_tab_drives", "mounted_tab_backups")) {
+            openSlider(tab)
+            device.wait(Until.findObject(selector), 1000L)?.let { return it }
+            val list = androidx.test.uiautomator.UiScrollable(
+                androidx.test.uiautomator.UiSelector().scrollable(true).packageName("app.fayaz.otgmaster"))
+            for (toEnd in listOf(true, false)) {
+                runCatching { if (toEnd) list.scrollToEnd(5) else list.scrollToBeginning(5) }
+                device.waitForIdle()
+                device.wait(Until.findObject(selector), 1000L)?.let { return it }
+            }
+        }
         return null
     }
 
@@ -3459,6 +3792,7 @@ class E2EAutomatedTest {
      * candidate and failed as "Mount #2 failed" (m_luks1_exfat).
      */
     private fun findScanButton(): androidx.test.uiautomator.UiObject2? {
+        closeSlider()
         scrollToTop()
         return device.wait(Until.findObject(By.textContains("Scan").clickable(true)), timeout)
             ?: device.wait(Until.findObject(By.descContains("scan_button")), timeout)
@@ -3517,7 +3851,7 @@ class E2EAutomatedTest {
     }
 
     private fun findMountButton(): androidx.test.uiautomator.UiObject2? =
-        findScrolling(By.descContains("mount_button"), desc = "mount_button")
+        findScrolling(By.desc("mount_button"), desc = "mount_button")
             ?: findScrolling(By.textContains("Unlock & mount"), text = "Unlock & mount", firstWaitMs = 0L)
 
     /** Waits up to [timeoutMs] for a mounted card ("Used:"), scrolling up to it. */
@@ -3525,6 +3859,7 @@ class E2EAutomatedTest {
         val deadline = android.os.SystemClock.uptimeMillis() + timeoutMs
         while (android.os.SystemClock.uptimeMillis() < deadline) {
             device.wait(Until.findObject(By.textContains("Used")), 5000L)?.let { return it }
+            if (!sliderOpen() && OtgMasterState.mountedDrives.isNotEmpty()) { openSlider(); continue }
             device.findObject(By.scrollable(true).pkg("app.fayaz.otgmaster"))
                 ?.scroll(androidx.test.uiautomator.Direction.UP, 1.0f)
         }
@@ -3599,7 +3934,7 @@ class E2EAutomatedTest {
             assertTrue("Expected 'Detected filesystem: $expectedFs' in app log", fsLog != null)
         }
 
-        assertNull("Drive should not have been mounted for unsupported filesystem",
-            device.findObject(By.textContains("Used:")))
+        assertTrue("Drive should not have been mounted for unsupported filesystem",
+            OtgMasterState.mountedDrives.isEmpty())
     }
 }

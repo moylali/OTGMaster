@@ -287,9 +287,8 @@ object BackupPrompts {
  * when a drive mounts or goes.
  *
  * A backup on the phone alone starts by itself. A backup using a USB drive never does, since
- * it would slow whatever the user plugged the drive in for: mounting asks in a dialog, coming
- * due with the drive already there asks in a notification, and with the drive away a
- * reminder names it.
+ * it would slow whatever the user plugged the drive in for: with the drive here a notification
+ * asks, and with the drive away a reminder names it. Both also show under the main screen's bell.
  */
 object BackupScheduler {
     private const val PERIODIC = "backup-scheduler"
@@ -383,14 +382,12 @@ object BackupScheduler {
                 if (swap || spaced(job, now)) remind(context, job, now)
             }
         }
-        if (prompt.isNotEmpty()) {
-            val drive = prompt.map(::driveNames).distinct().joinToString(" and ")
-            if (BackupPrompts.mainVisible) BackupPrompts.ask(BackupPrompts.Due(drive, prompt.map { it.id }))
-            else prompt.forEach { job ->
-                if (reachable(context, job)) { BackupNotifications.dueMounted(context, job); dueShown += job.id }
-                else remind(context, job, now)
-                store.update(job.id) { it.copy(lastReminderAt = now) }
-            }
+        // Never a dialog by itself: the user may have opened the app or plugged the drive in for
+        // something else. The notification and the bell on the main screen are what open it.
+        prompt.forEach { job ->
+            if (reachable(context, job)) { BackupNotifications.dueMounted(context, job); dueShown += job.id }
+            else remind(context, job, now)
+            store.update(job.id) { it.copy(lastReminderAt = now) }
         }
         return started
     }

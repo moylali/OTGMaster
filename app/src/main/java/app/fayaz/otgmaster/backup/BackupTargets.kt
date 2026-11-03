@@ -41,6 +41,33 @@ object BackupTargets {
         return null
     }
 
+    /** The name of [chosen] if it sits directly in [target], both from [folderKey]; otherwise null. */
+    fun childOf(target: String, chosen: String): String? {
+        val prefix = if (target.endsWith(":")) target else "$target/"
+        if (!chosen.startsWith(prefix)) return null
+        return chosen.removePrefix(prefix).takeIf { it.isNotEmpty() && '/' !in it }
+    }
+
+    /** What Select existing found: the backup's name, or why the chosen folder will not do. */
+    sealed class Existing {
+        data class Found(val name: String) : Existing()
+        object NotInTarget : Existing()
+        object NoBackup : Existing()
+    }
+
+    /** Reads the drive: call off the main thread. [chosen] came from the picker, which cannot be held to [target]. */
+    fun findExisting(context: Context, target: Uri, chosen: Uri): Existing {
+        val name = childOf(
+            folderKey(target.authority, DocumentsContract.getTreeDocumentId(target)),
+            folderKey(chosen.authority, DocumentsContract.getTreeDocumentId(chosen)),
+        ) ?: return Existing.NotInTarget
+        return if (holdsRepository(SafFileTree(context.contentResolver, target), name)) Existing.Found(name) else Existing.NoBackup
+    }
+
+    /** Whether [password] opens the backup in [target]/[name]. Reads the drive: call off the main thread. */
+    fun opensExisting(context: Context, target: Uri, name: String, password: String): Boolean =
+        ResticRepository.open(FileTreeBackend(SubTree(SafFileTree(context.contentResolver, target), name)), password.toByteArray()) != null
+
     private fun holdsRepository(tree: FileTree, folder: String): Boolean =
         tree.stat(Paths.join(folder, "config")) != null && tree.stat(Paths.join(folder, "keys")) != null
 

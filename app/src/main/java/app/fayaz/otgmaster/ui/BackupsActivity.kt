@@ -210,7 +210,7 @@ private fun Schedules() {
                         BackupEnds(job)
                         JobStatusLine(job, reachable?.contains(job.id))
                         FlowRow(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                            listOf(24 to R.string.backup_daily, 168 to R.string.backup_weekly).forEach { (h, label) ->
+                            BACKUP_INTERVALS.forEach { (h, label) ->
                                 FilterChip(job.schedule.intervalHours == h, {
                                     store.update(job.id) { it.copy(schedule = it.schedule.copy(intervalHours = h, autoRun = true)) }
                                 }, { Text(stringResource(label)) }, modifier = Modifier.semantics { contentDescription = "backup_interval_${h}_${job.name}" })
