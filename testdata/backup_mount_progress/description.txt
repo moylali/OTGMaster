@@ -1,1 +1,1 @@
-Mount tab: signs of progress on the row, after choosing a folder and in the password dialog; a second tap does nothing; with the drive gone Mount is off and says why.
+Mount backup goes straight to the Files picker, with no tab in Manage backups. A wrong saved password asks. One of this phone's backups mounts with its saved password, others after asking; signs of progress after choosing a folder and in the password dialog. Each lands in the slider on Backups.

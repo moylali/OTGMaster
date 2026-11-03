@@ -2957,7 +2957,6 @@ fun OtgMasterApp(
             )
         }
     }
-    driveOperation?.let { app.fayaz.otgmaster.ui.DriveOperationDialog(it, onDriveOperationClose) }
     journalRepairPrompt?.let { id -> mountedDrives.firstOrNull { it.id == id } }?.let { target ->
         app.fayaz.otgmaster.ui.JournalRepairDialog(
             driveTitle = driveTitle(target),
@@ -2969,7 +2968,15 @@ fun OtgMasterApp(
     val scrollState = rememberScrollState()
     var showMounted by androidx.compose.runtime.saveable.rememberSaveable { mutableStateOf(false) }
     var mountedTab by androidx.compose.runtime.saveable.rememberSaveable { mutableStateOf(app.fayaz.otgmaster.ui.MountedTab.DRIVES) }
+    driveOperation?.let {
+        app.fayaz.otgmaster.ui.DriveOperationDialog(it) {
+            onDriveOperationClose()
+            // Encrypt leaves nothing mounted and the new volume waiting on the form, under the slider.
+            if (mountedDrives.isEmpty()) showMounted = false
+        }
+    }
     var twoPaneWindow by remember { mutableStateOf(false) }
+    var backupProblem by remember { mutableStateOf<String?>(null) }
     val backupCount = mountedDrives.count { it.fileSystem is app.fayaz.otgmaster.backup.restic.ResticFileSystem }
     val driveCount = mountedDrives.size - backupCount
     val sliderOpen = showMounted && !twoPaneWindow
@@ -3179,8 +3186,8 @@ fun OtgMasterApp(
             }
         }
         val manageBackups: @Composable () -> Unit = {
-            // Every backup, whichever drives it uses. The button opens into its three parts,
-            // each going straight to that tab of BackupsActivity.
+            // Every backup, whichever drives it uses. The button opens into Schedules and History,
+            // each a tab of BackupsActivity, and Mount backup, which goes straight to the Files picker.
             val context = androidx.compose.ui.platform.LocalContext.current
             var backupsOpen by remember { mutableStateOf(false) }
             Button(
@@ -3195,16 +3202,17 @@ fun OtgMasterApp(
                     listOf(
                         Triple(app.fayaz.otgmaster.ui.BackupsActivity.TAB_SCHEDULES, R.string.backups_tab_schedules, "backups_open_schedules"),
                         Triple(app.fayaz.otgmaster.ui.BackupsActivity.TAB_HISTORY, R.string.backups_tab_history, "backups_open_history"),
-                        Triple(app.fayaz.otgmaster.ui.BackupsActivity.TAB_MOUNT, R.string.backups_tab_mount, "backups_open_mount"),
                     ).forEach { (tab, label, id) ->
                         OutlinedButton(
                             onClick = {
                                 context.startActivity(Intent(context, app.fayaz.otgmaster.ui.BackupsActivity::class.java)
                                     .putExtra(app.fayaz.otgmaster.ui.BackupsActivity.EXTRA_TAB, tab))
                             },
+                            contentPadding = PaddingValues(horizontal = 8.dp, vertical = 8.dp),
                             modifier = Modifier.weight(1f).semantics { contentDescription = id },
                         ) { Text(stringResource(label), maxLines = 1, softWrap = false) }
                     }
+                    app.fayaz.otgmaster.ui.MountBackupButton(onProblem = { backupProblem = it }, modifier = Modifier.weight(1f))
                 }
             }
         }
@@ -3372,6 +3380,15 @@ fun OtgMasterApp(
         onReadOnlyDefaultChange = onReadOnlyDefaultChange,
     )
 
+    app.fayaz.otgmaster.ui.StatusToast(
+        message = backupProblem,
+        isSuccess = false,
+        onDismiss = { backupProblem = null },
+        modifier = Modifier
+            .align(Alignment.BottomCenter)
+            .navigationBarsPadding()
+            .padding(16.dp),
+    )
     app.fayaz.otgmaster.ui.StatusToast(
         message = toastMessage,
         isSuccess = toastIsSuccess,

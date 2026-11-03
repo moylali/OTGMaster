@@ -60,9 +60,10 @@ object BackupMounts {
         .getOrDefault(false)
 
     /**
-     * If [folder] is the repository of one of this phone's jobs, mounts it as that job, so the
-     * job's row shows it mounted and it cannot be mounted twice. Null if it is no job's, or its
-     * saved password is missing or no longer opens it. Blocking: call off the main thread.
+     * If [folder] is the repository of one of this phone's jobs, mounts it as that job, with the
+     * saved password, so it cannot be mounted twice. Null if it is no job's, or its saved password
+     * is missing or no longer opens it. A damaged repository marks the job Corrupted, raises the
+     * offer to recreate it and throws. Blocking: call off the main thread.
      */
     fun mountAsJob(context: Context, folder: Uri): MountedDrive? {
         val chosen = runCatching { DocumentsContract.getTreeDocumentId(folder) }.getOrNull() ?: return null
@@ -74,7 +75,14 @@ object BackupMounts {
                 } == true
         } ?: return null
         return runCatching { mount(context, job) }
-            .onFailure { OtgMasterState.log("Backup \"${job.name}\": ${it.message}; asking for the password") }
+            .onFailure {
+                if (BackupRunner.isDamage(it)) {
+                    BackupRunner(context).markCorrupted(job, it.message ?: "the backup is damaged")
+                    JobStore.get(context).job(job.id)?.let { j -> BackupPrompts.corruptionFound(context, j) }
+                    throw it
+                }
+                OtgMasterState.log("Backup \"${job.name}\": ${it.message}; asking for the password")
+            }
             .getOrNull()
     }
 

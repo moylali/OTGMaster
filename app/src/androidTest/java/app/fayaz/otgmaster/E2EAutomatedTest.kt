@@ -260,7 +260,7 @@ class E2EAutomatedTest {
             // Verify capacity is populated
             val usedText = mountedText?.text ?: ""
             assertTrue("Used capacity should not be empty", usedText.contains("Used:"))
-            val freeTextObj = device.findObject(By.textContains("Free:"))
+            val freeTextObj = device.wait(Until.findObject(By.textContains("Free:")), timeout)
             assertTrue("Free capacity should be visible", freeTextObj != null)
 
             val context = ApplicationProvider.getApplicationContext<Context>()
@@ -754,6 +754,8 @@ class E2EAutomatedTest {
         if (action == "encrypt") {
             // Not mounted after Encrypt: the new volume is offered for unlock, so its
             // password is proved before anything is written to it (#94).
+            android.os.SystemClock.sleep(800)
+            assertFalse("the slider covers the form that offers the new volume", sliderOpen())
             assertNull("the new volume was mounted without its password", waitForMounted(5000L))
             assertTrue("password field not offered for the new volume",
                 device.wait(Until.findObject(By.descContains("password_input")), 30000L) != null)
@@ -904,7 +906,6 @@ class E2EAutomatedTest {
         assertTrue("the Create schedule form did not close", device.wait(Until.gone(By.desc(BACKUP_DIALOG_FIELD)), timeout))
 
         // ── A folder with no repository in it ────────────────────────────────
-        assertTrue("Mount tab missing", clickByDesc("backups_tab_mount"))
         browseToFolder(source!!.name, "not_a_backup")
         val none = device.wait(Until.findObject(By.text(context.getString(R.string.backups_browse_none))), 30000L)
         if (none == null) captureScreen("backup_none_not_shown")
@@ -963,12 +964,11 @@ class E2EAutomatedTest {
         // ── Unmount, and mount again ─────────────────────────────────────────
         doUnmount()
         assertFalse("the backup is still mounted after Unmount", OtgMasterState.mountedDrives.any { it.id == backup.id })
-        openBackupsTab("backups_open_mount")
         browseToFolder(source.name, BACKUP_REPO)
         mountBrowsedBackup(password)
         returnToMainScreen()
 
-        // ── A job on this drive: each end's folder shown, Mount from its row ─
+        // ── A job on this drive: each end's folder shown, and its saved password mounts it ─
         val tree = { folder: String -> DocumentsContract.buildTreeDocumentUri(AUTHORITY, "${source.id}:/$folder") }
         val jobs = JobStore.get(context)
         val endpoint = { uri: android.net.Uri ->
@@ -1004,22 +1004,15 @@ class E2EAutomatedTest {
         assertNull("a restore's row names the source as its target", device.findObject(By.text(sourceFolder)))
         jobs.addRun(RunRecord(jobId = job.id, kind = "backup", reason = "manual", startedAt = now + 1, finishedAt = now + 1, status = RunStatus.SUCCESS))
         assertNotNull("a backup's row does not name its source folder", device.wait(Until.findObject(By.text(sourceFolder)), timeout))
-        assertTrue("Mount tab missing", clickByDesc("backups_tab_mount"))
-        assertNotNull("the Mount row does not name its source folder", device.wait(Until.findObject(By.text(sourceFolder)), timeout))
-        assertNotNull("the Mount row does not name its target folder", device.findObject(By.text(targetFolder)))
-        val unreachableText = context.getString(R.string.backups_mount_connect, VolumeInfo.summary(job.destination.info))
-        val rowMount = "backup_mount_${job.name}"
-        assertNotNull("the job's Mount button is missing", device.wait(Until.findObject(By.desc(rowMount)), timeout))
-        android.os.SystemClock.sleep(2500) // past the first reachability check
-        assertNull("the row says its drive is missing with the drive mounted", device.findObject(By.text(unreachableText)))
-        device.findObject(By.desc(rowMount))!!.click()
+        browseToFolder(source.name, BACKUP_REPO)
         val jobDrive = BackupMounts.driveIdFor(job.id)
         val mountDeadline = android.os.SystemClock.uptimeMillis() + 60_000L
         while (OtgMasterState.mountedDrives.none { it.id == jobDrive } && android.os.SystemClock.uptimeMillis() < mountDeadline) {
             android.os.SystemClock.sleep(200)
         }
-        if (OtgMasterState.mountedDrives.none { it.id == jobDrive }) captureScreen("backup_row_mount_failed")
-        assertTrue("Mount on the job's row did not mount it", OtgMasterState.mountedDrives.any { it.id == jobDrive })
+        if (OtgMasterState.mountedDrives.none { it.id == jobDrive }) captureScreen("backup_job_mount_failed")
+        assertTrue("choosing the job's folder did not mount it with its saved password", OtgMasterState.mountedDrives.any { it.id == jobDrive })
+        assertNull("it asked for the password a job has saved", device.findObject(By.desc("backups_browse_password")))
         returnToMainScreen()
 
         // ── Pulling the drive takes the backup with it ───────────────────────
@@ -1047,14 +1040,6 @@ class E2EAutomatedTest {
         android.os.SystemClock.sleep(1500)
         assertNull("Create schedule opened its form with nothing mounted", device.findObject(By.desc(BACKUP_DIALOG_FIELD)))
 
-        // ── With its drive gone, the row's Mount says why and does nothing ───
-        assertTrue("Mount tab missing", clickByDesc("backups_tab_mount"))
-        val gone = device.wait(Until.findObject(By.text(unreachableText)), timeout)
-        if (gone == null) captureScreen("backup_mount_no_reason")
-        assertNotNull("the row does not say its drive is missing", gone)
-        device.findObject(By.desc(rowMount))!!.click()
-        android.os.SystemClock.sleep(1500)
-        assertTrue("Mount worked with the drive gone: ${OtgMasterState.mountedDrives.map { it.name }}", OtgMasterState.mountedDrives.isEmpty())
         jobs.delete(job.id)
         BackupSecrets(context).forget(job.id)
         requestUsb("replug")
@@ -1471,11 +1456,8 @@ class E2EAutomatedTest {
             assertEquals("restored $path", bkPhoneSha("$PHONE/src/$path"), bkPhoneSha("$PHONE/restored/$restoredDir/$path"))
         }
 
-        // Mount it from its row: the repository this app wrote, read through the provider.
-        assertTrue("Mount tab missing", clickByDesc("backups_tab_mount"))
-        bkAssertDesc("backup_mount_E2E_inc", "the backup is not on the Mount tab")
-        android.os.SystemClock.sleep(2500)
-        device.findObject(By.desc("backup_mount_E2E_inc"))!!.click()
+        // Mount it: the repository this app wrote, read through the provider, with its saved password.
+        bkMountFromPicker(drive.name, "E2E_inc")
         val mountId = BackupMounts.driveIdFor(inc.id)
         val mountDeadline = android.os.SystemClock.uptimeMillis() + 60_000L
         while (OtgMasterState.mountedDrives.none { it.id == mountId } && android.os.SystemClock.uptimeMillis() < mountDeadline) android.os.SystemClock.sleep(200)
@@ -2206,47 +2188,45 @@ class E2EAutomatedTest {
         assertNotNull(drive)
     }
 
-    // ── Signs of life on the Mount tab ──────────────────────────────────────────────────
+    // ── Mount backup ────────────────────────────────────────────────────────────────────
+
+    /** Manage backups' Mount backup: straight to the Files picker, for [path] on [root]. */
+    private fun bkMountFromPicker(root: String?, vararg path: String) {
+        clickMountBackup()
+        bkPick(root, *path)
+    }
 
     private fun bkFlowMountProgress(drive: MountedDrive) {
         val job = bkJob(drive, "E2E_mp", agoHours = 1)
         bkExpectSuccess(bkRunNow(job, "the backup to mount"), "the backup to mount")
         BackupMounts.testDelayMs = 4000
-        bkOpenTab("backups_tab_mount")
-        bkAssertDesc("backup_mount_E2E_mp", "no Mount on the row")
-        android.os.SystemClock.sleep(2500)
 
-        // A mount that fails says why in a toast, and stays here.
+        // There is no tab for it any more, in Manage backups or anywhere.
+        openBackupsTab("backups_open_schedules")
+        assertNull("Manage backups still has a Mount tab", device.findObject(By.textContains("Mount backup")))
+        returnToMainScreen()
+
+        // A saved password that no longer opens it: it asks, rather than failing.
         val secrets = BackupSecrets(bkContext)
         val realPassword = secrets.password(job.id)!!
         secrets.setPassword(job.id, "not-the-password")
-        device.findObject(By.desc("backup_mount_E2E_mp"))!!.click()
-        val failedText = bkText(R.string.backups_mount_failed, "E2E_mp", "")
-        val failedToast = device.wait(Until.findObject(By.textStartsWith(failedText)), 60000L)
-        if (failedToast == null) captureScreen("mount_failed_no_toast")
-        assertNotNull("no toast for the failed mount", failedToast)
-        assertNotNull("a failed mount left Manage backups", device.findObject(By.desc("backups_tab_mount")))
-        assertTrue("the failure stayed on the screen", device.wait(Until.gone(By.textStartsWith(failedText)), 15000L))
+        bkMountFromPicker(drive.name, "E2E_mp")
+        bkAssertDesc("backups_browse_password", "a wrong saved password did not ask", 60000L)
+        device.pressBack()
+        if (device.findObject(By.desc("backups_browse_password")) != null) device.pressBack()
+        bkAssertGone("backups_browse_password", "Cancel left the password dialog up")
         secrets.setPassword(job.id, realPassword)
 
-        // The row: a sign while it opens, and a second tap does nothing.
-        device.findObject(By.desc("backup_mount_E2E_mp"))!!.click()
-        bkAssertDesc("backup_mount_progress_E2E_mp", "no sign while the row's Mount works", 3000L)
-        device.findObject(By.desc("backup_mount_E2E_mp"))?.click()
-        val id = BackupMounts.driveIdFor(job.id)
-        val end = android.os.SystemClock.uptimeMillis() + 60_000L
-        while (OtgMasterState.mountedDrives.none { it.id == id } && android.os.SystemClock.uptimeMillis() < end) android.os.SystemClock.sleep(200)
-        assertEquals("a second tap mounted it twice", 1, OtgMasterState.mountedDrives.count { it.id == id })
+        // One of this phone's backups: a sign while it opens, then the slider, with no password asked.
+        bkMountFromPicker(drive.name, "E2E_mp")
+        bkAssertDesc("backups_browse_opening", "no sign after choosing a folder", 3000L)
         bkExpectMountAnnounced("E2E_mp (backup)")
-        openBackupsTab("backups_open_mount")
-        bkAssertText(bkText(R.string.backups_is_mounted), "the row does not say Mounted")
-        returnToMainScreen()
+        assertNull("it asked for the password it has saved", device.findObject(By.desc("backups_browse_password")))
+        assertEquals("mounted once", 1, OtgMasterState.mountedDrives.count { it.id == BackupMounts.driveIdFor(job.id) })
         doUnmount()
 
-        // After choosing a folder, and in the password dialog.
-        bkOpenTab("backups_tab_mount")
-        assertTrue("Browse for backup missing", clickByDesc("backups_browse"))
-        bkPick(drive.name, "desktop_repo")
+        // Someone else's: a sign after choosing the folder and in the password dialog.
+        bkMountFromPicker(drive.name, "desktop_repo")
         bkAssertDesc("backups_browse_opening", "no sign after choosing a folder", 3000L)
         bkAssertDesc("backups_browse_password", "no password dialog", 30000L)
         bkTypePassword("backups_browse_password", BK_DESKTOP_PASSWORD)
@@ -2255,16 +2235,7 @@ class E2EAutomatedTest {
         bkAssertGone("backups_browse_mount", "the password dialog stayed", 60000L)
         BackupMounts.testDelayMs = 0
         bkExpectMountAnnounced("desktop_repo (backup)")
-        returnToMainScreen()
         doUnmount()
-
-        // Not reachable: the Mount button is off and says why.
-        bkPullDrive(drive)
-        openBackupsTab("backups_open_mount")
-        bkAssertText(bkText(R.string.backups_mount_connect, VolumeInfo.summary(job.destination.info)), "no reason with the drive gone")
-        device.findObject(By.desc("backup_mount_E2E_mp"))?.click()
-        android.os.SystemClock.sleep(1500)
-        assertTrue("Mount worked with the drive gone", OtgMasterState.mountedDrives.isEmpty())
     }
 
     // ── What each schedule row says ─────────────────────────────────────────────────────
@@ -2334,7 +2305,7 @@ class E2EAutomatedTest {
         val slider = device.wait(Until.findObject(By.desc("mounted_drawer")), 60000L)
         if (slider == null) captureScreen("mount_stayed_on_backups")
         assertNotNull("the mount did not open the slider", slider)
-        assertNull("Manage backups is still open", device.findObject(By.desc("backups_tab_mount")))
+        assertNull("Manage backups is open", device.findObject(By.desc("backups_tab_history")))
         val toast = device.wait(Until.findObject(By.text("Mounted: $title")), 10000L)
         if (toast == null) captureScreen("mount_no_toast")
         assertNotNull("no toast for the mount of $title", toast)
@@ -2493,10 +2464,6 @@ class E2EAutomatedTest {
         bkCloseProgress()
         bkExpectSuccess(bkStore.history(job.id).last(), "Verify from History")
 
-        // On the Mount tab all the same.
-        assertTrue(clickByDesc("backups_tab_mount"))
-        bkAssertDesc("backup_mount_E2E_manual", "not on the Mount tab")
-
         // Never due, never reminds.
         assertFalse(bkStore.job(job.id)!!.isDue(System.currentTimeMillis() + 1000 * BackupJob.HOUR))
         assertTrue(BackupScheduler.evaluate(bkContext, "attach").isEmpty())
@@ -2534,7 +2501,7 @@ class E2EAutomatedTest {
             // and one for the screen, and nothing behind it can be seen until then.
             fun leavePinScreen() {
                 repeat(4) {
-                    if (device.findObject(By.desc("backups_tab_mount")) != null) return
+                    if (device.findObject(By.desc("backups_tab_history")) != null) return
                     device.pressBack()
                     android.os.SystemClock.sleep(1500)
                 }
@@ -2797,10 +2764,7 @@ class E2EAutomatedTest {
 
             // Mount the backup through the provider, and read it back.
             returnToMainScreen()
-            openBackupsTab("backups_open_mount")
-            bkAssertDesc("backup_mount_E2E_device", "the backup is not on the Mount tab")
-            android.os.SystemClock.sleep(2500) // past the reachability check that enables it
-            device.findObject(By.desc("backup_mount_E2E_device"))!!.click()
+            bkMountFromPicker(d.name, top, "E2E_device")
             val mountedId = BackupMounts.driveIdFor(job.id)
             val mountEnd = android.os.SystemClock.uptimeMillis() + 90_000L
             while (OtgMasterState.mountedDrives.none { it.id == mountedId } && android.os.SystemClock.uptimeMillis() < mountEnd) android.os.SystemClock.sleep(200)
@@ -3020,7 +2984,7 @@ class E2EAutomatedTest {
 
         // Back in: it asks, the run completes on what is there, and every blob reads.
         val back = bkReplugDrive()
-        bkAssertDesc("backup_due_title", "the replug did not ask", 60000L)
+        bkOpenDueFromBell(job.name)
         android.os.SystemClock.sleep(2500)
         assertTrue(clickByDesc("backup_due_start"))
         bkCloseProgress()
@@ -3031,17 +2995,24 @@ class E2EAutomatedTest {
         assertNotNull(back)
     }
 
+    /** Mount backup, on the main screen under Manage backups. Goes to the Files picker. */
+    private fun clickMountBackup() {
+        returnToMainScreen()
+        if (device.findObject(By.desc("backups_open_mount")) == null) clickScrolling("manage_backups_button", "Manage backups missing")
+        clickScrolling("backups_open_mount", "Mount backup missing under Manage backups")
+    }
+
     /** Opens a part of Manage backups from the main screen. */
     private fun openBackupsTab(desc: String) {
         if (device.findObject(By.desc(desc)) == null) clickScrolling("manage_backups_button", "Manage backups missing")
         clickScrolling(desc, "$desc missing under Manage backups")
-        assertNotNull("Manage backups did not open", device.wait(Until.findObject(By.desc("backups_tab_mount")), 30000L))
+        assertNotNull("Manage backups did not open", device.wait(Until.findObject(By.desc("backups_tab_history")), 30000L))
     }
 
-    /** Browse for backup: picks [folder] at the top of the drive titled [rootTitle] in the Files picker. */
+    /** Mount backup: picks [folder] at the top of the drive titled [rootTitle] in the Files picker. */
     private fun browseToFolder(rootTitle: String, folder: String) {
         val documentsUi = "com.google.android.documentsui"
-        assertTrue("Browse for backup missing", clickByDesc("backups_browse"))
+        clickMountBackup()
         assertTrue("the Files picker did not open", device.wait(Until.hasObject(By.pkg(documentsUi)), timeout))
         android.os.SystemClock.sleep(1000)
         fun step(what: String, selector: androidx.test.uiautomator.BySelector, waitMs: Long = 20000L) {
@@ -3209,6 +3180,7 @@ class E2EAutomatedTest {
         // Declining keeps it read-only, with the repair still on the card.
         device.findObject(By.text("Keep read-only"))!!.click()
         assertTrue("the repair dialog did not close", device.wait(Until.gone(By.text(title)), timeout))
+        openSlider()
         assertNotNull("READ-ONLY tag missing before the repair", device.wait(Until.findObject(By.text("READ-ONLY")), timeout))
         // A read-only drive can be a backup's source, not its target: the form says so.
         openBackupsTab("backups_open_schedules")
@@ -3922,12 +3894,15 @@ class E2EAutomatedTest {
         // (e.g. with a tall expanded mount form above it). Scroll the screen itself
         // rather than relying on the app to auto-scroll, which is both simpler and
         // closer to real user behavior.
-        device.swipe(device.displayWidth / 2, device.displayHeight - 200, device.displayWidth / 2, 200, 20)
-        android.os.SystemClock.sleep(500)
-
         // Crypto is slow on emulator; allow up to 120s for decryption + detection
         // Unsupported filesystems log "Cannot mount: <reason>" (log_cannot_mount_reason).
-        val errorLog = device.wait(Until.findObject(By.textContains("Cannot mount:")), 120000L)
+        // Scrolled again each time round: the form can change height while it unlocks, moving the log.
+        var errorLog: androidx.test.uiautomator.UiObject2? = null
+        val logDeadline = android.os.SystemClock.uptimeMillis() + 120_000L
+        while (errorLog == null && android.os.SystemClock.uptimeMillis() < logDeadline) {
+            device.swipe(device.displayWidth / 2, device.displayHeight * 3 / 4, device.displayWidth / 2, device.displayHeight / 4, 20)
+            errorLog = device.wait(Until.findObject(By.textContains("Cannot mount:")), 5000L)
+        }
         if (errorLog == null) captureScreen("cannot_mount_missing")
         assertTrue("Expected 'Cannot mount:' in app log but it did not appear", errorLog != null)
 
