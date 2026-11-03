@@ -9,6 +9,7 @@ import android.provider.DocumentsContract
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.foundation.layout.Arrangement
+import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.ExperimentalLayoutApi
 import androidx.compose.foundation.layout.FlowRow
@@ -21,7 +22,15 @@ import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.text.selection.SelectionContainer
 import androidx.compose.foundation.verticalScroll
+import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.Info
+import androidx.compose.material.icons.filled.Notifications
+import androidx.compose.material3.Badge
+import androidx.compose.material3.BadgedBox
+import androidx.compose.material3.DropdownMenu
+import androidx.compose.material3.DropdownMenuItem
+import androidx.compose.material3.Icon
+import androidx.compose.material3.IconButton
 import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Checkbox
 import androidx.compose.material3.CircularProgressIndicator
@@ -69,6 +78,7 @@ import app.fayaz.otgmaster.backup.JobType
 import app.fayaz.otgmaster.backup.Retention
 import app.fayaz.otgmaster.backup.Schedule
 import app.fayaz.otgmaster.backup.VolumeInfo
+import app.fayaz.otgmaster.backup.waitingOnUser
 import app.fayaz.otgmaster.extension.ExtensionContract
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.delay
@@ -167,6 +177,8 @@ fun BackupSetupDialog(driveId: String, driveTitle: String, title: Int = R.string
     var target by remember { mutableStateOf(End(here)) }
     var name by remember { mutableStateOf("") }
     var incremental by remember { mutableStateOf(true) }
+    var remindersInfo by remember { mutableStateOf(false) }
+    var passwordInfo by remember { mutableStateOf(false) }
     var learnMore by remember { mutableStateOf(false) }
     var intervalHours by remember { mutableStateOf(24) }
     // A generated password fills both fields: there is nothing to retype, only to save.
@@ -177,6 +189,49 @@ fun BackupSetupDialog(driveId: String, driveTitle: String, title: Int = R.string
     var checking by remember { mutableStateOf(false) }
     val scope = rememberCoroutineScope()
     var picking by remember { mutableStateOf<String?>(null) }
+    // A backup already in the target that this one continues: its name, and whether its password has been checked.
+    var existing by remember { mutableStateOf<String?>(null) }
+    var existingChecked by remember { mutableStateOf(false) }
+    fun startNew() {
+        existing = null
+        existingChecked = false
+        name = ""
+        password = BackupSecrets.generate()
+        confirm = password
+        saved = false
+    }
+    val pickExisting = rememberLauncherForActivityResult(ActivityResultContracts.OpenDocumentTree()) { uri ->
+        val into = target.folder
+        if (uri == null || into == null) return@rememberLauncherForActivityResult
+        error = null
+        checking = true
+        scope.launch {
+            val found = withContext(Dispatchers.IO) {
+                runCatching { BackupTargets.findExisting(context, into, uri) }.onFailure {
+                    app.fayaz.otgmaster.OtgMasterState.logFailure("backup-existing", "Could not read the chosen folder", it)
+                }.getOrNull()
+            }
+            checking = false
+            val problem = when (found) {
+                is BackupTargets.Existing.Found -> {
+                    existing = found.name
+                    existingChecked = false
+                    name = found.name
+                    incremental = true
+                    password = ""
+                    confirm = ""
+                    null
+                }
+                BackupTargets.Existing.NotInTarget -> context.getString(R.string.backup_existing_not_in_target, VolumeInfo.displayPath(context, into))
+                BackupTargets.Existing.NoBackup -> context.getString(R.string.backups_browse_none)
+                null -> context.getString(R.string.backup_target_unreadable, VolumeInfo.displayPath(context, uri))
+            }
+            if (problem != null) {
+                app.fayaz.otgmaster.OtgMasterState.log("Select existing: $problem")
+                error = problem
+            }
+        }
+    }
 
     val pickFolder = rememberLauncherForActivityResult(object : ActivityResultContracts.OpenDocumentTree() {
         override fun createIntent(context: Context, input: Uri?): Intent =
@@ -198,7 +253,10 @@ fun BackupSetupDialog(driveId: String, driveTitle: String, title: Int = R.string
         if (which == "source") {
             source = End(device, uri)
             if (name.isBlank()) name = VolumeInfo.displayPath(context, uri).substringAfterLast('/').ifEmpty { "Backup" }
-        } else target = End(device, uri)
+        } else {
+            target = End(device, uri)
+            if (existing != null) startNew()
+        }
     }
 
     @Composable
@@ -227,15 +285,20 @@ fun BackupSetupDialog(driveId: String, driveTitle: String, title: Int = R.string
                         Text(stringResource(R.string.backup_swap))
                     }
                 }
-                EndPicker(stringResource(R.string.backup_target), "target", target) { if (it != target.device) target = End(it) }
+                EndPicker(stringResource(R.string.backup_target), "target", target) { if (it != target.device) { target = End(it); if (existing != null) startNew() } }
                 if (target.device.readOnly) Text(stringResource(R.string.backup_target_read_only), color = MaterialTheme.colorScheme.error,
                     style = MaterialTheme.typography.bodySmall)
                 HorizontalDivider()
                 OutlinedTextField(name, { name = it }, label = { Text(stringResource(R.string.backup_name)) },
+                    enabled = existing == null,
                     supportingText = { Text(stringResource(R.string.backup_name_help)) }, singleLine = true,
                     modifier = Modifier.semantics { contentDescription = "backup_name" })
+                if (existing == null) TextButton(enabled = target.folder != null && !checking, onClick = { pickExisting.launch(target.folder) },
+                    modifier = Modifier.semantics { contentDescription = "backup_select_existing" }) { Text(stringResource(R.string.backup_select_existing)) }
+                else TextButton(onClick = ::startNew, modifier = Modifier.semantics { contentDescription = "backup_start_new" }) { Text(stringResource(R.string.backup_start_new)) }
                 Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                    FilterChip(!incremental, { incremental = false }, { Text(stringResource(R.string.backup_type_plain)) },
+                    // A backup that exists is Incremental: Plain cannot continue one.
+                    FilterChip(!incremental, { incremental = false }, { Text(stringResource(R.string.backup_type_plain)) }, enabled = existing == null,
                         modifier = Modifier.semantics { contentDescription = "backup_type_plain" })
                     FilterChip(incremental, { incremental = true }, { Text(stringResource(R.string.backup_type_incremental)) },
                         modifier = Modifier.semantics { contentDescription = "backup_type_incremental" })
@@ -247,17 +310,57 @@ fun BackupSetupDialog(driveId: String, driveTitle: String, title: Int = R.string
                 }
                 Text(stringResource(if (incremental) R.string.backup_type_incremental_short else R.string.backup_type_plain_short),
                     style = MaterialTheme.typography.bodySmall)
+                Row(verticalAlignment = Alignment.CenterVertically) {
+                    Text(stringResource(R.string.backup_reminders), style = MaterialTheme.typography.titleSmall,
+                        modifier = Modifier.semantics { contentDescription = "backup_reminders_heading" })
+                    androidx.compose.material3.IconButton(onClick = { remindersInfo = true }) {
+                        androidx.compose.material3.Icon(androidx.compose.material.icons.Icons.Default.Info,
+                            contentDescription = stringResource(R.string.cd_backup_reminders_info))
+                    }
+                }
                 FlowRow(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
                     (if (allowManual) listOf(0 to R.string.backup_manual) else emptyList<Pair<Int, Int>>())
-                        .plus(listOf(24 to R.string.backup_daily, 168 to R.string.backup_weekly)).forEach { (h, label) ->
+                        .plus(BACKUP_INTERVALS).forEach { (h, label) ->
                             FilterChip(intervalHours == h, { intervalHours = h }, { Text(stringResource(label)) },
                                 modifier = Modifier.semantics { contentDescription = "backup_interval_$h" })
                         }
                 }
                 if (incremental) {
                     HorizontalDivider()
-                    Text(stringResource(R.string.backup_password_help), style = MaterialTheme.typography.bodySmall)
-                    PasswordField(password, stringResource(R.string.backup_password), "backup_password") { password = it; saved = false }
+                    Row(verticalAlignment = Alignment.CenterVertically) {
+                        Box(Modifier.weight(1f)) {
+                            PasswordField(password, stringResource(R.string.backup_password), "backup_password",
+                                newPassword = existing == null, enabled = !existingChecked) { password = it; saved = false }
+                        }
+                        androidx.compose.material3.IconButton(onClick = { passwordInfo = true }) {
+                            androidx.compose.material3.Icon(androidx.compose.material.icons.Icons.Default.Info,
+                                contentDescription = stringResource(R.string.cd_backup_password_info))
+                        }
+                    }
+                    if (existing != null) {
+                        // Asked once: the backup itself says whether it is right, so there is nothing to retype or save.
+                        if (existingChecked) Text(stringResource(R.string.backup_existing_checked), style = MaterialTheme.typography.bodySmall,
+                            modifier = Modifier.semantics { contentDescription = "backup_existing_checked" })
+                        else TextButton(enabled = password.isNotEmpty() && !checking, onClick = {
+                            val into = target.folder ?: return@TextButton
+                            val folder = existing ?: return@TextButton
+                            error = null
+                            checking = true
+                            scope.launch {
+                                val opens = withContext(Dispatchers.IO) {
+                                    runCatching { BackupTargets.opensExisting(context, into, folder, password) }.onFailure {
+                                        app.fayaz.otgmaster.OtgMasterState.logFailure("backup-existing", "Could not open the backup \"$folder\"", it)
+                                    }.getOrDefault(false)
+                                }
+                                checking = false
+                                if (opens) { existingChecked = true; confirm = password; saved = true }
+                                else {
+                                    error = context.getString(R.string.backup_target_wrong_password, folder)
+                                    app.fayaz.otgmaster.OtgMasterState.log("Select existing: ${error}")
+                                }
+                            }
+                        }, modifier = Modifier.semantics { contentDescription = "backup_existing_check" }) { Text(stringResource(R.string.backup_existing_check)) }
+                    } else {
                     PasswordField(confirm, stringResource(R.string.encrypt_password_confirm), "backup_password_confirm") { confirm = it; saved = false }
                     if (confirm != password) Text(stringResource(R.string.encrypt_passwords_differ), color = MaterialTheme.colorScheme.error,
                         style = MaterialTheme.typography.bodySmall)
@@ -266,6 +369,7 @@ fun BackupSetupDialog(driveId: String, driveTitle: String, title: Int = R.string
                             Text(stringResource(R.string.backup_copy_password)) }
                         Checkbox(saved, { saved = it }, modifier = Modifier.semantics { contentDescription = "backup_password_saved" })
                         Text(stringResource(R.string.backup_password_saved), style = MaterialTheme.typography.bodySmall)
+                    }
                     }
                 }
             }
@@ -281,7 +385,7 @@ fun BackupSetupDialog(driveId: String, driveTitle: String, title: Int = R.string
         confirmButton = {
             TextButton(
                 enabled = !checking && source.folder != null && target.folder != null && !target.device.readOnly && name.isNotBlank() &&
-                    (!incremental || (password.length >= 8 && password == confirm && saved)),
+                    (if (existing != null) existingChecked else !incremental || (password.length >= 8 && password == confirm && saved)),
                 onClick = {
                     val src = source.folder!!
                     val dst = target.folder!!
@@ -329,8 +433,28 @@ fun BackupSetupDialog(driveId: String, driveTitle: String, title: Int = R.string
         },
         dismissButton = { TextButton(onClick = onDismiss) { Text(stringResource(R.string.cancel)) } },
     )
+    if (passwordInfo) AlertDialog(
+        onDismissRequest = { passwordInfo = false },
+        title = { Text(stringResource(R.string.backup_password)) },
+        text = { Text(stringResource(R.string.backup_password_help), modifier = Modifier.semantics { contentDescription = "backup_password_info" }) },
+        confirmButton = { TextButton(onClick = { passwordInfo = false }, modifier = Modifier.semantics { contentDescription = "backup_password_info_close" }) {
+            Text(stringResource(R.string.close)) } },
+    )
+    if (remindersInfo) AlertDialog(
+        onDismissRequest = { remindersInfo = false },
+        title = { Text(stringResource(R.string.backup_reminders)) },
+        text = {
+            Text(stringResource(R.string.backup_reminders_info) + if (allowManual) " " + stringResource(R.string.backup_reminders_info_manual) else "",
+                modifier = Modifier.semantics { contentDescription = "backup_reminders_info" })
+        },
+        confirmButton = { TextButton(onClick = { remindersInfo = false }, modifier = Modifier.semantics { contentDescription = "backup_reminders_info_close" }) {
+            Text(stringResource(R.string.close)) } },
+    )
     if (learnMore) BackupTypesInfoDialog { learnMore = false }
 }
+
+/** The choices of how often a backup comes due, in hours, with their labels. Monthly is 30 days. */
+val BACKUP_INTERVALS = listOf(24 to R.string.backup_daily, 168 to R.string.backup_weekly, 720 to R.string.backup_monthly)
 
 /** Learn more: what Plain and Incremental each give, and what each costs. */
 @Composable
@@ -756,7 +880,56 @@ fun BackupProgressDialog(jobId: String, onHide: () -> Unit) {
     )
 }
 
-/** Mounting a drive found backups due on it: start now, after some minutes, or not now. Nothing starts unasked. */
+/**
+ * The main screen's bell: how many backups are due, and the list of them. Choosing one opens its
+ * dialog, which appears no other way apart from a tap on its notification.
+ */
+@Composable
+fun BackupDueBell() {
+    val context = LocalContext.current
+    val store = remember { JobStore.get(context) }
+    val jobs by store.jobs.collectAsState()
+    val busy by BackupExecutor.busy.collectAsState()
+    // Coming due changes nothing in the store, so the time has to move the list along.
+    val now by produceState(System.currentTimeMillis()) {
+        while (true) {
+            delay(30_000L)
+            value = System.currentTimeMillis()
+        }
+    }
+    val due = remember(jobs, busy, now) { jobs.waitingOnUser(busy, System.currentTimeMillis()) }
+    var open by remember { mutableStateOf(false) }
+    Box {
+        IconButton(onClick = { open = true }) {
+            BadgedBox(badge = { if (due.isNotEmpty()) Badge { Text(due.size.toString()) } }) {
+                Icon(Icons.Default.Notifications, contentDescription = stringResource(R.string.cd_backups_due, due.size))
+            }
+        }
+        DropdownMenu(expanded = open, onDismissRequest = { open = false }) {
+            if (due.isEmpty()) DropdownMenuItem(
+                text = { Text(stringResource(R.string.backups_due_none)) }, enabled = false, onClick = {},
+                modifier = Modifier.semantics { contentDescription = "backup_due_none" })
+            due.forEach { job ->
+                val drive = BackupScheduler.driveNames(job)
+                DropdownMenuItem(
+                    text = {
+                        Column {
+                            Text(job.name, style = MaterialTheme.typography.titleSmall)
+                            Text(stringResource(R.string.backup_due_title, drive), style = MaterialTheme.typography.bodySmall)
+                        }
+                    },
+                    onClick = {
+                        open = false
+                        BackupPrompts.ask(BackupPrompts.Due(drive, listOf(job.id)))
+                    },
+                    modifier = Modifier.semantics { contentDescription = "backup_due_item_${job.name}" },
+                )
+            }
+        }
+    }
+}
+
+/** A backup is due: start now, after some minutes, or not now. Nothing starts unasked, and only a tap on the bell's list or the notification opens this. */
 @OptIn(ExperimentalLayoutApi::class)
 @Composable
 fun BackupDueDialog(due: BackupPrompts.Due) {

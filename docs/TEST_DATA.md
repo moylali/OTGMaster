@@ -357,8 +357,8 @@ python3 scripts/make_backup_fixture.py      # writes test.img, password.txt, bac
 ## 6g. Backups made through the app (E2E, no root)
 
 `scripts/make_backup_run_fixtures.py` builds a `backup_*` case per flow, plus `backup_run_exfat`,
-`_ext4`, `_ntfs`, `_luks2` and `_veracrypt`, and `encrypt_form_rules`. Each case's
-`description.txt` says what it proves. The encrypted two reuse the support matrix's images, so
+`_ext4`, `_ntfs`, `_luks2` and `_veracrypt`, `encrypt_form_rules` and `main_screen`. Each case's
+`description.txt` says what it proves. The encrypted ones reuse the support matrix's images, so
 it runs after `scripts/make_e2e_matrix.py`. It needs desktop `restic` and `udisksctl`.
 
 ```sh

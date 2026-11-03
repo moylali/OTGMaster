@@ -256,6 +256,10 @@ object OtgMasterState {
     @Volatile
     var mountRequest: MountRequest? = null
 
+    /** Debug builds only: holds an unlock in progress long enough for a test to see the form during it. */
+    @Volatile
+    var testUnlockHold: java.util.concurrent.CountDownLatch? = null
+
     /**
      * Unlocks a [MountRequest] has started and not yet finished, successfully or not.
      * Unlocks run one at a time and a key derivation can take many seconds, so the

@@ -60,6 +60,11 @@ import android.content.ClipData
 import android.content.SharedPreferences
 import androidx.compose.foundation.isSystemInDarkTheme
 import androidx.compose.material.icons.filled.Settings
+import app.fayaz.otgmaster.ui.MountedDrawer
+import app.fayaz.otgmaster.ui.MountedHandle
+import androidx.compose.ui.semantics.clearAndSetSemantics
+import kotlinx.coroutines.flow.getAndUpdate
+import kotlinx.coroutines.flow.update
 import androidx.compose.material3.*
 import app.fayaz.otgmaster.usb.UsbHostDiagnosis
 import app.fayaz.otgmaster.usb.RealUsbDeviceProvider
@@ -164,6 +169,14 @@ class MainActivity : AppCompatActivity() {
     private val logsState = mutableStateListOf<String>()
     private val toastState = mutableStateOf<Pair<String, Boolean>?>(null) // message to isSuccess
     private val newlyMountedDriveIds = mutableStateOf<Set<String>>(emptySet())
+
+    /**
+     * Partitions with an unlock started and not finished, by [unlockKey], whichever path started
+     * it. Auto mount puts the candidates back on the form while it unlocks them, so the form
+     * offered Unlock & mount for a partition already being unlocked, and the second unlock
+     * waited on deviceMutex and mounted it again: two filesystems over one volume.
+     */
+    private val unlockingPartitions = kotlinx.coroutines.flow.MutableStateFlow<Set<String>>(emptySet())
     /** A Scan tap found no USB drive, so the "no drives" message offers its help link. */
     private val scanFoundNoDrive = mutableStateOf(false)
     private val pendingToastMountNames = mutableListOf<String>()
@@ -639,7 +652,9 @@ class MainActivity : AppCompatActivity() {
                             },
                         )
                     }
+                    val unlocking by unlockingPartitions.collectAsState()
                     OtgMasterApp(
+                        unlockingPartitions = unlocking,
                         deviceCandidates = _deviceCandidates.value,
                         mountedDrives = mountedDrivesState.value,
                         logs = logsState,
@@ -1381,8 +1396,19 @@ class MainActivity : AppCompatActivity() {
         // zero while other unlocks were still running. Once, whichever path ends it.
         val completed = java.util.concurrent.atomic.AtomicBoolean(false)
         val callerOnComplete = onComplete
+        val partition = unlockKey(deviceName, candidate.startBlock)
+        if (partition in unlockingPartitions.getAndUpdate { it + partition }) {
+            appendLog(getString(R.string.log_unlock_already_running, candidate.label))
+            callerOnComplete()
+            return
+        }
         @Suppress("NAME_SHADOWING")
-        val onComplete = { if (completed.compareAndSet(false, true)) callerOnComplete() }
+        val onComplete = {
+            if (completed.compareAndSet(false, true)) {
+                unlockingPartitions.update { it - partition }
+                callerOnComplete()
+            }
+        }
         val device = openedDevices[deviceName]
         val readOnly = readOnlyOverride ?: isPartitionReadOnly(deviceName, candidate.startBlock)
         android.util.Log.i("OTGMaster",
@@ -1404,6 +1430,7 @@ class MainActivity : AppCompatActivity() {
         }
 
         lifecycleScope.launch(Dispatchers.IO) {
+            if (BuildConfig.DEBUG) OtgMasterState.testUnlockHold?.await(90, java.util.concurrent.TimeUnit.SECONDS)
             deviceMutex.withLock {
             try {
                 // An UNENCRYPTED candidate has a readable filesystem at its first
@@ -2831,6 +2858,7 @@ internal fun suggestedVolumeLabel(drive: MountedDrive): String {
 @OptIn(ExperimentalMaterial3Api::class, ExperimentalComposeUiApi::class)
 @Composable
 fun OtgMasterApp(
+    unlockingPartitions: Set<String> = emptySet(),
     deviceCandidates: List<UsbDeviceCandidate>,
     mountedDrives: List<MountedDrive>,
     logs: List<String>,
@@ -2937,77 +2965,35 @@ fun OtgMasterApp(
     }
     var isVeraCryptExpanded by remember { mutableStateOf(true) }
     val scrollState = rememberScrollState()
-    val mountedScrollState = rememberScrollState()
-    var previousMountedCount by remember { mutableIntStateOf(mountedDrives.size) }
+    var showMounted by androidx.compose.runtime.saveable.rememberSaveable { mutableStateOf(false) }
+    var mountedTab by androidx.compose.runtime.saveable.rememberSaveable { mutableStateOf(app.fayaz.otgmaster.ui.MountedTab.DRIVES) }
+    var twoPaneWindow by remember { mutableStateOf(false) }
+    val backupCount = mountedDrives.count { it.fileSystem is app.fayaz.otgmaster.backup.restic.ResticFileSystem }
+    val driveCount = mountedDrives.size - backupCount
+    val sliderOpen = showMounted && !twoPaneWindow
 
-    LaunchedEffect(mountedDrives.size) {
-        if (mountedDrives.size > previousMountedCount) {
-            scrollState.animateScrollTo(0)
-            mountedScrollState.animateScrollTo(0)
+    // Whatever mounts, by whichever path, opens the slider on the tab it landed in. Waits for the
+    // drive to be listed: its id can be marked new just before the list catches up.
+    var announcedMounts by remember { mutableStateOf(emptySet<String>()) }
+    LaunchedEffect(newlyMountedDriveIds, mountedDrives) {
+        val fresh = mountedDrives.filter { it.id in newlyMountedDriveIds && it.id !in announcedMounts }
+        announcedMounts = announcedMounts.intersect(newlyMountedDriveIds) + fresh.map { it.id }
+        if (fresh.isNotEmpty()) {
+            mountedTab = if (fresh.any { it.fileSystem is app.fayaz.otgmaster.backup.restic.ResticFileSystem })
+                app.fayaz.otgmaster.ui.MountedTab.BACKUPS else app.fayaz.otgmaster.ui.MountedTab.DRIVES
+            showMounted = true
         }
-        previousMountedCount = mountedDrives.size
     }
 
-    Box(modifier = Modifier.fillMaxSize()) {
-    Scaffold(
-        topBar = {
-            TopAppBar(
-                title = { Text(stringResource(R.string.app_name)) },
-                actions = {
-                    IconButton(onClick = { showSettings = true }) {
-                        Icon(Icons.Default.Settings, contentDescription = stringResource(R.string.cd_settings))
-                    }
-                }
-            )
-        }
-    ) { paddingValues ->
-        // Sections, laid out below as one column or, on a wide window, two panes.
-        val scanButton: @Composable () -> Unit = {
-            Button(
-                onClick = onRefreshDevices,
-                modifier = Modifier.fillMaxWidth().semantics { contentDescription = "scan_button" }
-            ) {
-                Text(stringResource(R.string.scan_usb_devices))
+        val mountedCards: @Composable (app.fayaz.otgmaster.ui.MountedTab) -> Unit = { tab ->
+            val onBackupsTab = tab == app.fayaz.otgmaster.ui.MountedTab.BACKUPS
+            val cards = mountedDrives.filter { (it.fileSystem is app.fayaz.otgmaster.backup.restic.ResticFileSystem) == onBackupsTab }
+            val gone = if (onBackupsTab) emptyList() else disconnectedDrives
+            if (cards.isEmpty() && gone.isEmpty()) {
+                Text(stringResource(if (onBackupsTab) R.string.no_backups_mounted else R.string.no_drives_mounted),
+                    style = MaterialTheme.typography.bodyMedium, color = MaterialTheme.colorScheme.onSurfaceVariant)
             }
-            // Every backup, whichever drives it uses. The button opens into its three parts,
-            // each going straight to that tab of BackupsActivity.
-            val context = androidx.compose.ui.platform.LocalContext.current
-            var backupsOpen by remember { mutableStateOf(false) }
-            Spacer(modifier = Modifier.height(8.dp))
-            Button(
-                onClick = { backupsOpen = !backupsOpen },
-                modifier = Modifier.fillMaxWidth().semantics { contentDescription = "manage_backups_button" },
-            ) {
-                Text(stringResource(R.string.backups_manage_link))
-                Icon(if (backupsOpen) Icons.Default.KeyboardArrowUp else Icons.Default.KeyboardArrowDown, contentDescription = null)
-            }
-            AnimatedVisibility(visible = backupsOpen) {
-                Row(Modifier.fillMaxWidth().padding(top = 8.dp), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                    listOf(
-                        Triple(app.fayaz.otgmaster.ui.BackupsActivity.TAB_SCHEDULES, R.string.backups_tab_schedules, "backups_open_schedules"),
-                        Triple(app.fayaz.otgmaster.ui.BackupsActivity.TAB_HISTORY, R.string.backups_tab_history, "backups_open_history"),
-                        Triple(app.fayaz.otgmaster.ui.BackupsActivity.TAB_MOUNT, R.string.backups_tab_mount, "backups_open_mount"),
-                    ).forEach { (tab, label, id) ->
-                        OutlinedButton(
-                            onClick = {
-                                context.startActivity(Intent(context, app.fayaz.otgmaster.ui.BackupsActivity::class.java)
-                                    .putExtra(app.fayaz.otgmaster.ui.BackupsActivity.EXTRA_TAB, tab))
-                            },
-                            modifier = Modifier.weight(1f).semantics { contentDescription = id },
-                        ) { Text(stringResource(label), maxLines = 1, softWrap = false) }
-                    }
-                }
-            }
-        }
-        val mountedSection: @Composable (alwaysShowTitle: Boolean) -> Unit = { alwaysShowTitle ->
-            if (mountedDrives.isNotEmpty() || disconnectedDrives.isNotEmpty() || alwaysShowTitle) {
-                Text(stringResource(R.string.mounted_devices), style = MaterialTheme.typography.titleLarge)
-            }
-            if (mountedDrives.isEmpty() && disconnectedDrives.isEmpty() && alwaysShowTitle) {
-                Text(stringResource(R.string.no_drives_mounted), style = MaterialTheme.typography.bodyMedium,
-                    color = MaterialTheme.colorScheme.onSurfaceVariant)
-            }
-                mountedDrives.forEach { drive ->
+                cards.forEach { drive ->
                     key(drive.id) {
                     val highlightAlpha = remember { Animatable(0f) }
                     val isNewlyMounted = drive.id in newlyMountedDriveIds
@@ -3147,11 +3133,67 @@ fun OtgMasterApp(
                     }
                     } // key(drive.id)
                 }
-                disconnectedDrives.forEach { gone ->
-                    key(gone.partitionKey) {
-                        app.fayaz.otgmaster.ui.DisconnectedDriveCard(gone, onDismiss = { onDismissDisconnected(gone.partitionKey) })
+                gone.forEach { drive ->
+                    key(drive.partitionKey) {
+                        app.fayaz.otgmaster.ui.DisconnectedDriveCard(drive, onDismiss = { onDismissDisconnected(drive.partitionKey) })
                     }
                 }
+        }
+
+    Box(modifier = Modifier.fillMaxSize()) {
+    Scaffold(
+        // Behind the open slider nothing can be tapped, so nothing is offered to a screen reader.
+        modifier = if (sliderOpen) Modifier.clearAndSetSemantics {} else Modifier,
+        topBar = {
+            TopAppBar(
+                title = { Text(stringResource(R.string.app_name)) },
+                actions = {
+                    app.fayaz.otgmaster.ui.BackupDueBell()
+                    IconButton(onClick = { showSettings = true }) {
+                        Icon(Icons.Default.Settings, contentDescription = stringResource(R.string.cd_settings))
+                    }
+                }
+            )
+        }
+    ) { paddingValues ->
+        // Sections, laid out below as one column or, on a wide window, two panes.
+        val scanButton: @Composable () -> Unit = {
+            Button(
+                onClick = onRefreshDevices,
+                modifier = Modifier.fillMaxWidth().semantics { contentDescription = "scan_button" }
+            ) {
+                Text(stringResource(R.string.scan_usb_devices))
+            }
+        }
+        val manageBackups: @Composable () -> Unit = {
+            // Every backup, whichever drives it uses. The button opens into its three parts,
+            // each going straight to that tab of BackupsActivity.
+            val context = androidx.compose.ui.platform.LocalContext.current
+            var backupsOpen by remember { mutableStateOf(false) }
+            Button(
+                onClick = { backupsOpen = !backupsOpen },
+                modifier = Modifier.fillMaxWidth().semantics { contentDescription = "manage_backups_button" },
+            ) {
+                Text(stringResource(R.string.backups_manage_link))
+                Icon(if (backupsOpen) Icons.Default.KeyboardArrowUp else Icons.Default.KeyboardArrowDown, contentDescription = null)
+            }
+            AnimatedVisibility(visible = backupsOpen) {
+                Row(Modifier.fillMaxWidth().padding(top = 8.dp), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                    listOf(
+                        Triple(app.fayaz.otgmaster.ui.BackupsActivity.TAB_SCHEDULES, R.string.backups_tab_schedules, "backups_open_schedules"),
+                        Triple(app.fayaz.otgmaster.ui.BackupsActivity.TAB_HISTORY, R.string.backups_tab_history, "backups_open_history"),
+                        Triple(app.fayaz.otgmaster.ui.BackupsActivity.TAB_MOUNT, R.string.backups_tab_mount, "backups_open_mount"),
+                    ).forEach { (tab, label, id) ->
+                        OutlinedButton(
+                            onClick = {
+                                context.startActivity(Intent(context, app.fayaz.otgmaster.ui.BackupsActivity::class.java)
+                                    .putExtra(app.fayaz.otgmaster.ui.BackupsActivity.EXTRA_TAB, tab))
+                            },
+                            modifier = Modifier.weight(1f).semantics { contentDescription = id },
+                        ) { Text(stringResource(label), maxLines = 1, softWrap = false) }
+                    }
+                }
+            }
         }
         val unlockSection: @Composable () -> Unit = {
             Card(modifier = Modifier.fillMaxWidth()) {
@@ -3173,6 +3215,7 @@ fun OtgMasterApp(
                     AnimatedVisibility(visible = isVeraCryptExpanded) {
                         key(formResetKey) {
                             VeraCryptMountSection(
+                                unlockingPartitions = unlockingPartitions,
                                 showNoDriveHelp = showNoDriveHelp,
                                 deviceCandidates = deviceCandidates,
                                 onUnlock = onUnlock,
@@ -3246,6 +3289,7 @@ fun OtgMasterApp(
             // password, switched to two panes, rebuilt the form (typed text gone, keyboard
             // closed), and switched back.
             val twoPane = app.fayaz.otgmaster.ui.isTwoPaneWindow(maxWidth, maxHeight)
+            LaunchedEffect(twoPane) { twoPaneWindow = twoPane }
             Box(modifier = Modifier.fillMaxSize().imePadding()) {
             if (twoPane) {
                 Row(
@@ -3259,15 +3303,18 @@ fun OtgMasterApp(
                     ) {
                         scanButton()
                         unlockSection()
+                        manageBackups()
                         logsSection()
                     }
-                    Column(
-                        modifier = Modifier.weight(0.35f).fillMaxHeight().verticalScroll(mountedScrollState)
-                            .semantics { contentDescription = "mounted_pane" },
-                        verticalArrangement = Arrangement.spacedBy(16.dp)
-                    ) {
-                        mountedSection(true)
-                    }
+                    app.fayaz.otgmaster.ui.MountedPanel(
+                        tab = mountedTab,
+                        onTab = { mountedTab = it },
+                        driveCount = driveCount,
+                        backupCount = backupCount,
+                        onClose = null,
+                        modifier = Modifier.weight(0.35f).fillMaxHeight().semantics { contentDescription = "mounted_pane" },
+                        cards = mountedCards,
+                    )
                 }
             } else {
                 Column(
@@ -3275,14 +3322,26 @@ fun OtgMasterApp(
                     verticalArrangement = Arrangement.spacedBy(16.dp)
                 ) {
                     scanButton()
-                    mountedSection(false)
-                    if (mountedDrives.isNotEmpty()) Spacer(modifier = Modifier.height(16.dp))
                     unlockSection()
+                    manageBackups()
                     logsSection()
                 }
             }
             }
         }
+    }
+
+    if (!twoPaneWindow && !showMounted) MountedHandle(onOpen = { showMounted = true })
+    MountedDrawer(visible = sliderOpen, onDismiss = { showMounted = false }) {
+        app.fayaz.otgmaster.ui.MountedPanel(
+            tab = mountedTab,
+            onTab = { mountedTab = it },
+            driveCount = driveCount,
+            backupCount = backupCount,
+            onClose = { showMounted = false },
+            modifier = Modifier.fillMaxSize(),
+            cards = mountedCards,
+        )
     }
 
     SettingsDrawer(
@@ -3312,8 +3371,12 @@ fun OtgMasterApp(
     }
 }
 
+/** Names one partition of one device in [MainActivity.unlockingPartitions]. */
+private fun unlockKey(deviceName: String, startBlock: Long) = "$deviceName@$startBlock"
+
 @Composable
 fun VeraCryptMountSection(
+    unlockingPartitions: Set<String> = emptySet(),
     deviceCandidates: List<UsbDeviceCandidate>,
     showNoDriveHelp: Boolean = false,
     onUnlock: (String, VolumeCandidate, String, Int?, List<Uri>, app.fayaz.otgmaster.veracrypt.VeraCryptCipher, app.fayaz.otgmaster.veracrypt.VeraCryptHash, () -> Unit) -> Unit,
@@ -3326,7 +3389,9 @@ fun VeraCryptMountSection(
     onSetPartitionReadOnly: (String, Long, Boolean) -> Unit = { _, _, _ -> },
     onQuickUnlock: ((String, VolumeCandidate, () -> Unit) -> Unit)? = null
 ) {
-    var isUnlocking by remember { mutableStateOf(false) }
+    // The partition this form was last asked to unlock: set before the unlock is registered,
+    // which for quick unlock is only after the fingerprint prompt.
+    var unlockingHere by remember { mutableStateOf<Long?>(null) }
     var selectedDevice by remember(deviceCandidates) { mutableStateOf(deviceCandidates.firstOrNull()) }
     var deviceExpanded by remember { mutableStateOf(false) }
     val candidates = selectedDevice?.candidates.orEmpty()
@@ -3339,6 +3404,11 @@ fun VeraCryptMountSection(
         sessionCreds?.let { sc -> selectedDevice?.candidates?.find { it.startBlock == sc.candidateStartBlock } }
             ?: selectedDevice?.candidates?.firstOrNull()
     ) }
+    // Says so for the chosen partition alone, whichever path is unlocking it. Another partition
+    // of the same drive can still be started: it waits its turn on the device.
+    val isUnlocking = selectedCandidate?.let { c ->
+        c.startBlock == unlockingHere || selectedDevice?.let { unlockKey(it.deviceName, c.startBlock) } in unlockingPartitions
+    } == true
     val isBitLocker = selectedCandidate?.containerType == app.fayaz.otgmaster.veracrypt.ContainerType.BITLOCKER
     val isApfs = selectedCandidate?.containerType == app.fayaz.otgmaster.veracrypt.ContainerType.APFS
     // "isLuks" gates the VeraCrypt-only fields (PIM, keyfiles, cipher, hash), which
@@ -3534,11 +3604,11 @@ fun VeraCryptMountSection(
             if (showQuickUnlock) {
                 Button(
                     onClick = {
-                        isUnlocking = true
                         val device = selectedDevice
                         val candidate = selectedCandidate
                         if (device != null && candidate != null) {
-                            onQuickUnlock!!(device.deviceName, candidate) { isUnlocking = false }
+                            unlockingHere = candidate.startBlock
+                            onQuickUnlock!!(device.deviceName, candidate) { unlockingHere = null }
                         }
                     },
                     modifier = Modifier.fillMaxWidth().semantics { contentDescription = "mount_button" },
@@ -3734,11 +3804,11 @@ fun VeraCryptMountSection(
             Button(
                 onClick = {
                     focusManager.clearFocus()
-                    isUnlocking = true
                     val device = selectedDevice
                     val candidate = selectedCandidate
                     if (device != null && candidate != null) {
-                        onUnlock(device.deviceName, candidate, password, pim.toIntOrNull(), keyfiles, selectedCipher, selectedHash) { isUnlocking = false }
+                        unlockingHere = candidate.startBlock
+                        onUnlock(device.deviceName, candidate, password, pim.toIntOrNull(), keyfiles, selectedCipher, selectedHash) { unlockingHere = null }
                     }
                 },
                 modifier = Modifier.fillMaxWidth().semantics { contentDescription = "mount_button" },

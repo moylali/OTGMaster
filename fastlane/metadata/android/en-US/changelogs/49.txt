@@ -1,9 +1,9 @@
 • New: backups between phone and drive; mount a backup
 • New: recover deleted files on FAT32 and exFAT drives
-• New: another phone over USB mounts as a read-only drive
+• New: mount another phone over USB, read-only
 • New: Format/Encrypt with ext4 or NTFS; Encrypt as LUKS2
-• New: Encrypt checks the password; progress notes
-• New: a fuller log in Report issue
-• Fixed: data written just before a USB error could be lost
+• New: a slider for mounted drives and backups
+• Fixed: data written before a USB error could be lost
 • Fixed: drives over 2 TB, some 2 TB enclosures
 • Fixed: drives plugged in while locked mount on unlock
+• Fixed: auto mount could mount a partition twice

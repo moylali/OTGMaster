@@ -3,6 +3,13 @@
 
     <!-- Top bar / global -->
     <string name="cd_settings">Settings</string>
+    <string name="cd_backups_due">Backups due: %1$d</string>
+    <string name="cd_open_mounted">Open mounted devices</string>
+    <string name="cd_close_mounted">Close mounted devices</string>
+    <string name="mounted_tab_drives">Drives (%1$d)</string>
+    <string name="mounted_tab_backups">Backups (%1$d)</string>
+    <string name="backups_due_none">No backups due</string>
+    <string name="log_unlock_already_running">%1$s is already being unlocked</string>
     <string name="cd_expand">Expand</string>
     <string name="scan_usb_devices">Scan USB devices</string>
 
@@ -201,6 +208,7 @@
     <string name="log_copied_to_clipboard">Copied %1$s to clipboard</string>
 
     <string name="no_drives_mounted">Drives you unlock or plug in appear here.</string>
+    <string name="no_backups_mounted">Backups you mount appear here.</string>
 
     <!-- Mounted card: More actions, Format, Encrypt -->
     <string name="ok">OK</string>
@@ -345,7 +353,7 @@
     <string name="backup_swap">⇅ Swap source and target</string>
     <string name="backup_target_read_only">This drive is mounted read-only: it can be the source, not the target.</string>
     <string name="backup_same_folder">The source and the target are the same folder.</string>
-    <string name="backup_name">Name</string>
+    <string name="backup_name">Backup name</string>
     <string name="backup_name_help">The backup goes into a folder of this name in the target.</string>
     <string name="backup_type_plain">Plain</string>
     <string name="backup_type_incremental">Incremental</string>
@@ -358,6 +366,17 @@
     <string name="backup_manual">Manual</string>
     <string name="backup_daily">Daily</string>
     <string name="backup_weekly">Weekly</string>
+    <string name="backup_monthly">Monthly</string>
+    <string name="backup_select_existing">Select existing</string>
+    <string name="backup_start_new">Start new</string>
+    <string name="backup_existing_not_in_target">Choose a backup folder directly inside %1$s.</string>
+    <string name="backup_existing_check">Check password</string>
+    <string name="backup_existing_checked">Password correct. New backups continue in this backup.</string>
+    <string name="backup_reminders">Backup reminders</string>
+    <string name="cd_backup_reminders_info">About backup reminders</string>
+    <string name="cd_backup_password_info">About the backup password</string>
+    <string name="backup_reminders_info">OTG Master sends a reminder at the interval you choose to connect the drive or drives, so you can start the backup.</string>
+    <string name="backup_reminders_info_manual">Manual sends no reminders.</string>
     <string name="backup_password_help">The password that encrypts these backups. Save it in your password manager: without it nobody, including this app on a new phone, can open them. If this backup\'s folder already holds a restic repository, enter its password instead.</string>
     <string name="backup_password">Backup password</string>
     <string name="backup_copy_password">Copy</string>
@@ -371,7 +390,7 @@
     <string name="backups_tab_history">History</string>
     <string name="backups_tab_mount">Mount backups</string>
     <string name="backups_mount_none">No incremental backups were made on this phone. Browse for one on a drive or in a folder. Plain backups are ordinary folders: open them in the Files app.</string>
-    <string name="backups_mount_help">A mounted backup is a read-only drive in the Files app, with one folder per snapshot. Unmount it from its card on the main screen.</string>
+    <string name="backups_mount_help">A mounted backup is a read-only drive in the Files app, with one folder per snapshot. Unmount it from its card under Mounted devices, on the Backups tab.</string>
     <string name="backups_create_schedule">Create schedule</string>
     <string name="backups_create_no_devices">No devices mounted to create a backup schedule</string>
     <string name="backups_browse">Browse for backup</string>

@@ -45,7 +45,7 @@ DESKTOP_PASSWORD = "otg-backup-e2e-2026"
 # name: (flow, seconds allowed, what it proves)
 FLOWS = {
     "backup_run": ("run_full", 3000, "Make backups through the real form and pickers: Incremental and Plain, phone to drive and drive to phone. Back up now stores nothing new, one changed file stores one. Verify reads every blob, Restore compares by hash outside the app, Mount reads the repository the app wrote. Keep rules, a target inside its source, an empty source, Cancel, too big, nearly full with both answers, Remove. Host: filesystem checker clean, restic check --read-data on every repository, copies by hash."),
-    "backup_due_prompt": ("due_prompt", 1200, "A due backup when a drive mounts: asks and starts nothing. Not now snoozes a day, the same mount does not ask twice, each of 5, 10, 15 and 30 minutes sets its time, Start now runs in its dialog, a partition of this device that is not mounted is named, manual and not-due backups do not ask, and the real replug asks."),
+    "backup_due_prompt": ("due_prompt", 1200, "A due backup when a drive mounts: a notification and the bell, no dialog, nothing started. The bell's list opens the dialog. Not now snoozes a day, the same mount does not ask twice, each of 5, 10, 15 and 30 minutes sets its time, Start now runs in its dialog, a partition of this device that is not mounted is named, manual and not-due backups do not ask, and the real replug asks."),
     "backup_delayed_start": ("delayed_start", 1500, "Later: a real 5 minute wait on the real alarm, 15 minutes with the time moved, 30 minutes with the drive pulled while waiting (dropped, logged, replug does not bring it back), and an end missing when it fires."),
     "backup_due_mounted": ("due_mounted", 1200, "Coming due with the drive already mounted: a notification, no run. Dismissed it returns after 20 hours. Not now, Later, Start now and its body, through their intents. The drive pulled swaps it for the connect reminder. A phone-only backup stays automatic."),
     "backup_reminder": ("reminder", 900, "Coming due with no drive: the reminder at the due time, its wording, the first-run title, 20 hours between, nothing for manual or not-due backups, a good run clears it."),
@@ -63,8 +63,11 @@ FLOWS = {
 }
 # name: (filesystem, flow) on a plain drive
 FILESYSTEMS = {"backup_run_exfat": "exfat", "backup_run_ext4": "ext4", "backup_run_ntfs": "ntfs"}
+MAIN_SCREEN = "The main screen around a mount: an unlock the form did not start shows as in progress on the form's button, a tap and a second request do not start another, and the partition mounts once. Manage backups is below the form and the bell left of Settings. The mount opens the slider on Drives; Back, Close and a drag close it, its tab at the edge reopens it, by a tap or a drag, Backups lists nothing. A wide screen keeps its pane with the same tabs."
 # name: (matrix case whose image it reuses)
 CONTAINERS = {"backup_run_luks2": "m_luks2_ext4", "backup_run_veracrypt": "m_vc_exfat"}
+# name: (matrix case whose image it reuses, flow, seconds allowed, what it proves)
+OTHER = {"main_screen": ("m_vc_exfat", "main_screen", 900, MAIN_SCREEN)}
 CORE = "Incremental and Plain from the phone onto {}, through the real form: Back up now, Verify, Restore by hash, Mount. Host: filesystem checker clean, restic check --read-data, copies by hash."
 
 
@@ -200,6 +203,14 @@ def main():
             if not os.path.exists(os.path.join(src, "test.img")):
                 raise SystemExit(f"{source} is missing: run scripts/make_e2e_matrix.py first")
             d = place(name, os.path.join(src, "test.img"), "run_core", 1500, CORE.format(f"{source}'s encrypted drive"), plain=False)
+            for extra in ("password.txt", "pim.txt", "container.txt"):
+                if os.path.exists(os.path.join(src, extra)):
+                    shutil.copyfile(os.path.join(src, extra), os.path.join(d, extra))
+        for name, (source, flow, seconds, text) in OTHER.items():
+            src = os.path.join(ROOT, "testdata", source)
+            if not os.path.exists(os.path.join(src, "test.img")):
+                raise SystemExit(f"{source} is missing: run scripts/make_e2e_matrix.py first")
+            d = place(name, os.path.join(src, "test.img"), flow, seconds, text, plain=False)
             for extra in ("password.txt", "pim.txt", "container.txt"):
                 if os.path.exists(os.path.join(src, extra)):
                     shutil.copyfile(os.path.join(src, extra), os.path.join(d, extra))
