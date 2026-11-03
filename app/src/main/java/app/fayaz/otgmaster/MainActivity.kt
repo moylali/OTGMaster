@@ -61,7 +61,9 @@ import android.content.SharedPreferences
 import androidx.compose.foundation.isSystemInDarkTheme
 import androidx.compose.material.icons.filled.Settings
 import app.fayaz.otgmaster.ui.MountedDrawer
-import app.fayaz.otgmaster.ui.MountedHandle
+import app.fayaz.otgmaster.ui.MountedEdgeSwipe
+import app.fayaz.otgmaster.ui.swipeLeftOpens
+import androidx.compose.material.icons.filled.Storage
 import androidx.compose.ui.semantics.clearAndSetSemantics
 import kotlinx.coroutines.flow.getAndUpdate
 import kotlinx.coroutines.flow.update
@@ -3143,11 +3145,22 @@ fun OtgMasterApp(
     Box(modifier = Modifier.fillMaxSize()) {
     Scaffold(
         // Behind the open slider nothing can be tapped, so nothing is offered to a screen reader.
-        modifier = if (sliderOpen) Modifier.clearAndSetSemantics {} else Modifier,
+        modifier = when {
+            sliderOpen -> Modifier.clearAndSetSemantics {}
+            twoPaneWindow -> Modifier
+            else -> Modifier.swipeLeftOpens { showMounted = true }
+        },
         topBar = {
             TopAppBar(
                 title = { Text(stringResource(R.string.app_name)) },
                 actions = {
+                    if (!twoPaneWindow) IconButton(onClick = { showMounted = true }) {
+                        // What is mounted: partitions and backups, the same as the two tabs add up to.
+                        val count = driveCount + backupCount
+                        BadgedBox(badge = { if (count > 0) Badge { Text(count.toString()) } }) {
+                            Icon(Icons.Default.Storage, contentDescription = stringResource(R.string.cd_open_mounted, count))
+                        }
+                    }
                     app.fayaz.otgmaster.ui.BackupDueBell()
                     IconButton(onClick = { showSettings = true }) {
                         Icon(Icons.Default.Settings, contentDescription = stringResource(R.string.cd_settings))
@@ -3331,7 +3344,7 @@ fun OtgMasterApp(
         }
     }
 
-    if (!twoPaneWindow && !showMounted) MountedHandle(onOpen = { showMounted = true })
+    if (!twoPaneWindow && !showMounted) MountedEdgeSwipe(onOpen = { showMounted = true })
     MountedDrawer(visible = sliderOpen, onDismiss = { showMounted = false }) {
         app.fayaz.otgmaster.ui.MountedPanel(
             tab = mountedTab,

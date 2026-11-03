@@ -27,10 +27,8 @@ import androidx.compose.foundation.layout.safeDrawing
 import androidx.compose.foundation.layout.windowInsetsPadding
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.verticalScroll
-import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.systemGestureExclusion
 import androidx.compose.material.icons.Icons
-import androidx.compose.material.icons.automirrored.filled.KeyboardArrowLeft
 import androidx.compose.material.icons.filled.Close
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
@@ -57,8 +55,8 @@ enum class MountedTab { DRIVES, BACKUPS }
 
 /** A sideways drag this far towards the edge closes the slider. */
 private val CLOSE_DRAG = 80.dp
-/** A drag this far away from the edge opens it, from the tab. */
-private val OPEN_DRAG = 16.dp
+/** A swipe this far to the left opens it. */
+private val OPEN_DRAG = 48.dp
 
 /**
  * The title, the two tabs and the chosen tab's cards. Shared by the slider on a phone and the
@@ -99,35 +97,27 @@ fun MountedPanel(
     }
 }
 
+/** A swipe to the left over [this] opens the slider. Vertical scrolling and taps are left alone. */
+fun Modifier.swipeLeftOpens(onOpen: () -> Unit): Modifier = pointerInput(onOpen) {
+    var dragged = 0f
+    detectHorizontalDragGestures(
+        onDragStart = { dragged = 0f },
+        onDragEnd = { if (dragged < -OPEN_DRAG.toPx()) onOpen() },
+    ) { _, amount -> dragged += amount }
+}
+
 /**
- * The edge of the closed slider, showing there is something to pull out: a tap or a drag to the
- * left opens it. Narrow enough to stay in the margin beside the form's cards.
+ * The part of the right edge where a swipe in opens the slider. Anywhere else on that edge the
+ * system's Back gesture takes it, which is why this is excluded from it. Android allows 200 dp per
+ * edge. It stays within the screen's margin, so it covers nothing that can be tapped.
  */
 @Composable
-fun BoxScope.MountedHandle(onOpen: () -> Unit) {
-    Surface(
-        modifier = Modifier.align(Alignment.CenterEnd)
-            .semantics { contentDescription = "mounted_handle" }
-            // At the screen's edge a drag is otherwise the system's Back gesture, which never reaches the tab.
+fun BoxScope.MountedEdgeSwipe(onOpen: () -> Unit) {
+    Box(
+        Modifier.align(Alignment.CenterEnd).size(width = 16.dp, height = 200.dp)
             .systemGestureExclusion()
-            .clickable(onClick = onOpen)
-            .pointerInput(Unit) {
-                var dragged = 0f
-                detectHorizontalDragGestures(
-                    onDragStart = { dragged = 0f },
-                    onDragEnd = { if (dragged < -OPEN_DRAG.toPx()) onOpen() },
-                ) { _, amount -> dragged += amount }
-            },
-        shape = RoundedCornerShape(topStart = 12.dp, bottomStart = 12.dp),
-        color = MaterialTheme.colorScheme.primaryContainer,
-        contentColor = MaterialTheme.colorScheme.onPrimaryContainer,
-        tonalElevation = 4.dp,
-        shadowElevation = 2.dp,
-    ) {
-        Box(Modifier.size(width = 20.dp, height = 72.dp), contentAlignment = Alignment.Center) {
-            Icon(Icons.AutoMirrored.Filled.KeyboardArrowLeft, contentDescription = stringResource(R.string.cd_open_mounted))
-        }
-    }
+            .swipeLeftOpens(onOpen)
+    )
 }
 
 /** Slides in from the right over the main screen. Back, a tap outside or a drag to the right closes it. */

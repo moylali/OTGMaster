@@ -3373,16 +3373,13 @@ class E2EAutomatedTest {
         bkAssertTextIn(context.getString(R.string.no_backups_mounted))
         assertNull("the drive is listed under Backups", device.findObject(By.textContains("Used:")))
 
-        // Back closes it; the tab at the edge brings it back, by a tap or a drag to the left.
+        // Back closes it; the top bar's icon brings it back, counting what is mounted.
         closeSlider()
         assertNotNull("Back did not return to the main screen", device.wait(Until.findObject(By.desc("scan_button")), timeout))
         assertNull("the mounted card stayed on the main screen", device.findObject(By.textContains("Used:")))
-        val handle = device.findObject(By.desc("mounted_handle"))
-        assertNotNull("no tab at the edge with the slider closed", handle)
-        assertTrue("the tab is not at the right edge", handle.visibleBounds.right == device.displayWidth)
+        assertNotNull("the icon does not count 1", device.findObject(By.desc(context.getString(R.string.cd_open_mounted, 1))))
         openSlider()
-        assertNotNull("the tab opened no card", device.wait(Until.findObject(By.textContains("Used:")), timeout))
-        assertNull("the tab stayed with the slider open", device.findObject(By.desc("mounted_handle")))
+        assertNotNull("the icon opened no card", device.wait(Until.findObject(By.textContains("Used:")), timeout))
         // The close button, and a drag towards the edge.
         device.findObject(By.desc(context.getString(R.string.cd_close_mounted))).click()
         assertTrue("Close left the slider open", device.wait(Until.gone(By.desc("mounted_drawer")), timeout))
@@ -3392,16 +3389,20 @@ class E2EAutomatedTest {
         device.swipe(device.displayWidth / 4, h, device.displayWidth - 20, h, 20)
         assertTrue("a drag did not close the slider", device.wait(Until.gone(By.desc("mounted_drawer")), timeout))
         android.os.SystemClock.sleep(500)
-        val edge = device.wait(Until.findObject(By.desc("mounted_handle")), timeout)!!.visibleBounds
-        device.swipe(edge.centerX(), edge.centerY(), device.displayWidth / 2, edge.centerY(), 20)
-        assertNotNull("a drag on the tab did not open the slider", device.wait(Until.findObject(By.desc("mounted_drawer")), timeout))
+        // A swipe to the left opens it: across the screen, and in from the right edge.
+        device.swipe(device.displayWidth * 3 / 4, h, device.displayWidth / 4, h, 20)
+        assertNotNull("a swipe across the screen did not open the slider", device.wait(Until.findObject(By.desc("mounted_drawer")), timeout))
+        closeSlider()
+        device.swipe(device.displayWidth - 5, h, device.displayWidth / 2, h, 20)
+        assertNotNull("a swipe in from the edge did not open the slider", device.wait(Until.findObject(By.desc("mounted_drawer")), timeout))
+        assertTrue("the edge swipe also went Back", device.hasObject(By.pkg("app.fayaz.otgmaster")))
         closeSlider()
 
         // On a wide screen what is mounted is always there, with the same tabs and no slider.
         onWideScreen {
             assertNotNull("no pane on a wide screen", device.wait(Until.findObject(By.desc("mounted_pane")), timeout))
             assertNull("a slider on a wide screen", device.findObject(By.desc("mounted_drawer")))
-            assertNull("the slider's tab on a wide screen", device.findObject(By.desc("mounted_handle")))
+            assertNull("the slider's icon on a wide screen", device.findObject(By.descStartsWith("Mounted:")))
             assertNotNull("no card in the pane", device.wait(Until.findObject(By.textContains("Used:")), timeout))
             assertTrue(clickByDesc("mounted_tab_backups"))
             bkAssertTextIn(context.getString(R.string.no_backups_mounted))
@@ -3734,14 +3735,15 @@ class E2EAutomatedTest {
         android.os.SystemClock.sleep(500)
     }
 
-    /** Opens the slider from its tab at the screen's edge, on [tab]. */
+    /** Opens the slider from the top bar's drive icon, on [tab]. */
     private fun openSlider(tab: String = "mounted_tab_drives") {
         if (!sliderOpen()) {
-            val handle = device.wait(Until.findObject(By.desc("mounted_handle")), timeout)
-            if (handle == null) captureScreen("no_mounted_handle")
-            assertNotNull("no tab at the screen's edge", handle)
-            handle!!.click()
-            assertNotNull("the tab did not open the slider", device.wait(Until.findObject(By.desc("mounted_drawer")), timeout))
+            InstrumentationRegistry.getInstrumentation().uiAutomation.clearCache()
+            val icon = device.wait(Until.findObject(By.descStartsWith("Mounted:")), timeout)
+            if (icon == null) captureScreen("no_mounted_icon")
+            assertNotNull("no drive icon on the top bar", icon)
+            icon!!.click()
+            assertNotNull("the icon did not open the slider", device.wait(Until.findObject(By.desc("mounted_drawer")), timeout))
         }
         val chosen = device.wait(Until.findObject(By.desc(tab)), timeout)
         assertNotNull("no $tab", chosen)

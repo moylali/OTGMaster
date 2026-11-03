@@ -4,7 +4,7 @@
     <!-- Top bar / global -->
     <string name="cd_settings">Settings</string>
     <string name="cd_backups_due">Backups due: %1$d</string>
-    <string name="cd_open_mounted">Open mounted devices</string>
+    <string name="cd_open_mounted">Mounted: %1$d</string>
     <string name="cd_close_mounted">Close mounted devices</string>
     <string name="mounted_tab_drives">Drives (%1$d)</string>
     <string name="mounted_tab_backups">Backups (%1$d)</string>

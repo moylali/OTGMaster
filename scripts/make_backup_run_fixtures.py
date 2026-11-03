@@ -63,7 +63,7 @@ FLOWS = {
 }
 # name: (filesystem, flow) on a plain drive
 FILESYSTEMS = {"backup_run_exfat": "exfat", "backup_run_ext4": "ext4", "backup_run_ntfs": "ntfs"}
-MAIN_SCREEN = "The main screen around a mount: an unlock the form did not start shows as in progress on the form's button, a tap and a second request do not start another, and the partition mounts once. Manage backups is below the form and the bell left of Settings. The mount opens the slider on Drives; Back, Close and a drag close it, its tab at the edge reopens it, by a tap or a drag, Backups lists nothing. A wide screen keeps its pane with the same tabs."
+MAIN_SCREEN = "The main screen around a mount: an unlock the form did not start shows as in progress on the form's button, a tap and a second request do not start another, and the partition mounts once. Manage backups is below the form and the bell left of Settings. The mount opens the slider on Drives; Back, Close and a drag close it, the top bar icon and a swipe to the left reopen it, Backups lists nothing. A wide screen keeps its pane with the same tabs."
 # name: (matrix case whose image it reuses)
 CONTAINERS = {"backup_run_luks2": "m_luks2_ext4", "backup_run_veracrypt": "m_vc_exfat"}
 # name: (matrix case whose image it reuses, flow, seconds allowed, what it proves)
