@@ -564,6 +564,32 @@ class E2EAutomatedTest {
         }
         assertTrue("write_test.txt still visible immediately after deletion", goneImmediately)
 
+        // ── DELETE a folder with files in it ───────────────────────────────────
+        // SafFileTree empties a folder first, but the Files app and other apps do not.
+        val treeUri = DocumentsContract.createDocument(
+            context.contentResolver, DocumentsContract.buildDocumentUri(AUTHORITY, rootDocId2),
+            DocumentsContract.Document.MIME_TYPE_DIR, "delete_tree"
+        )
+        assertNotNull("createDocument(delete_tree) returned null", treeUri)
+        val subUri = DocumentsContract.createDocument(
+            context.contentResolver, treeUri!!, DocumentsContract.Document.MIME_TYPE_DIR, "sub"
+        )
+        assertNotNull("createDocument(delete_tree/sub) returned null", subUri)
+        for ((parent, name) in listOf(treeUri to "top.txt", subUri!! to "deep.txt")) {
+            val uri = DocumentsContract.createDocument(context.contentResolver, parent, "text/plain", name)
+            assertNotNull("createDocument($name) returned null", uri)
+            context.contentResolver.openOutputStream(uri!!)?.use { it.write(name.toByteArray()) }
+                ?: fail("openOutputStream for $name returned null")
+        }
+        assertTrue("deleting a folder with files in it failed: see the log",
+            DocumentsContract.deleteDocument(context.contentResolver, treeUri))
+        context.contentResolver.query(childrenUri2, null, null, null, null)?.use { cur ->
+            while (cur.moveToNext()) {
+                val id = cur.getString(cur.getColumnIndex(DocumentsContract.Document.COLUMN_DOCUMENT_ID))
+                assertFalse("delete_tree still listed after deleting it", id?.endsWith("delete_tree") == true)
+            }
+        }
+
         // ── DELETE an open file: its space must come back at once ──────────────
         // exFAT freed a deleted file's clusters only when the last handle on it was
         // released — and a listing's handles are released by the GC, or never if the
@@ -859,6 +885,19 @@ class E2EAutomatedTest {
             assertNull("mounting the partition again did not clear its disconnected card",
                 device.findObject(By.desc("disconnected_card")))
             assertHistory(2, "on external power")
+
+            // ── Drop 3, as the "Mounted" note ends ──────────────────────────────
+            // A new note cancels the old one's timer only at the next recomposition. Keeping
+            // the main thread busy across the end of that timer fires it first, every time,
+            // which is what lost this warning now and then when a drive dropped by chance.
+            doUnmount()
+            scanAndMount(password, pim, testCase, "before the third drop")
+            assertNotNull("no 'Mounted' note to overlap",
+                device.wait(Until.findObject(By.textStartsWith("Mounted:")), 3000L))
+            dropMountedDrive(banner = "Check the cable",
+                noteSeenAt = android.os.SystemClock.uptimeMillis())
+            requestUsb("replug")
+            scanAndMount(password, pim, testCase, "after the third drop")
 
             doUnmount()
         } finally {
@@ -3433,8 +3472,11 @@ class E2EAutomatedTest {
      * and the unmount that follows must not replace it with a green "Unmounted", which
      * reads as success. The banner lasts 2.5 s, so it is watched throughout rather than
      * looked for afterwards.
+     *
+     * With [noteSeenAt], the time a 2.5 s note was seen, the app is told while its main thread
+     * is held across the end of that note.
      */
-    private fun dropMountedDrive(banner: String) {
+    private fun dropMountedDrive(banner: String, noteSeenAt: Long? = null) {
         val key = OtgMasterState.mountedDrives.firstOrNull()?.sourceDeviceName
         assertNotNull("no mounted drive to drop", key)
         // On screen, or its going below would be seen at once.
@@ -3444,7 +3486,15 @@ class E2EAutomatedTest {
         requestUsb("unplug")
         val detach = OtgMasterState.detachRequest
         assertNotNull("no detach handler installed — is MainActivity running?", detach)
-        detach!!(key!!)
+        if (noteSeenAt == null) {
+            detach!!(key!!)
+        } else {
+            android.os.SystemClock.sleep((noteSeenAt + 1700 - android.os.SystemClock.uptimeMillis()).coerceAtLeast(0))
+            InstrumentationRegistry.getInstrumentation().runOnMainSync {
+                detach!!(key!!)
+                android.os.SystemClock.sleep(1500)
+            }
+        }
         var sawWarning = false
         var sawUnmounted = false
         var goneAt = 0L
