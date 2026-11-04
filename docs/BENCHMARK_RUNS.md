@@ -84,6 +84,27 @@ left a folder named `otg_e2e_device` there.
 Found on the way, and not fixed: deleting a non-empty folder through the provider fails on ext4
 with "Directory not empty".
 
+### Commit hashes after the merge of #114
+
+Rebase-merged, so the E2E report in the PR names the head commit `7b71d39`, which is `5ce404c` on `main`.
+
+| At the PR head | On `main` | Commit |
+|---|---|---|
+| `e19bb83` | `8474456` | A slider for what is mounted; the bell for due backups; one unlock per partition |
+| `d31fac7` | `8f712c2` | The top bar's drive icon opens the slider, and so does a swipe to the left |
+| `7551295` | `8f14b45` | Mount backup goes straight to the Files picker; the Mount tab goes |
+| `7b71d39` | `5ce404c` | A run's own prune no longer calls its new snapshot damaged |
+
+### Commit hashes after the merge of #112
+
+Rebase-merged, so the E2E report in the PR names the head commit `1ca3f4b`, which is `b2872aa` on `main`.
+
+| At the PR head | On `main` | Commit |
+|---|---|---|
+| `5016ebb` | `1dcded1` | Two schedule columns on big screens; plainer wording |
+| `ec507d1` | `0314687` | A backup mount lands on the main screen like a partition |
+| `1ca3f4b` | `b2872aa` | The two-column check no longer leaves a taskbar behind |
+
 ### Commit hashes after the merge of #109
 
 The run above cites a hash from before the rebase-merge, so this table gives both.
