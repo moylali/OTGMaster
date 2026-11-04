@@ -1291,6 +1291,8 @@ class E2EAutomatedTest {
         assertNotNull("no card for the backup $name", title)
         var button: androidx.test.uiautomator.UiObject2? = null
         for (attempt in 1..4) {
+            // The screen can show the button while the accessibility tree still lacks it.
+            InstrumentationRegistry.getInstrumentation().uiAutomation.clearCache()
             val top = device.findObject(By.textContains(name))?.visibleBounds?.bottom ?: 0
             button = device.findObjects(By.descContains("unmount_button")).firstOrNull { it.visibleBounds.top > top }
             if (button != null) break
