@@ -1006,6 +1006,14 @@ class E2EAutomatedTest {
         assertNull("a restore's row names the source as its target", device.findObject(By.text(sourceFolder)))
         jobs.addRun(RunRecord(jobId = job.id, kind = "backup", reason = "manual", startedAt = now + 1, finishedAt = now + 1, status = RunStatus.SUCCESS))
         assertNotNull("a backup's row does not name its source folder", device.wait(Until.findObject(By.text(sourceFolder)), timeout))
+        // Mounted already, by the password asked for above: choosing it again does not mount it twice.
+        browseToFolder(source.name, BACKUP_REPO)
+        bkExpectMountAnnounced("$BACKUP_REPO (backup)")
+        assertEquals("the folder was mounted a second time", 1, OtgMasterState.mountedDrives.count { it.filesystemName == "Backup" })
+        assertTrue("it took the job's name while mounted", OtgMasterState.mountedDrives.none { it.id == BackupMounts.driveIdFor(job.id) })
+        returnToMainScreen()
+        openSlider("mounted_tab_backups")
+        doUnmount()
         browseToFolder(source.name, BACKUP_REPO)
         val jobDrive = BackupMounts.driveIdFor(job.id)
         val mountDeadline = android.os.SystemClock.uptimeMillis() + 60_000L
@@ -2308,8 +2316,6 @@ class E2EAutomatedTest {
         secrets.setPassword(twin.id, realPassword)
         bkStore.upsert(twin)
         val backupMounts = { OtgMasterState.mountedDrives.count { it.filesystemName == "Backup" } }
-        val skipped = { OtgMasterState.recentLogs().count { it.contains("E2E_mp (backup) is already mounted") } }
-        val skippedBefore = skipped()
         returnToMainScreen()
         openBackupsTab("backups_open_schedules")
         bkRowClick("backup_mount_E2E_mp")
@@ -2325,10 +2331,27 @@ class E2EAutomatedTest {
         bkRowClick("backup_mount_E2E_mp")
         bkExpectMountAnnounced("E2E_mp (backup)")
         assertEquals("its History entry mounted it again", 1, backupMounts())
+
+        // The slider closed in the middle of a flash, then Mount again: it still opens and flashes.
+        returnToMainScreen()
+        openBackupsTab("backups_open_schedules")
+        bkRowClick("backup_mount_E2E_mp")
+        assertCardFlashes(By.text("E2E_mp (backup)"), "E2E_mp (backup)", 60000L)
+        closeSlider()
+        returnToMainScreen()
+        openBackupsTab("backups_open_schedules")
+        bkRowClick("backup_mount_E2E_mp")
+        bkExpectMountAnnounced("E2E_mp (backup)")
+
+        // The picker's check takes no time at all, and the flash would be over before the picker
+        // has closed, so this holds it back until the test can watch.
+        BackupMounts.testDelayMs = 4000
         bkMountFromPicker(drive.name, "E2E_mp")
         bkExpectMountAnnounced("E2E_mp (backup)")
+        BackupMounts.testDelayMs = 0
         assertEquals("the picker mounted it again", 1, backupMounts())
-        assertEquals("the skipped mounts are not in the log", skippedBefore + 3, skipped())
+        // Repeats of a line collapse into one in the log, so this asks only that it says so.
+        assertTrue("the skipped mounts are not in the log", OtgMasterState.recentLogs().any { it.contains("E2E_mp (backup) is already mounted") })
         doUnmount()
         secrets.forget(twin.id)
         bkStore.delete(twin.id)
