@@ -33,6 +33,60 @@ to a row here.
 
 ---
 
+## 2026-11-04: Deleting a folder on real ext4 and exFAT, Galaxy Tab A9+
+
+Not a benchmark: no sections ran. Deleting a non-empty folder through the provider failed on ext4
+and exFAT, and ext4's single-file delete was unsafe on hard links and symlinks. This is the hardware
+check of those fixes.
+
+| Field | Value |
+|---|---|
+| Device | Samsung Galaxy Tab A9+ (SM-X210), Android 16 / One UI 8.0, arm64-v8a, over a USB-C hub |
+| Drive | D5/2, serial `071C48F5FB0EF455`: p7 plain ext4, p4 VeraCrypt AES-Twofish / Argon2 / PIM 1, exFAT |
+| Commit | `a186428`, clean tree, test flow `am instrument -e backup_flow delete_tree` |
+| Prepared | p7 and p4 checked clean and baselined first. `delete_linux` and `delete_keep` made on p7 by Linux |
+
+`delete_linux` held a 3,000 entry folder, 32 MiB and 5 MiB files, a hard link pair inside it, a hard
+link to `delete_keep/linked.bin`, short and long symlinks, a FIFO and a 2,000 byte xattr.
+
+| Partition | Deleted | Time | In-app |
+|---|---|---|---|
+| p7 ext4 | 300 small files + 32 MiB, made by the app | 12.9 s | free space back exactly |
+| p7 ext4 | `delete_linux` | 143.2 s | gone, 47,108,096 bytes back, `linked.bin` hash unchanged |
+| p4 exFAT | 300 small files + 32 MiB, made by the app | 11.9 s | free space back exactly |
+
+Host check afterwards:
+
+| Check | p7 ext4 | p4 exFAT |
+|---|---|---|
+| `verify_volume.sh` | e2fsck -fn CLEAN | fsck.exfat CLEAN |
+| `volume_baseline.sh compare`, full | 3,005 removed, 0 added, 0 modified: only `delete_linux`'s regular files | NO CHANGE, every file and metadata region byte-identical |
+| Other | `delete_keep/linked.bin` SHA-256 equals the hash taken at creation, now 1 link. 40,756 blocks and 563 inodes used before the folders were made, 42,037 and 565 now: exactly `delete_keep` and its 5 MiB file | |
+
+p8 NTFS was also clean with `verify_volume.sh` before this run, closing the fsck half of the check
+the 2026-11-02 row left open. **`restic check` was not run** on p7's `otgbk` and `fresh`: their
+passwords were generated on the tablet, which no longer holds those jobs, and the E2E passwords do
+not open them. Their last check is the 2026-11-01 row.
+
+About 40 to 50 ms per file on both filesystems, so a 20,000 file folder would take around 15
+minutes. `delete_keep` stays on p7.
+
+### Commit hashes after the merge of #116
+
+Rebase-merged, so the E2E report in the PR names the head commit `5a4aca3`, which is `84fab6c` on `main`.
+
+| At the PR head | On `main` | Commit |
+|---|---|---|
+| `c0fa4a3` | `42ee43a` | Manage backups and its three buttons sit in one panel |
+| `99d284a` | `26b4bb6` | Schedules is now Reminders |
+| `7170765` | `3977326` | A backup's actions go in More actions; Settings rows open dialogs |
+| `2a461f1` | `984fbe1` | Look for a backup's Unmount with a fresh accessibility tree |
+| `1cfb2cc` | `e3d6123` | Manage backups is a card like Mount encrypted drive |
+| `9aa5119` | `c31f3c8` | The frequency is a dropdown; reminders and History have Mount |
+| `ab45f25` | `84a0ac3` | A repository already mounted is not mounted again |
+| `fb0f5cd` | `339bdb2` | A mount flashes its card in the slider, already mounted or not |
+| `5a4aca3` | `84fab6c` | Mount still opens the slider after a flash was cut short |
+
 ## 2026-11-01 — A desktop restic repository on the Galaxy Tab A9+
 
 Not a benchmark. The `backup_mount` E2E case found that a compressed repository crashed the
