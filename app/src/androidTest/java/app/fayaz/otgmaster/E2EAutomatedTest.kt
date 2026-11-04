@@ -121,6 +121,7 @@ class E2EAutomatedTest {
         if (arguments.getString("disconnect_test", "false") == "true") return runDisconnectCase()
         if (arguments.getString("journal_repair", "false") == "true") return runJournalRepairCase()
         if (arguments.getString("backup_flow") == "device") return bkFlowDevice()
+        if (arguments.getString("backup_flow") == "delete_tree") return deviceDeleteTree()
         if (arguments.getString("backup_flow") == "main_screen") return runMainScreenCase()
         arguments.getString("backup_flow")?.let { return runBackupFlow(it) }
         if (arguments.getString("backup_test", "false") == "true") return runBackupCase()
@@ -2943,6 +2944,113 @@ class E2EAutomatedTest {
      * writable plain partition, works in a folder of its own, and leaves other jobs
      * alone: unlike the emulator flows it does not reset the app, whose jobs may be the owner's.
      */
+    /**
+     * Deleting a folder through the provider on a real drive, on ext4 and on exFAT. The laptop
+     * checks the partitions afterwards (docs/BENCHMARK_RUNS.md, 2026-11-04). Needs a physical
+     * device, so it is not an E2E case: `am instrument -e backup_flow delete_tree`, with the
+     * VeraCrypt credentials of the exFAT partition as -e password, pim, cipher and hash.
+     *
+     * Each partition gets a tree made through the app, whose space must come back. A plain ext4
+     * partition may also hold delete_linux, made on the laptop by Linux with hard links, symlinks,
+     * a FIFO, an indexed folder and an xattr block, plus a hard link to one of its files in
+     * delete_keep, which must survive. -e keep_sha256 is that file's hash from the laptop.
+     */
+    private fun deviceDeleteTree() {
+        val tag = "OTGDevice"
+        fun note(text: String) = Log.i(tag, text)
+        val args = InstrumentationRegistry.getArguments()
+        val cr = bkContext.contentResolver
+        val keepSha = args.getString("keep_sha256", "")
+
+        android.os.SystemClock.sleep(1000)
+        findScanButton()?.click()
+        device.wait(Until.findObject(By.text(java.util.regex.Pattern.compile("(?i)OK|ALLOW"))), 5000L)?.click()
+        val request = OtgMasterState.mountRequest
+        assertNotNull("no mount handler installed: is MainActivity running?", request)
+        request!!.mount(
+            args.getString("password", ""), args.getString("pim", "1").toInt(),
+            args.getString("cipher", ""), args.getString("hash", ""), false,
+        )
+        fun writable(fs: String, plain: Boolean) = OtgMasterState.mountedDrives
+            .firstOrNull { it.filesystemName == fs && it.isPlain == plain && !it.isReadOnly }
+        // The unlock tries every partition still locked, and Argon2 is slow on all of them.
+        val end = android.os.SystemClock.uptimeMillis() + 15 * 60_000L
+        while ((writable("ext4", true) == null || writable("exFAT", false) == null) &&
+            android.os.SystemClock.uptimeMillis() < end) android.os.SystemClock.sleep(1000)
+        val drives = listOf(writable("ext4", true), writable("exFAT", false))
+        assertTrue("no writable ext4 and exFAT: ${OtgMasterState.mountedDrives.map { "${it.name} ${it.filesystemName}" }}",
+            drives.all { it != null })
+
+        fun uri(id: String) = DocumentsContract.buildDocumentUri(AUTHORITY, id)
+        fun listed(id: String): List<String> = cr.query(
+            DocumentsContract.buildChildDocumentsUri(AUTHORITY, id), null, null, null, null,
+        )?.use { cur ->
+            val col = cur.getColumnIndex(DocumentsContract.Document.COLUMN_DOCUMENT_ID)
+            generateSequence { if (cur.moveToNext()) cur.getString(col) else null }.toList()
+        } ?: fail("listing $id returned null").let { emptyList() }
+        fun sha(id: String): String {
+            val digest = java.security.MessageDigest.getInstance("SHA-256")
+            cr.openInputStream(uri(id))!!.use { input ->
+                val buf = ByteArray(1 shl 16)
+                while (true) { val n = input.read(buf); if (n < 0) break; digest.update(buf, 0, n) }
+            }
+            return digest.digest().joinToString("") { "%02x".format(it) }
+        }
+        fun made(parent: android.net.Uri, mime: String, name: String): android.net.Uri =
+            DocumentsContract.createDocument(cr, parent, mime, name) ?: throw AssertionError("could not create $name")
+
+        for (d in drives.map { it!! }) {
+            val root = "${d.id}:/"
+            note("${d.filesystemName} ${d.name}: free ${availableBytes(bkContext, root)}")
+            assertTrue("otg_delete_check is left from an earlier run", listed(root).none { it.endsWith("/otg_delete_check") })
+            val freeBefore = availableBytes(bkContext, root)
+
+            val dir = DocumentsContract.Document.MIME_TYPE_DIR
+            val tree = made(uri(root), dir, "otg_delete_check")
+            val many = made(tree, dir, "many")
+            repeat(300) { i ->
+                cr.openOutputStream(made(many, "text/plain", "file_$i.txt"))!!.use { it.write("file $i".toByteArray()) }
+            }
+            val deep = made(made(made(tree, dir, "sub"), dir, "deep"), dir, "deeper")
+            cr.openOutputStream(made(deep, "application/octet-stream", "big.bin"))!!.use { out ->
+                val chunk = ByteArray(1 shl 20)
+                val random = java.util.Random(4)
+                repeat(32) { random.nextBytes(chunk); out.write(chunk) }
+            }
+            val freeFull = availableBytes(bkContext, root)
+            note("${d.filesystemName}: tree made, 300 small files and 32 MiB, free $freeFull")
+            assertTrue("the tree took no space", freeFull < freeBefore - (32L shl 20))
+
+            val t0 = android.os.SystemClock.uptimeMillis()
+            assertTrue("deleting the tree failed: see the app log", DocumentsContract.deleteDocument(cr, tree))
+            note("${d.filesystemName}: tree deleted in ${android.os.SystemClock.uptimeMillis() - t0} ms")
+            assertTrue("otg_delete_check still listed", listed(root).none { it.endsWith("/otg_delete_check") })
+            assertEquals("free space after deleting the tree, ${d.filesystemName}", freeBefore, availableBytes(bkContext, root))
+
+            if (d.filesystemName == "ext4") {
+                val keep = root + "delete_keep/linked.bin"
+                assertEquals("delete_keep/linked.bin before", keepSha, sha(keep))
+                val freeLinux = availableBytes(bkContext, root)
+                val t1 = android.os.SystemClock.uptimeMillis()
+                assertTrue("deleting delete_linux failed: see the app log", DocumentsContract.deleteDocument(cr, uri(root + "delete_linux")))
+                note("ext4: delete_linux deleted in ${android.os.SystemClock.uptimeMillis() - t1} ms")
+                assertTrue("delete_linux still listed", listed(root).none { it.endsWith("/delete_linux") })
+                assertEquals("delete_keep/linked.bin after", keepSha, sha(keep))
+                val back = availableBytes(bkContext, root) - freeLinux
+                note("ext4: delete_linux gave back $back bytes")
+                assertTrue("delete_linux gave back only $back bytes", back >= (32L shl 20))
+            }
+        }
+
+        val unmount = OtgMasterState.unmountAllRequest
+        assertNotNull("no unmount handler installed", unmount)
+        unmount!!.invoke()
+        val gone = android.os.SystemClock.uptimeMillis() + 120_000L
+        while (OtgMasterState.mountedDrives.isNotEmpty() && android.os.SystemClock.uptimeMillis() < gone) android.os.SystemClock.sleep(500)
+        assertTrue("still mounted: ${OtgMasterState.mountedDrives.map { it.name }}", OtgMasterState.mountedDrives.isEmpty())
+        note("all unmounted: safe to pull the drive")
+    }
+
     private fun bkFlowDevice() {
         val tag = "OTGDevice"
         fun note(text: String) = Log.i(tag, text)
