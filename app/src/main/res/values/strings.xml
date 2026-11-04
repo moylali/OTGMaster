@@ -361,6 +361,7 @@
     <string name="backup_learn_more_title">Plain or incremental?</string>
     <string name="backup_learn_plain">Every backup is a complete copy of the files in a folder named by its date. Any computer or phone reads them with no app and no password. Each backup takes the full space again, and they are not encrypted: anyone holding the drive can read them.</string>
     <string name="backup_learn_incremental">Every backup is a snapshot of the folder as it was, and files that did not change are not stored again, so many backups take little more space than one. Snapshots are encrypted with the backup\'s password and checked when read. They are kept in the standard restic repository format: this app restores files from them and can mount a backup to browse it, and on a computer the free restic tool (restic.net) opens them with the same password. Without restic or this app, and without the password, the files cannot be read.</string>
+    <string name="backup_frequency">Backup frequency</string>
     <string name="backup_manual">Manual</string>
     <string name="backup_daily">Daily</string>
     <string name="backup_weekly">Weekly</string>

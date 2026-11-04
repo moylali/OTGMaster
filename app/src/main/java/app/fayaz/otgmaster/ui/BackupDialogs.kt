@@ -26,6 +26,10 @@ import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.Info
 import androidx.compose.material.icons.filled.Notifications
 import androidx.compose.material3.Badge
+import app.fayaz.otgmaster.backup.BackupRunner
+import app.fayaz.otgmaster.backup.BackupMounts
+import app.fayaz.otgmaster.OtgMasterState
+import androidx.compose.runtime.State
 import androidx.compose.material3.Button
 import androidx.compose.material3.BadgedBox
 import androidx.compose.material3.DropdownMenu
@@ -263,7 +267,7 @@ fun BackupSetupDialog(driveId: String, driveTitle: String, title: Int = R.string
     @Composable
     fun EndPicker(title: String, tag: String, end: End, onDevice: (BackupDevice) -> Unit) {
         Text(title, style = MaterialTheme.typography.titleSmall)
-        Picker(stringResource(R.string.backup_device), end.device, devices, { it.title }, "backup_${tag}_device", onDevice)
+        Picker(stringResource(R.string.backup_device), end.device, devices, { it.title }, "backup_${tag}_device", onPick = onDevice)
         OutlinedButton(
             onClick = { picking = tag; pickFolder.launch(end.device.rootUri()) },
             modifier = Modifier.fillMaxWidth().semantics { contentDescription = "backup_${tag}_location" },
@@ -319,13 +323,7 @@ fun BackupSetupDialog(driveId: String, driveTitle: String, title: Int = R.string
                             contentDescription = stringResource(R.string.cd_backup_reminders_info))
                     }
                 }
-                FlowRow(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                    (if (allowManual) listOf(0 to R.string.backup_manual) else emptyList<Pair<Int, Int>>())
-                        .plus(BACKUP_INTERVALS).forEach { (h, label) ->
-                            FilterChip(intervalHours == h, { intervalHours = h }, { Text(stringResource(label)) },
-                                modifier = Modifier.semantics { contentDescription = "backup_interval_$h" })
-                        }
-                }
+                BackupFrequencyPicker(intervalHours, "backup_interval", allowManual) { intervalHours = it }
                 if (incremental) {
                     HorizontalDivider()
                     Row(verticalAlignment = Alignment.CenterVertically) {
@@ -455,6 +453,14 @@ fun BackupSetupDialog(driveId: String, driveTitle: String, title: Int = R.string
 }
 
 /** The choices of how often a backup comes due, in hours, with their labels. Monthly is 30 days. */
+/** How often a backup comes due, as a dropdown. [id] is the field's test handle, and `[id]_<hours>` each option's. */
+@Composable
+fun BackupFrequencyPicker(hours: Int, id: String, allowManual: Boolean = false, onPick: (Int) -> Unit) {
+    val options = (if (allowManual) listOf(0 to R.string.backup_manual) else emptyList()) + BACKUP_INTERVALS
+    val names = options.associate { (h, label) -> h to stringResource(label) }
+    Picker(stringResource(R.string.backup_frequency), hours, options.map { it.first }, { names[it] ?: "$it h" }, id, { "${id}_$it" }, onPick)
+}
+
 val BACKUP_INTERVALS = listOf(24 to R.string.backup_daily, 168 to R.string.backup_weekly, 720 to R.string.backup_monthly)
 
 /** Learn more: what Plain and Incremental each give, and what each costs. */
@@ -485,7 +491,7 @@ fun BackupJobsDialog(driveId: String, onDismiss: () -> Unit) {
     val all by store.jobs.collectAsState()
     store.revision.collectAsState().value // recompose on history changes
     val jobs = jobsForDrive(all, driveId)
-    val actions = rememberJobActions()
+    val actions = rememberJobActions(onMounted = onDismiss)
 
     AlertDialog(
         onDismissRequest = onDismiss,
@@ -564,11 +570,17 @@ class JobActions(
     val remove: (BackupJob) -> Unit,
     val enterPassword: (BackupJob) -> Unit,
     val chooseFolder: (BackupJob) -> Unit,
+    val mount: (BackupJob) -> Unit,
+    /** The job whose mount is working: opening a repository reads its index, which takes seconds on a slow drive. */
+    val mounting: State<String?>,
 )
 
 @Composable
-fun rememberJobActions(): JobActions {
+fun rememberJobActions(onMounted: () -> Unit = {}): JobActions {
     val context = LocalContext.current
+    val scope = rememberCoroutineScope()
+    val mounting = remember { mutableStateOf<String?>(null) }
+    var mountProblem by remember { mutableStateOf<String?>(null) }
     val store = remember { JobStore.get(context) }
     var showPassword by remember { mutableStateOf<String?>(null) }
     var removing by remember { mutableStateOf<BackupJob?>(null) }
@@ -614,9 +626,31 @@ fun rememberJobActions(): JobActions {
             remove = { removing = it },
             enterPassword = { entering = it },
             chooseFolder = { relinking = it; pickFolderAgain.launch(null) },
+            mount = { job ->
+                mounting.value = job.id
+                scope.launch {
+                    val result = withContext(Dispatchers.IO) { runCatching { BackupMounts.mount(context, job) } }
+                    mounting.value = null
+                    result.onSuccess { onMounted() }.onFailure {
+                        OtgMasterState.logFailure("backup-mount", "Could not mount the backup \"${job.name}\"", it)
+                        if (BackupRunner.isDamage(it)) withContext(Dispatchers.IO) {
+                            // The offer to recreate it says what happened.
+                            BackupRunner(context).markCorrupted(job, it.message ?: "the backup is damaged")
+                            JobStore.get(context).job(job.id)?.let { j -> BackupPrompts.corruptionFound(context, j) }
+                        } else mountProblem = context.getString(R.string.backups_mount_failed, job.name, it.message ?: it.javaClass.simpleName)
+                    }
+                }
+            },
+            mounting = mounting,
         )
     }
 
+    mountProblem?.let { text ->
+        AlertDialog(onDismissRequest = { mountProblem = null },
+            title = { Text(stringResource(R.string.backups_mount)) },
+            text = { Text(text, modifier = Modifier.semantics { contentDescription = "backup_mount_problem" }) },
+            confirmButton = { TextButton(onClick = { mountProblem = null }) { Text(stringResource(R.string.close)) } })
+    }
     refusal?.let { text ->
         AlertDialog(onDismissRequest = { refusal = null },
             title = { Text(stringResource(R.string.backup_password)) },
@@ -735,7 +769,34 @@ private fun grantLost(context: Context, end: Endpoint): Boolean = end.kind != Vo
 private fun lostFolderIsTarget(context: Context, job: BackupJob) = grantLost(context, job.destination)
 
 /**
- * Back up now and Cancel, whatever it needs to be put right, and More actions: Verify, Restore,
+ * Mount for an incremental backup, enabled while the target can be read: the repository is all a
+ * mount needs, so the source can be away. A plain backup is ordinary folders, with nothing to mount.
+ * Tapped when it is already mounted, it goes to its card.
+ */
+@Composable
+fun BackupMountButton(job: BackupJob, actions: JobActions) {
+    if (job.type != JobType.INCREMENTAL) return
+    val context = LocalContext.current
+    val targetHere by produceState(false, job.destination.uri) {
+        while (true) {
+            value = withContext(Dispatchers.IO) { VolumeInfo.isAvailable(context, Uri.parse(job.destination.uri)) }
+            delay(2000)
+        }
+    }
+    val mounting by actions.mounting
+    Button(
+        enabled = targetHere && mounting == null,
+        onClick = { actions.mount(job) },
+        modifier = Modifier.semantics { contentDescription = "backup_mount_${job.name}" },
+    ) {
+        if (mounting == job.id) CircularProgressIndicator(
+            Modifier.size(18.dp).semantics { contentDescription = "backup_mount_progress_${job.name}" }, strokeWidth = 2.dp,
+        ) else Text(stringResource(R.string.backups_mount))
+    }
+}
+
+/**
+ * Back up now and Cancel, Mount, whatever it needs to be put right, and More actions: Verify, Restore,
  * its password and Remove. As on a drive's card, the menu lists only what can be done right now,
  * and no menu shows when that is nothing.
  */
@@ -784,6 +845,7 @@ fun JobActionsRow(job: BackupJob, actions: JobActions, runLabel: Int = R.string.
         Button(enabled = !busy && job.corruptedAt == null, onClick = { run(BackupExecutor.Op.Backup("manual")) }, modifier = Modifier.semantics { contentDescription = tag("run_now") }) {
             Text(stringResource(runLabel)) }
         if (busy) Button(onClick = { BackupExecutor.cancel(job.id) }, modifier = Modifier.semantics { contentDescription = tag("cancel") }) { Text(stringResource(R.string.cancel)) }
+        BackupMountButton(job, actions)
         if (more.isNotEmpty()) MoreActionsButton(more, tag("more"))
     }
 }

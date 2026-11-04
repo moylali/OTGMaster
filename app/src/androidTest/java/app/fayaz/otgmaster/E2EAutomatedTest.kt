@@ -1254,6 +1254,16 @@ class E2EAutomatedTest {
         }
     }
 
+    /** In Create's form: picks how often the backup comes due. */
+    private fun bkPickFrequency(hours: Int) {
+        clickInDialog("backup_interval")
+        val option = device.wait(Until.findObject(By.desc("backup_interval_$hours")), timeout)
+        if (option == null) captureScreen("no_frequency_$hours")
+        assertNotNull("no frequency of $hours hours", option)
+        option!!.click()
+        assertTrue("the frequency's menu stayed", device.wait(Until.gone(By.desc("backup_interval_$hours")), timeout))
+    }
+
     /** Opens the More actions menu of the backup [name]'s card. */
     private fun bkOpenMore(name: String): Boolean {
         val more = bkScrollTo(By.desc("backup_more_$name")) ?: return false
@@ -1368,7 +1378,7 @@ class E2EAutomatedTest {
         bkPick(target.root, *target.path.toTypedArray())
         typeInto("backup_name", name)
         clickInDialog(if (incremental) "backup_type_incremental" else "backup_type_plain")
-        interval?.let { clickInDialog("backup_interval_$it") }
+        interval?.let { bkPickFrequency(it) }
         if (incremental) {
             bkTypePassword("backup_password", password)
             bkTypePassword("backup_password_confirm", password)
@@ -2006,12 +2016,15 @@ class E2EAutomatedTest {
         assertTrue(clickByDesc("backup_learn_more_close"))
         android.os.SystemClock.sleep(500)
         assertNotNull("no Backup reminders heading", findInDialog("backup_reminders_heading"))
-        assertNotNull("no Daily", findInDialog("backup_interval_24"))
-        assertNotNull("no Weekly", findInDialog("backup_interval_168"))
-        assertNotNull("no Monthly", findInDialog("backup_interval_720"))
+        clickInDialog("backup_interval")
+        assertNotNull("no Daily", device.wait(Until.findObject(By.desc("backup_interval_24")), timeout))
+        assertNotNull("no Weekly", device.findObject(By.desc("backup_interval_168")))
+        assertNotNull("no Monthly", device.findObject(By.desc("backup_interval_720")))
         assertNull("Manual on Create reminder", device.findObject(By.desc("backup_interval_0")))
-        assertTrue("the heading is not above the choices",
-            device.findObject(By.desc("backup_reminders_heading")).visibleBounds.bottom <= device.findObject(By.desc("backup_interval_24")).visibleBounds.top + 40)
+        device.pressBack()
+        assertTrue("Back left the frequency's menu up", device.wait(Until.gone(By.desc("backup_interval_24")), timeout))
+        assertTrue("the heading is not above the frequency",
+            device.findObject(By.desc("backup_reminders_heading")).visibleBounds.bottom <= device.findObject(By.desc("backup_interval")).visibleBounds.top + 40)
         bkTapSettled(bkText(R.string.cd_backup_reminders_info))
         bkAssertDesc("backup_reminders_info", "the info icon opened no dialog")
         assertNull("Create reminder's info mentions Manual, which it does not offer",
@@ -2272,9 +2285,50 @@ class E2EAutomatedTest {
         clickInDialog("backups_browse_mount")
         bkAssertDesc("backups_browse_opening", "no sign in the password dialog", 3000L)
         bkAssertGone("backups_browse_mount", "the password dialog stayed", 60000L)
-        BackupMounts.testDelayMs = 0
         bkExpectMountAnnounced("desktop_repo (backup)")
         doUnmount()
+
+        // A reminder's card mounts it with the saved password, with a sign while it opens.
+        returnToMainScreen()
+        openBackupsTab("backups_open_schedules")
+        bkRowClick("backup_mount_E2E_mp")
+        bkAssertDesc("backup_mount_progress_E2E_mp", "no sign on the card's Mount", 3000L)
+        BackupMounts.testDelayMs = 0
+        bkExpectMountAnnounced("E2E_mp (backup)")
+        doUnmount()
+        // So does its History entry.
+        returnToMainScreen()
+        openBackupsTab("backups_open_history")
+        bkRowClick("backup_mount_E2E_mp")
+        bkExpectMountAnnounced("E2E_mp (backup)")
+        doUnmount()
+
+        // With the target's drive gone, neither does anything. The button follows within two seconds.
+        bkPullDrive(drive)
+        openBackupsTab("backups_open_history")
+        android.os.SystemClock.sleep(3000)
+        bkAssertMountRefused("History")
+        bkOpenTab("backups_tab_schedules")
+        android.os.SystemClock.sleep(3000)
+        bkAssertMountRefused("the card")
+
+        // Back again, it mounts.
+        bkReplugDrive()
+        openBackupsTab("backups_open_schedules")
+        android.os.SystemClock.sleep(3000)
+        bkRowClick("backup_mount_E2E_mp")
+        bkExpectMountAnnounced("E2E_mp (backup)")
+        doUnmount()
+    }
+
+    /** A tap on Mount does nothing with the target away: no mount, no error, and Manage backups stays up. */
+    private fun bkAssertMountRefused(where: String) {
+        bkRowClick("backup_mount_E2E_mp")
+        android.os.SystemClock.sleep(1500)
+        assertNull("Mount on $where opened something with the drive gone", device.findObject(By.desc("backup_mount_progress_E2E_mp")))
+        assertNull("Mount on $where tried with the drive gone", device.findObject(By.desc("backup_mount_problem")))
+        assertTrue("Mount on $where mounted with the drive gone", OtgMasterState.mountedDrives.none { it.id == BackupMounts.driveIdFor(bkStore.jobs.value.first { j -> j.name == "E2E_mp" }.id) })
+        assertNotNull("Mount on $where left Manage backups", device.findObject(By.desc("backups_tab_history")))
     }
 
     // ── What each schedule row says ─────────────────────────────────────────────────────
@@ -2326,6 +2380,20 @@ class E2EAutomatedTest {
         bkRelease()
         bkAwait(slow.id, "the slow run", 600_000L)
         bkExpectSuccess(bkAwait(job.id, "the waiting backup", 120_000L), "the waiting backup")
+
+        // The frequency is a dropdown on the card, and what it picks is kept.
+        bkRowClick("backup_interval_E2E_next")
+        assertNotNull("no Daily on the card", device.wait(Until.findObject(By.desc("backup_interval_E2E_next_24")), timeout))
+        assertNotNull("no Monthly on the card", device.findObject(By.desc("backup_interval_E2E_next_720")))
+        assertNull("Manual on a reminder's card", device.findObject(By.desc("backup_interval_E2E_next_0")))
+        device.findObject(By.desc("backup_interval_E2E_next_168")).click()
+        assertTrue("the card's menu stayed", device.wait(Until.gone(By.desc("backup_interval_E2E_next_168")), timeout))
+        assertEquals("the card's dropdown did not set Weekly", 168, bkStore.job(job.id)!!.schedule.intervalHours)
+        // Back to Daily: the rest of this flow expects it to be due after a day.
+        bkRowClick("backup_interval_E2E_next")
+        device.wait(Until.findObject(By.desc("backup_interval_E2E_next_24")), timeout)!!.click()
+        assertTrue("the card's menu stayed", device.wait(Until.gone(By.desc("backup_interval_E2E_next_24")), timeout))
+        assertEquals("the card's dropdown did not set Daily", 24, bkStore.job(job.id)!!.schedule.intervalHours)
 
         bkExpectScheduleColumns("E2E_next", "E2E_busy")
 
@@ -2471,7 +2539,10 @@ class E2EAutomatedTest {
             clickScrolling("more_actions_button", "More actions missing")
             device.wait(Until.findObject(By.text(bkText(R.string.backup_action))), timeout)!!.click()
         } else action.click()
-        assertNotNull("no Manual on the card's Back up", findInDialog("backup_interval_0"))
+        clickInDialog("backup_interval")
+        assertNotNull("no Manual on the card's Back up", device.wait(Until.findObject(By.desc("backup_interval_0")), timeout))
+        device.pressBack()
+        assertTrue("Back left the frequency's menu up", device.wait(Until.gone(By.desc("backup_interval_0")), timeout))
         bkTapSettled(bkText(R.string.cd_backup_reminders_info))
         bkAssertText(bkText(R.string.backup_reminders_info) + " " + bkText(R.string.backup_reminders_info_manual), "the info does not cover Manual")
         assertTrue(clickByDesc("backup_reminders_info_close"))
