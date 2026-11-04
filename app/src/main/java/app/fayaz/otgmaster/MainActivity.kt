@@ -77,9 +77,7 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.text.input.PasswordVisualTransformation
 import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.unit.dp
-import androidx.compose.ui.draw.drawBehind
 import androidx.compose.ui.platform.testTag
-import androidx.compose.ui.text.style.TextAlign
 import app.fayaz.otgmaster.block.RawBlockDevice
 import app.fayaz.otgmaster.fs.DetectedFilesystem
 import app.fayaz.otgmaster.fs.FilesystemDetector
@@ -3194,50 +3192,46 @@ fun OtgMasterApp(
             // each a tab of BackupsActivity, and Mount backup, which goes straight to the Files picker.
             val context = androidx.compose.ui.platform.LocalContext.current
             var backupsOpen by remember { mutableStateOf(false) }
-            // One panel, so the three buttons read as part of the button that opened them. It starts at
-            // the top of the button's pill, 4 dp inside its 48 dp touch target, and shares its corners.
-            // Closed there is nothing below the pill, so it is not drawn and the button stands alone.
-            val panelColor = CardDefaults.cardColors().containerColor
-            Column(
-                Modifier.fillMaxWidth().drawBehind {
-                    val top = 4.dp.toPx()
-                    if (size.height > 48.dp.toPx()) drawRoundRect(
-                        color = panelColor,
-                        topLeft = androidx.compose.ui.geometry.Offset(0f, top),
-                        size = androidx.compose.ui.geometry.Size(size.width, size.height - top),
-                        cornerRadius = androidx.compose.ui.geometry.CornerRadius(20.dp.toPx()),
-                    )
-                }
-            ) {
-                Button(
-                    onClick = { backupsOpen = !backupsOpen },
-                    modifier = Modifier.fillMaxWidth().semantics { contentDescription = "manage_backups_button" },
-                ) {
-                    Text(stringResource(R.string.backups_manage_link))
-                    Icon(if (backupsOpen) Icons.Default.KeyboardArrowUp else Icons.Default.KeyboardArrowDown, contentDescription = null)
-                }
-                AnimatedVisibility(visible = backupsOpen) {
-                    // Each button keeps 4 dp of touch target above and below, which makes these gaps 8 dp too.
+            // The same card and header as Mount encrypted drive above it: the title on the left,
+            // the arrow on the right, and what it opens inside the card.
+            Card(modifier = Modifier.fillMaxWidth()) {
+                Column(modifier = Modifier.padding(16.dp)) {
                     Row(
-                        Modifier.fillMaxWidth().padding(start = 8.dp, end = 8.dp, bottom = 4.dp),
-                        horizontalArrangement = Arrangement.spacedBy(8.dp),
-                        verticalAlignment = Alignment.CenterVertically,
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .semantics { contentDescription = "manage_backups_button" }
+                            .clickable { backupsOpen = !backupsOpen },
+                        horizontalArrangement = Arrangement.SpaceBetween,
+                        verticalAlignment = Alignment.CenterVertically
                     ) {
-                        listOf(
-                            Triple(app.fayaz.otgmaster.ui.BackupsActivity.TAB_SCHEDULES, R.string.backups_tab_schedules, "backups_open_schedules"),
-                            Triple(app.fayaz.otgmaster.ui.BackupsActivity.TAB_HISTORY, R.string.backups_tab_history, "backups_open_history"),
-                        ).forEach { (tab, label, id) ->
-                            OutlinedButton(
-                                onClick = {
-                                    context.startActivity(Intent(context, app.fayaz.otgmaster.ui.BackupsActivity::class.java)
-                                        .putExtra(app.fayaz.otgmaster.ui.BackupsActivity.EXTRA_TAB, tab))
-                                },
-                                contentPadding = PaddingValues(horizontal = 8.dp, vertical = 8.dp),
-                                modifier = Modifier.weight(1f).semantics { contentDescription = id },
-                            ) { Text(stringResource(label), maxLines = 2, textAlign = TextAlign.Center) }
+                        Text(stringResource(R.string.backups_manage_link), style = MaterialTheme.typography.titleMedium)
+                        Icon(
+                            imageVector = if (backupsOpen) Icons.Default.KeyboardArrowUp else Icons.Default.KeyboardArrowDown,
+                            contentDescription = stringResource(R.string.cd_expand)
+                        )
+                    }
+                    AnimatedVisibility(visible = backupsOpen) {
+                        // Each button is as wide as its label. What does not fit moves to the next
+                        // line, so a narrow screen or a large font never cuts a label or breaks a word.
+                        FlowRow(
+                            Modifier.fillMaxWidth().padding(top = 8.dp),
+                            horizontalArrangement = Arrangement.spacedBy(8.dp),
+                        ) {
+                            listOf(
+                                Triple(app.fayaz.otgmaster.ui.BackupsActivity.TAB_SCHEDULES, R.string.backups_tab_schedules, "backups_open_schedules"),
+                                Triple(app.fayaz.otgmaster.ui.BackupsActivity.TAB_HISTORY, R.string.backups_tab_history, "backups_open_history"),
+                            ).forEach { (tab, label, id) ->
+                                OutlinedButton(
+                                    onClick = {
+                                        context.startActivity(Intent(context, app.fayaz.otgmaster.ui.BackupsActivity::class.java)
+                                            .putExtra(app.fayaz.otgmaster.ui.BackupsActivity.EXTRA_TAB, tab))
+                                    },
+                                    contentPadding = PaddingValues(horizontal = 10.dp, vertical = 8.dp),
+                                    modifier = Modifier.semantics { contentDescription = id },
+                                ) { Text(stringResource(label), maxLines = 1, softWrap = false) }
+                            }
+                            app.fayaz.otgmaster.ui.MountBackupButton(onProblem = { backupProblem = it })
                         }
-                        // The longest label: at 360 dp an equal share cut it off.
-                        app.fayaz.otgmaster.ui.MountBackupButton(onProblem = { backupProblem = it }, modifier = Modifier.weight(1.2f))
                     }
                 }
             }
