@@ -1,1 +1,1 @@
-Remove schedule: warns about the password, Cancel keeps it, Remove clears job, password, delay and notifications, keeps the backup, and releases a folder grant only once nothing uses it.
+Remove reminder: warns about the password, Cancel keeps it, Remove clears job, password, delay and notifications, keeps the backup, and releases a folder grant only once nothing uses it.
