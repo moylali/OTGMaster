@@ -193,6 +193,42 @@ class VeraCryptDocumentProvider : DocumentsProvider() {
             return if (drive?.fileSystem is app.fayaz.otgmaster.backup.restic.ResticFileSystem) backupProxyHandler else proxyHandler
         }
 
+        /** Documents open for writing, each with how many handles have it open. */
+        private val openWriters = HashMap<String, Int>()
+
+        private fun writerOpened(docId: String) = synchronized(openWriters) {
+            openWriters[docId] = (openWriters[docId] ?: 0) + 1
+        }
+
+        private fun writerClosed(docId: String) = synchronized(openWriters) {
+            val left = (openWriters[docId] ?: 1) - 1
+            if (left > 0) openWriters[docId] = left else openWriters.remove(docId)
+        }
+
+        private fun writerInside(docId: String) = synchronized(openWriters) {
+            openWriters.keys.any { it == docId || it.startsWith("$docId/") }
+        }
+
+        /**
+         * Waits for writers of [docId], or of anything below it, to finish closing.
+         *
+         * A client's close() returns before this process runs onRelease, and that closes the
+         * file, which writes to the volume. Deleting first let that write land on what the delete
+         * had freed: FAT32 allocated a cluster for the deleted folder, which only fsck found
+         * (1 orphan cluster, free count off by one), and ext4 would write the cleared inode back.
+         * Called without the drive's lock, which onRelease needs.
+         *
+         * @return false if one is still open after [waitMs], so is really in use
+         */
+        internal fun awaitWriters(docId: String, waitMs: Long = 5000): Boolean {
+            val end = android.os.SystemClock.uptimeMillis() + waitMs
+            while (writerInside(docId)) {
+                if (android.os.SystemClock.uptimeMillis() >= end) return false
+                android.os.SystemClock.sleep(20)
+            }
+            return true
+        }
+
         /**
          * Blocks until all previously-queued proxyHandler messages have run, then returns.
          * Call this on a background thread before unmounting a filesystem to ensure any
@@ -228,8 +264,13 @@ class VeraCryptDocumentProvider : DocumentsProvider() {
         return getDocIdForChild(documentId, newFile)
     }
 
-    override fun deleteDocument(documentId: String?) =
-        onDrive(documentId, "delete") { deleteDocumentImpl(documentId) }
+    override fun deleteDocument(documentId: String?) {
+        val settled = documentId == null || awaitWriters(documentId)
+        onDrive(documentId, "delete") {
+            if (!settled) throw java.io.IOException("Cannot delete: a file there is still open for writing")
+            deleteDocumentImpl(documentId)
+        }
+    }
 
     private fun deleteDocumentImpl(documentId: String?) {
         val file = getFileForDocId(documentId) ?: throw FileNotFoundException("File not found")
@@ -384,11 +425,24 @@ class VeraCryptDocumentProvider : DocumentsProvider() {
 
                 override fun onFsync() = onDrive(documentId, "sync") { file.flush() }
 
-                override fun onRelease() = onDrive(documentId, "close") { file.close() }
+                override fun onRelease() {
+                    try {
+                        onDrive(documentId, "close") { file.close() }
+                    } finally {
+                        documentId?.let { writerClosed(it) }
+                    }
+                }
             }
 
             val pfdMode = ParcelFileDescriptor.parseMode(mode ?: "r")
-            return storageManager.openProxyFileDescriptor(pfdMode, callback, proxyHandler)
+            documentId?.let { writerOpened(it) }
+            try {
+                return storageManager.openProxyFileDescriptor(pfdMode, callback, proxyHandler)
+            } catch (e: Exception) {
+                // No descriptor, so no onRelease will ever come for this one.
+                documentId?.let { writerClosed(it) }
+                throw e
+            }
         }
 
         val storageManager = context?.getSystemService(StorageManager::class.java)
