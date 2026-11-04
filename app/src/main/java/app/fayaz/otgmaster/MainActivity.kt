@@ -3010,11 +3010,17 @@ fun OtgMasterApp(
                     val isNewlyMounted = drive.id in newlyMountedDriveIds
                     LaunchedEffect(isNewlyMounted) {
                         if (isNewlyMounted) {
-                            repeat(3) {
-                                highlightAlpha.animateTo(1f, tween(250))
-                                highlightAlpha.animateTo(0f, tween(250))
+                            try {
+                                repeat(3) {
+                                    highlightAlpha.animateTo(1f, tween(250))
+                                    highlightAlpha.animateTo(0f, tween(250))
+                                }
+                            } finally {
+                                // Closing the slider mid flash cancels this. It still has to count as
+                                // shown, or the next Mount of this drive looks like nothing new and
+                                // the slider stays shut.
+                                onHighlightConsumed(drive.id)
                             }
-                            onHighlightConsumed(drive.id)
                         }
                     }
                     val normalColor = MaterialTheme.colorScheme.secondaryContainer
