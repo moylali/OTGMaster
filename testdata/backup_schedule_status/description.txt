@@ -1,1 +1,1 @@
-What a reminder row says: Next with a delay and a snooze, Due now, Due now and which drive, Backup in progress, Waiting for another backup, Corrupted.
+The frequency dropdown on a reminder's card, and what its row says: Next with a delay and a snooze, Due now, Due now and which drive, Backup in progress, Waiting for another backup, Corrupted.

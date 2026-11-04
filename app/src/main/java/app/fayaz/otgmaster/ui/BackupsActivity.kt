@@ -34,7 +34,6 @@ import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Button
 import androidx.compose.material3.Card
 import androidx.compose.material3.CircularProgressIndicator
-import androidx.compose.material3.FilterChip
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
 import androidx.compose.material3.LinearProgressIndicator
@@ -89,10 +88,10 @@ import kotlinx.coroutines.withContext
  * drives it uses, in two tabs.
  *
  * - **Reminders**: Create reminder, while a drive is mounted; each job's source and target, type and interval (changeable here), when
- *   it last ran and how, where it stands now; Back up now, and More actions for Verify backup,
+ *   it last ran and how, where it stands now; Back up now, Mount, and More actions for Verify backup,
  *   Restore newest, its password and Remove reminder. A manual backup has no interval, so it is under History.
  * - **History**: every run of every job, newest first — what ran, when, for how long, how
- *   many files and bytes, the snapshot it made, and the message of a failure.
+ *   many files and bytes, the snapshot it made, and the message of a failure; Mount on what made a snapshot.
  */
 class BackupsActivity : androidx.fragment.app.FragmentActivity() {
 
@@ -152,7 +151,7 @@ private fun Schedules() {
     store.revision.collectAsState().value // recompose on history changes
     // A manual backup has no schedule: it lives in History.
     val jobs = allJobs.filterNot { it.schedule.isManual }
-    val actions = rememberJobActions()
+    val actions = rememberJobActions(onMounted = { (context as? android.app.Activity)?.finish() })
     val reachable = rememberReachableJobs(jobs)
 
     // The mounted partitions a schedule can use. A drive can come or go while this tab is up
@@ -199,12 +198,8 @@ private fun Schedules() {
                             style = MaterialTheme.typography.labelMedium)
                         BackupEnds(job)
                         JobStatusLine(job, reachable?.contains(job.id))
-                        FlowRow(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                            BACKUP_INTERVALS.forEach { (h, label) ->
-                                FilterChip(job.schedule.intervalHours == h, {
-                                    store.update(job.id) { it.copy(schedule = it.schedule.copy(intervalHours = h, autoRun = true)) }
-                                }, { Text(stringResource(label)) }, modifier = Modifier.semantics { contentDescription = "backup_interval_${h}_${job.name}" })
-                            }
+                        BackupFrequencyPicker(job.schedule.intervalHours, "backup_interval_${job.name}") { h ->
+                            store.update(job.id) { it.copy(schedule = it.schedule.copy(intervalHours = h, autoRun = true)) }
                         }
                         Text(stringResource(R.string.backup_last_success, Format.ago(job.lastSuccessAt)), style = MaterialTheme.typography.bodySmall)
                         job.lastMessage?.let { Text("${job.lastStatus?.lowercase() ?: ""}: $it", style = MaterialTheme.typography.bodySmall) }
@@ -228,7 +223,7 @@ private fun History() {
     val runs = remember(jobs, revision) {
         jobs.flatMap { j -> store.history(j.id).map { j to it } }.sortedByDescending { it.second.startedAt }
     }
-    val actions = rememberJobActions()
+    val actions = rememberJobActions(onMounted = { (context as? android.app.Activity)?.finish() })
     if (runs.isEmpty()) {
         Text(stringResource(R.string.backups_history_none), Modifier.padding(16.dp))
         return
@@ -236,12 +231,12 @@ private fun History() {
     // A manual backup has no row under Schedules, so its newest entry here carries its actions.
     val newestOfManual = runs.filter { it.first.schedule.isManual }.distinctBy { it.first.id }.map { it.second.id }.toSet()
     LazyColumn(Modifier.fillMaxSize().padding(horizontal = 12.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
-        items(runs, key = { it.second.id }) { (job, run) -> RunRow(job, run, if (run.id in newestOfManual) actions else null) }
+        items(runs, key = { it.second.id }) { (job, run) -> RunRow(job, run, actions, carriesActions = run.id in newestOfManual) }
     }
 }
 
 @Composable
-private fun RunRow(job: BackupJob, run: RunRecord, actions: JobActions? = null) {
+private fun RunRow(job: BackupJob, run: RunRecord, actions: JobActions, carriesActions: Boolean) {
     Card(Modifier.fillMaxWidth().padding(top = 8.dp)) {
         Column(Modifier.padding(12.dp), verticalArrangement = Arrangement.spacedBy(2.dp)) {
             val color = when (run.status) {
@@ -261,10 +256,10 @@ private fun RunRow(job: BackupJob, run: RunRecord, actions: JobActions? = null) 
             run.copyFolder?.let { Text(it, style = MaterialTheme.typography.bodySmall) }
             if (run.message.isNotBlank()) Text(run.message, style = MaterialTheme.typography.bodySmall)
             run.errors.take(5).forEach { Text("• $it", style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.error) }
-            actions?.let { a ->
+            if (carriesActions) {
                 JobStatusLine(job, null)
-                JobActionsRow(job, a, runLabel = R.string.backup_run_again)
-            }
+                JobActionsRow(job, actions, runLabel = R.string.backup_run_again)
+            } else if (run.snapshotId != null) BackupMountButton(job, actions)
         }
     }
 }
