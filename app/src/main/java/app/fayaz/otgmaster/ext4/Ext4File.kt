@@ -51,6 +51,9 @@ class Ext4File private constructor(
     companion object {
         private const val EXT4_EXTENTS_FL    = 0x00080000
         private const val EXT4_INLINE_DATA_FL = 0x10000000
+        private const val EXT4_IMMUTABLE_FL  = 0x00000010
+        private const val EXT4_APPEND_FL     = 0x00000020
+        private const val XATTR_MAGIC        = 0xEA020000.toInt()
         private const val EXTENT_MAGIC       = 0xF30A
         /** Max blocks in an initialised extent; above this ee_len flags it uninitialised. */
         private const val MAX_INIT_EXTENT_LEN = 32768
@@ -643,32 +646,92 @@ class Ext4File private constructor(
         return child
     }
 
+    /**
+     * Deletes this file, or this folder and everything in it, as FAT32 and NTFS do.
+     *
+     * The whole tree is checked first, so a folder holding something that cannot be deleted
+     * safely is refused with nothing written, rather than left half deleted.
+     */
     @Throws(IOException::class)
     override fun delete() {
-        val p = parent ?: throw IOException("Cannot delete root")
+        val p = parent as? Ext4File ?: throw IOException("Cannot delete root")
+        if (p.inodesFlags() and EXT4_INLINE_DATA_FL != 0) refuseDelete("its folder is stored inline in an inode")
+        checkDeletable(mutableSetOf())
 
         fs.markDirty()
+        deleteTree(p)
+        fs.markClean()
+    }
+
+    private fun refuseDelete(why: String): Nothing =
+        throw IOException("Cannot delete from this ext4 volume: $why. Nothing was changed.")
+
+    /** Reads the tree and writes nothing. No file names: these reasons reach anonymous reports. */
+    private fun checkDeletable(seenDirs: MutableSet<Long>) {
+        val bb = ByteBuffer.wrap(inode).order(ByteOrder.LITTLE_ENDIAN)
+        val mode = bb.getShort(0).toInt() and 0xFFFF
+        val flags = bb.getInt(32)
+        if (mode and 0xF000 == 0) refuseDelete("an entry points at a freed inode, so the volume is damaged. Check it on a computer")
+        // The name is matched by its bytes when the entry is removed, and these did not survive decoding.
+        if ('\uFFFD' in entryName) refuseDelete("a name is not valid UTF-8")
+        if (flags and (EXT4_IMMUTABLE_FL or EXT4_APPEND_FL) != 0) refuseDelete("a file is marked immutable or append-only")
+
+        val acl = externalXattrBlock()
+        if (acl != 0L) {
+            val x = ByteBuffer.wrap(fs.readBlock(acl)).order(ByteOrder.LITTLE_ENDIAN)
+            if (x.getInt(0) != XATTR_MAGIC) refuseDelete("an extended attribute block is damaged. Check it on a computer")
+            if (x.getInt(4) != 1) refuseDelete("an extended attribute block is shared between files")
+        }
+
+        val blocksInXattr = if (acl != 0L) fs.blockSize / 512L else 0L
+        val hasData = iBlocksLow48() - blocksInXattr != 0L
+        val extents = flags and EXT4_EXTENTS_FL != 0
+        val inline = flags and EXT4_INLINE_DATA_FL != 0
+        if (!extents && !inline && hasData) refuseDelete("a file uses the older block map layout")
+        if (extents) {
+            if (bb.getShort(40).toInt() and 0xFFFF != 0xF30A) refuseDelete("an extent tree is damaged. Check it on a computer")
+            if (bb.getShort(46).toInt() and 0xFFFF > 1) refuseDelete("a file's extent tree is deeper than one level")
+        }
+
+        if (isDir_) {
+            if (!seenDirs.add(inodeNum)) refuseDelete("a folder is reachable twice, so the volume is damaged. Check it on a computer")
+            if (inline) refuseDelete("a folder is stored inline in an inode")
+            if (!extents) refuseDelete("a folder uses the older block map layout")
+            listFiles().forEach { (it as Ext4File).checkDeletable(seenDirs) }
+        }
+    }
+
+    private fun deleteTree(p: Ext4File) {
+        if (isDir_) listFiles().forEach { (it as Ext4File).deleteTree(this) }
 
         val wasDir = isDir_
-        if (wasDir) {
-            // Must be empty (only "." and ".." entries remain).
-            val children = listFiles()
-            if (children.isNotEmpty())
-                throw IOException("Directory not empty: $entryName")
+        // Read now, not at the listing: another name of this file may have gone since.
+        val onDisk = if (wasDir) null else fs.readInode(inodeNum)
+        val onDiskBuf = onDisk?.let { ByteBuffer.wrap(it).order(ByteOrder.LITTLE_ENDIAN) }
+        val links = onDiskBuf?.let { it.getShort(26).toInt() and 0xFFFF } ?: 0
+
+        if (links > 1) {
+            // Another name still reaches this file, so only this name goes. Cut off between
+            // the two writes, the count is one too high, which fsck corrects.
+            p.unlinkChild(inodeNum, entryName, wasDir = false)
+            onDiskBuf!!.putShort(26, (links - 1).toShort())
+            onDiskBuf.putInt(12, (System.currentTimeMillis() / 1000L).toInt())  // i_ctime
+            fs.writeInode(inodeNum, onDisk!!)
+            return
         }
+
         // Which blocks the file holds. Nothing is freed yet: each step below leaves
         // the volume safe to interrupt, at worst leaking blocks or an inode (#33).
-        val toFree = freeBlocksAbove(-1L)
+        // Only an extent tree can be walked: a symlink's i_block holds its target's text,
+        // and a device's holds its numbers.
+        val flags = inodesFlags()
+        val xattr = externalXattrBlock()
+        val toFree = if (flags and EXT4_EXTENTS_FL != 0) freeBlocksAbove(-1L).toMutableList() else mutableListOf()
+        if (xattr != 0L) toFree += longArrayOf(xattr, 1)
 
         // 1. Unlink. Cut off here, the inode is unattached but still owns its
         //    blocks, which fsck reconnects or reclaims.
-        val childInode = inodeNum
-        val childName = entryName
-        (p as? Ext4File)?.run {  // receiver is the parent: use the captured child values
-            removeDirEntry(childInode, childName)
-            if (wasDir) incrLinkCount(-1)  // the ".." entry pointed at the parent
-            touchMtime(); dirty = true; sync()
-        }
+        p.unlinkChild(inodeNum, entryName, wasDir)
 
         // 2. Clear the inode. Cut off after this, its blocks are only leaked.
         inode.fill(0)
@@ -679,8 +742,23 @@ class Ext4File private constructor(
 
         // 3. Free the blocks, a block group at a time.
         fs.allocator.freeRuns(toFree)
+    }
 
-        fs.markClean()
+    private fun unlinkChild(childInode: Long, childName: String, wasDir: Boolean) {
+        // Going on would clear an inode that an entry still names.
+        if (!removeDirEntry(childInode, childName)) throw IOException("Directory entry to delete was not found")
+        if (wasDir) incrLinkCount(-1)  // the ".." entry pointed at this folder
+        touchMtime(); dirty = true; sync()
+    }
+
+    private fun externalXattrBlock(): Long {
+        val bb = ByteBuffer.wrap(inode).order(ByteOrder.LITTLE_ENDIAN)
+        return (bb.getInt(104).toLong() and 0xFFFFFFFFL) or ((bb.getShort(118).toLong() and 0xFFFFL) shl 32)
+    }
+
+    private fun iBlocksLow48(): Long {
+        val bb = ByteBuffer.wrap(inode).order(ByteOrder.LITTLE_ENDIAN)
+        return (bb.getInt(28).toLong() and 0xFFFFFFFFL) or ((bb.getShort(116).toLong() and 0xFFFFL) shl 32)
     }
 
     @Throws(IOException::class)
@@ -815,8 +893,10 @@ class Ext4File private constructor(
 
     /**
      * Remove the directory entry with ([inoNum], [name]) from this directory.
+     *
+     * @return false if no such entry was found
      */
-    fun removeDirEntry(inoNum: Long, name: String) {
+    fun removeDirEntry(inoNum: Long, name: String): Boolean {
         val nameBytes = name.toByteArray(Charsets.UTF_8)
         val tailReserve = if (fs.hasMetadataCsum) 12 else 0
         val numBlocks = (currentSize + fs.blockSize - 1) / fs.blockSize
@@ -845,12 +925,13 @@ class Ext4File private constructor(
                         bb.putInt(pos, 0)
                     }
                     writeDirBlock(inodeNum, inode, phys, data)
-                    return
+                    return true
                 }
                 prevPos = pos
                 pos += recLen
             }
         }
+        return false
     }
 
     /** Write a directory block with the tail checksum if required. */

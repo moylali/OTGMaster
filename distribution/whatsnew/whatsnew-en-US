@@ -6,4 +6,4 @@
 • Fixed: data written before a USB error could be lost
 • Fixed: drives over 2 TB, some 2 TB enclosures
 • Fixed: drives plugged in while locked mount on unlock
-• Fixed: auto mount could mount a partition twice
+• Fixed: ext4 folder delete; other hard links stay intact
