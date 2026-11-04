@@ -76,6 +76,8 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.text.input.PasswordVisualTransformation
 import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.unit.dp
+import androidx.compose.ui.draw.drawBehind
+import androidx.compose.ui.text.style.TextAlign
 import app.fayaz.otgmaster.block.RawBlockDevice
 import app.fayaz.otgmaster.fs.DetectedFilesystem
 import app.fayaz.otgmaster.fs.FilesystemDetector
@@ -3190,29 +3192,51 @@ fun OtgMasterApp(
             // each a tab of BackupsActivity, and Mount backup, which goes straight to the Files picker.
             val context = androidx.compose.ui.platform.LocalContext.current
             var backupsOpen by remember { mutableStateOf(false) }
-            Button(
-                onClick = { backupsOpen = !backupsOpen },
-                modifier = Modifier.fillMaxWidth().semantics { contentDescription = "manage_backups_button" },
+            // One panel, so the three buttons read as part of the button that opened them. It starts at
+            // the top of the button's pill, 4 dp inside its 48 dp touch target, and shares its corners.
+            // Closed there is nothing below the pill, so it is not drawn and the button stands alone.
+            val panelColor = CardDefaults.cardColors().containerColor
+            Column(
+                Modifier.fillMaxWidth().drawBehind {
+                    val top = 4.dp.toPx()
+                    if (size.height > 48.dp.toPx()) drawRoundRect(
+                        color = panelColor,
+                        topLeft = androidx.compose.ui.geometry.Offset(0f, top),
+                        size = androidx.compose.ui.geometry.Size(size.width, size.height - top),
+                        cornerRadius = androidx.compose.ui.geometry.CornerRadius(20.dp.toPx()),
+                    )
+                }
             ) {
-                Text(stringResource(R.string.backups_manage_link))
-                Icon(if (backupsOpen) Icons.Default.KeyboardArrowUp else Icons.Default.KeyboardArrowDown, contentDescription = null)
-            }
-            AnimatedVisibility(visible = backupsOpen) {
-                Row(Modifier.fillMaxWidth().padding(top = 8.dp), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                    listOf(
-                        Triple(app.fayaz.otgmaster.ui.BackupsActivity.TAB_SCHEDULES, R.string.backups_tab_schedules, "backups_open_schedules"),
-                        Triple(app.fayaz.otgmaster.ui.BackupsActivity.TAB_HISTORY, R.string.backups_tab_history, "backups_open_history"),
-                    ).forEach { (tab, label, id) ->
-                        OutlinedButton(
-                            onClick = {
-                                context.startActivity(Intent(context, app.fayaz.otgmaster.ui.BackupsActivity::class.java)
-                                    .putExtra(app.fayaz.otgmaster.ui.BackupsActivity.EXTRA_TAB, tab))
-                            },
-                            contentPadding = PaddingValues(horizontal = 8.dp, vertical = 8.dp),
-                            modifier = Modifier.weight(1f).semantics { contentDescription = id },
-                        ) { Text(stringResource(label), maxLines = 1, softWrap = false) }
+                Button(
+                    onClick = { backupsOpen = !backupsOpen },
+                    modifier = Modifier.fillMaxWidth().semantics { contentDescription = "manage_backups_button" },
+                ) {
+                    Text(stringResource(R.string.backups_manage_link))
+                    Icon(if (backupsOpen) Icons.Default.KeyboardArrowUp else Icons.Default.KeyboardArrowDown, contentDescription = null)
+                }
+                AnimatedVisibility(visible = backupsOpen) {
+                    // Each button keeps 4 dp of touch target above and below, which makes these gaps 8 dp too.
+                    Row(
+                        Modifier.fillMaxWidth().padding(start = 8.dp, end = 8.dp, bottom = 4.dp),
+                        horizontalArrangement = Arrangement.spacedBy(8.dp),
+                        verticalAlignment = Alignment.CenterVertically,
+                    ) {
+                        listOf(
+                            Triple(app.fayaz.otgmaster.ui.BackupsActivity.TAB_SCHEDULES, R.string.backups_tab_schedules, "backups_open_schedules"),
+                            Triple(app.fayaz.otgmaster.ui.BackupsActivity.TAB_HISTORY, R.string.backups_tab_history, "backups_open_history"),
+                        ).forEach { (tab, label, id) ->
+                            OutlinedButton(
+                                onClick = {
+                                    context.startActivity(Intent(context, app.fayaz.otgmaster.ui.BackupsActivity::class.java)
+                                        .putExtra(app.fayaz.otgmaster.ui.BackupsActivity.EXTRA_TAB, tab))
+                                },
+                                contentPadding = PaddingValues(horizontal = 8.dp, vertical = 8.dp),
+                                modifier = Modifier.weight(1f).semantics { contentDescription = id },
+                            ) { Text(stringResource(label), maxLines = 2, textAlign = TextAlign.Center) }
+                        }
+                        // The longest label: at 360 dp an equal share cut it off.
+                        app.fayaz.otgmaster.ui.MountBackupButton(onProblem = { backupProblem = it }, modifier = Modifier.weight(1.2f))
                     }
-                    app.fayaz.otgmaster.ui.MountBackupButton(onProblem = { backupProblem = it }, modifier = Modifier.weight(1f))
                 }
             }
         }

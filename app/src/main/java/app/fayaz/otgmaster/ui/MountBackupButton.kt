@@ -27,6 +27,7 @@ import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.semantics.contentDescription
 import androidx.compose.ui.semantics.semantics
+import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
 import app.fayaz.otgmaster.OtgMasterState
 import app.fayaz.otgmaster.R
@@ -116,6 +117,6 @@ fun MountBackupButton(onProblem: (String) -> Unit, modifier: Modifier = Modifier
         modifier = modifier.semantics { contentDescription = "backups_open_mount" },
     ) {
         if (opening) CircularProgressIndicator(Modifier.size(18.dp).semantics { contentDescription = "backups_browse_opening" }, strokeWidth = 2.dp)
-        else Text(stringResource(R.string.backups_mount_backup), maxLines = 1, softWrap = false)
+        else Text(stringResource(R.string.backups_mount_backup), maxLines = 2, textAlign = TextAlign.Center)
     }
 }
