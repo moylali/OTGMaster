@@ -35,6 +35,7 @@ import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.automirrored.filled.KeyboardArrowRight
 import androidx.compose.material.icons.filled.KeyboardArrowDown
 import androidx.compose.material.icons.filled.KeyboardArrowUp
 import androidx.compose.material.icons.filled.Visibility
@@ -77,6 +78,7 @@ import androidx.compose.ui.text.input.PasswordVisualTransformation
 import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.draw.drawBehind
+import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.text.style.TextAlign
 import app.fayaz.otgmaster.block.RawBlockDevice
 import app.fayaz.otgmaster.fs.DetectedFilesystem
@@ -3894,42 +3896,49 @@ fun themeStringRes(mode: ThemeMode): Int = when (mode) {
 }
 
 /**
- * A single collapsed-by-default settings entry: a tappable row showing a title and a
- * one-line summary of its current value, expanding in place to reveal its full content.
- * Keeping each setting in its own row like this lets new settings be added later without
- * the drawer growing into an unscannable wall of controls.
+ * One settings entry: a row with a title and a one-line summary of its current value. Tapping it
+ * opens a dialog holding the rest, so a setting never pushes the others down the drawer. [id] names
+ * the row for tests; Close and tapping outside both come back to the list.
  */
 @Composable
-fun SettingsExpandableRow(
+fun SettingsDialogRow(
+    id: String,
     title: String,
     summary: String,
-    content: @Composable () -> Unit
+    content: @Composable ColumnScope.() -> Unit
 ) {
-    var expanded by remember { mutableStateOf(false) }
+    var open by remember { mutableStateOf(false) }
     Column(modifier = Modifier.fillMaxWidth()) {
         Row(
             modifier = Modifier
                 .fillMaxWidth()
-                .clickable { expanded = !expanded }
+                .testTag("settings_row_$id")
+                .clickable { open = true }
                 .padding(vertical = 12.dp),
             horizontalArrangement = Arrangement.SpaceBetween,
             verticalAlignment = Alignment.CenterVertically
         ) {
-            Column {
+            Column(modifier = Modifier.weight(1f)) {
                 Text(title, style = MaterialTheme.typography.titleMedium)
                 Text(summary, style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
             }
-            Icon(
-                imageVector = if (expanded) Icons.Default.KeyboardArrowUp else Icons.Default.KeyboardArrowDown,
-                contentDescription = null
-            )
-        }
-        AnimatedVisibility(visible = expanded) {
-            Column(modifier = Modifier.padding(bottom = 8.dp)) {
-                content()
-            }
+            Icon(Icons.AutoMirrored.Filled.KeyboardArrowRight, contentDescription = null)
         }
         HorizontalDivider()
+    }
+    if (open) {
+        AlertDialog(
+            onDismissRequest = { open = false },
+            modifier = Modifier.semantics { contentDescription = "settings_dialog_$id" },
+            title = { Text(title) },
+            text = { Column(modifier = Modifier.verticalScroll(rememberScrollState()), content = content) },
+            confirmButton = {
+                TextButton(
+                    onClick = { open = false },
+                    modifier = Modifier.semantics { contentDescription = "settings_dialog_close" }
+                ) { Text(stringResource(R.string.close)) }
+            },
+        )
     }
 }
 
@@ -3976,6 +3985,7 @@ fun SettingsDrawer(
                 Column(
                     modifier = Modifier
                         .fillMaxSize()
+                        .semantics { testTagsAsResourceId = true }
                         .windowInsetsPadding(WindowInsets.safeDrawing.only(
                             WindowInsetsSides.Vertical + WindowInsetsSides.End))
                         .padding(16.dp)
@@ -3993,15 +4003,15 @@ fun SettingsDrawer(
                     Spacer(modifier = Modifier.height(8.dp))
                     HorizontalDivider()
 
-                    // Scrolls independently of the header, which stays reachable. The
-                    // drawer is a fixed 300.dp column and an expanded row can exceed the
-                    // screen on its own.
+                    // Scrolls independently of the header, which stays reachable: the rows
+                    // can outgrow a short screen, or a landscape one.
                     Column(
                         modifier = Modifier
                             .weight(1f)
                             .verticalScroll(rememberScrollState())
                     ) {
-                    SettingsExpandableRow(
+                    SettingsDialogRow(
+                        id = "theme",
                         title = stringResource(R.string.theme_label),
                         summary = stringResource(themeStringRes(currentTheme))
                     ) {
@@ -4023,7 +4033,8 @@ fun SettingsDrawer(
                         }
                     }
 
-                    SettingsExpandableRow(
+                    SettingsDialogRow(
+                        id = "auto_mount",
                         title = stringResource(R.string.auto_mount_title),
                         summary = if (autoMountEnabled) "On" else "Off"
                     ) {
@@ -4057,7 +4068,8 @@ fun SettingsDrawer(
                         }
                     }
 
-                    SettingsExpandableRow(
+                    SettingsDialogRow(
+                        id = "read_only",
                         title = stringResource(R.string.read_only_mode_title),
                         summary = if (readOnlyDefault) "On" else "Off"
                     ) {
@@ -4077,14 +4089,16 @@ fun SettingsDrawer(
                             )
                             Switch(
                                 checked = readOnlyDefault,
-                                onCheckedChange = onReadOnlyDefaultChange
+                                onCheckedChange = onReadOnlyDefaultChange,
+                                modifier = Modifier.semantics { contentDescription = "settings_read_only_switch" }
                             )
                         }
                     }
 
                     val uriHandler = androidx.compose.ui.platform.LocalUriHandler.current
 
-                    SettingsExpandableRow(
+                    SettingsDialogRow(
+                        id = "version",
                         title = stringResource(R.string.app_version_label),
                         summary = versionText
                     ) {
@@ -4106,7 +4120,8 @@ fun SettingsDrawer(
                     }
 
                     val donateUrl = stringResource(R.string.donate_url)
-                    SettingsExpandableRow(
+                    SettingsDialogRow(
+                        id = "donate",
                         title = stringResource(R.string.donate_title),
                         summary = stringResource(R.string.donate_summary)
                     ) {

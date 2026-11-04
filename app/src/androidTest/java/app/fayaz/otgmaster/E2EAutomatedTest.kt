@@ -51,6 +51,8 @@ class E2EAutomatedTest {
         /** As a case's password: it has keyfiles and no password. */
         private const val NO_PASSWORD = "none"
         private const val BK_PASSWORD = "otg-backup-run-2026"
+        /** A backup's actions that live in its card's More actions, not on the card. */
+        private val BK_IN_MORE = listOf("verify", "restore", "show_password", "remove")
         private const val BK_DESKTOP_PASSWORD = "otg-backup-e2e-2026"
         private const val PHONE = "/sdcard/Download/otg_e2e"
         private const val BACKUP_DIALOG_FIELD = "backup_name"
@@ -896,14 +898,14 @@ class E2EAutomatedTest {
         openBackupsTab("backups_open_schedules")
         // By tapping: isEnabled on a Compose button's description node cannot say.
         val create = device.wait(Until.findObject(By.desc("backups_create_schedule")), timeout)
-        assertNotNull("Create schedule missing", create)
+        assertNotNull("Create reminder missing", create)
         assertNull("the no-devices message shows with a drive mounted",
             device.findObject(By.text(context.getString(R.string.backups_create_no_devices))))
         create!!.click()
         if (device.wait(Until.findObject(By.desc(BACKUP_DIALOG_FIELD)), timeout) == null) captureScreen("backup_create_no_dialog")
-        assertNotNull("Create schedule did not open its form with a drive mounted", device.findObject(By.desc(BACKUP_DIALOG_FIELD)))
+        assertNotNull("Create reminder did not open its form with a drive mounted", device.findObject(By.desc(BACKUP_DIALOG_FIELD)))
         device.pressBack()
-        assertTrue("the Create schedule form did not close", device.wait(Until.gone(By.desc(BACKUP_DIALOG_FIELD)), timeout))
+        assertTrue("the Create reminder form did not close", device.wait(Until.gone(By.desc(BACKUP_DIALOG_FIELD)), timeout))
 
         // ── A folder with no repository in it ────────────────────────────────
         browseToFolder(source!!.name, "not_a_backup")
@@ -1035,10 +1037,10 @@ class E2EAutomatedTest {
         if (message == null) captureScreen("backup_no_devices_not_shown")
         assertNotNull("the no-devices message is not shown with nothing mounted", message)
         val disabled = device.wait(Until.findObject(By.desc("backups_create_schedule")), timeout)
-        assertNotNull("Create schedule missing with nothing mounted", disabled)
+        assertNotNull("Create reminder missing with nothing mounted", disabled)
         disabled!!.click()
         android.os.SystemClock.sleep(1500)
-        assertNull("Create schedule opened its form with nothing mounted", device.findObject(By.desc(BACKUP_DIALOG_FIELD)))
+        assertNull("Create reminder opened its form with nothing mounted", device.findObject(By.desc(BACKUP_DIALOG_FIELD)))
 
         jobs.delete(job.id)
         BackupSecrets(context).forget(job.id)
@@ -1235,6 +1237,10 @@ class E2EAutomatedTest {
 
     /** Taps a job's row action, scrolling to it first. */
     private fun bkRowClick(desc: String) {
+        BK_IN_MORE.firstOrNull { desc.startsWith("backup_${it}_") }?.let { action ->
+            bkMoreClick(desc.removePrefix("backup_${action}_"), desc)
+            return
+        }
         for (attempt in 1..3) {
             val o = bkScrollTo(By.desc(desc))
             if (o == null) captureScreen("missing_$desc")
@@ -1246,6 +1252,34 @@ class E2EAutomatedTest {
                 if (attempt == 3) throw e
             }
         }
+    }
+
+    /** Opens the More actions menu of the backup [name]'s card. */
+    private fun bkOpenMore(name: String): Boolean {
+        val more = bkScrollTo(By.desc("backup_more_$name")) ?: return false
+        return try { more.click(); true } catch (e: androidx.test.uiautomator.StaleObjectException) { false }
+    }
+
+    /**
+     * Taps [desc] in the backup [name]'s More actions. The menu lists only what can be done now,
+     * so a run just ending can leave the item, or the whole menu, a moment behind: look again.
+     */
+    private fun bkMoreClick(name: String, desc: String) {
+        for (attempt in 1..5) {
+            if (bkOpenMore(name)) {
+                val item = device.wait(Until.findObject(By.desc(desc)), 5000L)
+                try {
+                    if (item != null) { item.click(); return }
+                } catch (e: androidx.test.uiautomator.StaleObjectException) {
+                    // Redrawn under the tap: the menu closes or not, and the check below sorts that out.
+                }
+                // Back only if the menu is up: otherwise it would leave the screen.
+                if (BK_IN_MORE.any { device.hasObject(By.desc("backup_${it}_$name")) }) device.pressBack()
+            }
+            android.os.SystemClock.sleep(2000)
+        }
+        captureScreen("missing_$desc")
+        fail("$desc not in the More actions of $name")
     }
 
     /** Unmounts the mounted backup [id], titled [name]: an encrypted drive's card has Unmount too. */
@@ -1376,7 +1410,7 @@ class E2EAutomatedTest {
 
     private fun bkOpenCreate() {
         bkOpenTab("backups_tab_schedules")
-        assertTrue("Create schedule missing", clickByDesc("backups_create_schedule"))
+        assertTrue("Create reminder missing", clickByDesc("backups_create_schedule"))
         assertNotNull("the form did not open", device.wait(Until.findObject(By.desc("backup_name")), timeout))
     }
 
@@ -1973,12 +2007,12 @@ class E2EAutomatedTest {
         assertNotNull("no Daily", findInDialog("backup_interval_24"))
         assertNotNull("no Weekly", findInDialog("backup_interval_168"))
         assertNotNull("no Monthly", findInDialog("backup_interval_720"))
-        assertNull("Manual on Create schedule", device.findObject(By.desc("backup_interval_0")))
+        assertNull("Manual on Create reminder", device.findObject(By.desc("backup_interval_0")))
         assertTrue("the heading is not above the choices",
             device.findObject(By.desc("backup_reminders_heading")).visibleBounds.bottom <= device.findObject(By.desc("backup_interval_24")).visibleBounds.top + 40)
         bkTapSettled(bkText(R.string.cd_backup_reminders_info))
         bkAssertDesc("backup_reminders_info", "the info icon opened no dialog")
-        assertNull("Create schedule's info mentions Manual, which it does not offer",
+        assertNull("Create reminder's info mentions Manual, which it does not offer",
             device.findObject(By.text(bkText(R.string.backup_reminders_info) + " " + bkText(R.string.backup_reminders_info_manual))))
         assertTrue(clickByDesc("backup_reminders_info_close"))
         bkAssertGone("backup_reminders_info", "Close left the info up")
@@ -2371,7 +2405,7 @@ class E2EAutomatedTest {
         }
     }
 
-    // ── Remove schedule ─────────────────────────────────────────────────────────────────
+    // ── Remove reminder ─────────────────────────────────────────────────────────────────
 
     private fun bkFlowRemoveSchedule(drive: MountedDrive) {
         val job = bkJob(drive, "E2E_rm", agoHours = 25)
@@ -2458,7 +2492,10 @@ class E2EAutomatedTest {
         assertTrue(clickByDesc("backups_tab_history"))
         bkAssertDesc("backup_run_now_E2E_manual", "no Run again on its History entry")
         bkAssertText(bkText(R.string.backup_run_again), "the button says Run again")
-        for (a in listOf("verify", "restore", "show_password", "remove")) bkAssertDesc("backup_${a}_E2E_manual", "no $a on its History entry")
+        assertTrue("no More actions on its History entry", bkOpenMore("E2E_manual"))
+        for (a in BK_IN_MORE) bkAssertDesc("backup_${a}_E2E_manual", "no $a in the More actions of its History entry")
+        device.pressBack()
+        android.os.SystemClock.sleep(500)
         bkRowClick("backup_run_now_E2E_manual")
         bkCloseProgress()
         assertEquals("two runs", 2, bkStore.history(job.id).size)
@@ -3187,7 +3224,7 @@ class E2EAutomatedTest {
         assertNotNull("READ-ONLY tag missing before the repair", device.wait(Until.findObject(By.text("READ-ONLY")), timeout))
         // A read-only drive can be a backup's source, not its target: the form says so.
         openBackupsTab("backups_open_schedules")
-        assertTrue("Create schedule missing", clickByDesc("backups_create_schedule"))
+        assertTrue("Create reminder missing", clickByDesc("backups_create_schedule"))
         assertNotNull("the form did not open", device.wait(Until.findObject(By.desc("backup_name")), timeout))
         val readOnlyNote = findScrolling(By.text(context.getString(R.string.backup_target_read_only)), text = context.getString(R.string.backup_target_read_only))
         if (readOnlyNote == null) captureScreen("no_read_only_note")
@@ -3275,6 +3312,46 @@ class E2EAutomatedTest {
     }
 
     /**
+     * Each Settings row opens a dialog holding what it has, nothing of it shows before the tap, and
+     * Close comes back to the list. A switch in a dialog still changes the setting.
+     */
+    private fun assertSettingsOpenDialogs(context: Context) {
+        device.findObject(By.desc(context.getString(R.string.cd_settings))).click()
+        assertNotNull("Settings did not open", device.wait(Until.findObject(By.res("settings_row_theme")), timeout))
+        val rows = listOf(
+            "theme" to By.text(context.getString(R.string.theme_dark)),
+            "auto_mount" to By.text(context.getString(R.string.auto_mount_description)),
+            "read_only" to By.text(context.getString(R.string.read_only_mode_description)),
+            "version" to By.descContains(context.getString(R.string.cd_copy_version)),
+            "donate" to By.text(context.getString(R.string.donate_thank_you)),
+        )
+        for ((id, inside) in rows) {
+            assertNull("$id shows its content before the tap", device.findObject(inside))
+            val row = device.findObject(By.res("settings_row_$id"))
+            if (row == null) captureScreen("no_settings_row_$id")
+            assertNotNull("no Settings row for $id", row)
+            row!!.click()
+            assertNotNull("$id opened no dialog", device.wait(Until.findObject(By.desc("settings_dialog_$id")), timeout))
+            assertNotNull("the $id dialog does not hold its content", device.wait(Until.findObject(inside), timeout))
+            if (id == "read_only") {
+                val prefs = context.getSharedPreferences("otgmaster_prefs", Context.MODE_PRIVATE)
+                val before = prefs.getBoolean("read_only_default", false)
+                assertTrue(clickByDesc("settings_read_only_switch"))
+                android.os.SystemClock.sleep(500)
+                assertEquals("the switch in the dialog did not change the setting", !before, prefs.getBoolean("read_only_default", false))
+                assertTrue(clickByDesc("settings_read_only_switch"))
+                android.os.SystemClock.sleep(500)
+                assertEquals("the switch did not change back", before, prefs.getBoolean("read_only_default", false))
+            }
+            assertTrue(clickByDesc("settings_dialog_close"))
+            assertTrue("Close left the $id dialog up", device.wait(Until.gone(By.desc("settings_dialog_$id")), timeout))
+            assertNotNull("Close left Settings", device.wait(Until.findObject(By.res("settings_row_$id")), timeout))
+        }
+        device.findObject(By.desc(context.getString(R.string.cd_close_settings))).click()
+        assertTrue("Settings stayed open", device.wait(Until.gone(By.res("settings_row_theme")), timeout))
+    }
+
+    /**
      * The main screen around a mount: one unlock per partition whichever path starts it, Manage
      * backups below the form, the bell beside Settings, and the slider that a mount opens.
      */
@@ -3301,6 +3378,8 @@ class E2EAutomatedTest {
             assertTrue("Manage backups is not below the form", it.visibleBounds.bottom <= manage!!.visibleBounds.top)
         }
         scrollToTop()
+
+        assertSettingsOpenDialogs(context)
 
         // An unlock the form did not start, as auto mount's is: the form says so for this partition.
         val attempts = { OtgMasterState.recentLogs().count { it.contains("is already being unlocked") } }
