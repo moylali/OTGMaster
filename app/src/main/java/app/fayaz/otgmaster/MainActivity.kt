@@ -730,7 +730,7 @@ class MainActivity : AppCompatActivity() {
                         },
                         toastMessage = toastState.value?.first,
                         toastIsSuccess = toastState.value?.second ?: true,
-                        onToastDismiss = { toastState.value = null },
+                        onToastDismiss = { msg -> if (toastState.value?.first == msg) toastState.value = null },
                         newlyMountedDriveIds = newlyMountedDriveIds.value,
                         onHighlightConsumed = { driveId -> newlyMountedDriveIds.value = newlyMountedDriveIds.value - driveId },
                         formatUnavailable = { formatUnavailable(it) },
@@ -2898,7 +2898,7 @@ fun OtgMasterApp(
     onQuickUnlock: (String, VolumeCandidate, () -> Unit) -> Unit = { _, _, cb -> cb() },
     toastMessage: String? = null,
     toastIsSuccess: Boolean = true,
-    onToastDismiss: () -> Unit = {},
+    onToastDismiss: (String) -> Unit = {},
     newlyMountedDriveIds: Set<String> = emptySet(),
     onHighlightConsumed: (String) -> Unit = {},
     formatUnavailable: (MountedDrive) -> String? = { "" },
@@ -3409,7 +3409,7 @@ fun OtgMasterApp(
     app.fayaz.otgmaster.ui.StatusToast(
         message = backupProblem,
         isSuccess = false,
-        onDismiss = { backupProblem = null },
+        onDismiss = { msg -> if (backupProblem == msg) backupProblem = null },
         modifier = Modifier
             .align(Alignment.BottomCenter)
             .navigationBarsPadding()

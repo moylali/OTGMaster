@@ -15,9 +15,15 @@ import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.unit.dp
 import kotlinx.coroutines.delay
 
-/** The green or red note that slides in for a moment after a mount, an unmount or a failure. */
+/**
+ * The green or red note that slides in for a moment after a mount, an unmount or a failure.
+ *
+ * [onDismiss] gets the message whose time is up, and must clear it only if that is still the one
+ * showing: a new message cancels this timer at the next recomposition, and until then the old timer
+ * can still fire. That lost "Check the cable" to the end of a "Mounted:" note.
+ */
 @Composable
-fun StatusToast(message: String?, isSuccess: Boolean, onDismiss: () -> Unit, modifier: Modifier = Modifier) {
+fun StatusToast(message: String?, isSuccess: Boolean, onDismiss: (String) -> Unit, modifier: Modifier = Modifier) {
     AnimatedVisibility(
         visible = message != null,
         enter = slideInVertically(initialOffsetY = { it }),
@@ -27,7 +33,7 @@ fun StatusToast(message: String?, isSuccess: Boolean, onDismiss: () -> Unit, mod
         message?.let { msg ->
             LaunchedEffect(msg) {
                 delay(2500)
-                onDismiss()
+                onDismiss(msg)
             }
             Surface(
                 color = if (isSuccess) Color(0xFF2E7D32) else Color(0xFFC62828),
