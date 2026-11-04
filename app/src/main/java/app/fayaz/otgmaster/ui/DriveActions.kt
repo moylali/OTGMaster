@@ -196,10 +196,10 @@ private fun ActionButton(a: DriveAction) {
 }
 
 @Composable
-private fun MoreActionsButton(items: List<DriveAction>) {
+internal fun MoreActionsButton(items: List<DriveAction>, id: String = "more_actions_button") {
     var open by remember { mutableStateOf(false) }
     Box {
-        Button(onClick = { open = true }, modifier = Modifier.semantics { contentDescription = "more_actions_button" }) {
+        Button(onClick = { open = true }, modifier = Modifier.semantics { contentDescription = id }) {
             Text(stringResource(R.string.more_actions))
             Icon(Icons.Default.ArrowDropDown, contentDescription = null)
         }

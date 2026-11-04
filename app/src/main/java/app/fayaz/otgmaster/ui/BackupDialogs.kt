@@ -26,6 +26,7 @@ import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.Info
 import androidx.compose.material.icons.filled.Notifications
 import androidx.compose.material3.Badge
+import androidx.compose.material3.Button
 import androidx.compose.material3.BadgedBox
 import androidx.compose.material3.DropdownMenu
 import androidx.compose.material3.DropdownMenuItem
@@ -733,7 +734,11 @@ private fun grantLost(context: Context, end: Endpoint): Boolean = end.kind != Vo
 
 private fun lostFolderIsTarget(context: Context, job: BackupJob) = grantLost(context, job.destination)
 
-/** Back up now, Cancel, Verify, Restore, its password, Remove, and whatever it needs to be put right. */
+/**
+ * Back up now and Cancel, whatever it needs to be put right, and More actions: Verify, Restore,
+ * its password and Remove. As on a drive's card, the menu lists only what can be done right now,
+ * and no menu shows when that is nothing.
+ */
 @OptIn(ExperimentalLayoutApi::class)
 @Composable
 fun JobActionsRow(job: BackupJob, actions: JobActions, runLabel: Int = R.string.backup_run_now) {
@@ -757,26 +762,29 @@ fun JobActionsRow(job: BackupJob, actions: JobActions, runLabel: Int = R.string.
         color = MaterialTheme.colorScheme.error, modifier = Modifier.semantics { contentDescription = tag("password_missing") })
     if (folderLost) Text(stringResource(R.string.backup_folder_lost), style = MaterialTheme.typography.bodySmall,
         color = MaterialTheme.colorScheme.error, modifier = Modifier.semantics { contentDescription = tag("folder_lost") })
-    FlowRow(horizontalArrangement = Arrangement.spacedBy(4.dp)) {
-        if (job.corruptedAt != null) TextButton(enabled = !busy, onClick = { BackupPrompts.askRecreate(job.id) }, modifier = Modifier.semantics { contentDescription = tag("recreate") }) {
-            Text(stringResource(R.string.backup_recreate)) }
-        if (missingPassword) TextButton(onClick = { actions.enterPassword(job) }, modifier = Modifier.semantics { contentDescription = tag("enter_password") }) {
-            Text(stringResource(R.string.backup_enter_password)) }
-        if (folderLost) TextButton(onClick = { actions.chooseFolder(job) }, modifier = Modifier.semantics { contentDescription = tag("choose_folder") }) {
-            Text(stringResource(R.string.backup_choose_folder_again)) }
-        TextButton(enabled = !busy && job.corruptedAt == null, onClick = { run(BackupExecutor.Op.Backup("manual")) }, modifier = Modifier.semantics { contentDescription = tag("run_now") }) {
-            Text(stringResource(runLabel)) }
-        if (busy) TextButton(onClick = { BackupExecutor.cancel(job.id) }, modifier = Modifier.semantics { contentDescription = tag("cancel") }) { Text(stringResource(R.string.cancel)) }
-        TextButton(enabled = !busy, onClick = { run(BackupExecutor.Op.Check(readData = true)) }, modifier = Modifier.semantics { contentDescription = tag("verify") }) {
-            Text(stringResource(R.string.backup_check)) }
+    val verifyLabel = stringResource(R.string.backup_check)
+    val restoreLabel = stringResource(R.string.backup_restore_latest)
+    val passwordLabel = stringResource(R.string.backup_show_password)
+    val removeLabel = stringResource(if (job.schedule.isManual) R.string.backup_remove else R.string.backup_delete_job)
+    val more = buildList {
+        if (!busy) add(DriveAction(tag("verify"), verifyLabel) { run(BackupExecutor.Op.Check(readData = true)) })
         if (incremental) {
-            TextButton(enabled = !busy && store.snapshots(job.id).isNotEmpty(), onClick = { actions.restore(job) }, modifier = Modifier.semantics { contentDescription = tag("restore") }) {
-                Text(stringResource(R.string.backup_restore_latest)) }
-            TextButton(onClick = { actions.showPassword(job) }, modifier = Modifier.semantics { contentDescription = tag("show_password") }) {
-                Text(stringResource(R.string.backup_show_password)) }
+            if (!busy && store.snapshots(job.id).isNotEmpty()) add(DriveAction(tag("restore"), restoreLabel) { actions.restore(job) })
+            add(DriveAction(tag("show_password"), passwordLabel) { actions.showPassword(job) })
         }
-        TextButton(enabled = !busy, onClick = { actions.remove(job) }, modifier = Modifier.semantics { contentDescription = tag("remove") }) {
-            Text(stringResource(if (job.schedule.isManual) R.string.backup_remove else R.string.backup_delete_job)) }
+        if (!busy) add(DriveAction(tag("remove"), removeLabel) { actions.remove(job) })
+    }
+    FlowRow(horizontalArrangement = Arrangement.spacedBy(8.dp), verticalArrangement = Arrangement.spacedBy(4.dp)) {
+        if (job.corruptedAt != null) Button(enabled = !busy, onClick = { BackupPrompts.askRecreate(job.id) }, modifier = Modifier.semantics { contentDescription = tag("recreate") }) {
+            Text(stringResource(R.string.backup_recreate)) }
+        if (missingPassword) Button(onClick = { actions.enterPassword(job) }, modifier = Modifier.semantics { contentDescription = tag("enter_password") }) {
+            Text(stringResource(R.string.backup_enter_password)) }
+        if (folderLost) Button(onClick = { actions.chooseFolder(job) }, modifier = Modifier.semantics { contentDescription = tag("choose_folder") }) {
+            Text(stringResource(R.string.backup_choose_folder_again)) }
+        Button(enabled = !busy && job.corruptedAt == null, onClick = { run(BackupExecutor.Op.Backup("manual")) }, modifier = Modifier.semantics { contentDescription = tag("run_now") }) {
+            Text(stringResource(runLabel)) }
+        if (busy) Button(onClick = { BackupExecutor.cancel(job.id) }, modifier = Modifier.semantics { contentDescription = tag("cancel") }) { Text(stringResource(R.string.cancel)) }
+        if (more.isNotEmpty()) MoreActionsButton(more, tag("more"))
     }
 }
 
