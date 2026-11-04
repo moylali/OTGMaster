@@ -2437,8 +2437,37 @@ class E2EAutomatedTest {
         bkExpectStatus("E2E_next", bkText(R.string.backup_state_corrupted))
     }
 
+    /**
+     * The mounted card flashes green. The flash lasts 1.5 s and leaves no state behind, so this looks
+     * at the screen: the card's padding, just left of [anchor], until green shows in it. A resting card
+     * is never greener than it is red, in either theme.
+     */
+    private fun assertCardFlashes(anchor: androidx.test.uiautomator.BySelector, what: String, waitMs: Long) {
+        val automation = InstrumentationRegistry.getInstrumentation().uiAutomation
+        val inset = (8 * ApplicationProvider.getApplicationContext<Context>().resources.displayMetrics.density).toInt()
+        val end = android.os.SystemClock.uptimeMillis() + waitMs
+        var firstSeen = 0L
+        while (android.os.SystemClock.uptimeMillis() < end) {
+            val bounds = try { device.findObject(anchor)?.visibleBounds } catch (e: androidx.test.uiautomator.StaleObjectException) { null }
+            if (bounds == null) {
+                android.os.SystemClock.sleep(50)
+                continue
+            }
+            if (firstSeen == 0L) firstSeen = android.os.SystemClock.uptimeMillis()
+            automation.takeScreenshot()?.let { shot ->
+                val pixel = shot.getPixel((bounds.left - inset).coerceAtLeast(0), bounds.centerY())
+                shot.recycle()
+                if (android.graphics.Color.green(pixel) > android.graphics.Color.red(pixel)) return
+            }
+            if (android.os.SystemClock.uptimeMillis() - firstSeen > 5000L) break
+        }
+        captureScreen("no_flash")
+        fail("the card of $what did not flash")
+    }
+
     /** A mount from Manage backups leaves it for the slider, open on the Backups tab, which highlights it and says so. */
     private fun bkExpectMountAnnounced(title: String) {
+        assertCardFlashes(By.text(title), title, 60000L)
         val slider = device.wait(Until.findObject(By.desc("mounted_drawer")), 60000L)
         if (slider == null) captureScreen("mount_stayed_on_backups")
         assertNotNull("the mount did not open the slider", slider)
@@ -3513,6 +3542,7 @@ class E2EAutomatedTest {
         }
 
         // One mount, and it opens the slider on Drives over everything else.
+        assertCardFlashes(By.descContains("unmount_button"), "the drive", 120_000L)
         val slider = device.wait(Until.findObject(By.desc("mounted_drawer")), 120_000L)
         if (slider == null) captureScreen("no_slider")
         assertNotNull("the mount did not open the slider", slider)
