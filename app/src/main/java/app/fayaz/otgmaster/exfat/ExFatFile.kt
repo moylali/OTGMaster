@@ -247,9 +247,19 @@ class ExFatFile(
         dirty = true
     }
 
+    /**
+     * Deletes this file, or this folder and everything in it, as FAT32, NTFS and ext4 do.
+     * libexfat's rmdir refuses a folder that still has anything in it.
+     *
+     * The handles of the listing are left for the GC, like those of any other listing: closing
+     * each one here would flush the whole volume once per file.
+     */
     override fun delete() {
         checkNotClosed()
+        // The native delete starts from the node's parent, and the root has none.
+        if (isRoot) throw IOException("Cannot delete the root")
         fileSystem.checkWritable()
+        if (isDirectory) listFiles().forEach { it.delete() }
         val rc = fileSystem.withNative {
             ExFatNative.deleteNode(fileSystem.exfatPtr, node.nodePtr)
         }
