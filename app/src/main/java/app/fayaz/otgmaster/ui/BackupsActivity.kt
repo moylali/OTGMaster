@@ -88,12 +88,11 @@ import kotlinx.coroutines.withContext
  * Manage backups, opened from the main screen: every backup job in one place, whichever
  * drives it uses, in two tabs.
  *
- * - **Schedules**: Create schedule, while a drive is mounted; each job's source and target, type and schedule (changeable here), when
- *   it last ran and how, where it stands now; Back up now, Verify backup, Restore newest,
- *   its password, Remove schedule. A manual backup has no schedule, so it is under History.
+ * - **Reminders**: Create reminder, while a drive is mounted; each job's source and target, type and interval (changeable here), when
+ *   it last ran and how, where it stands now; Back up now, and More actions for Verify backup,
+ *   Restore newest, its password and Remove reminder. A manual backup has no interval, so it is under History.
  * - **History**: every run of every job, newest first — what ran, when, for how long, how
  *   many files and bytes, the snapshot it made, and the message of a failure.
- * - **Mount backups**: Browse for a backup in any folder, and the incremental jobs of this phone.
  */
 class BackupsActivity : androidx.fragment.app.FragmentActivity() {
 
@@ -220,11 +219,6 @@ private fun Schedules() {
     }
 }
 
-/**
- * Mount backups: each incremental backup, mountable as a read-only drive (one folder per
- * snapshot) for the Files app; a mounted one is unmounted from its card on the main screen.
- * A mount that works goes to that screen, which announces it; one that fails says why here.
- */
 @Composable
 private fun History() {
     val context = LocalContext.current

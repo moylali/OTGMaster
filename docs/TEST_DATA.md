@@ -351,7 +351,7 @@ python3 scripts/make_backup_fixture.py      # writes test.img, password.txt, bac
 - **What the host checks.** Reading a backup writes nothing, so `scripts/verify_e2e_volume.py`
   (it sees `backup.txt`) requires the drive to match `test.img` byte for byte.
 - **Pulling the drive.** The case uses the same unplug and replug requests as `disconnect`
-  (§6d), to see the backup leave with its drive and Create schedule stop opening its form.
+  (§6d), to see the backup leave with its drive and Create reminder stop opening its form.
 
 
 ## 6g. Backups made through the app (E2E, no root)
