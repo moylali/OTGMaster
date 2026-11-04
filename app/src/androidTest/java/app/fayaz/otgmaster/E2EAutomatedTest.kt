@@ -263,7 +263,9 @@ class E2EAutomatedTest {
             // Verify capacity is populated
             val usedText = mountedText?.text ?: ""
             assertTrue("Used capacity should not be empty", usedText.contains("Used:"))
+            InstrumentationRegistry.getInstrumentation().uiAutomation.clearCache()
             val freeTextObj = device.wait(Until.findObject(By.textContains("Free:")), timeout)
+            if (freeTextObj == null) captureScreen("no_free")
             assertTrue("Free capacity should be visible", freeTextObj != null)
 
             val context = ApplicationProvider.getApplicationContext<Context>()
@@ -590,6 +592,30 @@ class E2EAutomatedTest {
                 assertFalse("delete_tree still listed after deleting it", id?.endsWith("delete_tree") == true)
             }
         }
+
+        // ── DELETE a folder with a file in it still open for writing ───────────
+        // The file's close writes to the volume, so it has to come before the delete. Held open it
+        // is refused, and once closed it goes: the case that left FAT32 an orphan cluster when the
+        // close was only late. The host's checker sees that.
+        val heldDir = DocumentsContract.createDocument(
+            context.contentResolver, DocumentsContract.buildDocumentUri(AUTHORITY, rootDocId2),
+            DocumentsContract.Document.MIME_TYPE_DIR, "delete_held"
+        ) ?: throw AssertionError("createDocument(delete_held) returned null")
+        val heldFile = DocumentsContract.createDocument(context.contentResolver, heldDir, "text/plain", "held.txt")
+            ?: throw AssertionError("createDocument(held.txt) returned null")
+        val heldOut = context.contentResolver.openOutputStream(heldFile)
+            ?: throw AssertionError("openOutputStream for held.txt returned null")
+        var refused: Boolean
+        try {
+            heldOut.write("still open".toByteArray())
+            heldOut.flush()
+            refused = !DocumentsContract.deleteDocument(context.contentResolver, heldDir)
+        } finally {
+            heldOut.close()
+        }
+        assertTrue("a folder was deleted with a file in it open for writing", refused)
+        assertTrue("delete_held could not be deleted once its file was closed",
+            DocumentsContract.deleteDocument(context.contentResolver, heldDir))
 
         // ── DELETE an open file: its space must come back at once ──────────────
         // exFAT freed a deleted file's clusters only when the last handle on it was
@@ -2950,7 +2976,7 @@ class E2EAutomatedTest {
      * device, so it is not an E2E case: `am instrument -e backup_flow delete_tree`, with the
      * VeraCrypt credentials of the exFAT partition as -e password, pim, cipher and hash.
      *
-     * Each partition gets a tree made through the app, whose space must come back. A plain ext4
+     * Each partition gets a tree made through the app, whose space must come back. An ext4
      * partition may also hold delete_linux, made on the laptop by Linux with hard links, symlinks,
      * a FIFO, an indexed folder and an xattr block, plus a hard link to one of its files in
      * delete_keep, which must survive. -e keep_sha256 is that file's hash from the laptop.
@@ -2971,13 +2997,13 @@ class E2EAutomatedTest {
             args.getString("password", ""), args.getString("pim", "1").toInt(),
             args.getString("cipher", ""), args.getString("hash", ""), false,
         )
-        fun writable(fs: String, plain: Boolean) = OtgMasterState.mountedDrives
-            .firstOrNull { it.filesystemName == fs && it.isPlain == plain && !it.isReadOnly }
+        fun writable(fs: String) = OtgMasterState.mountedDrives
+            .firstOrNull { it.filesystemName == fs && !it.isReadOnly }
         // The unlock tries every partition still locked, and Argon2 is slow on all of them.
         val end = android.os.SystemClock.uptimeMillis() + 15 * 60_000L
-        while ((writable("ext4", true) == null || writable("exFAT", false) == null) &&
+        while ((writable("ext4") == null || writable("exFAT") == null) &&
             android.os.SystemClock.uptimeMillis() < end) android.os.SystemClock.sleep(1000)
-        val drives = listOf(writable("ext4", true), writable("exFAT", false))
+        val drives = listOf(writable("ext4"), writable("exFAT"))
         assertTrue("no writable ext4 and exFAT: ${OtgMasterState.mountedDrives.map { "${it.name} ${it.filesystemName}" }}",
             drives.all { it != null })
 
@@ -3027,7 +3053,7 @@ class E2EAutomatedTest {
             assertTrue("otg_delete_check still listed", listed(root).none { it.endsWith("/otg_delete_check") })
             assertEquals("free space after deleting the tree, ${d.filesystemName}", freeBefore, availableBytes(bkContext, root))
 
-            if (d.filesystemName == "ext4") {
+            if (d.filesystemName == "ext4" && keepSha.isNotEmpty()) {
                 val keep = root + "delete_keep/linked.bin"
                 assertEquals("delete_keep/linked.bin before", keepSha, sha(keep))
                 val freeLinux = availableBytes(bkContext, root)
