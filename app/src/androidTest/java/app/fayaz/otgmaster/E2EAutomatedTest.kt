@@ -2303,6 +2303,36 @@ class E2EAutomatedTest {
         bkExpectMountAnnounced("E2E_mp (backup)")
         doUnmount()
 
+        // Two rows on one folder, and the same folder chosen in the picker: one mount.
+        val twin = job.copy(id = java.util.UUID.randomUUID().toString(), name = "E2E_mp2")
+        secrets.setPassword(twin.id, realPassword)
+        bkStore.upsert(twin)
+        val backupMounts = { OtgMasterState.mountedDrives.count { it.filesystemName == "Backup" } }
+        val skipped = { OtgMasterState.recentLogs().count { it.contains("E2E_mp (backup) is already mounted") } }
+        val skippedBefore = skipped()
+        returnToMainScreen()
+        openBackupsTab("backups_open_schedules")
+        bkRowClick("backup_mount_E2E_mp")
+        bkExpectMountAnnounced("E2E_mp (backup)")
+        assertEquals("the first row did not mount it", 1, backupMounts())
+        returnToMainScreen()
+        openBackupsTab("backups_open_schedules")
+        bkRowClick("backup_mount_E2E_mp2")
+        bkExpectMountAnnounced("E2E_mp (backup)")
+        assertEquals("a second row mounted the same folder again", 1, backupMounts())
+        returnToMainScreen()
+        openBackupsTab("backups_open_history")
+        bkRowClick("backup_mount_E2E_mp")
+        bkExpectMountAnnounced("E2E_mp (backup)")
+        assertEquals("its History entry mounted it again", 1, backupMounts())
+        bkMountFromPicker(drive.name, "E2E_mp")
+        bkExpectMountAnnounced("E2E_mp (backup)")
+        assertEquals("the picker mounted it again", 1, backupMounts())
+        assertEquals("the skipped mounts are not in the log", skippedBefore + 3, skipped())
+        doUnmount()
+        secrets.forget(twin.id)
+        bkStore.delete(twin.id)
+
         // With the target's drive gone, neither does anything. The button follows within two seconds.
         bkPullDrive(drive)
         openBackupsTab("backups_open_history")

@@ -25,6 +25,9 @@ object BackupMounts {
     /** Mounted backup's drive id → the drive id its repository lives on (null: the phone). */
     private val on = ConcurrentHashMap<String, String>()
 
+    /** Mounted backup's drive id → the folder its repository is in, as [BackupTargets.folderKey]. */
+    private val folders = ConcurrentHashMap<String, String>()
+
     private val _justMounted = MutableStateFlow<MountedDrive?>(null)
     /** A backup just mounted, for the main screen to highlight the next time it is on screen. */
     val justMounted: StateFlow<MountedDrive?> = _justMounted
@@ -34,17 +37,36 @@ object BackupMounts {
     @Volatile var testDelayMs = 0L
     private fun testDelay() { if (app.fayaz.otgmaster.BuildConfig.DEBUG && testDelayMs > 0) Thread.sleep(testDelayMs) }
 
-    fun isMounted(jobId: String): Boolean = OtgMasterState.mountedDrives.any { it.id == driveIdFor(jobId) }
-
     fun driveIdFor(jobId: String): String = "bk" + jobId.filter { it.isLetterOrDigit() }.take(8)
 
-    /** Opens the job's repository with its saved password and mounts it. Blocking: call off the main thread. */
+    private fun folderOf(job: BackupJob): String? = runCatching {
+        val target = Uri.parse(job.destination.uri)
+        BackupTargets.folderKey(target.authority, DocumentsContract.getTreeDocumentId(target), job.destinationFolder)
+    }.getOrNull()
+
+    private fun folderOf(folder: Uri): String? = runCatching {
+        BackupTargets.folderKey(folder.authority, DocumentsContract.getTreeDocumentId(folder))
+    }.getOrNull()
+
+    /**
+     * The mount already showing the repository in [folder]. Rows of more than one job, or the picker,
+     * can lead to the same folder, and it only needs mounting once. Announced, so the screen goes to its card.
+     */
+    private fun alreadyMounted(folder: String?): MountedDrive? {
+        if (folder == null) return null
+        val drive = OtgMasterState.mountedDrives.firstOrNull { folders[it.id] == folder } ?: return null
+        OtgMasterState.log("${drive.name} is already mounted")
+        _justMounted.value = drive
+        return drive
+    }
+
+    /** Opens the job's repository with its saved password and mounts it, unless it is mounted already. Blocking: call off the main thread. */
     fun mount(context: Context, job: BackupJob): MountedDrive {
         require(job.type == JobType.INCREMENTAL) { "only incremental backups can be mounted" }
+        val folder = folderOf(job)
+        alreadyMounted(folder)?.let { return it }
         testDelay()
-        val id = driveIdFor(job.id)
-        OtgMasterState.mountedDrives.firstOrNull { it.id == id }?.let { _justMounted.value = it; return it }
-        return add(context, id, job.name, BackupRunner(context).repository(job), Uri.parse(job.destination.uri))
+        return add(context, driveIdFor(job.id), job.name, BackupRunner(context).repository(job), Uri.parse(job.destination.uri), folder)
     }
 
     /**
@@ -60,12 +82,13 @@ object BackupMounts {
         .getOrDefault(false)
 
     /**
-     * If [folder] is the repository of one of this phone's jobs, mounts it as that job, with the
-     * saved password, so it cannot be mounted twice. Null if it is no job's, or its saved password
+     * The mount already showing [folder], whoever mounted it. Otherwise, if it is the repository of one
+     * of this phone's jobs, mounts it as that job, with the saved password. Null if it is no job's, or its saved password
      * is missing or no longer opens it. A damaged repository marks the job Corrupted, raises the
      * offer to recreate it and throws. Blocking: call off the main thread.
      */
     fun mountAsJob(context: Context, folder: Uri): MountedDrive? {
+        alreadyMounted(folderOf(folder))?.let { return it }
         val chosen = runCatching { DocumentsContract.getTreeDocumentId(folder) }.getOrNull() ?: return null
         val job = JobStore.get(context).jobs.value.firstOrNull { job ->
             val target = Uri.parse(job.destination.uri)
@@ -91,19 +114,24 @@ object BackupMounts {
      * not open it. Blocking: call off the main thread.
      */
     fun mountFolder(context: Context, folder: Uri, password: String): MountedDrive? {
+        val key = folderOf(folder)
+        alreadyMounted(key)?.let { return it }
         testDelay()
         val id = "bk" + Integer.toHexString(folder.toString().hashCode())
-        OtgMasterState.mountedDrives.firstOrNull { it.id == id }?.let { _justMounted.value = it; return it }
         val path = VolumeInfo.displayPath(context, folder)
         val repo = ResticRepository.open(FileTreeBackend(SafFileTree(context.contentResolver, folder)), password.toByteArray())
         if (repo == null) {
             OtgMasterState.log("Backup at $path: the password does not open it")
             return null
         }
-        return add(context, id, path.trimEnd('/').substringAfterLast('/').ifEmpty { "Backup" }, repo, folder)
+        return add(context, id, path.trimEnd('/').substringAfterLast('/').ifEmpty { "Backup" }, repo, folder, key)
     }
 
-    private fun add(context: Context, id: String, label: String, repo: ResticRepository, location: Uri): MountedDrive {
+    @Synchronized
+    private fun add(context: Context, id: String, label: String, repo: ResticRepository, location: Uri, folder: String?): MountedDrive {
+        // Opening a repository takes seconds, so another row may have mounted it meanwhile.
+        alreadyMounted(folder)?.let { return it }
+        OtgMasterState.mountedDrives.firstOrNull { it.id == id }?.let { _justMounted.value = it; return it }
         val drive = MountedDrive(
             id = id,
             name = "$label (backup)",
@@ -115,6 +143,7 @@ object BackupMounts {
             mountedReadOnly = true,
         )
         VolumeInfo.otgDriveId(location)?.let { on[id] = it }
+        folder?.let { folders[id] = it }
         OtgMasterState.addDrive(drive)
         context.contentResolver.notifyChange(DocumentsContract.buildRootsUri(ExtensionContract.AUTHORITY), null)
         OtgMasterState.log("Mounted backup \"$label\" read-only: ${repo.snapshots().size} snapshot(s)")
@@ -126,5 +155,8 @@ object BackupMounts {
     fun dependents(driveId: String): List<MountedDrive> =
         OtgMasterState.mountedDrives.filter { on[it.id] == driveId }
 
-    fun forget(id: String) { on.remove(id) }
+    fun forget(id: String) {
+        on.remove(id)
+        folders.remove(id)
+    }
 }
