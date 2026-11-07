@@ -43,7 +43,7 @@ android {
         // parses this file's text per-tag and can't resolve a dynamic expression. Bump via
         // scripts/bump-version.sh as part of cutting a release, before tagging.
         versionCode = 49
-        versionName = "0.4.2"
+        versionName = "0.5.0"
         testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
         externalNativeBuild {
             cmake {
