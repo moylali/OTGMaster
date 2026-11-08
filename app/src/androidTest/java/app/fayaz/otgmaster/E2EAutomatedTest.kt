@@ -4070,16 +4070,33 @@ class E2EAutomatedTest {
         assertTrue("the edge swipe also went Back", device.hasObject(By.pkg("app.fayaz.otgmaster")))
         closeSlider()
 
-        // On a wide screen what is mounted is always there, with the same tabs and no slider.
+        // Portrait: the form takes the width of the screen.
+        scrollToTop()
+        val portraitScan = device.wait(Until.findObject(By.desc("scan_button")), timeout)
+        assertNotNull("no Scan button", portraitScan)
+        assertTrue("the form is narrow in portrait", portraitScan!!.visibleBounds.width() >= device.displayWidth * 85 / 100)
+
+        // Landscape: the phone's slider, not a pane beside the form, and the form is a centred column.
         onWideScreen {
-            assertNotNull("no pane on a wide screen", device.wait(Until.findObject(By.desc("mounted_pane")), timeout))
-            assertNull("a slider on a wide screen", device.findObject(By.desc("mounted_drawer")))
-            assertNull("the slider's icon on a wide screen", device.findObject(By.descStartsWith("Mounted:")))
-            assertNotNull("no card in the pane", device.wait(Until.findObject(By.textContains("Used:")), timeout))
+            val density = 420f / 160f
+            assertNull("a pane beside the form", device.findObject(By.desc("mounted_pane")))
+            scrollToTop()
+            val scan = device.wait(Until.findObject(By.desc("scan_button")), timeout)
+            if (scan == null) captureScreen("no_scan_on_wide")
+            assertNotNull("no Scan button on a wide screen", scan)
+            val form = scan!!.visibleBounds
+            assertTrue("the form is ${form.width()} px wide", form.width() <= 640 * density + 2)
+            assertTrue("the form is at ${form.left}..${form.right}, off centre", kotlin.math.abs(form.centerX() - 2208 / 2) <= 4)
+
+            openSlider()
+            val drawer = device.findObject(By.desc("mounted_drawer"))
+            assertTrue("the slider is ${drawer.visibleBounds.width()} px wide", drawer.visibleBounds.width() <= 480 * density + 2)
+            assertNotNull("no card in the slider", device.wait(Until.findObject(By.textContains("Used:")), timeout))
             assertTrue(clickByDesc("mounted_tab_backups"))
             bkAssertTextIn(context.getString(R.string.no_backups_mounted))
             assertTrue(clickByDesc("mounted_tab_drives"))
-            assertNotNull("the pane lost its card", device.wait(Until.findObject(By.textContains("Used:")), timeout))
+            assertNotNull("the slider lost its card", device.wait(Until.findObject(By.textContains("Used:")), timeout))
+            closeSlider()
         }
         doUnmount()
     }
