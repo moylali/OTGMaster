@@ -93,10 +93,11 @@ class E2EAutomatedTest {
         // Launch the app
         val context = ApplicationProvider.getApplicationContext<Context>()
         // Cases share an emulator and every disk there is the same device, so a read-only
-        // choice left by one case made the next case's writes fail. commit(): the activity
-        // reads this in onCreate.
+        // choice left by one case made the next case's writes fail, and backups left hidden
+        // would take the next case's Manage backups away. commit(): the activity reads these
+        // in onCreate.
         context.getSharedPreferences("otgmaster_prefs", Context.MODE_PRIVATE).edit()
-            .remove("read_only_partitions").commit()
+            .remove("read_only_partitions").remove("backups_hidden").commit()
         // Named explicitly: the debug build has a second launcher entry (OTG Bench),
         // and getLaunchIntentForPackage returned that one, so every case ran against
         // the bench screen and failed with "password input not shown".
@@ -1210,6 +1211,7 @@ class E2EAutomatedTest {
                 "verify_damaged" -> bkFlowVerifyDamaged(drive)
                 "interrupted" -> bkFlowInterrupted(drive)
                 "encrypt_form" -> bkFlowEncryptForm()
+                "backups_disabled" -> bkFlowBackupsDisabled(drive)
                 else -> fail("unknown backup flow $flow")
             }
         } catch (t: Throwable) {
@@ -2338,6 +2340,76 @@ class E2EAutomatedTest {
     private fun bkMountFromPicker(root: String?, vararg path: String) {
         clickMountBackup()
         bkPick(root, *path)
+    }
+
+    /**
+     * Settings > Disable backups: the bell, Manage backups and the Backups tab go, stay gone over
+     * a relaunch and come back when it is turned off. A backup already mounted moves to the one
+     * list left, and can still be unmounted from there.
+     */
+    private fun bkFlowBackupsDisabled(drive: MountedDrive) {
+        val title = "E2E_off (backup)"
+        val job = bkJob(drive, "E2E_off", agoHours = 1)
+        bkExpectSuccess(bkRunNow(job, "the backup to mount"), "the backup to mount")
+        bkMountFromPicker(drive.name, "E2E_off")
+        assertNotNull("the mount did not open the slider", device.wait(Until.findObject(By.desc("mounted_drawer")), 60000L))
+        assertNotNull("the backup is not on Backups", device.wait(Until.findObject(By.textContains(title)), 60000L))
+        closeSlider()
+        assertBackupUiShown(true)
+
+        setBackupsDisabled(true)
+        assertBackupUiShown(false)
+
+        openSlider()
+        assertNull("the Drives tab is still there", device.findObject(By.desc("mounted_tab_drives")))
+        assertNull("the Backups tab is still there", device.findObject(By.desc("mounted_tab_backups")))
+        assertNotNull("the mounted backup left the list", findInSlider(By.textContains(title)))
+        bkUnmountBackup(BackupMounts.driveIdFor(job.id), title)
+        assertNotNull("the drive is not in the list", findInSlider(By.text(driveTitle(drive))))
+        closeSlider()
+
+        bkContext.startActivity(mainActivityIntent().apply {
+            addFlags(Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_CLEAR_TASK)
+        })
+        assertNotNull("the app did not come back", device.wait(Until.findObject(By.desc(bkContext.getString(R.string.cd_settings))), 30000L))
+        assertBackupUiShown(false)
+
+        setBackupsDisabled(false)
+        assertBackupUiShown(true)
+        openSlider("mounted_tab_backups")
+        assertNotNull("the Drives tab did not come back", device.findObject(By.desc("mounted_tab_drives")))
+        closeSlider()
+    }
+
+    private fun setBackupsDisabled(disabled: Boolean) {
+        val prefs = bkContext.getSharedPreferences("otgmaster_prefs", Context.MODE_PRIVATE)
+        device.wait(Until.findObject(By.desc(bkContext.getString(R.string.cd_settings))), timeout)!!.click()
+        val row = device.wait(Until.findObject(By.res("settings_row_backups")), timeout)
+        if (row == null) captureScreen("no_settings_row_backups")
+        assertNotNull("no Disable backups row in Settings", row)
+        row!!.click()
+        assertNotNull("Disable backups opened no dialog", device.wait(Until.findObject(By.desc("settings_dialog_backups")), timeout))
+        assertTrue(clickByDesc("settings_backups_switch"))
+        android.os.SystemClock.sleep(500)
+        assertEquals("the switch did not change the setting", disabled, prefs.getBoolean("backups_hidden", false))
+        assertTrue(clickByDesc("settings_dialog_close"))
+        assertTrue("Close left the dialog up", device.wait(Until.gone(By.desc("settings_dialog_backups")), timeout))
+        device.findObject(By.desc(bkContext.getString(R.string.cd_close_settings))).click()
+        assertTrue("Settings stayed open", device.wait(Until.gone(By.res("settings_row_theme")), timeout))
+    }
+
+    private fun assertBackupUiShown(shown: Boolean) {
+        val bell = By.descStartsWith(bkContext.getString(R.string.cd_backups_due, 0).substringBeforeLast(' '))
+        if (shown) {
+            assertNotNull("no bell", device.wait(Until.findObject(bell), timeout))
+            assertNotNull("no Manage backups", findScrolling(By.desc("manage_backups_button"), desc = "manage_backups_button"))
+        } else {
+            assertTrue("the bell is still there", device.wait(Until.gone(bell), timeout))
+            assertNull("Manage backups is still there", findScrolling(By.desc("manage_backups_button"), desc = "manage_backups_button"))
+            // A search that finds nothing ends in the slider.
+            closeSlider()
+        }
+        scrollToTop()
     }
 
     private fun bkFlowMountProgress(drive: MountedDrive) {
@@ -3866,6 +3938,7 @@ class E2EAutomatedTest {
             "theme" to By.text(context.getString(R.string.theme_dark)),
             "auto_mount" to By.text(context.getString(R.string.auto_mount_description)),
             "read_only" to By.text(context.getString(R.string.read_only_mode_description)),
+            "backups" to By.text(context.getString(R.string.backups_disable_description)),
             "version" to By.descContains(context.getString(R.string.cd_copy_version)),
             "donate" to By.text(context.getString(R.string.donate_thank_you)),
         )
@@ -4347,6 +4420,8 @@ class E2EAutomatedTest {
             icon!!.click()
             assertNotNull("the icon did not open the slider", device.wait(Until.findObject(By.desc("mounted_drawer")), timeout))
         }
+        // With backups disabled the slider is one list, without tabs.
+        if (bkContext.getSharedPreferences("otgmaster_prefs", Context.MODE_PRIVATE).getBoolean("backups_hidden", false)) return
         val chosen = device.wait(Until.findObject(By.desc(tab)), timeout)
         assertNotNull("no $tab", chosen)
         chosen!!.click()
