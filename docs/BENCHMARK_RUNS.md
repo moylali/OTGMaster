@@ -33,6 +33,333 @@ to a row here.
 
 ---
 
+## 2026-11-04 to 11-07: the 0.5.0 release matrix on `cae0e9e` (= `d0e5655`)
+
+Every report below says `build: 0.4.2 (49) commit cae0e9e`. That line was checked against the round's APK
+(`matrix/apk-050-cae0e9e.apk`) at the start of every drive. `cae0e9e` is #117's head and landed on
+`main` as `d0e5655` with the same files. The tag commit differs from it only by versionName
+(`0.4.2` → `0.5.0`, `4782c56`) and by store screenshots and records.
+
+Procedure as in the 0.4.2 round: one partition per run via `sequence_runs.sh` → `start_run.sh`, the
+full section set (`free,block,dir,path,seq,random,opens,write,unaligned,correct,bigwrite,fixtures`),
+password123 / PIM 1 / AES / SHA-512 unless the partition says otherwise (Drive 5 partitions carry
+their own cipher, KDF and PIM). After each phone's run, the drive went to the laptop:
+`read_matrix_drive.sh` + `verify_matrix_drive.py` for Drives 1 to 4 (each partition's own checker,
+every fixture against the host manifest, the chunk baseline, and big.bin and the tree against the
+bigwrite keystream), or `hostcheck_d5.sh` for Drive 5 (`verify_volume.sh`, manifest hashes and
+`volume_baseline.sh compare --metadata-only`).
+
+Devices: **OnePlus 7** (GM1901, LineageOS, Android 16, SDK 36, over Tailscale), **Galaxy Tab A9+**
+(SM-X210, Android 16, SDK 36), **Pixel 7 Pro** (Android 17, SDK 37, over Tailscale). Drives:
+Drives 1, 3 and 4, Drive 5/1 (…EF449), Drive 2 (…2D62) until it was retired on 11-07, then its copy
+Drive 2/2 (…EF451). Drive 5/2 (…EF455) was not used: its p7 to p10 were reformatted on 10-31 and
+their fixture lists are stale.
+
+| | Drive 1 | Drive 2 | Drive 3 | Drive 4 | Drive 5/1 |
+|---|---|---|---|---|---|
+| OnePlus 7 | 10/10 ✓ · ALL CLEAN | old stick: 10/10 ✓ · host 8/10, D2BLFAT32 big.bin lost a page (stick), stray file. Drive 2/2: 10/10 ✓ · ALL CLEAN | 10/10 ✓ · ALL CLEAN | 10/10 ✓ · ALL CLEAN | 10/10 ✓ · ALL CLEAN |
+| Galaxy Tab A9+ | 10/10 ✓ · host 9/10, D1FAT32 dirty bit (vold), accepted | 10/10 ✓ · host 9/10, stray file, accepted | 10/10 ✓ · ALL CLEAN | 10/10 ✓ · ALL CLEAN | 10/10 ✓ · host 8/10, p8/p9 dirty bit (vold), accepted |
+| Pixel 7 Pro | 10/10 ✓ · ALL CLEAN | **9/10, D2VCNTFS bigwrite FAILED** (stick) · host 9/10, accepted | 10/10 ✓ · ALL CLEAN | 10/10 ✓ · ALL CLEAN | 10/10 ✓ · host 8/10, p8/p9 dirty bit (vold), accepted |
+
+Three phones with a full matrix, counting the cells the user accepted on 11-07: each one's cause is
+explained below and none is app damage. "10/10 ✓" counts the ext2/ext3 and APFS partitions, where the
+app is read-only and the write sections report `SKIPPED (ro)` by design, and the 2 GiB Drive 5
+partitions p7 to p10, which are too small for the 2.2 GB bigwrite.
+
+`sequence_runs.sh` did not stop or flag the Pixel's D2VCNTFS failure: its check matches `: FAILED`,
+and bigwrite prints `: *** FAILED`. The rows here come from each partition's `benchmark.txt`, not
+from the sequence line.
+
+### OnePlus 7 · Drive 1 · 11-05 21:03 – 23:51
+
+| Partition | Finished | bigwrite write / read-back (MB/s) | Fixtures | Verdict |
+|---|---|---|---|---|
+| D1FAT32 | 21:16 | 7.99 / 19.82 | ALL 20995 MATCHED | all ✓ |
+| D1EXFAT | 21:31 | 8.76 / 18.15 | ALL 20963 MATCHED | all ✓ |
+| D1NTFS | 21:54 | 2.91 / 26.49 | ALL 21052 MATCHED | all ✓ |
+| D1EXT4 | 22:09 | 6.17 / 18.96 | ALL 20854 MATCHED | all ✓ |
+| D1BLEXFAT | 22:29 | 5.72 / 12.79 | ALL 20898 MATCHED | all ✓ |
+| D1BLNTFS | 22:55 | 2.70 / 17.44 | ALL 20905 MATCHED | all ✓ |
+| D1APFSCI | 23:08 | — | ALL 22129 MATCHED | read sections ✓; writes SKIPPED (ro) |
+| D1APFSCS | 23:21 | — | ALL 22024 MATCHED | read sections ✓; writes SKIPPED (ro) |
+| D1APFSECI | 23:36 | — | ALL 21777 MATCHED | read sections ✓; writes SKIPPED (ro) |
+| D1APFSECS | 23:51 | — | ALL 21911 MATCHED | read sections ✓; writes SKIPPED (ro) |
+
+Laptop: **ALL CLEAN** (`matrix/d1-after-op-050.md`).
+
+### OnePlus 7 · Drive 2 (…2D62) · 11-05 05:52 – 10:13
+
+| Partition | Finished | bigwrite write / read-back (MB/s) | Fixtures | Verdict |
+|---|---|---|---|---|
+| D2VCFAT32 | 06:13 | 6.52 / 14.31 | ALL 20958 MATCHED | all ✓ |
+| D2VCEXFAT | 06:39 | 6.17 / 12.88 | ALL 20974 MATCHED | all ✓ |
+| D2VCNTFS | 07:12 | 2.75 / 16.84 | ALL 20919 MATCHED | all ✓ |
+| D2VCEXT4 | 07:38 | 5.61 / 13.11 | ALL 21071 MATCHED | all ✓ |
+| D2L1FAT32 | 08:01 | 6.05 / 14.56 | ALL 20953 MATCHED | all ✓ |
+| D2L1EXT4 | 08:26 | 5.41 / 13.12 | ALL 21024 MATCHED | all ✓ |
+| D2L2EXFAT | 08:52 | 6.28 / 12.88 | ALL 20942 MATCHED | all ✓ |
+| D2L4EXT4 | 09:18 | 5.19 / 13.21 | ALL 20888 MATCHED | all ✓ |
+| D2L4NTFS | 09:50 | 2.78 / 16.91 | ALL 20927 MATCHED | all ✓ |
+| D2BLFAT32 | 10:13 | 6.66 / 15.50 | ALL 20974 MATCHED | all ✓ |
+
+Laptop: **2 of 10 NOT CLEAN** (`matrix/d2-after-050.md`). `D2VCEXFAT`: an unexplained file, `BENCH/file with spaces.txt`, copied there by hand on 10-30 and not by a run; the user deleted it. `D2BLFAT32`: `BENCH_BIG/big.bin` differs from the bytes the run wrote, although the phone's read after remount had matched. It is the old stick's fault described under the Pixel's Drive 2 below. The OnePlus's Drive 2 cell was run again on Drive 2/2.
+
+### OnePlus 7 · Drive 2/2 (…EF451) · 11-07 14:22 – 18:03
+
+| Partition | Finished | bigwrite write / read-back (MB/s) | Fixtures | Verdict |
+|---|---|---|---|---|
+| D2BLFAT32 | 14:41 | 7.04 / 21.32 | ALL 20974 MATCHED | all ✓ |
+| D2VCFAT32 | 15:00 | 7.34 / 19.38 | ALL 20958 MATCHED | all ✓ |
+| D2VCEXFAT | 15:21 | 7.80 / 23.87 | ALL 20974 MATCHED | all ✓ |
+| D2VCNTFS | 15:50 | 2.87 / 25.80 | ALL 20919 MATCHED | all ✓ |
+| D2VCEXT4 | 16:11 | 6.24 / 24.84 | ALL 21071 MATCHED | all ✓ |
+| D2L1FAT32 | 16:31 | 7.16 / 19.68 | ALL 20953 MATCHED | all ✓ |
+| D2L1EXT4 | 16:52 | 5.86 / 24.85 | ALL 21024 MATCHED | all ✓ |
+| D2L2EXFAT | 17:12 | 7.84 / 23.17 | ALL 20942 MATCHED | all ✓ |
+| D2L4EXT4 | 17:34 | 5.63 / 24.14 | ALL 20888 MATCHED | all ✓ |
+| D2L4NTFS | 18:03 | 3.00 / 25.50 | ALL 20927 MATCHED | all ✓ |
+
+Laptop: checked **ALL CLEAN** before the run (`matrix/d2copy-after-pre-op-050.md`), with no 0x55 blocks, and **ALL CLEAN** after it (`matrix/d2copy-after-op-050b.md`): checker clean on all 10, every fixture matched, big.bin and the tree intact on all 10. The D2L4NTFS logcat stream died when Tailscale dropped, so the sequence never saw that partition finish; its `benchmark.txt` was pulled from the phone by hand and the two finish lines in the sequence log were written by hand, marked as such.
+
+### OnePlus 7 · Drive 3 · 11-04 11:11 – 15:31
+
+| Partition | Finished | bigwrite write / read-back (MB/s) | Fixtures | Verdict |
+|---|---|---|---|---|
+| D3EXT2 | 11:17 | — | ALL 21821 MATCHED | read sections ✓; writes SKIPPED (ro) |
+| D3EXT3 | 11:24 | — | ALL 21883 MATCHED | read sections ✓; writes SKIPPED (ro) |
+| D3L1EXFAT | 11:52 | 6.28 / 12.84 | ALL 20929 MATCHED | all ✓ |
+| D3L1NTFS | 12:26 | 2.83 / 16.66 | ALL 20920 MATCHED | all ✓ |
+| D3L2FAT32 | 12:51 | 5.88 / 14.57 | ALL 20913 MATCHED | all ✓ |
+| D3L2NTFS | 13:27 | 2.76 / 16.51 | ALL 20925 MATCHED | all ✓ |
+| D3L2EXT4 | 13:55 | 5.36 / 13.01 | ALL 20939 MATCHED | all ✓ |
+| D3L4FAT32 | 14:23 | 4.37 / 15.11 | ALL 20972 MATCHED | all ✓ |
+| D3L4EXFAT | 14:57 | 4.20 / 12.84 | ALL 20910 MATCHED | all ✓ |
+| D3BLNTFS | 15:31 | 2.79 / 17.36 | ALL 21023 MATCHED | all ✓ |
+
+Laptop: **ALL CLEAN** (`matrix/d3-after-op-050.md`). Drive 3 had no laptop check before this run.
+
+### OnePlus 7 · Drive 4 · 11-06 06:35 – 08:33
+
+| Partition | Finished | bigwrite write / read-back (MB/s) | Fixtures | Verdict |
+|---|---|---|---|---|
+| D4L1EXT2 | 06:42 | — | ALL 21870 MATCHED | read sections ✓; writes SKIPPED (ro) |
+| D4L1EXT3 | 06:51 | — | ALL 21875 MATCHED | read sections ✓; writes SKIPPED (ro) |
+| D4L2EXT2 | 06:59 | — | ALL 21678 MATCHED | read sections ✓; writes SKIPPED (ro) |
+| D4L2EXT3 | 07:08 | — | ALL 21971 MATCHED | read sections ✓; writes SKIPPED (ro) |
+| D4L4EXT2 | 07:16 | — | ALL 21916 MATCHED | read sections ✓; writes SKIPPED (ro) |
+| D4L4EXT3 | 07:25 | — | ALL 21846 MATCHED | read sections ✓; writes SKIPPED (ro) |
+| D4VCEXT2 | 07:33 | — | ALL 21948 MATCHED | read sections ✓; writes SKIPPED (ro) |
+| D4VCEXT3 | 07:42 | — | ALL 21956 MATCHED | read sections ✓; writes SKIPPED (ro) |
+| D4BLFAT32 | 08:06 | 6.13 / 14.23 | ALL 20918 MATCHED | all ✓ |
+| D4BLEXFAT | 08:33 | 6.59 / 13.65 | ALL 21073 MATCHED | all ✓ |
+
+Laptop: **ALL CLEAN** (`matrix/d4-after-op-050.md`).
+
+### OnePlus 7 · Drive 5/1 (…EF449) · 11-04 19:32 – 23:59
+
+| Partition | Finished | bigwrite write / read-back (MB/s) | Fixtures | Verdict |
+|---|---|---|---|---|
+| VC_ATS_ARGON_PIM0 | 20:12 | 3.51 / 5.76 | ALL 20902 MATCHED | all ✓ |
+| VC_STA_ARGON_PIM1 | 20:48 | 2.61 / 6.07 | ALL 20965 MATCHED | all ✓ |
+| VC_TWO_SHA512_PIM0 | 21:25 | 2.80 / 13.85 | ALL 20962 MATCHED | all ✓ |
+| VC_AT_ARGON_PIM1 | 21:49 | 4.37 / 10.43 | ALL 20950 MATCHED | all ✓ |
+| VC_SA_SHA512_PIM1 | 22:16 | 3.50 / 7.13 | ALL 20027 MATCHED | all ✓ |
+| VC_TS_ARGON_PIM31 | 23:42 | 3.01 / 6.79 | ALL 20984 MATCHED | all ✓ |
+| FMT_EXFAT | 23:47 | — | ALL 20027 MATCHED | all ✓; bigwrite not run (2 GiB partition) |
+| FMT_FAT32 | 23:51 | — | ALL 20027 MATCHED | all ✓; bigwrite not run (2 GiB partition) |
+| ENC_TO_EXFAT | 23:55 | — | ALL 20027 MATCHED | all ✓; bigwrite not run (2 GiB partition) |
+| ENC_TO_FAT32 | 23:59 | — | ALL 20027 MATCHED | all ✓; bigwrite not run (2 GiB partition) |
+
+Laptop, 11-05 (`hostcheck_d5.sh`; baselines `matrix/baseline-050-EF449.p*`): every partition's checker clean, every fixture matched; the metadata diffs are the runs' own output.
+
+### Galaxy Tab A9+ · Drive 1 · 11-04 17:15 – 20:57
+
+| Partition | Finished | bigwrite write / read-back (MB/s) | Fixtures | Verdict |
+|---|---|---|---|---|
+| D1FAT32 | 17:31 | 5.80 / 16.53 | ALL 20995 MATCHED | all ✓ |
+| D1EXFAT | 17:49 | 6.07 / 14.45 | ALL 20963 MATCHED | all ✓ |
+| D1NTFS | 18:17 | 2.25 / 19.88 | ALL 21052 MATCHED | all ✓ |
+| D1EXT4 | 18:37 | 4.39 / 14.47 | ALL 20854 MATCHED | all ✓ |
+| D1BLEXFAT | 19:02 | 4.48 / 9.96 | ALL 20898 MATCHED | all ✓ |
+| D1BLNTFS | 19:35 | 2.08 / 13.28 | ALL 20905 MATCHED | all ✓ |
+| D1APFSCI | 19:53 | — | ALL 22129 MATCHED | read sections ✓; writes SKIPPED (ro) |
+| D1APFSCS | 20:11 | — | ALL 22024 MATCHED | read sections ✓; writes SKIPPED (ro) |
+| D1APFSECI | 20:34 | — | ALL 21777 MATCHED | read sections ✓; writes SKIPPED (ro) |
+| D1APFSECS | 20:57 | — | ALL 21911 MATCHED | read sections ✓; writes SKIPPED (ro) |
+
+Laptop: **1 of 10 NOT CLEAN** (`matrix/d1-after-tab-050.md`): `D1FAT32`, dirty bit only (boot sector offset 65, 01/00); every fixture and the big write matched. The same vold cause as the Pixel's Drive 5 below. Accepted by the user on 11-07. The OnePlus and Pixel checks of D1 afterwards were ALL CLEAN.
+
+Also on this build and tablet, before these runs: the folder delete check (`am instrument -e backup_flow delete_tree`). The app's test tree was deleted from D1EXT4 in 15.0 s and from D1EXFAT in 45.0 s, both with free space back exactly. Both partitions were CLEAN in this laptop check.
+
+### Galaxy Tab A9+ · Drive 2 (…2D62) · 11-06 06:18 – 11:37
+
+| Partition | Finished | bigwrite write / read-back (MB/s) | Fixtures | Verdict |
+|---|---|---|---|---|
+| D2BLFAT32 | 06:44 | 4.81 / 11.04 | ALL 20974 MATCHED | all ✓ |
+| D2VCFAT32 | 07:12 | 4.20 / 10.41 | ALL 20958 MATCHED | all ✓ |
+| D2VCEXFAT | 07:44 | 4.42 / 9.80 | ALL 20974 MATCHED | all ✓ |
+| D2VCNTFS | 08:24 | 2.02 / 12.54 | ALL 20919 MATCHED | all ✓ |
+| D2VCEXT4 | 08:56 | 3.90 / 10.05 | ALL 21071 MATCHED | all ✓ |
+| D2L1FAT32 | 09:24 | 4.68 / 10.45 | ALL 20953 MATCHED | all ✓ |
+| D2L1EXT4 | 09:56 | 3.69 / 9.84 | ALL 21024 MATCHED | all ✓ |
+| D2L2EXFAT | 10:27 | 4.40 / 10.07 | ALL 20942 MATCHED | all ✓ |
+| D2L4EXT4 | 10:58 | 3.71 / 10.18 | ALL 20888 MATCHED | all ✓ |
+| D2L4NTFS | 11:37 | 2.04 / 12.62 | ALL 20927 MATCHED | all ✓ |
+
+Laptop: **1 of 10 NOT CLEAN** (`matrix/d2-after-tab-050.md`): `D2VCEXFAT`, the same stray `BENCH/file with spaces.txt` as after the OnePlus run. The user deleted it. Accepted by the user on 11-07.
+
+### Galaxy Tab A9+ · Drive 3 · 11-05 05:22 – 10:29
+
+| Partition | Finished | bigwrite write / read-back (MB/s) | Fixtures | Verdict |
+|---|---|---|---|---|
+| D3EXT2 | 05:29 | — | ALL 21821 MATCHED | read sections ✓; writes SKIPPED (ro) |
+| D3EXT3 | 05:37 | — | ALL 21883 MATCHED | read sections ✓; writes SKIPPED (ro) |
+| D3L1EXFAT | 06:10 | 4.59 / 10.09 | ALL 20929 MATCHED | all ✓ |
+| D3L1NTFS | 06:51 | 2.12 / 12.74 | ALL 20920 MATCHED | all ✓ |
+| D3L2FAT32 | 07:22 | 4.39 / 10.95 | ALL 20913 MATCHED | all ✓ |
+| D3L2NTFS | 08:04 | 2.21 / 13.27 | ALL 20925 MATCHED | all ✓ |
+| D3L2EXT4 | 08:37 | 3.88 / 10.32 | ALL 20939 MATCHED | all ✓ |
+| D3L4FAT32 | 09:10 | 3.48 / 10.99 | ALL 20972 MATCHED | all ✓ |
+| D3L4EXFAT | 09:48 | 3.09 / 10.23 | ALL 20910 MATCHED | all ✓ |
+| D3BLNTFS | 10:29 | 2.11 / 13.60 | ALL 21023 MATCHED | all ✓ |
+
+Laptop: **ALL CLEAN** (`matrix/d3-after-050.md`).
+
+### Galaxy Tab A9+ · Drive 4 · 11-05 18:47 – 22:43
+
+| Partition | Finished | bigwrite write / read-back (MB/s) | Fixtures | Verdict |
+|---|---|---|---|---|
+| D4L1EXT2 | 18:56 | — | ALL 21870 MATCHED | read sections ✓; writes SKIPPED (ro) |
+| D4L2EXT2 | 20:51 | — | ALL 21678 MATCHED | read sections ✓; writes SKIPPED (ro) |
+| D4L2EXT3 | 21:01 | — | ALL 21971 MATCHED | read sections ✓; writes SKIPPED (ro) |
+| D4L4EXT2 | 21:11 | — | ALL 21916 MATCHED | read sections ✓; writes SKIPPED (ro) |
+| D4L4EXT3 | 21:22 | — | ALL 21846 MATCHED | read sections ✓; writes SKIPPED (ro) |
+| D4VCEXT2 | 21:32 | — | ALL 21948 MATCHED | read sections ✓; writes SKIPPED (ro) |
+| D4VCEXT3 | 21:42 | — | ALL 21956 MATCHED | read sections ✓; writes SKIPPED (ro) |
+| D4BLFAT32 | 22:11 | 4.71 / 10.47 | ALL 20918 MATCHED | all ✓ |
+| D4BLEXFAT | 22:43 | 4.52 / 10.40 | ALL 21073 MATCHED | all ✓ |
+
+Laptop: **ALL CLEAN** (`matrix/d4-after-tab-050.md`).
+
+### Galaxy Tab A9+ · Drive 5/1 (…EF449) · 11-06 18:40 – 00:04
+
+| Partition | Finished | bigwrite write / read-back (MB/s) | Fixtures | Verdict |
+|---|---|---|---|---|
+| VC_ATS_ARGON_PIM0 | 19:27 | 2.88 / 4.72 | ALL 20902 MATCHED | all ✓ |
+| VC_STA_ARGON_PIM1 | 20:10 | 2.13 / 5.35 | ALL 20965 MATCHED | all ✓ |
+| VC_TWO_SHA512_PIM0 | 20:58 | 2.05 / 11.09 | ALL 20962 MATCHED | all ✓ |
+| VC_AT_ARGON_PIM1 | 21:30 | 3.46 / 7.92 | ALL 20950 MATCHED | all ✓ |
+| VC_SA_SHA512_PIM1 | 22:03 | 3.01 / 5.42 | ALL 20027 MATCHED | all ✓ |
+| VC_TS_ARGON_PIM31 | 23:43 | 2.36 / 6.09 | ALL 20984 MATCHED | all ✓ |
+| FMT_EXFAT | 23:49 | — | ALL 20027 MATCHED | all ✓; bigwrite not run (2 GiB partition) |
+| FMT_FAT32 | 23:55 | — | ALL 20027 MATCHED | all ✓; bigwrite not run (2 GiB partition) |
+| ENC_TO_EXFAT | 23:59 | — | ALL 20027 MATCHED | all ✓; bigwrite not run (2 GiB partition) |
+| ENC_TO_FAT32 | 00:04 | — | ALL 20027 MATCHED | all ✓; bigwrite not run (2 GiB partition) |
+
+Laptop (`matrix/hostcheck-050-tab-EF449.log`): p1 to p7 and p10 checker clean and every fixture matched. **p8 and p9 (plain FAT32) NOT CLEAN: dirty bit only**, the vold cause above. Accepted by the user on 11-07.
+
+### Pixel 7 Pro · Drive 1 · 11-07 13:09 – 15:27
+
+| Partition | Finished | bigwrite write / read-back (MB/s) | Fixtures | Verdict |
+|---|---|---|---|---|
+| D1FAT32 | 13:20 | 8.13 / 36.15 | ALL 20995 MATCHED | all ✓ |
+| D1EXFAT | 13:31 | 9.31 / 36.72 | ALL 20963 MATCHED | all ✓ |
+| D1NTFS | 13:53 | 2.92 / 34.10 | ALL 21052 MATCHED | all ✓ |
+| D1EXT4 | 14:06 | 6.19 / 40.78 | ALL 20854 MATCHED | all ✓ |
+| D1BLEXFAT | 14:21 | 6.54 / 27.52 | ALL 20898 MATCHED | all ✓ |
+| D1BLNTFS | 14:45 | 2.66 / 25.74 | ALL 20905 MATCHED | all ✓ |
+| D1APFSCI | 14:55 | — | ALL 22129 MATCHED | read sections ✓; writes SKIPPED (ro) |
+| D1APFSCS | 15:06 | — | ALL 22024 MATCHED | read sections ✓; writes SKIPPED (ro) |
+| D1APFSECI | 15:16 | — | ALL 21777 MATCHED | read sections ✓; writes SKIPPED (ro) |
+| D1APFSECS | 15:27 | — | ALL 21911 MATCHED | read sections ✓; writes SKIPPED (ro) |
+
+Laptop: **ALL CLEAN** (`matrix/d1-after-px-050a.md`).
+
+### Pixel 7 Pro · Drive 2 (…2D62) · 11-07 06:01 – 09:31
+
+| Partition | Finished | bigwrite write / read-back (MB/s) | Fixtures | Verdict |
+|---|---|---|---|---|
+| D2BLFAT32 | 06:18 | 5.93 / 29.63 | ALL 20974 MATCHED | all ✓ |
+| D2VCFAT32 | 06:36 | 6.50 / 28.69 | ALL 20958 MATCHED | all ✓ |
+| D2VCEXFAT | 06:56 | 7.17 / 26.19 | ALL 20974 MATCHED | all ✓ |
+| D2VCNTFS | 07:24 | 2.67 / - | ALL 20919 MATCHED | **bigwrite FAILED**: big.bin DIFFERS at byte 341196800 after remount; tree 244/244 OK |
+| D2VCEXT4 | 07:44 | 5.47 / 28.54 | ALL 21071 MATCHED | all ✓ |
+| D2L1FAT32 | 08:02 | 7.36 / 28.38 | ALL 20953 MATCHED | all ✓ |
+| D2L1EXT4 | 08:22 | 5.30 / 28.58 | ALL 21024 MATCHED | all ✓ |
+| D2L2EXFAT | 08:42 | 7.38 / 25.89 | ALL 20942 MATCHED | all ✓ |
+| D2L4EXT4 | 09:02 | 5.09 / 27.28 | ALL 20888 MATCHED | all ✓ |
+| D2L4NTFS | 09:31 | 2.73 / 26.36 | ALL 20927 MATCHED | all ✓ |
+
+Laptop: **1 of 10 NOT CLEAN** (`matrix/d2-after-px-050.md`): `D2VCNTFS` big.bin, as the phone found. fsck was clean, every fixture matched and the tree matched, and no USB errors were logged. The difference is one 16 KiB run at file offset 0x14564000 (raw 0x12c9d8000) whose encrypted bytes are all 0x55, with correct sectors either side. The expected plaintext is nowhere else on the volume, its ciphertext is nowhere else on the raw partition, no XTS tweak within ±65,536 sectors decrypts the stored bytes to it, and no app code writes a 0x55 fill. A scan of all 10 partitions found this block only. Notes: `matrix/d2vcntfs-px-050-bigbin.md`.
+
+Diagnosis: a faulty stick (…2D62). It lost a page twice, on two phones, two containers and two filesystems, and no other stick has shown it; this is not proven by a surface test. The stick was retired on 11-07 and Drive 2/2 (…EF451) took its place. Drive 2/2's clean OnePlus run on the same build supports the diagnosis. The user accepted this cell on 11-07.
+
+### Pixel 7 Pro · Drive 3 · 11-06 18:03 – 21:43
+
+| Partition | Finished | bigwrite write / read-back (MB/s) | Fixtures | Verdict |
+|---|---|---|---|---|
+| D3EXT2 | 18:06 | — | ALL 21821 MATCHED | read sections ✓; writes SKIPPED (ro) |
+| D3EXT3 | 18:11 | — | ALL 21883 MATCHED | read sections ✓; writes SKIPPED (ro) |
+| D3L1EXFAT | 18:33 | 7.40 / 26.93 | ALL 20929 MATCHED | all ✓ |
+| D3L1NTFS | 19:04 | 2.71 / 26.59 | ALL 20920 MATCHED | all ✓ |
+| D3L2FAT32 | 19:24 | 6.77 / 28.48 | ALL 20913 MATCHED | all ✓ |
+| D3L2NTFS | 19:57 | 2.68 / 26.28 | ALL 20925 MATCHED | all ✓ |
+| D3L2EXT4 | 20:20 | 5.19 / 26.34 | ALL 20939 MATCHED | all ✓ |
+| D3L4FAT32 | 20:43 | 4.50 / 28.77 | ALL 20972 MATCHED | all ✓ |
+| D3L4EXFAT | 21:12 | 4.36 / 27.05 | ALL 20910 MATCHED | all ✓ |
+| D3BLNTFS | 21:43 | 2.71 / 27.06 | ALL 21023 MATCHED | all ✓ |
+
+Laptop: **ALL CLEAN** (`matrix/d3-after-px-050.md`).
+
+### Pixel 7 Pro · Drive 4 · 11-07 15:54 – 17:22
+
+| Partition | Finished | bigwrite write / read-back (MB/s) | Fixtures | Verdict |
+|---|---|---|---|---|
+| D4VCEXT2 | 15:59 | — | ALL 21948 MATCHED | read sections ✓; writes SKIPPED (ro) |
+| D4VCEXT3 | 16:04 | — | ALL 21956 MATCHED | read sections ✓; writes SKIPPED (ro) |
+| D4L1EXT2 | 16:10 | — | ALL 21870 MATCHED | read sections ✓; writes SKIPPED (ro) |
+| D4L1EXT3 | 16:15 | — | ALL 21875 MATCHED | read sections ✓; writes SKIPPED (ro) |
+| D4L2EXT2 | 16:21 | — | ALL 21678 MATCHED | read sections ✓; writes SKIPPED (ro) |
+| D4L2EXT3 | 16:26 | — | ALL 21971 MATCHED | read sections ✓; writes SKIPPED (ro) |
+| D4L4EXT2 | 16:32 | — | ALL 21916 MATCHED | read sections ✓; writes SKIPPED (ro) |
+| D4L4EXT3 | 16:37 | — | ALL 21846 MATCHED | read sections ✓; writes SKIPPED (ro) |
+| D4BLFAT32 | 16:59 | 6.20 / 25.46 | ALL 20918 MATCHED | all ✓ |
+| D4BLEXFAT | 17:22 | 6.90 / 24.73 | ALL 21073 MATCHED | all ✓ |
+
+Laptop: **ALL CLEAN** (`matrix/d4-after-px-050a.md`).
+
+### Pixel 7 Pro · Drive 5/1 (…EF449) · 11-06 10:03 – 14:24
+
+| Partition | Finished | bigwrite write / read-back (MB/s) | Fixtures | Verdict |
+|---|---|---|---|---|
+| VC_ATS_ARGON_PIM0 | 10:42 | 4.21 / 5.63 | ALL 20902 MATCHED | all ✓ |
+| VC_STA_ARGON_PIM1 | 11:16 | 2.82 / 6.61 | ALL 20965 MATCHED | all ✓ |
+| VC_TWO_SHA512_PIM0 | 11:52 | 2.50 / 21.84 | ALL 20962 MATCHED | all ✓ |
+| VC_AT_ARGON_PIM1 | 12:11 | 5.17 / 17.27 | ALL 20950 MATCHED | all ✓ |
+| VC_SA_SHA512_PIM1 | 12:35 | 4.27 / 8.81 | ALL 20027 MATCHED | all ✓ |
+| VC_TS_ARGON_PIM31 | 14:09 | 3.26 / 7.43 | ALL 20984 MATCHED | all ✓ |
+| FMT_EXFAT | 14:13 | — | ALL 20027 MATCHED | all ✓; bigwrite not run (2 GiB partition) |
+| FMT_FAT32 | 14:18 | — | ALL 20027 MATCHED | all ✓; bigwrite not run (2 GiB partition) |
+| ENC_TO_EXFAT | 14:21 | — | ALL 20027 MATCHED | all ✓; bigwrite not run (2 GiB partition) |
+| ENC_TO_FAT32 | 14:24 | — | ALL 20027 MATCHED | all ✓; bigwrite not run (2 GiB partition) |
+
+Laptop (`matrix/hostcheck-050-px-EF449.log`): p1 to p7 and p10 checker clean and every fixture matched. p6's manifest step first failed to mount, a transient; the rerun was clean (`matrix/hostcheck-050-px-EF449-p6redo.log`, rebuilt from the session transcript and labelled so). **p8 and p9 (plain FAT32) NOT CLEAN: dirty bit only**, every fixture matched. Cause, proven on the tablet on 11-07 with the app disabled: Android's vold mounts every plain FAT32 and exFAT partition at plug-in, the kernel's vfat driver sets boot-sector byte 0x41, and unplugging with those volumes mounted leaves it set. The reserved-area diff is byte 66 plus the FSInfo bytes from 1001, the same shape as in that test. Accepted by the user on 11-07.
+
+### Commit hashes after the merge of #117
+
+Rebase-merged, so the run log and the matrix above name the PR's commits, and `cae0e9e` is `d0e5655` on `main`.
+
+| At the PR head | On `main` | Commit |
+|---|---|---|
+| `636b521` | `6a564c4` | fix(ext4): deleting a folder deletes its contents, and is safe on links |
+| `bbd90b6` | `c85fa6a` | fix(main): the end of one note no longer wipes the next |
+| `5e779ae` | `800d5f9` | test(e2e): delete a folder with files in it; a warning as a note ends |
+| `8acf33b` | `afb32d4` | fix(exfat): deleting a folder deletes its contents |
+| `a186428` | `7dbbbea` | test(device): delete a folder on a real ext4 and exFAT partition |
+| `22871e1` | `25f11b2` | docs: record the folder delete run on D5/2; hash table for #116 |
+| `e8f9086` | `89c0750` | fix(provider): a delete waits for writers there to finish closing |
+| `cae0e9e` | `d0e5655` | chore: remove test screenshots committed by mistake |
+
 ## 2026-11-04: Deleting a folder on real ext4 and exFAT, Galaxy Tab A9+
 
 Not a benchmark: no sections ran. Deleting a non-empty folder through the provider failed on ext4
