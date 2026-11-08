@@ -1,0 +1,1 @@
+Mounting read-only unticks and greys out hidden volume protection, as VeraCrypt's dialog does.

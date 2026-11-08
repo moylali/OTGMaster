@@ -8,6 +8,7 @@ Android app to open encrypted USB mass-storage devices for read/write without ro
 - Read and write encrypted drives
   - Encryption types: VeraCrypt, LUKS1, LUKS2, BitLocker
   - File systems: FAT32, exFAT, NTFS, ext4
+  - VeraCrypt hidden volumes, with hidden volume protection (0.5.1 onwards)
 - Read Mac APFS drives, plain or encrypted
 - Format a partition as FAT32, exFAT, ext4 (0.5.0 onwards) or NTFS (0.5.0 onwards)
 - Encrypt a partition as VeraCrypt or LUKS2 (0.5.0 onwards), with FAT32, exFAT, ext4 (0.5.0 onwards) or NTFS (0.5.0 onwards) inside

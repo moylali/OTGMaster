@@ -1,0 +1,1 @@
+A hidden volume is written: create, persist over remounts, delete, then the host decrypts it and runs fsck.

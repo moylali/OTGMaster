@@ -1,0 +1,1 @@
+Protection on, a write clear of the hidden volume: mounts OUTER, the write lands, and the host finds the hidden volume unchanged and both filesystems clean.

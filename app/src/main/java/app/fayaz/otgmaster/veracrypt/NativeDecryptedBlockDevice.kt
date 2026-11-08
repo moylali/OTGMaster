@@ -20,7 +20,10 @@ class NativeDecryptedBlockDevice(
     // physical sector 0 (e.g. "whole device") — for any volume inside a partition with a
     // nonzero start, it corrupts every data sector while leaving the header (which uses its
     // own fixed tweak) unaffected.
-    private val tweakDataOffset: Long = volumeDataOffset
+    private val tweakDataOffset: Long = volumeDataOffset,
+    val volumeType: VeraCryptVolumeType = VeraCryptVolumeType.NORMAL,
+    /** Set on an outer volume mounted with hidden volume protection; every write asks it first. */
+    val hiddenVolumeProtection: HiddenVolumeProtection? = null,
 ) : RawBlockDevice, BlockDeviceDriver {
 
     /**
@@ -95,6 +98,7 @@ class NativeDecryptedBlockDevice(
     override fun writeBlocks(startBlock: Long, data: ByteArray) {
         checkOpen()
         requireInRange(startBlock, data.size.toLong() / blockSize, "write")
+        hiddenVolumeProtection?.checkWrite((tweakDataOffset + startBlock) * blockSize, data.size.toLong())
         val physicalStartBlock = startBlock + volumeDataOffset
         val sectorsPerBlock = blockSize / 512L
         val firstTweak = tweakDataOffset * sectorsPerBlock + startBlock * sectorsPerBlock

@@ -125,8 +125,99 @@ class VeraCryptUnlocker {
         keyfiles: List<android.net.Uri>? = null,
         contentResolver: android.content.ContentResolver? = null,
         cipher: VeraCryptCipher = VeraCryptCipher.DEFAULT,
-        hash: VeraCryptHash = VeraCryptHash.DEFAULT
-    ): RawBlockDevice {
+        hash: VeraCryptHash = VeraCryptHash.DEFAULT,
+        /** Non-null mounts the outer volume with its hidden volume protected against writes to it. */
+        protect: HiddenVolumeCredentials? = null,
+    ): NativeDecryptedBlockDevice {
+        requireSupported(cipher, hash)
+        protect?.let { requireSupported(it.cipher, it.hash) }
+
+        val passwordBytes = keyedPassword(password, keyfiles, contentResolver)
+        val kdf = KdfParams.forVolume(hash, pim)
+        android.util.Log.i("VeraCryptUnlocker", "PIM: $pim, ${hash.displayName}: " +
+            if (hash == VeraCryptHash.ARGON2) "${kdf.iterations} passes over ${kdf.memoryKiB / 1024} MiB"
+            else "${kdf.iterations} iterations")
+
+        // In VeraCrypt's own order. Each header has its own salt and so costs a full key
+        // derivation, which is why the hidden one is tried only after the standard one fails:
+        // an ordinary unlock costs exactly what it always did.
+        val header = try {
+            readHeader(device, candidate, VeraCryptHeader.STANDARD_HEADER_OFFSET, passwordBytes, cipher, hash, kdf)
+                ?: readHeader(device, candidate, VeraCryptHeader.HIDDEN_HEADER_OFFSET, passwordBytes, cipher, hash, kdf)
+        } finally {
+            passwordBytes.fill(0)
+        } ?: throw IllegalArgumentException(WRONG_PASSWORD)
+
+        // Volume::Open: the main password must open the outer volume when protecting a hidden one.
+        if (protect != null && header.isHidden) {
+            header.keyArea.fill(0)
+            throw IllegalArgumentException(WRONG_PASSWORD)
+        }
+
+        val masterKey = header.keyArea.copyOf(cipher.keySizeBytes)
+        header.keyArea.fill(0)
+
+        try {
+            val partitionBlocks = candidate.blockCount ?: (device.blockCount - candidate.startBlock)
+            // From the header: a hidden volume's data lies in the outer volume's free space. The
+            // XTS data unit is this offset plus the sector, counted from the start of the host
+            // volume, which is what tweakDataOffset carries and what VeraCrypt computes as
+            // hostOffset / SectorSize.
+            val (dataOffset, dataSize) = dataArea(header, partitionBlocks * device.blockSize)
+            requireSectorAligned(dataOffset, device.blockSize)
+            requireSectorAligned(dataSize, device.blockSize)
+            val protection = protect?.let { openProtection(device, candidate, partitionBlocks, contentResolver, it) }
+            val dataOffsetSectors = dataOffset / device.blockSize
+            return NativeDecryptedBlockDevice(
+                device,
+                masterKey,
+                volumeDataOffset = candidate.startBlock + dataOffsetSectors,
+                decryptedBlockCount = dataSize / device.blockSize,
+                cipherNativeIds = cipher.nativeIds,
+                tweakDataOffset = dataOffsetSectors,
+                volumeType = when {
+                    header.isHidden -> VeraCryptVolumeType.HIDDEN
+                    protection != null -> VeraCryptVolumeType.OUTER
+                    else -> VeraCryptVolumeType.NORMAL
+                },
+                hiddenVolumeProtection = protection,
+            )
+        } catch (e: Exception) {
+            masterKey.fill(0)
+            throw e
+        }
+    }
+
+    /**
+     * Learns where the hidden volume is, as VeraCrypt does: its header is decrypted only to read
+     * its offset and size, it is not mounted, and its key is thrown away.
+     */
+    private fun openProtection(
+        device: RawBlockDevice,
+        candidate: VolumeCandidate,
+        partitionBlocks: Long,
+        contentResolver: android.content.ContentResolver?,
+        protect: HiddenVolumeCredentials,
+    ): HiddenVolumeProtection {
+        val withKeyfiles = protect.keyfiles.isNotEmpty()
+        val bytes = keyedPassword(protect.password, protect.keyfiles, contentResolver)
+        val header = try {
+            readHeader(device, candidate, VeraCryptHeader.HIDDEN_HEADER_OFFSET, bytes, protect.cipher, protect.hash,
+                KdfParams.forVolume(protect.hash, protect.pim))
+        } finally {
+            bytes.fill(0)
+        }
+        // Only the hidden location is tried, and its header has to say that it is one.
+        if (header == null || !header.isHidden) {
+            header?.keyArea?.fill(0)
+            throw HiddenVolumeCredentialsException(withKeyfiles)
+        }
+        header.keyArea.fill(0)
+        val (offset, size) = dataArea(header, partitionBlocks * device.blockSize)
+        return HiddenVolumeProtection(offset, offset + size)
+    }
+
+    private fun requireSupported(cipher: VeraCryptCipher, hash: VeraCryptHash) {
         if (!cipher.isSupported) {
             throw UnsupportedAlgorithmException(
                 "${cipher.displayName} is not yet supported. Supported ciphers: " +
@@ -139,73 +230,76 @@ class VeraCryptUnlocker {
                     VeraCryptHash.entries.filter { it.isSupported }.joinToString(", ") { it.displayName }
             )
         }
+    }
 
-        var passwordBytes = String(password).toByteArray(Charsets.UTF_8)
+    /** The password's bytes with its keyfiles mixed in; [password] is wiped. An unreadable keyfile is skipped. */
+    private fun keyedPassword(
+        password: CharArray,
+        keyfiles: List<android.net.Uri>?,
+        contentResolver: android.content.ContentResolver?,
+    ): ByteArray {
+        val bytes = String(password).toByteArray(Charsets.UTF_8)
         password.fill('\u0000')
+        if (keyfiles.isNullOrEmpty() || contentResolver == null) return bytes
+        return VeraCryptKeyfiles.apply(bytes,
+            keyfiles.map { uri -> { contentResolver.openInputStream(uri) } }, skipUnreadable = true)
+    }
 
-        // Keyfiles, mixed as VeraCrypt does. An unreadable one is skipped, as it always was
-        // here, and the unlock then fails as a wrong password.
-        if (!keyfiles.isNullOrEmpty() && contentResolver != null) {
-            passwordBytes = VeraCryptKeyfiles.apply(passwordBytes,
-                keyfiles.map { uri -> { contentResolver.openInputStream(uri) } }, skipUnreadable = true)
-        }
+    /** The header at [offset] bytes into the partition if these credentials open it, else null. */
+    private fun readHeader(
+        device: RawBlockDevice,
+        candidate: VolumeCandidate,
+        offset: Long,
+        passwordBytes: ByteArray,
+        cipher: VeraCryptCipher,
+        hash: VeraCryptHash,
+        kdf: KdfParams,
+    ): VeraCryptHeader? {
+        if (offset % device.blockSize != 0L) return null
+        val block = candidate.startBlock + offset / device.blockSize
+        val partitionEnd = candidate.startBlock + (candidate.blockCount ?: (device.blockCount - candidate.startBlock))
+        if (block >= partitionEnd) return null
 
-        val kdf = KdfParams.forVolume(hash, pim)
-        android.util.Log.i("VeraCryptUnlocker",
-            "Password length: ${password.size}, PIM: $pim, ${hash.displayName}: " +
-                if (hash == VeraCryptHash.ARGON2) "${kdf.iterations} passes over ${kdf.memoryKiB / 1024} MiB"
-                else "${kdf.iterations} iterations")
-        
-        val headerSector = device.readBlocks(candidate.startBlock, 1)
-        android.util.Log.i("VeraCryptUnlocker", "startBlock: ${candidate.startBlock}, header length: ${headerSector.size}")
-        android.util.Log.i("VeraCryptUnlocker", "Header first 16 bytes: " + headerSector.take(16).joinToString("") { "%02x".format(it) })
-        
-        val salt = headerSector.copyOfRange(0, 64)
-        val encryptedHeader = headerSector.copyOfRange(64, 512)
-
-        val decryptedHeader = try {
+        val sector = device.readBlocks(block, 1)
+        val plain = try {
             VeraCryptNative.decryptHeader(
-                cipher.nativeIds, hash.kdfNativeId!!, passwordBytes, salt,
-                kdf.iterations, kdf.memoryKiB, encryptedHeader)
+                cipher.nativeIds, hash.kdfNativeId!!, passwordBytes, sector.copyOfRange(0, 64),
+                kdf.iterations, kdf.memoryKiB, sector.copyOfRange(64, 512))
         } catch (e: IllegalStateException) {
-            // Only Argon2id throws: almost always its working memory, which is hundreds
-            // of MiB at the default PIM and up to 1 GiB, failing to allocate.
-            passwordBytes.fill(0)
+            // Only Argon2id throws, almost always because its working memory, hundreds of MiB
+            // at the default PIM and up to 1 GiB, failed to allocate. The other location
+            // would fail the same way, so this does not move on to it.
             throw IllegalStateException(
                 "Argon2 could not derive the key (${e.message}). It needs " +
                     "${kdf.memoryKiB / 1024} MiB of memory at this PIM; close other apps and try again.", e)
         }
-
-        if (decryptedHeader == null) {
-            throw IllegalArgumentException("Decryption failed internally")
+        if (plain == null) {
+            android.util.Log.w("VeraCryptUnlocker", "the native header decryption failed")
+            return null
         }
+        return try { VeraCryptHeader.parse(plain) } finally { plain.fill(0) }
+    }
 
-        // Check "VERA" magic bytes (ASCII)
-        if (decryptedHeader[0] != 'V'.code.toByte() ||
-            decryptedHeader[1] != 'E'.code.toByte() ||
-            decryptedHeader[2] != 'R'.code.toByte() ||
-            decryptedHeader[3] != 'A'.code.toByte()) {
-            throw IllegalArgumentException(
-                "Wrong password, PIM, keyfile, or cipher/hash selection (header could not be decrypted)."
-            )
+    /** Offset and size of the data area, in bytes from the start of the host volume. */
+    private fun dataArea(header: VeraCryptHeader, hostBytes: Long): Pair<Long, Long> {
+        val offset = if (header.hasDataAreaFields) header.dataAreaOffset else VeraCryptHeader.STANDARD_DATA_OFFSET
+        // Volume size, not the partition: VolumeLayoutV2 takes it from the header, and for a
+        // standard volume it leaves out the 128 KiB of backup headers at the end.
+        val size = if (header.hasDataAreaFields && header.volumeSize > 0) header.volumeSize else hostBytes - offset
+        if (offset < 0 || size <= 0 || offset > hostBytes || size > hostBytes - offset) {
+            throw IllegalArgumentException("The volume header describes a data area outside this partition.")
         }
+        return offset to size
+    }
 
-        // Master key starts at offset 192 of the 448 decrypted bytes, sized per cipher.keySizeBytes
-        val masterKey = decryptedHeader.copyOfRange(192, 192 + cipher.keySizeBytes)
-        passwordBytes.fill(0)
+    private fun requireSectorAligned(bytes: Long, blockSize: Int) {
+        if (bytes % blockSize != 0L) {
+            throw IllegalArgumentException("The volume's data area does not start on a sector of this device.")
+        }
+    }
 
-        // For standard volume, data area starts at byte 131072 (sector 256 for 512-byte sectors)
-        // relative to the START OF THE VOLUME — this is the XTS tweak offset. The physical I/O
-        // offset additionally includes wherever the volume's partition starts on the disk.
-        val dataOffsetSectors = 131072L / device.blockSize
-
-        return NativeDecryptedBlockDevice(
-            device,
-            masterKey,
-            volumeDataOffset = candidate.startBlock + dataOffsetSectors,
-            decryptedBlockCount = (candidate.blockCount ?: (device.blockCount - candidate.startBlock)) - dataOffsetSectors,
-            cipherNativeIds = cipher.nativeIds,
-            tweakDataOffset = dataOffsetSectors
-        )
+    private companion object {
+        const val WRONG_PASSWORD = "Wrong password, PIM, keyfile, or cipher/hash selection. " +
+            "Neither the standard nor the hidden volume header could be decrypted."
     }
 }

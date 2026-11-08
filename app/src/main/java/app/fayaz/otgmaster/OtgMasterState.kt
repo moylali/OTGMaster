@@ -33,6 +33,10 @@ data class MountedDrive(
     /** First block of the partition on the raw device, and its length; null when unknown. */
     val partitionStartBlock: Long? = null,
     val partitionBlockCount: Long? = null,
+    /** VeraCrypt's Normal, Hidden or Outer for a VeraCrypt mount; null for any other. */
+    val veraCryptVolumeType: app.fayaz.otgmaster.veracrypt.VeraCryptVolumeType? = null,
+    /** Set on an outer volume mounted with its hidden volume protected. */
+    val hiddenVolumeProtection: app.fayaz.otgmaster.veracrypt.HiddenVolumeProtection? = null,
 ) {
     /**
      * Why the volume refuses writes, or null if it is writable. ext4 and NTFS can
@@ -42,9 +46,24 @@ data class MountedDrive(
         get() = (fileSystem as? app.fayaz.otgmaster.ext4.Ext4FileSystem)?.readOnlyReason
             ?: (fileSystem as? app.fayaz.otgmaster.ntfs.NtfsFileSystem)?.readOnlyReason
             ?: (fileSystem as? app.fayaz.otgmaster.apfs.ApfsFileSystem)?.readOnlyReason
-            ?: if (mountedReadOnly) app.fayaz.otgmaster.ext4.Ext4FileSystem.MOUNTED_READ_ONLY else null
+            ?: (if (mountedReadOnly) app.fayaz.otgmaster.ext4.Ext4FileSystem.MOUNTED_READ_ONLY else null)
+            ?: if (hiddenVolumeProtection?.triggered == true) "it stopped taking writes until it is unmounted" else null
 
     val isReadOnly: Boolean get() = readOnlyReason != null
+
+    /** True for a hidden volume, and for an outer one with its hidden volume protected. */
+    val isHiddenOrOuter: Boolean
+        get() = veraCryptVolumeType == app.fayaz.otgmaster.veracrypt.VeraCryptVolumeType.HIDDEN ||
+            veraCryptVolumeType == app.fayaz.otgmaster.veracrypt.VeraCryptVolumeType.OUTER
+
+    /** The card's tag, VeraCrypt's Type column. Null for a normal volume and anything else. */
+    val volumeTypeLabel: String?
+        get() = when (veraCryptVolumeType) {
+            app.fayaz.otgmaster.veracrypt.VeraCryptVolumeType.HIDDEN -> "HIDDEN"
+            app.fayaz.otgmaster.veracrypt.VeraCryptVolumeType.OUTER ->
+                if (hiddenVolumeProtection?.triggered == true) "OUTER(!)" else "OUTER"
+            else -> null
+        }
 
     /**
      * The partition's identity across a re-plug, which a fresh mount does not keep in [id].

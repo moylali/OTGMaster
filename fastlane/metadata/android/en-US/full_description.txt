@@ -10,6 +10,7 @@ FEATURES
 • ext4 Repair — a drive that wasn't unmounted cleanly opens read-only; one tap replays its journal, as Linux would, and makes it writable again
 • Auto Mount — automatically unlocks known drives on connect using biometric authentication
 • Hub Support — multiple USB drives connected via a hub are all prompted in a single biometric step
+• VeraCrypt Hidden Volumes — open a hidden volume with its own password, and protect it from damage while writing to its outer volume
 • Keyfile Support — use a keyfile in addition to or instead of a password
 • Custom PIM — supports non-default PIM values for stronger key derivation
 • Cipher Selection — AES, Serpent and Twofish, VeraCrypt's five cascades of them, and SHA-512 or Argon2id key derivation

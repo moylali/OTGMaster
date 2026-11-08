@@ -92,6 +92,11 @@ class E2EAutomatedTest {
 
         // Launch the app
         val context = ApplicationProvider.getApplicationContext<Context>()
+        // Cases share an emulator and every disk there is the same device, so a read-only
+        // choice left by one case made the next case's writes fail. commit(): the activity
+        // reads this in onCreate.
+        context.getSharedPreferences("otgmaster_prefs", Context.MODE_PRIVATE).edit()
+            .remove("read_only_partitions").commit()
         // Named explicitly: the debug build has a second launcher entry (OTG Bench),
         // and getLaunchIntentForPackage returned that one, so every case ran against
         // the bench screen and failed with "password input not shown".
@@ -120,6 +125,7 @@ class E2EAutomatedTest {
         // @Before, and a fourth method cost every case about 13 s doing nothing.
         if (arguments.getString("disconnect_test", "false") == "true") return runDisconnectCase()
         if (arguments.getString("journal_repair", "false") == "true") return runJournalRepairCase()
+        arguments.getString("hidden_flow")?.let { return runHiddenFlow(it) }
         if (arguments.getString("backup_flow") == "device") return bkFlowDevice()
         if (arguments.getString("backup_flow") == "delete_tree") return deviceDeleteTree()
         if (arguments.getString("backup_flow") == "main_screen") return runMainScreenCase()
@@ -328,6 +334,18 @@ class E2EAutomatedTest {
             assertEquals("case sensitivity of the volume (names: ${names.sorted()})",
                 cs == "true", "CASE.txt" in names)
         }
+
+        // VeraCrypt's volume type on the card, and a file only this volume has.
+        arguments.getString("expected_volume_tag", "").takeIf { it.isNotEmpty() }?.let { tag ->
+            if (tag == "NONE") {
+                openSlider()
+                assertNull("HIDDEN on a normal unlock", device.findObject(By.text("HIDDEN")))
+                assertNull("OUTER on a normal unlock", device.findObject(By.text("OUTER")))
+            } else {
+                assertNotNull("$tag not on the drive card", findInSlider(By.text(tag)))
+            }
+        }
+        arguments.getString("expect_file", "").takeIf { it.isNotEmpty() }?.let { readRootFile(context, it) }
 
         // Volumes the app must not write (ext2/ext3: no extents) are mounted
         // read-only: the card says so, and a create through the provider fails.
@@ -3592,12 +3610,199 @@ class E2EAutomatedTest {
     }
 
     /** Taps Scan and unlocks and mounts the volume. */
-    private fun scanAndMount(password: String, pim: String, testCase: String, context: String) {
+    private fun scanAndMount(password: String, pim: String, testCase: String, context: String, beforeMount: () -> Unit = {}) {
+        scan(context)
+        assertTrue("the volume did not mount $context",
+            doMount(password, pim, testCase, clearFields = true, beforeMount = beforeMount))
+    }
+
+    private fun scan(context: String) {
         val scan = findScanButton()
         assertNotNull("Scan button not found ($context)", scan)
         scan!!.click()
         device.wait(Until.findObject(By.text(java.util.regex.Pattern.compile("(?i)Allow|OK"))), 3000L)?.click()
-        assertTrue("the volume did not mount $context", doMount(password, pim, testCase, clearFields = true))
+    }
+
+    // ── VeraCrypt hidden volumes (testdata/hidden_*, scripts/make_hidden_volume_fixtures.py) ──
+
+    private fun hiddenArg(name: String): String = InstrumentationRegistry.getArguments().getString(name, "")
+
+    /** Fills the Hidden Volume Protection group of the unlock form, as the case says. */
+    private fun fillHiddenProtection() {
+        clickScrolling("hidden_protect_switch", "no hidden volume protection switch on the form")
+        typeInField("hidden_protect_password", hiddenArg("hidden_password"))
+        hiddenArg("hidden_pim").takeIf { it.isNotEmpty() }?.let { typeInField("hidden_protect_pim", it) }
+        hiddenArg("hidden_keyfile").takeIf { it.isNotEmpty() }?.let {
+            clickScrolling("hidden_protect_keyfiles_button", "no keyfiles button in the protection group")
+            pickKeyfileInFiles(it)
+        }
+        // Below the fold with the group open, and pickOption does not scroll.
+        fun pick(picker: String, option: String) {
+            assertNotNull("$picker missing", findScrolling(By.desc(picker), desc = picker))
+            pickOption(picker, option)
+        }
+        hiddenArg("hidden_cipher").takeIf { it.isNotEmpty() }?.let { pick("hidden_protect_cipher", it) }
+        hiddenArg("hidden_hash").takeIf { it.isNotEmpty() }?.let { pick("hidden_protect_hash", it) }
+        hideKeyboard()
+    }
+
+    private fun typeInField(desc: String, text: String) {
+        clickScrolling(desc, "$desc missing")
+        android.os.SystemClock.sleep(500)
+        device.executeShellCommand("input text $text")
+        android.os.SystemClock.sleep(500)
+    }
+
+    private fun protectionSwitch(): androidx.test.uiautomator.UiObject2 {
+        val found = findScrolling(By.desc("hidden_protect_switch"), desc = "hidden_protect_switch")
+        assertNotNull("no hidden volume protection switch on the form", found)
+        return found!!
+    }
+
+    /** A failed unlock's reason, in the log below the form. */
+    private fun assertLogLine(text: String) {
+        val deadline = android.os.SystemClock.uptimeMillis() + 120_000L
+        var line: androidx.test.uiautomator.UiObject2? = null
+        while (line == null && android.os.SystemClock.uptimeMillis() < deadline) {
+            InstrumentationRegistry.getInstrumentation().uiAutomation.clearCache()
+            line = findScrolling(By.textContains(text), text = text, firstWaitMs = 3000L)
+        }
+        if (line == null) captureScreen("no_log_line")
+        assertNotNull("'$text' not in the app's log", line)
+    }
+
+    private fun assertRefusedThenOptionOff(logLine: String) {
+        assertLogLine(logLine)
+        assertTrue("a refused unlock mounted something", OtgMasterState.mountedDrives.isEmpty())
+        assertFalse("hidden volume protection stayed on after the attempt", protectionSwitch().isChecked)
+        assertNull("the protection fields stayed open after the attempt", device.findObject(By.desc("hidden_protect_password")))
+    }
+
+    /**
+     * Mounts with the protection fields filled. VeraCrypt's message about the protection covers
+     * the screen when the mount ends, so it is read and closed before looking for the card.
+     */
+    private fun mountProtected(password: String, pim: String, testCase: String) {
+        scan("with hidden volume protection")
+        assertTrue("the mount button was not tapped",
+            doMount(password, pim, testCase, clearFields = true, waitForMount = false, beforeMount = { fillHiddenProtection() }))
+        if (device.wait(Until.findObject(By.text("Hidden volume protected")), 300000L) == null) captureScreen("no_protection_message")
+        assertDialog("Hidden volume protected", "until the outer volume is unmounted")
+        assertNotNull("the outer volume did not mount", waitForMounted(30000L))
+    }
+
+    private fun assertOuterTag(tag: String) {
+        assertNotNull("$tag not on the drive card", findInSlider(By.text(tag)))
+    }
+
+    /** Writes a new file in the volume's root through the provider; false if that was refused. */
+    private fun writeRootFile(context: Context, name: String, bytes: ByteArray): Boolean = runCatching {
+        val root = DocumentsContract.buildDocumentUri(AUTHORITY, getRootDocId(context)!!)
+        val uri = DocumentsContract.createDocument(context.contentResolver, root, "application/octet-stream", name)!!
+        context.contentResolver.openOutputStream(uri)!!.use { it.write(bytes) }
+    }.isSuccess
+
+    /** The hidden volume, read-only so that nothing can touch it: its own file and a byte-exact flower. */
+    private fun assertHiddenVolumeIntact(context: Context, testCase: String) {
+        scanAndMount(hiddenArg("hidden_password"), hiddenArg("hidden_pim"), testCase, "with the hidden volume's password") {
+            clickScrolling("read_only_switch", "no read-only switch on the form")
+        }
+        assertOuterTag("HIDDEN")
+        assertEquals("the hidden volume's own file changed", "Only the hidden volume has this file\n",
+            readRootFile(context, "hidden_marker.txt"))
+        doUnmount()
+    }
+
+    private fun runHiddenFlow(flow: String) {
+        val arguments = InstrumentationRegistry.getArguments()
+        val password = arguments.getString("password", "")
+        val pim = arguments.getString("pim", "")
+        val testCase = arguments.getString("testCase", "")
+        val context = ApplicationProvider.getApplicationContext<Context>()
+        android.os.SystemClock.sleep(1000)
+        when (flow) {
+            "wrong_password" -> {
+                scan("before a wrong password")
+                doMount(password, pim, testCase, clearFields = true, waitForMount = false)
+                assertLogLine("Neither the standard nor the hidden volume header")
+                assertTrue("a wrong password mounted something", OtgMasterState.mountedDrives.isEmpty())
+            }
+            "protect_wrong_password" -> {
+                scan("before a wrong hidden password")
+                doMount(password, pim, testCase, clearFields = true, waitForMount = false, beforeMount = { fillHiddenProtection() })
+                // Named only in the toast: a log gets pasted into public issues.
+                assertRefusedThenOptionOff("second set of credentials")
+                assertTrue("the log names the hidden volume",
+                    device.wait(Until.gone(By.textContains("protected hidden")), 15000L))
+            }
+            "protect_main_is_hidden" -> {
+                scan("with the hidden password as the main one")
+                doMount(password, pim, testCase, clearFields = true, waitForMount = false, beforeMount = { fillHiddenProtection() })
+                assertRefusedThenOptionOff("Neither the standard nor the hidden volume header")
+            }
+            "protect_read_only" -> {
+                scan("before the read-only switch")
+                assertNotNull("no unlock form", device.wait(Until.findObject(By.desc("password_input")), 30000L))
+                protectionSwitch().click()
+                assertNotNull("the protection fields did not open", findScrolling(By.desc("hidden_protect_password"), desc = "hidden_protect_password"))
+                clickScrolling("read_only_switch", "no read-only switch on the form")
+                android.os.SystemClock.sleep(500)
+                assertFalse("read-only left hidden volume protection on", protectionSwitch().isChecked)
+                assertFalse("hidden volume protection can be turned on for a read-only mount", protectionSwitch().isEnabled)
+                assertNull("the protection fields stayed open", device.findObject(By.desc("hidden_protect_password")))
+                clickScrolling("read_only_switch", "no read-only switch on the form")
+                android.os.SystemClock.sleep(500)
+                assertTrue("hidden volume protection stayed greyed out", protectionSwitch().isEnabled)
+            }
+            "protect_option" -> {
+                mountProtected(password, pim, testCase)
+                assertOuterTag("OUTER")
+                doUnmount()
+            }
+            "protect_safe" -> {
+                mountProtected(password, pim, testCase)
+                assertOuterTag("OUTER")
+                clickScrolling("more_actions_button", "More actions missing")
+                android.os.SystemClock.sleep(500)
+                assertNull("Format offered with the hidden volume protected", device.findObject(By.text("Format")))
+                assertNull("Encrypt offered with the hidden volume protected", device.findObject(By.text("Encrypt")))
+                device.pressBack()
+                val protection = OtgMasterState.mountedDrives.first().hiddenVolumeProtection
+                assertNotNull("the mount has no protection", protection)
+                assertTrue("a write clear of the hidden volume was refused",
+                    writeRootFile(context, "protected_write_ok.txt", ByteArray(64 * 1024) { (it % 251).toByte() }))
+                assertFalse("a write clear of the hidden volume set off the protection", protection!!.triggered)
+                readRootFile(context, "decoy.txt")
+                doUnmount()
+                // The option does not survive the mount: the same drive now mounts as a normal volume.
+                scanAndMount(password, pim, testCase, "without protection, the second time")
+                assertNull("the mount after a protected one is protected too", OtgMasterState.mountedDrives.first().hiddenVolumeProtection)
+                assertNull("OUTER on a mount without protection", device.findObject(By.text("OUTER")))
+                doUnmount()
+                assertHiddenVolumeIntact(context, testCase)
+            }
+            "protect_trigger" -> {
+                mountProtected(password, pim, testCase)
+                assertOuterTag("OUTER")
+                val protection = OtgMasterState.mountedDrives.first().hiddenVolumeProtection!!
+                assertFalse("an 8 MiB write that must reach the hidden volume succeeded",
+                    writeRootFile(context, "reaches_hidden.bin", ByteArray(8 * 1024 * 1024) { (it % 253).toByte() }))
+                assertTrue("the write did not set off the protection", protection.triggered)
+                assertDialog("Damage to hidden volume prevented", "write-protected until it is unmounted")
+                val posted = (0 until 40).any {
+                    android.os.SystemClock.sleep(250)
+                    "Damage to hidden volume prevented" in bkTitles()
+                }
+                assertTrue("no notification that a write was refused: ${bkTitles()}", posted)
+                assertOuterTag("OUTER(!)")
+                assertNotNull("READ-ONLY not on the card", device.wait(Until.findObject(By.text("READ-ONLY")), timeout))
+                assertFalse("a small write after the protection fired was not refused",
+                    writeRootFile(context, "after_trigger.txt", ByteArray(4096)))
+                doUnmount()
+                assertHiddenVolumeIntact(context, testCase)
+            }
+            else -> fail("unknown hidden_flow $flow")
+        }
     }
 
     /**
@@ -3956,7 +4161,8 @@ class E2EAutomatedTest {
 
     // ── helpers ──────────────────────────────────────────────────────────────
 
-    private fun doMount(password: String, pim: String, testCase: String, clearFields: Boolean): Boolean {
+    private fun doMount(password: String, pim: String, testCase: String, clearFields: Boolean,
+                        waitForMount: Boolean = true, beforeMount: () -> Unit = {}): Boolean {
         closeSlider()
         // First pass: check if password field is visible; if not, try the device picker.
         if (device.wait(Until.findObject(By.descContains("password_input")), 15000L) == null) {
@@ -4016,8 +4222,10 @@ class E2EAutomatedTest {
             pickKeyfileInFiles(name)
         }
 
+        beforeMount()
         val clicked = clickMountButton()
         if (clicked != MountClick.CLICKED) return false.also { captureScreen("mount_button_$clicked") }
+        if (!waitForMount) return true
 
         return waitForMounted(300000L) != null
     }

@@ -25,8 +25,10 @@ import struct
 from cryptography.hazmat.primitives.ciphers import Cipher, algorithms, modes
 
 
-def open_header(path, password, pim):
+def open_header(path, password, pim, header_offset=0):
+    """A hidden volume's header is at header_offset 65536; its data area comes from the header."""
     with open(path, "rb") as f:
+        f.seek(header_offset)
         raw = f.read(512)
     iterations = 15000 + pim * 1000 if pim else 500000
     hk = hashlib.pbkdf2_hmac("sha512", password.encode(), raw[:64], iterations, 64)
@@ -46,8 +48,9 @@ def main():
     g = ap.add_mutually_exclusive_group(required=True)
     g.add_argument("--make-plain", metavar="PLAIN", help="create an empty plain image of the data area's size")
     g.add_argument("--fill", metavar="PLAIN", help="encrypt PLAIN into the data area")
+    ap.add_argument("--header-offset", type=int, default=0, help="65536 for a hidden volume")
     a = ap.parse_args()
-    master, start, size = open_header(a.container, a.password, a.pim)
+    master, start, size = open_header(a.container, a.password, a.pim, a.header_offset)
     if a.make_plain:
         with open(a.make_plain, "wb") as f:
             f.truncate(size)

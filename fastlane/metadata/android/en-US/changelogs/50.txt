@@ -1,0 +1,2 @@
+• New: open VeraCrypt hidden volumes with their own password
+• New: hidden volume protection, as in VeraCrypt: write to the outer volume without damaging the hidden one
