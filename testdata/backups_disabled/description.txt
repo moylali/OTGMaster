@@ -1,0 +1,1 @@
+Settings, Disable backups: the bell, Manage backups and the Backups tab go, stay gone over a relaunch and come back when it is turned off. A backup already mounted moves to the one list left and can still be unmounted.
