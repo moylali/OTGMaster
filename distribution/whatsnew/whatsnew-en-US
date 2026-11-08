@@ -1,3 +1,4 @@
 • New: open VeraCrypt hidden volumes with their own password
 • New: hidden volume protection, as in VeraCrypt: write to the outer volume without damaging the hidden one
 • New: a setting to disable backups, which hides their icon, tab and form
+• New: on tablets in landscape the form stays centred, and mounted drives open in the slider

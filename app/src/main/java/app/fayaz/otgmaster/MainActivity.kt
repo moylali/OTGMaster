@@ -2884,6 +2884,9 @@ fun DriveTag(label: String, color: Color) {
 }
 
 /** The card header: the USB device's name, then the partition. */
+/** How wide the main screen's form gets in landscape. */
+private val LANDSCAPE_FORM_WIDTH = 640.dp
+
 fun driveTitle(drive: MountedDrive): String = buildString {
     append(drive.sourceDeviceDisplayName ?: drive.name)
     if (drive.partitionLabel.isNotEmpty()) {
@@ -3034,11 +3037,9 @@ fun OtgMasterApp(
             if (mountedDrives.isEmpty()) showMounted = false
         }
     }
-    var twoPaneWindow by remember { mutableStateOf(false) }
     var backupProblem by remember { mutableStateOf<String?>(null) }
     val backupCount = mountedDrives.count { it.fileSystem is app.fayaz.otgmaster.backup.restic.ResticFileSystem }
     val driveCount = mountedDrives.size - backupCount
-    val sliderOpen = showMounted && !twoPaneWindow
     val shownTab = if (backupsHidden) app.fayaz.otgmaster.ui.MountedTab.DRIVES else mountedTab
 
     // Whatever mounts, by whichever path, opens the slider on the tab it landed in. Waits for the
@@ -3223,16 +3224,12 @@ fun OtgMasterApp(
     Box(modifier = Modifier.fillMaxSize()) {
     Scaffold(
         // Behind the open slider nothing can be tapped, so nothing is offered to a screen reader.
-        modifier = when {
-            sliderOpen -> Modifier.clearAndSetSemantics {}
-            twoPaneWindow -> Modifier
-            else -> Modifier.swipeLeftOpens { showMounted = true }
-        },
+        modifier = if (showMounted) Modifier.clearAndSetSemantics {} else Modifier.swipeLeftOpens { showMounted = true },
         topBar = {
             TopAppBar(
                 title = { Text(stringResource(R.string.app_name)) },
                 actions = {
-                    if (!twoPaneWindow) IconButton(onClick = { showMounted = true }) {
+                    IconButton(onClick = { showMounted = true }) {
                         // What is mounted: partitions and backups, the same as the two tabs add up to.
                         val count = driveCount + backupCount
                         BadgedBox(badge = { if (count > 0) Badge { Text(count.toString()) } }) {
@@ -3390,25 +3387,19 @@ fun OtgMasterApp(
                 .padding(paddingValues)
                 .consumeWindowInsets(paddingValues)
         ) {
-            // Two panes on a tablet, or a phone-sized window in landscape wide enough
-            // for both: the unlock form on the left, what is mounted on the right, so a
-            // mount is seen landing without scrolling past the form.
+            // In landscape the form is a centred column, with the rest of the width as margin.
             //
             // Measured without the keyboard: with imePadding outside, a Galaxy Tab A9+ in
             // portrait (800×1280 dp) became wider than tall when the keyboard opened for the
-            // password, switched to two panes, rebuilt the form (typed text gone, keyboard
-            // closed), and switched back.
-            val twoPane = app.fayaz.otgmaster.ui.isTwoPaneWindow(maxWidth, maxHeight)
-            LaunchedEffect(twoPane) { twoPaneWindow = twoPane }
+            // password, which rebuilt the form (typed text gone, keyboard closed).
+            val landscape = maxWidth > maxHeight
             Box(modifier = Modifier.fillMaxSize().imePadding()) {
-            if (twoPane) {
-                Row(
-                    modifier = Modifier.fillMaxSize().padding(16.dp),
-                    horizontalArrangement = Arrangement.spacedBy(16.dp)
+                Column(
+                    modifier = Modifier.fillMaxSize().verticalScroll(scrollState).padding(16.dp),
+                    horizontalAlignment = Alignment.CenterHorizontally,
                 ) {
-                    // 65/35: the form needs the width; the mounted cards fit in a narrower pane.
                     Column(
-                        modifier = Modifier.weight(0.65f).fillMaxHeight().verticalScroll(scrollState),
+                        modifier = (if (landscape) Modifier.widthIn(max = LANDSCAPE_FORM_WIDTH) else Modifier).fillMaxWidth(),
                         verticalArrangement = Arrangement.spacedBy(16.dp)
                     ) {
                         scanButton()
@@ -3416,34 +3407,13 @@ fun OtgMasterApp(
                         if (!backupsHidden) manageBackups()
                         logsSection()
                     }
-                    app.fayaz.otgmaster.ui.MountedPanel(
-                        tab = shownTab,
-                        onTab = { mountedTab = it },
-                        showBackupsTab = !backupsHidden,
-                        driveCount = driveCount,
-                        backupCount = backupCount,
-                        onClose = null,
-                        modifier = Modifier.weight(0.35f).fillMaxHeight().semantics { contentDescription = "mounted_pane" },
-                        cards = mountedCards,
-                    )
                 }
-            } else {
-                Column(
-                    modifier = Modifier.fillMaxSize().padding(16.dp).verticalScroll(scrollState),
-                    verticalArrangement = Arrangement.spacedBy(16.dp)
-                ) {
-                    scanButton()
-                    unlockSection()
-                    if (!backupsHidden) manageBackups()
-                    logsSection()
-                }
-            }
             }
         }
     }
 
-    if (!twoPaneWindow && !showMounted) MountedEdgeSwipe(onOpen = { showMounted = true })
-    MountedDrawer(visible = sliderOpen, onDismiss = { showMounted = false }) {
+    if (!showMounted) MountedEdgeSwipe(onOpen = { showMounted = true })
+    MountedDrawer(visible = showMounted, onDismiss = { showMounted = false }) {
         app.fayaz.otgmaster.ui.MountedPanel(
             tab = shownTab,
             onTab = { mountedTab = it },

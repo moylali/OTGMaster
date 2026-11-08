@@ -21,6 +21,7 @@ import androidx.compose.foundation.layout.fillMaxHeight
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.size
+import androidx.compose.foundation.layout.widthIn
 import androidx.compose.foundation.layout.only
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.safeDrawing
@@ -59,9 +60,8 @@ private val CLOSE_DRAG = 80.dp
 private val OPEN_DRAG = 48.dp
 
 /**
- * The title, the two tabs and the chosen tab's cards. Shared by the slider on a phone and the
- * always-visible pane on a wide window. [onClose] is null in the pane, which cannot close.
- * Without [showBackupsTab] there are no tabs, only the list.
+ * The title, the two tabs and the chosen tab's cards, in the slider. Without [showBackupsTab]
+ * there are no tabs, only the list.
  */
 @Composable
 fun MountedPanel(
@@ -69,7 +69,7 @@ fun MountedPanel(
     onTab: (MountedTab) -> Unit,
     driveCount: Int,
     backupCount: Int,
-    onClose: (() -> Unit)?,
+    onClose: () -> Unit,
     modifier: Modifier = Modifier,
     showBackupsTab: Boolean = true,
     cards: @Composable (MountedTab) -> Unit,
@@ -77,7 +77,7 @@ fun MountedPanel(
     Column(modifier) {
         Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween, verticalAlignment = Alignment.CenterVertically) {
             Text(stringResource(R.string.mounted_devices), style = MaterialTheme.typography.titleLarge)
-            if (onClose != null) IconButton(onClick = onClose) {
+            IconButton(onClick = onClose) {
                 Icon(Icons.Default.Close, contentDescription = stringResource(R.string.cd_close_mounted))
             }
         }
@@ -139,7 +139,8 @@ fun BoxScope.MountedDrawer(visible: Boolean, onDismiss: () -> Unit, content: @Co
         modifier = Modifier.align(Alignment.CenterEnd),
     ) {
         Surface(
-            modifier = Modifier.fillMaxHeight().fillMaxWidth(0.92f)
+            // Capped, or on a tablet in landscape the cards stretch across most of the screen.
+            modifier = Modifier.fillMaxHeight().widthIn(max = 480.dp).fillMaxWidth(0.92f)
                 .semantics { contentDescription = "mounted_drawer" }
                 .pointerInput(Unit) {
                     var dragged = 0f
