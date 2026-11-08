@@ -1,0 +1,1 @@
+Protection on, with the hidden volume's own password as the main one: refused, as VeraCrypt refuses it.

@@ -1,0 +1,1 @@
+Protection on with a wrong hidden password: the outer volume is not mounted, and the option is off again afterwards.

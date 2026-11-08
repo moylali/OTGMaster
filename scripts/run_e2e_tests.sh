@@ -199,6 +199,12 @@ ensure_testdata() {
         python3 scripts/make_vc_option_fixtures.py || { echo "Form-option fixture generation failed!"; exit 1; }
     fi
 
+    # VeraCrypt hidden volumes: real outer and hidden pairs (scripts/make_hidden_volume_fixtures.py, no root).
+    if [ ! -f "$TESTDATA_DIR/hidden_unlock/test.img" ] || [ ! -f "$TESTDATA_DIR/hidden_protect_trigger/test.img" ]; then
+        echo "Generating the hidden-volume fixtures..."
+        python3 scripts/make_hidden_volume_fixtures.py || { echo "Hidden-volume fixture generation failed!"; exit 1; }
+    fi
+
     # APFS, plain and encrypted, case-sensitive and not. Only a Mac can build these
     # (docs/TEST_DATA.md §6b), so they are committed as an archive and unpacked here.
     # --skip-old-files keeps the committed per-case files (description.txt and the
@@ -428,6 +434,12 @@ for test_dir in "$TESTDATA_DIR"/*/; do
     [ -f "$test_dir/timeout.txt" ] && CASE_TIMEOUT="$(cat "$test_dir/timeout.txt")"
     JOURNAL_ARG=""
     [ -f "$test_dir/journal.txt" ] && JOURNAL_ARG="-e journal_repair true"
+    # VeraCrypt hidden volumes: a flow, the hidden volume's credentials, and what the card and root must show.
+    HIDDEN_ARG=""
+    [ -f "$test_dir/hidden_flow.txt" ] && HIDDEN_ARG="-e hidden_flow $(cat "$test_dir/hidden_flow.txt")"
+    for f in hidden_password hidden_pim hidden_keyfile hidden_cipher hidden_hash expected_volume_tag expect_file; do
+        [ -f "$test_dir/$f.txt" ] && HIDDEN_ARG="$HIDDEN_ARG -e $f $(cat "$test_dir/$f.txt")"
+    done
     CASE_ARG=""
     [ -f "$test_dir/case_sensitive.txt" ] && CASE_ARG="-e expect_case_sensitive $(cat "$test_dir/case_sensitive.txt")"
     FLOWER_ARG=""
@@ -537,6 +549,7 @@ for test_dir in "$TESTDATA_DIR"/*/; do
             $BACKUP_ARG \
             $BACKUP_FLOW_ARG \
             $JOURNAL_ARG \
+            $HIDDEN_ARG \
             -e class app.fayaz.otgmaster.E2EAutomatedTest \
             $PACKAGE_NAME.test/androidx.test.runner.AndroidJUnitRunner)
 
@@ -567,7 +580,7 @@ for test_dir in "$TESTDATA_DIR"/*/; do
         # with the kernel's driver and checks every file the case left behind. The
         # in-app checks above only read the writes back through the same code.
         HOST_CHECK=""
-        if [ $TEST_EXIT_CODE -eq 0 ] && { [ -f "$test_dir/write_test.txt" ] || [ -f "$test_dir/backup_flow.txt" ] || [ -f "$test_dir/erase.txt" ] || [ -f "$test_dir/journal.txt" ] || [ -f "$test_dir/backup.txt" ]; }; then
+        if [ $TEST_EXIT_CODE -eq 0 ] && { [ -f "$test_dir/write_test.txt" ] || [ -f "$test_dir/backup_flow.txt" ] || [ -f "$test_dir/erase.txt" ] || [ -f "$test_dir/journal.txt" ] || [ -f "$test_dir/backup.txt" ] || [ -f "$test_dir/hidden_check.txt" ]; }; then
             HOST_OUT=$(python3 scripts/verify_e2e_volume.py "$SLOT_FILE" "$test_dir" 2>&1)
             echo "$HOST_OUT"
             if echo "$HOST_OUT" | grep -q "^HOST CHECK OK"; then

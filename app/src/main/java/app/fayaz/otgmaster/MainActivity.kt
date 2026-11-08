@@ -223,6 +223,10 @@ class MainActivity : AppCompatActivity() {
     private lateinit var credentialStore: app.fayaz.otgmaster.security.CredentialStore
     private val autoMountEnabled = mutableStateOf(false)
     private val mountFormResetKey = mutableStateOf(0)
+    /** A protected mount just finished; VeraCrypt tells the user what that means. */
+    private val hiddenProtectionActive = mutableStateOf(false)
+    /** The volume whose hidden area a write just tried to reach, while its warning is up. */
+    private val hiddenProtectionTriggered = mutableStateOf<String?>(null)
     private val autoMountAttempted = mutableSetOf<String>()
     // Devices the user has explicitly unmounted while still connected. Auto-mount is
     // suppressed for these until the device is physically detached and re-attached.
@@ -686,8 +690,8 @@ class MainActivity : AppCompatActivity() {
                                 .none { UsbDeviceDescriber.isMassStorageDevice(it) }
                         },
                         showNoDriveHelp = scanFoundNoDrive.value,
-                        onUnlock = { deviceName, candidate, pwd, pim, keyfiles, cipher, hash, onComplete ->
-                            attemptUnlock(deviceName, candidate, pwd, pim, keyfiles, cipher, hash, onComplete = onComplete)
+                        onUnlock = { deviceName, candidate, pwd, pim, keyfiles, cipher, hash, protect, onComplete ->
+                            attemptUnlock(deviceName, candidate, pwd, pim, keyfiles, cipher, hash, protectHidden = protect, onComplete = onComplete)
                         },
                         onUnmount = { drive -> unmountDrive(drive, isManual = true) },
                         onOpenFilesApp = { drive -> openFilesApp(drive) },
@@ -725,8 +729,8 @@ class MainActivity : AppCompatActivity() {
                             credentialStore.setExcluded(deviceKey, excluded)
                             excludedDeviceKeys.value = credentialStore.loadExcludedKeys()
                         },
-                        onQuickUnlock = { deviceName, candidate, onComplete ->
-                            showQuickUnlockPrompt(deviceName, candidate, onComplete)
+                        onQuickUnlock = { deviceName, candidate, protect, onComplete ->
+                            showQuickUnlockPrompt(deviceName, candidate, protect, onComplete)
                         },
                         toastMessage = toastState.value?.first,
                         toastIsSuccess = toastState.value?.second ?: true,
@@ -744,6 +748,12 @@ class MainActivity : AppCompatActivity() {
                         disconnectHistory = OtgMasterState.disconnectHistory.value,
                         onDismissDisconnected = { OtgMasterState.dismissDisconnected(it) },
                     )
+                    if (hiddenProtectionActive.value) {
+                        app.fayaz.otgmaster.ui.HiddenProtectionActiveDialog(onDismiss = { hiddenProtectionActive.value = false })
+                    }
+                    hiddenProtectionTriggered.value?.let { name ->
+                        app.fayaz.otgmaster.ui.HiddenProtectionTriggeredDialog(name, onDismiss = { hiddenProtectionTriggered.value = null })
+                    }
                 }
             }
         }
@@ -1393,6 +1403,8 @@ class MainActivity : AppCompatActivity() {
         fromCache: Boolean = false,
         /** Overrides the partition's stored choice; auto mount passes the Settings default. */
         readOnlyOverride: Boolean? = null,
+        /** Mounts the outer volume with its hidden volume protected; never set by auto mount. */
+        protectHidden: app.fayaz.otgmaster.veracrypt.HiddenVolumeCredentials? = null,
         onComplete: () -> Unit
     ) {
         // An exception after the success path's onComplete() reached the catch block,
@@ -1491,8 +1503,14 @@ class MainActivity : AppCompatActivity() {
                     }
                     else -> VeraCryptUnlocker().unlock(
                         device, candidate, password.toCharArray(), pim, keyfiles, contentResolver,
-                        cipher, hash
+                        cipher, hash, protect = protectHidden.takeUnless { readOnly }
                     )
+                }
+                val veraCryptVolume = decryptedDevice as? app.fayaz.otgmaster.veracrypt.NativeDecryptedBlockDevice
+                val protection = veraCryptVolume?.hiddenVolumeProtection
+                // Set before the filesystem mounts: a mount can write too.
+                protection?.onTriggered = {
+                    onHiddenProtectionTriggered("$deviceDisplayName · ${candidate.label}")
                 }
                 val isApfs = candidate.containerType == app.fayaz.otgmaster.veracrypt.ContainerType.APFS
                 // APFS is not unlocked until it mounts.
@@ -1568,6 +1586,8 @@ class MainActivity : AppCompatActivity() {
                     mountedReadOnly = readOnly,
                     partitionStartBlock = candidate.startBlock,
                     partitionBlockCount = candidate.blockCount,
+                    veraCryptVolumeType = veraCryptVolume?.volumeType,
+                    hiddenVolumeProtection = protection,
                 )
 
                 OtgMasterState.addDrive(mountedDrive)
@@ -1597,6 +1617,7 @@ class MainActivity : AppCompatActivity() {
                     updateMountedDrives()
                     pushDriveShortcut(mountedDrive)
                     appendLog(getString(R.string.log_mounted_successfully, deviceDisplayName, fileSystem.capacity / (1024 * 1024)))
+                    if (protection != null) hiddenProtectionActive.value = true
                     // Remove only this candidate; keep others for the same device (multi-partition).
                     val updatedCandidates = _deviceCandidates.value.map { udc ->
                         if (udc.deviceName == deviceName)
@@ -1629,13 +1650,17 @@ class MainActivity : AppCompatActivity() {
                     // away the user's saved credentials.  Discarding them on any
                     // exception meant a transport blip silently un-saved a
                     // partition the user had asked to be remembered.
-                    if (fromCache && e !is java.io.IOException) {
+                    // Nor does a mistake in the hidden volume's fields say anything about the outer
+                    // volume's saved password.
+                    val protectionRefused = e is app.fayaz.otgmaster.veracrypt.HiddenVolumeCredentialsException
+                    if (fromCache && e !is java.io.IOException && !protectionRefused) {
                         credentialStore.deletePartition(deviceName, candidate.startBlock)
                         sessionPlaintextCreds.remove(deviceName)
                         appendLog(getString(R.string.log_cached_credentials_invalid, deviceDisplayName))
                     }
                     toastState.value = Pair("Mount failed: ${e.message ?: "Unknown error"}", false)
-                    appendLog(getString(R.string.log_failed_to_unlock, deviceDisplayName, e.reason()))
+                    appendLog(getString(R.string.log_failed_to_unlock, deviceDisplayName,
+                        (e as? app.fayaz.otgmaster.veracrypt.HiddenVolumeCredentialsException)?.logMessage ?: e.reason()))
                 }
             }
             }
@@ -1883,6 +1908,7 @@ class MainActivity : AppCompatActivity() {
     /** Why Format is not offered for [drive], or null if it is. */
     private fun formatUnavailable(drive: MountedDrive): String? = when {
         drive.isReadOnly -> getString(R.string.action_unavailable_read_only)
+        drive.isHiddenOrOuter -> getString(R.string.action_unavailable_hidden)
         drive.sourceVolumeCandidate?.containerType == app.fayaz.otgmaster.veracrypt.ContainerType.BITLOCKER ->
             getString(R.string.format_unavailable_fs, "BitLocker")
         drive.filesystemName !in setOf("FAT32", "exFAT", "ext2", "ext3", "ext4", "NTFS") ->
@@ -1894,6 +1920,8 @@ class MainActivity : AppCompatActivity() {
     /** Why Encrypt is not offered for [drive], or null if it is. */
     private fun encryptUnavailable(drive: MountedDrive): String? = when {
         drive.isReadOnly -> getString(R.string.action_unavailable_read_only)
+        // Encrypt rewrites the whole partition, straight past the protected range.
+        drive.isHiddenOrOuter -> getString(R.string.action_unavailable_hidden)
         drive.partitionStartBlock == null || drive.partitionBlockCount == null || drive.rawBlockDevice == null ->
             getString(R.string.encrypt_unavailable_bounds)
         drive.rawBlockDevice.blockSize != 512 -> getString(R.string.encrypt_unavailable_sector)
@@ -2604,7 +2632,26 @@ class MainActivity : AppCompatActivity() {
         prompt.authenticate(builder.build())
     }
 
-    private fun showQuickUnlockPrompt(deviceName: String, candidate: VolumeCandidate, onComplete: () -> Unit) {
+    /**
+     * Hidden volume protection just refused a write: VeraCrypt's warning, here and as a
+     * notification, since the write usually comes from another app. The log is told only that
+     * the volume stopped taking writes, because logs get pasted into public issues.
+     */
+    private fun onHiddenProtectionTriggered(volumeName: String) {
+        runOnUiThread {
+            hiddenProtectionTriggered.value = volumeName
+            updateMountedDrives()
+            appendLog(getString(R.string.log_volume_write_protected, volumeName))
+            MountedDriveService.hiddenProtectionTriggered(applicationContext, volumeName)
+        }
+    }
+
+    private fun showQuickUnlockPrompt(
+        deviceName: String,
+        candidate: VolumeCandidate,
+        protect: app.fayaz.otgmaster.veracrypt.HiddenVolumeCredentials?,
+        onComplete: () -> Unit,
+    ) {
         val creds = sessionPlaintextCreds[deviceName]?.takeIf { it.candidateStartBlock == candidate.startBlock }
             ?: credentialStore.load(deviceName, candidate.startBlock)
             ?: run {
@@ -2621,7 +2668,7 @@ class MainActivity : AppCompatActivity() {
         val callback = object : androidx.biometric.BiometricPrompt.AuthenticationCallback() {
             override fun onAuthenticationSucceeded(result: androidx.biometric.BiometricPrompt.AuthenticationResult) {
                 attemptUnlock(deviceName, candidate, creds.password, creds.pim.toIntOrNull(),
-                    creds.keyfileUris, cipher, hash, fromCache = true, onComplete = onComplete)
+                    creds.keyfileUris, cipher, hash, fromCache = true, protectHidden = protect, onComplete = onComplete)
             }
             override fun onAuthenticationError(errorCode: Int, errString: CharSequence) { onComplete() }
             override fun onAuthenticationFailed() {}
@@ -2880,7 +2927,7 @@ fun OtgMasterApp(
     onSetPartitionReadOnly: (String, Long, Boolean) -> Unit,
     onRefreshDevices: () -> Unit,
     showNoDriveHelp: Boolean = false,
-    onUnlock: (String, VolumeCandidate, String, Int?, List<Uri>, app.fayaz.otgmaster.veracrypt.VeraCryptCipher, app.fayaz.otgmaster.veracrypt.VeraCryptHash, () -> Unit) -> Unit,
+    onUnlock: (String, VolumeCandidate, String, Int?, List<Uri>, app.fayaz.otgmaster.veracrypt.VeraCryptCipher, app.fayaz.otgmaster.veracrypt.VeraCryptHash, app.fayaz.otgmaster.veracrypt.HiddenVolumeCredentials?, () -> Unit) -> Unit,
     onUnmount: (MountedDrive) -> Unit,
     onOpenFilesApp: (MountedDrive) -> Unit,
     journalRepairPrompt: String? = null,
@@ -2895,7 +2942,7 @@ fun OtgMasterApp(
     onClearAllCredentials: () -> Unit,
     onClearDeviceCreds: (String) -> Unit = {},
     onSetExcluded: (String, Boolean) -> Unit,
-    onQuickUnlock: (String, VolumeCandidate, () -> Unit) -> Unit = { _, _, cb -> cb() },
+    onQuickUnlock: (String, VolumeCandidate, app.fayaz.otgmaster.veracrypt.HiddenVolumeCredentials?, () -> Unit) -> Unit = { _, _, _, cb -> cb() },
     toastMessage: String? = null,
     toastIsSuccess: Boolean = true,
     onToastDismiss: (String) -> Unit = {},
@@ -3067,6 +3114,9 @@ fun OtgMasterApp(
                                     }
                                     DriveTag(label = drive.filesystemName.uppercase(), color = fsColor)
                                 }
+
+                                // VeraCrypt's Type column. Normal gets no tag: most volumes are.
+                                drive.volumeTypeLabel?.let { DriveTag(label = it, color = Color(0xFF4E342E)) }
 
                                 // Red, not a filesystem colour: it is a warning that the
                                 // drive refuses writes, and why is in the log.
@@ -3435,7 +3485,7 @@ fun VeraCryptMountSection(
     unlockingPartitions: Set<String> = emptySet(),
     deviceCandidates: List<UsbDeviceCandidate>,
     showNoDriveHelp: Boolean = false,
-    onUnlock: (String, VolumeCandidate, String, Int?, List<Uri>, app.fayaz.otgmaster.veracrypt.VeraCryptCipher, app.fayaz.otgmaster.veracrypt.VeraCryptHash, () -> Unit) -> Unit,
+    onUnlock: (String, VolumeCandidate, String, Int?, List<Uri>, app.fayaz.otgmaster.veracrypt.VeraCryptCipher, app.fayaz.otgmaster.veracrypt.VeraCryptHash, app.fayaz.otgmaster.veracrypt.HiddenVolumeCredentials?, () -> Unit) -> Unit,
     autoMountEnabled: Boolean = false,
     sessionCredentials: Map<String, app.fayaz.otgmaster.security.CredentialStore.Credentials> = emptyMap(),
     hasCachedCreds: (String, Long?) -> Boolean = { _, _ -> false },
@@ -3443,7 +3493,7 @@ fun VeraCryptMountSection(
     onSetExcluded: (String, Boolean) -> Unit = { _, _ -> },
     isPartitionReadOnly: (String, Long) -> Boolean = { _, _ -> false },
     onSetPartitionReadOnly: (String, Long, Boolean) -> Unit = { _, _, _ -> },
-    onQuickUnlock: ((String, VolumeCandidate, () -> Unit) -> Unit)? = null
+    onQuickUnlock: ((String, VolumeCandidate, app.fayaz.otgmaster.veracrypt.HiddenVolumeCredentials?, () -> Unit) -> Unit)? = null
 ) {
     // The partition this form was last asked to unlock: set before the unlock is registered,
     // which for quick unlock is only after the fingerprint prompt.
@@ -3488,6 +3538,9 @@ fun VeraCryptMountSection(
             ?: app.fayaz.otgmaster.veracrypt.VeraCryptHash.DEFAULT
     ) }
     var hashExpanded by remember { mutableStateOf(false) }
+    val hiddenProtection = remember { app.fayaz.otgmaster.ui.HiddenProtectionFormState() }
+    // VeraCrypt's Mount Options are for one mount: another partition starts with them off.
+    androidx.compose.runtime.LaunchedEffect(selectedDevice, selectedCandidate) { hiddenProtection.reset() }
     val focusManager = androidx.compose.ui.platform.LocalFocusManager.current
     val context = androidx.compose.ui.platform.LocalContext.current
     val passwordManagerScope = androidx.compose.runtime.rememberCoroutineScope()
@@ -3655,6 +3708,10 @@ fun VeraCryptMountSection(
                         modifier = Modifier.semantics { contentDescription = "read_only_switch" }
                     )
                 }
+                if (!isLuks) {
+                    app.fayaz.otgmaster.ui.HiddenVolumeProtectionSection(
+                        hiddenProtection, mountReadOnly = isPartitionReadOnly(currentDeviceName, sc.startBlock))
+                }
             }
 
             if (showQuickUnlock) {
@@ -3664,11 +3721,14 @@ fun VeraCryptMountSection(
                         val candidate = selectedCandidate
                         if (device != null && candidate != null) {
                             unlockingHere = candidate.startBlock
-                            onQuickUnlock!!(device.deviceName, candidate) { unlockingHere = null }
+                            onQuickUnlock!!(device.deviceName, candidate, hiddenProtection.credentials()) {
+                                unlockingHere = null
+                                hiddenProtection.reset()     // VeraCrypt: off after every attempt
+                            }
                         }
                     },
                     modifier = Modifier.fillMaxWidth().semantics { contentDescription = "mount_button" },
-                    enabled = selectedDevice != null && selectedCandidate != null && !isUnlocking
+                    enabled = selectedDevice != null && selectedCandidate != null && !isUnlocking && hiddenProtection.isComplete
                 ) {
                     if (isUnlocking) {
                         androidx.compose.material3.CircularProgressIndicator(modifier = Modifier.size(24.dp), color = MaterialTheme.colorScheme.onPrimary)
@@ -3864,12 +3924,17 @@ fun VeraCryptMountSection(
                     val candidate = selectedCandidate
                     if (device != null && candidate != null) {
                         unlockingHere = candidate.startBlock
-                        onUnlock(device.deviceName, candidate, password, pim.toIntOrNull(), keyfiles, selectedCipher, selectedHash) { unlockingHere = null }
+                        onUnlock(device.deviceName, candidate, password, pim.toIntOrNull(), keyfiles, selectedCipher, selectedHash,
+                            if (isLuks) null else hiddenProtection.credentials()) {
+                            unlockingHere = null
+                            hiddenProtection.reset()     // VeraCrypt: off after every attempt
+                        }
                     }
                 },
                 modifier = Modifier.fillMaxWidth().semantics { contentDescription = "mount_button" },
                 enabled = selectedDevice != null && selectedCandidate != null &&
-                    (password.isNotEmpty() || isBitLocker || (!isLuks && keyfiles.isNotEmpty())) && !isUnlocking
+                    (password.isNotEmpty() || isBitLocker || (!isLuks && keyfiles.isNotEmpty())) && !isUnlocking &&
+                    hiddenProtection.isComplete
             ) {
                 if (isUnlocking) {
                     androidx.compose.material3.CircularProgressIndicator(modifier = Modifier.size(24.dp), color = MaterialTheme.colorScheme.onPrimary)

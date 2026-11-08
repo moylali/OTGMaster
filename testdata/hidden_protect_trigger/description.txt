@@ -1,0 +1,1 @@
+Protection on, a write that reaches the hidden volume: refused, OUTER(!) and READ-ONLY on the card, every later write refused, the warning shown, and the hidden volume unchanged on the host.

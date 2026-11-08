@@ -1,0 +1,1 @@
+A password that opens neither volume is refused, after both headers were tried.

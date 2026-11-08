@@ -417,6 +417,41 @@ from a baseline, and no combinations.
   For a cascade, Argon2 or keyfiles it only checks the drive no longer reads as plain; the app's
   remount through the unlock form is the check on those.
 
+## 6i. VeraCrypt hidden volumes (E2E, no root)
+
+`scripts/make_hidden_volume_fixtures.py` builds the `hidden_*` cases, all without sudo. Each
+outer and hidden pair is made by desktop VeraCrypt (`--volume-type=hidden --filesystem=none`), so
+the app is opening what it did not write. The filesystems go in with
+`fill_veracrypt_volume.py --header-offset 65536`, which reads the hidden volume's data area from
+its own header: that offset is where the XTS tweak has to agree with VeraCrypt's.
+
+A 32 MiB outer volume holds exFAT, filled to 20 MiB so that a small write lands below the hidden
+volume and an 8 MiB one reaches it. The 8 MiB hidden volume at its end holds FAT32 and
+`hidden_marker.txt`. Outer password `outer-volume-password-2026`, hidden password
+`hidden-volume-password-2026`, both PIM 1, AES, SHA-512.
+
+| Case | What it checks |
+|---|---|
+| `hidden_unlock`, `hidden_outer_unlock` | each password opens its own volume; `HIDDEN` on the card, or no type tag |
+| `hidden_write` | create, persist and delete on a hidden volume; the host decrypts and runs fsck |
+| `hidden_wrong_password` | refused after both headers were tried |
+| `hidden_protect_safe` | protection on, a write clear of the hidden volume lands; `OUTER`; the option does not carry over to the next mount; Format and Encrypt not offered |
+| `hidden_protect_trigger` | a write reaching the hidden volume is refused; `OUTER(!)` and `READ-ONLY`; every later write refused; warning and notification |
+| `hidden_protect_wrong_password` | outer volume not mounted; the log does not name a hidden volume; the option is off again |
+| `hidden_protect_main_is_hidden` | the hidden password as the main one is refused while protection is on |
+| `hidden_protect_read_only` | a read-only mount unticks and greys out the protection, as VeraCrypt's dialog does |
+| `hidden_protect_pim`, `_keyfile`, `_cipher`, `_hash` | one case per protection field |
+| `hidden_opt_pim`, `_keyfile`, `_cipher`, `_hash` | one case per unlock field, on a hidden volume; VeraCrypt's own FAT16, so the refusal proves it decrypted |
+
+The per-case files are the usual ones plus `hidden_flow.txt`, `hidden_password.txt`, `hidden_pim.txt`,
+`hidden_keyfile.txt`, `hidden_cipher.txt`, `hidden_hash.txt`, `expected_volume_tag.txt` (`HIDDEN`,
+`NONE`) and `expect_file.txt`. `hidden_header.txt` tells the host check the volume's header is at 64 KiB.
+
+`hidden_check.txt` runs `verify_e2e_volume.py`: the hidden volume's header and data must be byte
+for byte what the fixture made, and its filesystem clean. `outer_clean` in that file also runs the
+checker on the outer volume. `hidden_only` leaves that out, because a refused write may corrupt the
+outer filesystem, as VeraCrypt itself warns.
+
 ## 6e. An ext4 drive whose journal needs recovery (E2E, no root)
 
 The `ext4_journal` case is plain ext4, 64 MiB with 4 KiB blocks and the usual mount

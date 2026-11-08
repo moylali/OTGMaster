@@ -37,6 +37,11 @@ except that a folder with " damaged " in its name, or one named in expect_damage
 fail. desktop_repo must still hold the snapshots desktop restic made, and Plain copies of
 files the test knows must match by hash.
 
+A case with hidden_check.txt (an outer volume written with hidden volume protection on) must
+leave the hidden volume's header and data byte for byte as the fixture made them, and its
+filesystem clean. "outer_clean" in the file also runs the checker on the outer volume; after
+protection has refused a write the outer filesystem may be damaged, as VeraCrypt warns.
+
 Exit 0 when everything holds; the problems are printed otherwise.
 """
 import hashlib
@@ -81,7 +86,8 @@ def decrypt(slot, case_dir, out):
     elif container == "VERACRYPT":
         from fill_veracrypt_volume import open_header
         pim = int(open(os.path.join(case_dir, "pim.txt")).read().strip())
-        master, start, size = open_header(slot, password, pim)
+        offset = 65536 if os.path.exists(os.path.join(case_dir, "hidden_header.txt")) else 0
+        master, start, size = open_header(slot, password, pim, offset)
         with open(slot, "rb") as src, open(out, "wb") as dst:
             src.seek(start)
             pos = 0
@@ -496,10 +502,58 @@ def backup_flow_main(slot, case_dir):
     print(f"HOST CHECK OK {name} ({container}, {fs}): checker clean; " + "; ".join(notes))
 
 
+def decrypt_area(slot, password, pim, header_offset, out):
+    from fill_veracrypt_volume import open_header
+    master, start, size = open_header(slot, password, pim, header_offset)
+    with open(slot, "rb") as src, open(out, "wb") as dst:
+        src.seek(start)
+        pos = 0
+        while pos < size:
+            chunk = src.read(min(1 << 20, size - pos))
+            buf = bytearray()
+            for i in range(0, len(chunk), 512):
+                unit = (start + pos + i) // 512
+                d = Cipher(algorithms.AES(master), modes.XTS(unit.to_bytes(16, "little"))).decryptor()
+                buf += d.update(chunk[i:i + 512]) + d.finalize()
+            dst.write(buf)
+            pos += len(chunk)
+    return start, size
+
+
+def hidden_main(slot, case_dir):
+    """Hidden volume protection held: the hidden volume is byte for byte what the fixture made."""
+    name = os.path.basename(os.path.normpath(case_dir))
+    read = lambda f: open(os.path.join(case_dir, f)).read().strip()
+    outer, hidden, pim = read("password.txt"), read("hidden_password.txt"), int(read("pim.txt"))
+    problems = []
+    fixture = os.path.join(case_dir, "test.img")
+    with tempfile.TemporaryDirectory() as work:
+        plain_hidden = os.path.join(work, "hidden.img")
+        start, size = decrypt_area(slot, hidden, pim, 65536, plain_hidden)
+        with open(slot, "rb") as a, open(fixture, "rb") as b:
+            for label, at, n in (("hidden volume header", 65536, 65536), ("hidden volume data", start, size)):
+                a.seek(at), b.seek(at)
+                if a.read(n) != b.read(n):
+                    problems.append(f"{label} changed on the drive")
+        problems += check_structure(fs_type(plain_hidden), plain_hidden)
+        if read("hidden_check.txt") == "outer_clean":
+            plain_outer = os.path.join(work, "outer.img")
+            decrypt_area(slot, outer, pim, 0, plain_outer)
+            problems += check_structure(fs_type(plain_outer), plain_outer)
+    if problems:
+        print(f"HOST CHECK FAILED {name}:")
+        for p in problems:
+            print(f"  - {p}")
+        sys.exit(1)
+    print(f"HOST CHECK OK {name}: the hidden volume's header and data are unchanged, its checker clean")
+
+
 def main():
     if len(sys.argv) != 3:
         raise SystemExit(__doc__)
     slot, case_dir = sys.argv[1:]
+    if os.path.exists(os.path.join(case_dir, "hidden_check.txt")):
+        return hidden_main(slot, case_dir)
     if os.path.exists(os.path.join(case_dir, "erase.txt")):
         return erase_main(slot, case_dir)
     if os.path.exists(os.path.join(case_dir, "journal.txt")):

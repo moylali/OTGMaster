@@ -80,6 +80,7 @@ class MountedDriveService : Service() {
         private const val RESULT_CHANNEL = "drive_operations"
         private const val NOTIFICATION_ID = 0x07D6
         private const val RESULT_ID = 0x07D7
+        private const val HIDDEN_PROTECTION_ID = 0x07D8
         /** Android drops updates posted faster than this; progress need not be smoother. */
         private const val PROGRESS_INTERVAL_MS = 1_000L
 
@@ -162,6 +163,30 @@ class MountedDriveService : Service() {
                     .build())
             }
             refresh(app)
+        }
+
+        /**
+         * VeraCrypt's Background Task warning. A write usually comes from another app, with this
+         * one in the background, so a dialog alone would go unseen. Secret on the lock screen:
+         * the text says that a hidden volume exists.
+         */
+        fun hiddenProtectionTriggered(context: Context, volumeName: String) {
+            val app = context.applicationContext
+            val nm = app.getSystemService(NotificationManager::class.java) ?: return
+            if (nm.getNotificationChannel(RESULT_CHANNEL) == null) {
+                nm.createNotificationChannel(NotificationChannel(RESULT_CHANNEL,
+                    app.getString(R.string.notification_channel_operations), NotificationManager.IMPORTANCE_DEFAULT))
+            }
+            val text = app.getString(R.string.hidden_protection_triggered_notification, volumeName)
+            nm.notify(HIDDEN_PROTECTION_ID, NotificationCompat.Builder(app, RESULT_CHANNEL)
+                .setSmallIcon(R.drawable.ic_stat_drive)
+                .setContentTitle(app.getString(R.string.hidden_protection_triggered_title))
+                .setContentText(text)
+                .setStyle(NotificationCompat.BigTextStyle().bigText(text))
+                .setVisibility(NotificationCompat.VISIBILITY_SECRET)
+                .setContentIntent(openApp(app))
+                .setAutoCancel(true)
+                .build())
         }
 
         private fun refresh(app: Context) { synchronized(lock) {

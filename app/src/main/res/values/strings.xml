@@ -100,6 +100,16 @@
     <string name="log_cached_credentials_invalid">The saved credentials for %1$s no longer work, so they were cleared. Enter them again to turn Auto mount back on.</string>
     <string name="auto_mount_exclude_device">Opt out of Auto mount for this device</string>
     <string name="mount_read_only">Mount this partition read-only</string>
+    <string name="hidden_protection_switch">Protect hidden volume against damage caused by writing to outer volume</string>
+    <string name="hidden_protection_password">Password to hidden volume</string>
+    <string name="hidden_protection_help">What is hidden volume protection?</string>
+    <string name="hidden_protection_active_title">Hidden volume protected</string>
+    <string name="hidden_protection_active_text">The hidden volume is now protected against damage until the outer volume is unmounted.\n\nIf anything tries to save data to the hidden volume area, OTG Master write-protects the entire volume, both the outer and the hidden part, until it is unmounted. Data saved to that area is lost. This can also corrupt the filesystem on the outer volume, which, if repeated, might weaken the plausible deniability of the hidden volume. Avoid writing to the hidden volume area.</string>
+    <string name="hidden_protection_triggered_title">Damage to hidden volume prevented</string>
+    <string name="hidden_protection_triggered_text">Data was about to be saved to the hidden volume area of %1$s. OTG Master refused it to protect the hidden volume, and that data is lost. This may have corrupted the filesystem on the outer volume.\n\nThe entire volume, both the outer and the hidden part, is write-protected until it is unmounted.\n\nIf this has happened before on this volume, the plausible deniability of the hidden volume might be affected. Consider creating a new VeraCrypt volume with quick format off, moving your files to it, and securely erasing this one.</string>
+    <string name="hidden_protection_triggered_notification">%1$s is write-protected until it is unmounted. Open OTG Master for details.</string>
+    <string name="log_volume_write_protected">%1$s stopped taking writes until it is unmounted.</string>
+    <string name="action_unavailable_hidden">Not available for a hidden or protected outer volume</string>
     <string name="read_only_mode_title">Read-only mode</string>
     <string name="read_only_mode_description">Mount encrypted partitions read-only by default</string>
     <string name="auto_mount_clear_credentials">Clear all cached credentials</string>

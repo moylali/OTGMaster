@@ -1,0 +1,1 @@
+Hidden volume protection fields, one option: a hash unlike the outer volume's. Mounts as OUTER.
