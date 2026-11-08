@@ -360,6 +360,17 @@ Rebase-merged, so the run log and the matrix above name the PR's commits, and `c
 | `e8f9086` | `89c0750` | fix(provider): a delete waits for writers there to finish closing |
 | `cae0e9e` | `d0e5655` | chore: remove test screenshots committed by mistake |
 
+### Commit hashes after the merge of #123
+
+Rebase-merged; `v0.5.0` is tagged on `45ea068`.
+
+| At the PR head | On `main` | Commit |
+|---|---|---|
+| `4782c56` | `1e6d16c` | chore: name the unreleased build 0.5.0 |
+| `bf6b988` | `5ec6dfc` | store: 0.5.0 tablet screenshots, 7" and 10", from a Galaxy Tab A9+ |
+| `b3b1345` | `8f26d99` | docs: v0.5.0 regression report and the release matrix on cae0e9e |
+| `42b6517` | `45ea068` | store: 0.5.0 phone screenshots, all six, from a Pixel 7 Pro |
+
 ## 2026-11-04: Deleting a folder on real ext4 and exFAT, Galaxy Tab A9+
 
 Not a benchmark: no sections ran. Deleting a non-empty folder through the provider failed on ext4
