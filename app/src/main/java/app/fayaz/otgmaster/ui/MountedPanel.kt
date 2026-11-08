@@ -61,6 +61,7 @@ private val OPEN_DRAG = 48.dp
 /**
  * The title, the two tabs and the chosen tab's cards. Shared by the slider on a phone and the
  * always-visible pane on a wide window. [onClose] is null in the pane, which cannot close.
+ * Without [showBackupsTab] there are no tabs, only the list.
  */
 @Composable
 fun MountedPanel(
@@ -70,6 +71,7 @@ fun MountedPanel(
     backupCount: Int,
     onClose: (() -> Unit)?,
     modifier: Modifier = Modifier,
+    showBackupsTab: Boolean = true,
     cards: @Composable (MountedTab) -> Unit,
 ) {
     Column(modifier) {
@@ -79,7 +81,7 @@ fun MountedPanel(
                 Icon(Icons.Default.Close, contentDescription = stringResource(R.string.cd_close_mounted))
             }
         }
-        TabRow(selectedTabIndex = tab.ordinal) {
+        if (showBackupsTab) TabRow(selectedTabIndex = tab.ordinal) {
             Tab(selected = tab == MountedTab.DRIVES, onClick = { onTab(MountedTab.DRIVES) },
                 modifier = Modifier.semantics { contentDescription = "mounted_tab_drives" },
                 text = { Text(stringResource(R.string.mounted_tab_drives, driveCount)) })

@@ -214,6 +214,7 @@ class MainActivity : AppCompatActivity() {
         private const val PREF_MANUALLY_UNMOUNTED = "manually_unmounted_devices"
         private const val PREF_LAST_BOOT_TIME = "last_boot_time_ms"
         private const val PREF_READ_ONLY_DEFAULT = "read_only_default"
+        private const val PREF_BACKUPS_HIDDEN = "backups_hidden"
         private const val PREF_READ_ONLY_CHOICES = "read_only_partitions"
     }
 
@@ -250,6 +251,7 @@ class MainActivity : AppCompatActivity() {
     private val excludedDeviceKeys = mutableStateOf<Set<String>>(emptySet())
     /** Settings → Read-only mode: the default for any partition with no choice of its own. */
     private val readOnlyDefault = mutableStateOf(false)
+    private val backupsHidden = mutableStateOf(false)
     /** Per-partition read-only choices made in the unlock form, keyed by [partitionKey]. */
     private val readOnlyChoices = mutableStateOf<Map<String, Boolean>>(emptyMap())
 
@@ -608,6 +610,7 @@ class MainActivity : AppCompatActivity() {
         autoMountEnabled.value = sharedPreferences.getBoolean("auto_mount", false)
         excludedDeviceKeys.value = credentialStore.loadExcludedKeys()
         readOnlyDefault.value = sharedPreferences.getBoolean(PREF_READ_ONLY_DEFAULT, false)
+        backupsHidden.value = sharedPreferences.getBoolean(PREF_BACKUPS_HIDDEN, false)
         readOnlyChoices.value = sharedPreferences.getStringSet(PREF_READ_ONLY_CHOICES, emptySet()).orEmpty()
             .mapNotNull { e -> e.substringBeforeLast('|', "").takeIf { it.isNotEmpty() }?.let { it to e.endsWith("|1") } }
             .toMap()
@@ -681,6 +684,11 @@ class MainActivity : AppCompatActivity() {
                         onReadOnlyDefaultChange = { enabled ->
                             readOnlyDefault.value = enabled
                             sharedPreferences.edit().putBoolean(PREF_READ_ONLY_DEFAULT, enabled).apply()
+                        },
+                        backupsHidden = backupsHidden.value,
+                        onBackupsHiddenChange = { hidden ->
+                            backupsHidden.value = hidden
+                            sharedPreferences.edit().putBoolean(PREF_BACKUPS_HIDDEN, hidden).apply()
                         },
                         isPartitionReadOnly = { deviceKey, startBlock -> isPartitionReadOnly(deviceKey, startBlock) },
                         onSetPartitionReadOnly = { deviceKey, startBlock, ro -> setPartitionReadOnly(deviceKey, startBlock, ro) },
@@ -2923,6 +2931,8 @@ fun OtgMasterApp(
     isExcluded: (String) -> Boolean,
     readOnlyDefault: Boolean,
     onReadOnlyDefaultChange: (Boolean) -> Unit,
+    backupsHidden: Boolean,
+    onBackupsHiddenChange: (Boolean) -> Unit,
     isPartitionReadOnly: (String, Long) -> Boolean,
     onSetPartitionReadOnly: (String, Long, Boolean) -> Unit,
     onRefreshDevices: () -> Unit,
@@ -3029,6 +3039,7 @@ fun OtgMasterApp(
     val backupCount = mountedDrives.count { it.fileSystem is app.fayaz.otgmaster.backup.restic.ResticFileSystem }
     val driveCount = mountedDrives.size - backupCount
     val sliderOpen = showMounted && !twoPaneWindow
+    val shownTab = if (backupsHidden) app.fayaz.otgmaster.ui.MountedTab.DRIVES else mountedTab
 
     // Whatever mounts, by whichever path, opens the slider on the tab it landed in. Waits for the
     // drive to be listed: its id can be marked new just before the list catches up.
@@ -3045,7 +3056,9 @@ fun OtgMasterApp(
 
         val mountedCards: @Composable (app.fayaz.otgmaster.ui.MountedTab) -> Unit = { tab ->
             val onBackupsTab = tab == app.fayaz.otgmaster.ui.MountedTab.BACKUPS
-            val cards = mountedDrives.filter { (it.fileSystem is app.fayaz.otgmaster.backup.restic.ResticFileSystem) == onBackupsTab }
+            // With backups hidden there is one list, and a backup still mounted is in it: its
+            // card is the only way to unmount it.
+            val cards = mountedDrives.filter { backupsHidden || (it.fileSystem is app.fayaz.otgmaster.backup.restic.ResticFileSystem) == onBackupsTab }
             val gone = if (onBackupsTab) emptyList() else disconnectedDrives
             if (cards.isEmpty() && gone.isEmpty()) {
                 Text(stringResource(if (onBackupsTab) R.string.no_backups_mounted else R.string.no_drives_mounted),
@@ -3226,7 +3239,7 @@ fun OtgMasterApp(
                             Icon(Icons.Default.Storage, contentDescription = stringResource(R.string.cd_open_mounted, count))
                         }
                     }
-                    app.fayaz.otgmaster.ui.BackupDueBell()
+                    if (!backupsHidden) app.fayaz.otgmaster.ui.BackupDueBell()
                     IconButton(onClick = { showSettings = true }) {
                         Icon(Icons.Default.Settings, contentDescription = stringResource(R.string.cd_settings))
                     }
@@ -3400,12 +3413,13 @@ fun OtgMasterApp(
                     ) {
                         scanButton()
                         unlockSection()
-                        manageBackups()
+                        if (!backupsHidden) manageBackups()
                         logsSection()
                     }
                     app.fayaz.otgmaster.ui.MountedPanel(
-                        tab = mountedTab,
+                        tab = shownTab,
                         onTab = { mountedTab = it },
+                        showBackupsTab = !backupsHidden,
                         driveCount = driveCount,
                         backupCount = backupCount,
                         onClose = null,
@@ -3420,7 +3434,7 @@ fun OtgMasterApp(
                 ) {
                     scanButton()
                     unlockSection()
-                    manageBackups()
+                    if (!backupsHidden) manageBackups()
                     logsSection()
                 }
             }
@@ -3431,8 +3445,9 @@ fun OtgMasterApp(
     if (!twoPaneWindow && !showMounted) MountedEdgeSwipe(onOpen = { showMounted = true })
     MountedDrawer(visible = sliderOpen, onDismiss = { showMounted = false }) {
         app.fayaz.otgmaster.ui.MountedPanel(
-            tab = mountedTab,
+            tab = shownTab,
             onTab = { mountedTab = it },
+            showBackupsTab = !backupsHidden,
             driveCount = driveCount,
             backupCount = backupCount,
             onClose = { showMounted = false },
@@ -3454,6 +3469,8 @@ fun OtgMasterApp(
         onDismiss = { showSettings = false },
         readOnlyDefault = readOnlyDefault,
         onReadOnlyDefaultChange = onReadOnlyDefaultChange,
+        backupsHidden = backupsHidden,
+        onBackupsHiddenChange = onBackupsHiddenChange,
     )
 
     app.fayaz.otgmaster.ui.StatusToast(
@@ -4021,6 +4038,8 @@ fun SettingsDrawer(
     onDismiss: () -> Unit,
     readOnlyDefault: Boolean = false,
     onReadOnlyDefaultChange: (Boolean) -> Unit = {},
+    backupsHidden: Boolean = false,
+    onBackupsHiddenChange: (Boolean) -> Unit = {},
 ) {
     if (!visible) return
 
@@ -4156,6 +4175,33 @@ fun SettingsDrawer(
                                 checked = readOnlyDefault,
                                 onCheckedChange = onReadOnlyDefaultChange,
                                 modifier = Modifier.semantics { contentDescription = "settings_read_only_switch" }
+                            )
+                        }
+                    }
+
+                    SettingsDialogRow(
+                        id = "backups",
+                        title = stringResource(R.string.backups_disable_title),
+                        summary = if (backupsHidden) "On" else "Off"
+                    ) {
+                        Text(
+                            stringResource(R.string.backups_disable_description),
+                            style = MaterialTheme.typography.bodySmall,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant,
+                            modifier = Modifier.padding(bottom = 8.dp)
+                        )
+                        Row(
+                            verticalAlignment = Alignment.CenterVertically,
+                            modifier = Modifier.fillMaxWidth()
+                        ) {
+                            Text(
+                                stringResource(R.string.backups_disable_title),
+                                modifier = Modifier.weight(1f)
+                            )
+                            Switch(
+                                checked = backupsHidden,
+                                onCheckedChange = onBackupsHiddenChange,
+                                modifier = Modifier.semantics { contentDescription = "settings_backups_switch" }
                             )
                         }
                     }
