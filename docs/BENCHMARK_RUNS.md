@@ -294,6 +294,17 @@ Laptop: **1 of 10 NOT CLEAN** (`matrix/d2-after-px-050.md`): `D2VCNTFS` big.bin,
 
 Diagnosis: a faulty stick (…2D62). It lost a page twice, on two phones, two containers and two filesystems, and no other stick has shown it; this is not proven by a surface test. The stick was retired on 11-07 and Drive 2/2 (…EF451) took its place. Drive 2/2's clean OnePlus run on the same build supports the diagnosis. The user accepted this cell on 11-07.
 
+### Pixel 7 Pro · Drive 2/2 (…EF451) · 11-07 21:05 – 21:40, after the tag
+
+APK from `cae0e9e`. Two of ten partitions: the laptop shut down at about 21:31 and the sequence died with it. `D2VCFAT32` finished on the phone and its report came from the phone's archive. The other 8 never ran, so this does not count as a full drive.
+
+| Partition | Finished | bigwrite write / read-back (MB/s) | Fixtures | Verdict |
+|---|---|---|---|---|
+| D2BLFAT32 | 21:23 | 6.01 / 27.04 | ALL 20974 MATCHED | all ✓ |
+| D2VCFAT32 | 21:40 | 6.92 / 26.14 | ALL 20958 MATCHED | all ✓ |
+
+Laptop: **ALL CLEAN** on all ten partitions (`matrix/d2copy-after-px-050c.md`).
+
 ### Pixel 7 Pro · Drive 3 · 11-06 18:03 – 21:43
 
 | Partition | Finished | bigwrite write / read-back (MB/s) | Fixtures | Verdict |
@@ -370,6 +381,16 @@ Rebase-merged; `v0.5.0` is tagged on `45ea068`.
 | `bf6b988` | `5ec6dfc` | store: 0.5.0 tablet screenshots, 7" and 10", from a Galaxy Tab A9+ |
 | `b3b1345` | `8f26d99` | docs: v0.5.0 regression report and the release matrix on cae0e9e |
 | `42b6517` | `45ea068` | store: 0.5.0 phone screenshots, all six, from a Pixel 7 Pro |
+
+### Commit hashes after the merges of #124, #125 and #127
+
+Rebase-merged. #127 replaced #126, the same commit rebased after #125 merged. Its E2E ran on `510e785`, which has the same tree as `0a32a00`.
+
+| At the PR head | On `main` | PR | Commit |
+|---|---|---|---|
+| `580f39c` | `ab5bcfd` | #124 | chore: bump to 0.5.1 (50) after the v0.5.0 tag; hash table for #123 |
+| `e1528af` | `8e82a40` | #125 | feat(veracrypt): hidden volumes, with hidden volume protection (#119) |
+| `510e785`, `0a32a00` | `996f926` | #127 | feat(settings): Disable backups hides the backup UI |
 
 ## 2026-11-04: Deleting a folder on real ext4 and exFAT, Galaxy Tab A9+
 
