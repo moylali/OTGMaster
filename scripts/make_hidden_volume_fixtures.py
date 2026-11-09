@@ -140,6 +140,8 @@ def main():
         case("hidden_wrong_password", "A password that opens neither volume is refused, after both headers were tried.",
              pair, password="neither-volume-password-2026", hidden_flow="wrong_password")
         common = dict(hidden_password=HIDDEN_PASSWORD, hidden_pim=PIM)
+        case("hidden_no_auto_mount", "With Auto mount on, a normal mount saves its password, but a protected mount and a hidden volume's password do not, and a protected mount removes one saved earlier.",
+             pair, hidden_flow="no_auto_mount", **common)
         case("hidden_protect_safe", "Protection on, a write clear of the hidden volume: mounts OUTER, the write lands, and the host finds the hidden volume unchanged and both filesystems clean.",
              pair, hidden_flow="protect_safe", hidden_check="outer_clean", **common)
         case("hidden_protect_trigger", "Protection on, a write that reaches the hidden volume: refused, OUTER(!) and READ-ONLY on the card, every later write refused, the warning shown, and the hidden volume unchanged on the host.",
