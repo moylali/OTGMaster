@@ -85,7 +85,7 @@
     <string name="cd_copy_version">Copy version</string>
     <string name="cd_close_settings">Close settings</string>
     <string name="auto_mount_title">Auto mount</string>
-    <string name="auto_mount_description">When a known device is connected, OTG Master asks for your device lock, then mounts all recognized encrypted drives automatically. Credentials are encrypted with AES-256 in Android Keystore and cannot be extracted without your device lock.</string>
+    <string name="auto_mount_description">When a known device is connected, OTG Master asks for your device lock, then mounts all recognized encrypted drives automatically. Credentials are encrypted with AES-256 in Android Keystore and cannot be extracted without your device lock. A hidden volume, or a volume mounted with hidden volume protection, is never mounted this way.</string>
     <string name="cd_clear_keyfiles">Clear keyfiles</string>
     <string name="auto_mount_prompt_title">Authenticate to mount</string>
     <string name="auto_mount_prompt_subtitle_single">Auto mount %1$s</string>

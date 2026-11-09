@@ -1,0 +1,1 @@
+With Auto mount on, a normal mount saves its password, but a protected mount and a hidden volume's password do not, and a protected mount removes one saved earlier.

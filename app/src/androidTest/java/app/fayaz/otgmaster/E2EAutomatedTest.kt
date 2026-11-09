@@ -97,7 +97,7 @@ class E2EAutomatedTest {
         // would take the next case's Manage backups away. commit(): the activity reads these
         // in onCreate.
         context.getSharedPreferences("otgmaster_prefs", Context.MODE_PRIVATE).edit()
-            .remove("read_only_partitions").remove("backups_hidden").commit()
+            .remove("read_only_partitions").remove("backups_hidden").remove("auto_mount").commit()
         // Named explicitly: the debug build has a second launcher entry (OTG Bench),
         // and getLaunchIntentForPackage returned that one, so every case ran against
         // the bench screen and failed with "password input not shown".
@@ -2368,10 +2368,7 @@ class E2EAutomatedTest {
         assertNotNull("the drive is not in the list", findInSlider(By.text(driveTitle(drive))))
         closeSlider()
 
-        bkContext.startActivity(mainActivityIntent().apply {
-            addFlags(Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_CLEAR_TASK)
-        })
-        assertNotNull("the app did not come back", device.wait(Until.findObject(By.desc(bkContext.getString(R.string.cd_settings))), 30000L))
+        relaunchApp()
         assertBackupUiShown(false)
 
         // Under More actions: Backups is gone, Back up stays and asks to enable backups first.
@@ -2418,6 +2415,14 @@ class E2EAutomatedTest {
         assertNotNull("no More actions on the drive", more)
         more!!.click()
         return device.wait(Until.findObject(By.desc(id)), timeout)
+    }
+
+    /** Starts the activity afresh: what it keeps in memory is gone and it rereads its settings. */
+    private fun relaunchApp() {
+        bkContext.startActivity(mainActivityIntent().apply {
+            addFlags(Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_CLEAR_TASK)
+        })
+        assertNotNull("the app did not come back", device.wait(Until.findObject(By.desc(bkContext.getString(R.string.cd_settings))), 30000L))
     }
 
     private fun setBackupsDisabled(disabled: Boolean) {
@@ -3793,10 +3798,10 @@ class E2EAutomatedTest {
      * Mounts with the protection fields filled. VeraCrypt's message about the protection covers
      * the screen when the mount ends, so it is read and closed before looking for the card.
      */
-    private fun mountProtected(password: String, pim: String, testCase: String) {
+    private fun mountProtected(password: String, pim: String, testCase: String, justBeforeMount: () -> Unit = {}) {
         scan("with hidden volume protection")
         assertTrue("the mount button was not tapped",
-            doMount(password, pim, testCase, clearFields = true, waitForMount = false, beforeMount = { fillHiddenProtection() }))
+            doMount(password, pim, testCase, clearFields = true, waitForMount = false, beforeMount = { fillHiddenProtection(); justBeforeMount() }))
         if (device.wait(Until.findObject(By.text("Hidden volume protected")), 300000L) == null) captureScreen("no_protection_message")
         assertDialog("Hidden volume protected", "until the outer volume is unmounted")
         assertNotNull("the outer volume did not mount", waitForMounted(30000L))
@@ -3911,6 +3916,39 @@ class E2EAutomatedTest {
                     writeRootFile(context, "after_trigger.txt", ByteArray(4096)))
                 doUnmount()
                 assertHiddenVolumeIntact(context, testCase)
+            }
+            "no_auto_mount" -> {
+                val prefs = context.getSharedPreferences("otgmaster_prefs", Context.MODE_PRIVATE)
+                val store = app.fayaz.otgmaster.security.CredentialStore(context)
+                try {
+                    prefs.edit().putBoolean("auto_mount", true).commit()
+                    relaunchApp()
+                    // A normal mount is remembered, which is what the two below must not be.
+                    scanAndMount(password, pim, testCase, "as a normal volume")
+                    val key = OtgMasterState.mountedDrives.first().sourceDeviceName.orEmpty()
+                    assertTrue("no device key", key.isNotEmpty())
+                    assertNotNull("a normal mount was not remembered", store.load(key, 0L))
+                    doUnmount()
+                    store.deletePartition(key, 0L)
+                    relaunchApp()
+
+                    // Saved at the last moment: with a saved password on it the form offers Quick unlock instead.
+                    mountProtected(password, pim, testCase) {
+                        store.save(key, 0L, password, pim, emptyList(),
+                            app.fayaz.otgmaster.veracrypt.VeraCryptCipher.DEFAULT.name, app.fayaz.otgmaster.veracrypt.VeraCryptHash.DEFAULT.name)
+                    }
+                    assertOuterTag("OUTER")
+                    assertNull("a protected mount left a password saved", store.load(key, 0L))
+                    doUnmount()
+
+                    scanAndMount(hiddenArg("hidden_password"), hiddenArg("hidden_pim"), testCase, "with the hidden volume's password")
+                    assertOuterTag("HIDDEN")
+                    assertNull("the hidden volume's password was saved", store.load(key, 0L))
+                    doUnmount()
+                } finally {
+                    prefs.edit().remove("auto_mount").commit()
+                    store.clearAll()
+                }
             }
             else -> fail("unknown hidden_flow $flow")
         }

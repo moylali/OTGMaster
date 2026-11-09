@@ -1611,7 +1611,16 @@ class MainActivity : AppCompatActivity() {
                 withContext(Dispatchers.Main) {
                     onComplete()
                     mountFormResetKey.value++
-                    if (autoMountEnabled.value) {
+                    if (mountedDrive.isHiddenOrOuter) {
+                        // Auto mount has no form, so it cannot turn protection on, and a saved
+                        // password would then mount this volume unprotected. A hidden volume's
+                        // password on the phone is evidence that the volume exists. So neither is
+                        // remembered, and a password saved earlier for this partition goes too.
+                        credentialStore.deletePartition(deviceName, candidate.startBlock)
+                        if (sessionPlaintextCreds[deviceName]?.candidateStartBlock == candidate.startBlock) {
+                            sessionPlaintextCreds.remove(deviceName)
+                        }
+                    } else if (autoMountEnabled.value) {
                         credentialStore.save(deviceName, candidate.startBlock, password, pim?.toString() ?: "", keyfiles, cipher.name, hash.name, candidate.containerType)
                         sessionPlaintextCreds[deviceName] = app.fayaz.otgmaster.security.CredentialStore.Credentials(
                             password, pim?.toString() ?: "", keyfiles, cipher.name, hash.name, candidate.startBlock, candidate.containerType
