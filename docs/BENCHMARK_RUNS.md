@@ -392,6 +392,17 @@ Rebase-merged. #127 replaced #126, the same commit rebased after #125 merged. It
 | `e1528af` | `8e82a40` | #125 | feat(veracrypt): hidden volumes, with hidden volume protection (#119) |
 | `510e785`, `0a32a00` | `996f926` | #127 | feat(settings): Disable backups hides the backup UI |
 
+### Commit hashes after the merges of #128, #129 and #130
+
+Rebase-merged. The E2E reports for #129 and #130 name the commits in the first column.
+
+| At the PR head | On `main` | PR | Commit |
+|---|---|---|---|
+| `97719a3` | `8e82c9b` | #128 | docs: hash table for #124, #125 and #127; the Pixel run on Drive 2/2 |
+| `1d20dbe` | `28dc7e2` | #129 | feat(ui): one slider on every screen, and a centred form in landscape |
+| `9d62fcf` | `f5cb834` | #130 | feat(settings): with backups disabled, Back up asks to enable them first |
+| `4ee2cb5` | `5e2c176` | #130 | feat(veracrypt): hidden and protected mounts are never auto mounted |
+
 ## 2026-11-04: Deleting a folder on real ext4 and exFAT, Galaxy Tab A9+
 
 Not a benchmark: no sections ran. Deleting a non-empty folder through the provider failed on ext4
