@@ -140,8 +140,10 @@ key derivation (VeraCrypt 1.26.24 and later). Called from
   `encoding.c`/`.h`, `ref.c`, `thread.c`/`.h`, and `blake2/` `blake2.h`,
   `blake2-impl.h`, `blake2b.c`, `blamka-round-ref.h`; and `LICENSE`. Byte for byte.
   Left out: `opt.c` and `blamka-round-opt.h` (x86 SSE, does not build for ARM), the
-  command-line tool, benchmarks, test vectors and build files. Built with
-  `ARGON2_NO_THREADS`: VeraCrypt derives with parallelism 1.
+  command-line tool, benchmarks, test vectors and build files. Built with threads:
+  VeraCrypt derives with one lane, but cryptsetup gives a LUKS2 key slot four.
+  `ARGON2_NO_THREADS` was set until 0.5.0 moved LUKS2 here, and made those unlocks over
+  twice as slow; `Argon2LanesTest` guards it.
 - **Why vendored rather than a dependency:** the app already depends on argon2kt for
   LUKS2, but that is an Android library that cannot load on the host JVM, so nothing
   that uses it can be tested against real volumes there: `LuksSectorSizeTest` says so

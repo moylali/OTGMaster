@@ -103,8 +103,8 @@ target_compile_definitions(twofish PUBLIC LTC_NOTHING LTC_TWOFISH LTC_TWOFISH_TA
 target_include_directories(twofish PUBLIC libtomcrypt/src/headers)
 
 # argon2: the PHC reference implementation, unmodified (docs/VENDOR_FIXES.md). ref.c, not
-# the SSE opt.c, which does not build for ARM. VeraCrypt derives with parallelism 1, so
-# no threads.
+# the SSE opt.c, which does not build for ARM. Threads stay on: VeraCrypt derives with one
+# lane, but cryptsetup gives a LUKS2 key slot four, and run in turn they take over twice as long.
 add_library(argon2 STATIC
         argon2/src/argon2.c
         argon2/src/core.c
@@ -112,7 +112,6 @@ add_library(argon2 STATIC
         argon2/src/ref.c
         argon2/src/thread.c
         argon2/src/blake2/blake2b.c)
-target_compile_definitions(argon2 PRIVATE ARGON2_NO_THREADS)
 target_include_directories(argon2 PUBLIC argon2/include)
 
 # zstd's decoder alone, for restic repositories (docs/VENDOR_FIXES.md). No assembly: the
