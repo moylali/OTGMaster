@@ -2977,11 +2977,31 @@ fun OtgMasterApp(
     var encryptTarget by remember { mutableStateOf<MountedDrive?>(null) }
     var backupTarget by remember { mutableStateOf<MountedDrive?>(null) }
     var backupsTarget by remember { mutableStateOf<MountedDrive?>(null) }
+    var enableBackupsFor by remember { mutableStateOf<MountedDrive?>(null) }
     var recoveryTarget by remember { mutableStateOf<MountedDrive?>(null) }
     recoveryTarget?.let { d -> app.fayaz.otgmaster.ui.RecoveryDialog(d, onDismiss = { recoveryTarget = null }) }
     val backupJobs by app.fayaz.otgmaster.backup.JobStore.get(androidx.compose.ui.platform.LocalContext.current).jobs.collectAsState()
     backupTarget?.let { d ->
         app.fayaz.otgmaster.ui.BackupSetupDialog(d.id, d.name, onDismiss = { backupTarget = null })
+    }
+    enableBackupsFor?.let { d ->
+        androidx.compose.material3.AlertDialog(
+            onDismissRequest = { enableBackupsFor = null },
+            title = { Text(stringResource(R.string.backups_enable_title)) },
+            text = { Text(stringResource(R.string.backups_enable_text)) },
+            confirmButton = {
+                androidx.compose.material3.TextButton(
+                    onClick = { enableBackupsFor = null; onBackupsHiddenChange(false); backupTarget = d },
+                    modifier = Modifier.semantics { contentDescription = "backups_enable_confirm" },
+                ) { Text(stringResource(R.string.backups_enable_confirm)) }
+            },
+            dismissButton = {
+                androidx.compose.material3.TextButton(
+                    onClick = { enableBackupsFor = null },
+                    modifier = Modifier.semantics { contentDescription = "backups_enable_cancel" },
+                ) { Text(stringResource(R.string.cancel)) }
+            },
+        )
     }
     backupsTarget?.let { d ->
         app.fayaz.otgmaster.ui.BackupJobsDialog(d.id, onDismiss = { backupsTarget = null })
@@ -3196,11 +3216,13 @@ fun OtgMasterApp(
                                     add(app.fayaz.otgmaster.ui.DriveAction("encrypt_action", stringResource(R.string.encrypt_drive_menu),
                                         encryptUnavailable(drive)) { encryptTarget = drive })
                                     // Offered on a read-only drive too: it can be the source.
-                                    add(app.fayaz.otgmaster.ui.DriveAction("backup_action", stringResource(R.string.backup_action)) { backupTarget = drive })
+                                    add(app.fayaz.otgmaster.ui.DriveAction("backup_action", stringResource(R.string.backup_action)) {
+                                        if (backupsHidden) enableBackupsFor = drive else backupTarget = drive
+                                    })
                                     add(app.fayaz.otgmaster.ui.DriveAction("recovery_action", stringResource(R.string.recovery_action),
                                         app.fayaz.otgmaster.ui.recoveryUnavailable(drive, stringResource(R.string.recovery_not_supported))) { recoveryTarget = drive })
                                     val driveJobs = app.fayaz.otgmaster.ui.jobsForDrive(backupJobs, drive.id)
-                                    if (driveJobs.isNotEmpty()) {
+                                    if (driveJobs.isNotEmpty() && !backupsHidden) {
                                         add(app.fayaz.otgmaster.ui.DriveAction("backups_action",
                                             stringResource(R.string.backups_action, driveJobs.size)) { backupsTarget = drive })
                                     }
