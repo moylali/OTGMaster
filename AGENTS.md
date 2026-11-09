@@ -212,6 +212,22 @@ the three-device bar applies to benchmark figures, not just smoke checks. (It wa
 four until 0.4.1, which was tagged on three (OnePlus 7, Pixel 7 Pro, Samsung M30) with
 the Huawei P20 Lite's partial run kept in the report but not counted.)
 
+**Every benchmark run records how long each partition took to unlock, and a run
+fails if any partition's median unlock time is 5% or more slower than the baseline.** The baseline is the
+figure from the last tagged release on the same phone, the same partition and the
+same build type. Compare the median for each partition across all of a drive's runs,
+because every run unlocks every partition and one reading is too noisy for a 5%
+limit: two runs of the same 0.5.0 build on one drive took 65.9 s and 69.8 s for the
+same 10 unlocks, a 5.7% difference with no code change. Debug builds compile native code without optimisation (Argon2 took
+32.79 s unoptimised and 4.89 s optimised at 1 GiB on a Pixel 7 Pro), so a debug
+figure is never compared with a release figure.
+
+This exists because 0.5.0 roughly doubled LUKS2 unlock time and every test passed,
+since nothing measured time. On a Pixel 7 Pro with the same drive, the build before
+it took 4.9 s, 0.5.0 took 10.5 s, and the fix took 5.3 s. Customers found it first.
+A failed unlock-time check is a failed run: record it in `BENCHMARK_RUNS.md` with
+the figures, as any other failure.
+
 **A content hash does not verify a filesystem write: run the filesystem's own
 checker.** A write path must leave the volume structurally valid, and SHA-256 over
 the bytes just written cannot see otherwise. The ext4 write support reported
