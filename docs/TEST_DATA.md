@@ -588,6 +588,13 @@ completes and reads back whole after a remount. Each case copies the image and c
 `eject_flow.txt`, so build those cases first. `eject_not_offered` and `eject_backup_running` come
 from `scripts/make_backup_run_fixtures.py`, which needs a backup repository on the drive.
 
+The same script builds `testdata/report_issue`. Its `github_issue.txt` names the repository. The
+runner makes up a random string for each attempt, the test types it into the Report issue form in
+Chrome and submits, and `scripts/check_github_issue.py` asserts that GitHub's issue contains that
+string, then deletes the issue. The case needs internet on the emulator and `gh` logged in with
+admin rights. `gh issue delete` removes only the GitHub issue: the row the form saved in Supabase
+stays.
+
 An emulator has no Android storage stack behind its USB disk, so whether Android mounted a drive is
 answered by the debug-only preference `test_android_holds_usb`. Android taking a drive back after
 Eject can only be checked on a phone.

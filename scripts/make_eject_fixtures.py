@@ -42,7 +42,11 @@ CASES = {
     "usb_mode_wait_free": (VC, "usb_mode_wait_free", "USB access, Wait for Android: a drive Android left alone is opened after the wait, with no Scan."),
     "usb_mode_wait_held": (VC, "usb_mode_wait_held", "USB access, Wait for Android: a drive Android took stays with it."),
     "usb_mode_scan_warning": (VC, "usb_mode_scan_warning", "USB access, Wait for Android: Scan warns before taking a drive from Android."),
+    "report_issue": (PLAIN, "report_issue", "Report issue: the details and a random string reach a GitHub issue, which is then deleted."),
 }
+
+# Cases the runner checks on GitHub afterwards: the repository the issue should appear in.
+GITHUB_ISSUE = {"report_issue": "moylali/OTGMaster"}
 
 COPIED = ["test.img", "password.txt", "pim.txt", "cipher.txt", "hash.txt", "plain.txt", "container.txt", "recovery.txt", "boot.txt"]
 
@@ -62,6 +66,9 @@ def main():
             out.write(what + "\n")
         with open(os.path.join(dst, "timeout.txt"), "w") as out:
             out.write("600\n")
+        if name in GITHUB_ISSUE:
+            with open(os.path.join(dst, "github_issue.txt"), "w") as out:
+                out.write(GITHUB_ISSUE[name] + "\n")
         print(name, "from", base)
 
 

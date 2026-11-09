@@ -3868,6 +3868,78 @@ class E2EAutomatedTest {
         assertEquals("it ejected", 1, OtgMasterState.mountedDrives.size)
     }
 
+    // ── Report issue (testdata/report_issue, scripts/check_github_issue.py) ──
+
+    /**
+     * Report issue, the review screen, the web form in Chrome, then Submit. The runner makes
+     * [marker] up for each attempt. After this test it looks for that string in the issue
+     * GitHub received, and deletes the issue.
+     */
+    private fun runReportIssue(marker: String) {
+        assertTrue("the runner gave no issue_marker", marker.isNotEmpty())
+        ejMount("to report")
+        val report = findScrolling(By.text(usbText(R.string.feedback_report_issue)))
+        assertNotNull("no Report issue button", report)
+        report!!.click()
+        val open = findScrolling(By.text(usbText(R.string.feedback_open)), firstWaitMs = 10_000L)
+        assertNotNull("no button to open the form", open)
+        open!!.click()
+
+        val description = webOnScreen("feedback-text")
+        description.text = "E2E test of Report issue, please ignore. $marker"
+        assertTrue("the description did not take the text", webField("feedback-text").text.orEmpty().contains(marker))
+        webOnScreen("submit-btn").click()
+        val done = device.wait(Until.findObject(By.textContains("Feedback submitted successfully")), 60_000L)
+        if (done == null) captureScreen("report_issue_submit")
+        assertNotNull("the form did not say the report was submitted", done)
+        device.executeShellCommand("am force-stop com.android.chrome")
+    }
+
+    /** An element of the web form by its HTML id, past any Chrome first-run screen. */
+    private fun webField(id: String, ms: Long = 90_000L): androidx.test.uiautomator.UiObject2 {
+        val firstRun = java.util.regex.Pattern.compile("(?i)Use without an account|No thanks|Accept & continue|Got it")
+        val end = android.os.SystemClock.uptimeMillis() + ms
+        while (android.os.SystemClock.uptimeMillis() < end) {
+            device.findObject(By.res(id))?.let { return it }
+            device.findObject(By.pkg("com.android.chrome").text(firstRun))?.click()
+            android.os.SystemClock.sleep(1000)
+        }
+        captureScreen("report_issue_$id")
+        throw AssertionError("the web form has no $id")
+    }
+
+    /**
+     * Scrolls the page until the element can be tapped. Chrome only exposes elements near the
+     * screen, so one further down is not in the tree until the page has moved. The swipe is in
+     * the left margin, because on a text box it would scroll the box, and slow, because a fling
+     * can carry the page past the element. It goes down the page and then back up, since the
+     * tree can lag a fresh page and the first pass can pass the element by.
+     */
+    private fun webOnScreen(id: String): androidx.test.uiautomator.UiObject2 {
+        webField("feedback-form")
+        val x = device.displayWidth / 12
+        val low = device.displayHeight * 3 / 4
+        val high = device.displayHeight * 2 / 5
+        fun tappable(): androidx.test.uiautomator.UiObject2? {
+            android.os.SystemClock.sleep(800)
+            return device.findObject(By.res(id))?.takeIf {
+                it.visibleBounds.height() >= 40 && it.visibleBounds.bottom < device.displayHeight - 150
+            }
+        }
+        device.wait(Until.findObject(By.res(id)), 5_000L)
+        tappable()?.let { return it }
+        repeat(14) {
+            device.swipe(x, low, x, high, 120)
+            tappable()?.let { return it }
+        }
+        repeat(14) {
+            device.swipe(x, high, x, low, 120)
+            tappable()?.let { return it }
+        }
+        captureScreen("report_issue_scroll_$id")
+        throw AssertionError("could not scroll $id onto the screen")
+    }
+
     private fun usbText(id: Int): java.util.regex.Pattern =
         java.util.regex.Pattern.compile(java.util.regex.Pattern.quote(bkContext.getString(id)))
 
@@ -4288,6 +4360,7 @@ class E2EAutomatedTest {
                 usbAssertNotOpened("Wait, a drive Android took")
                 assertNotNull("the hint went away", device.findObject(By.text(usbText(R.string.usb_hint_android))))
             }
+            "report_issue" -> runReportIssue(args.getString("issue_marker", ""))
             "usb_mode_scan_warning" -> {
                 usbAwaitHint(R.string.usb_hint_android)
                 findScanButton()!!.click()

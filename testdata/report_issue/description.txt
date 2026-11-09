@@ -1,0 +1,1 @@
+Report issue: the details and a random string reach a GitHub issue, which is then deleted.
