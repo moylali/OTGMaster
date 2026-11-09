@@ -403,6 +403,53 @@ Rebase-merged. The E2E reports for #129 and #130 name the commits in the first c
 | `9d62fcf` | `f5cb834` | #130 | feat(settings): with backups disabled, Back up asks to enable them first |
 | `4ee2cb5` | `5e2c176` | #130 | feat(veracrypt): hidden and protected mounts are never auto mounted |
 
+### Commit hashes after the merge of #134
+
+Rebase-merged. The E2E report and hardware results in #134 name the commits in the first column.
+
+| At the PR head | On `main` | PR | Commit |
+|---|---|---|---|
+| `4b5d2a7` | `18cdf9c` | #134 | fix(luks): Argon2 runs a LUKS2 key slot's lanes on threads again |
+| `27a958e` | `10da2b4` | #134 | feat(usb): Eject, and a USB access setting (#113) |
+
+## 2026-11-09: 0.5.1 on the Pixel 7 Pro, without bigwrite
+
+Debug APK from `27a958e`. The owner waived the three-device matrix for 0.5.1 and left bigwrite out to save time, so these runs do not exercise large writes. Sections: free, block, dir, path, seq, random, opens, write, unaligned, correct, fixtures. Debug native code is not optimised, so no timing here compares with a release build. Unlock time per partition was not logged: the rule that requires it landed after these runs. D3, D4 and D5/1 were not finished when this was written.
+
+### Pixel 7 Pro · Android 17 · Drive 1 · 11-09 07:53 – 08:57
+
+| Partition | Finished | Fixtures | Verdict |
+|---|---|---|---|
+| D1FAT32 | 07:57 | ALL 20995 MATCHED | write verify ✓; correctness ✓ |
+| D1EXFAT | 08:02 | ALL 20963 MATCHED | write verify ✓; correctness ✓ |
+| D1NTFS | 08:05 | ALL 21052 MATCHED | write verify ✓; correctness ✓ |
+| D1EXT4 | 08:09 | ALL 20854 MATCHED | write verify ✓; correctness ✓ |
+| D1BLEXFAT | 08:14 | ALL 20898 MATCHED | write verify ✓; correctness ✓ |
+| D1BLNTFS | 08:18 | ALL 20905 MATCHED | write verify ✓; correctness ✓ |
+| D1APFSCI | 08:28 | ALL 22129 MATCHED | read sections ✓; writes SKIPPED (ro) |
+| D1APFSCS | 08:37 | ALL 22024 MATCHED | read sections ✓; writes SKIPPED (ro) |
+| D1APFSECI | 08:47 | ALL 21777 MATCHED | read sections ✓; writes SKIPPED (ro) |
+| D1APFSECS | 08:57 | ALL 21911 MATCHED | read sections ✓; writes SKIPPED (ro) |
+
+Laptop: **ALL CLEAN** on all ten partitions (`matrix/d1-after-px-051a.md`). The filesystem checker does not apply to the two encrypted APFS partitions, so those rest on every file matching.
+
+### Pixel 7 Pro · Android 17 · Drive 2/2 (…EF451) · 11-09 05:38 – 07:10
+
+| Partition | Finished | Fixtures | Verdict |
+|---|---|---|---|
+| D2BLFAT32 | 05:47 | ALL 20974 MATCHED | write verify ✓; correctness ✓ |
+| D2VCFAT32 | 05:55 | ALL 20958 MATCHED | write verify ✓; correctness ✓ |
+| D2VCEXFAT | 06:06 | ALL 20974 MATCHED | write verify ✓; correctness ✓ |
+| D2VCNTFS | 06:14 | ALL 20919 MATCHED | write verify ✓; correctness ✓ |
+| D2VCEXT4 | 06:23 | ALL 21071 MATCHED | write verify ✓; correctness ✓ |
+| D2L1FAT32 | 06:32 | ALL 20953 MATCHED | write verify ✓; correctness ✓ |
+| D2L1EXT4 | 06:41 | ALL 21024 MATCHED | write verify ✓; correctness ✓ |
+| D2L2EXFAT | 06:52 | ALL 20942 MATCHED | write verify ✓; correctness ✓ |
+| D2L4EXT4 | 07:01 | ALL 20888 MATCHED | write verify ✓; correctness ✓ |
+| D2L4NTFS | 07:10 | ALL 20927 MATCHED | write verify ✓; correctness ✓ |
+
+Laptop: **ALL CLEAN** on all ten partitions (`matrix/d2copy-after-px-051b.md`).
+
 ## 2026-11-04: Deleting a folder on real ext4 and exFAT, Galaxy Tab A9+
 
 Not a benchmark: no sections ran. Deleting a non-empty folder through the provider failed on ext4
