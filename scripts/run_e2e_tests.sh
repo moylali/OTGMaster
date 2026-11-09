@@ -526,6 +526,16 @@ for test_dir in "$TESTDATA_DIR"/*/; do
             usb_request_watcher &
             WATCHER_PID=$!
         fi
+        # Report issue: a new random string each attempt, so an issue left by the first
+        # attempt can't satisfy the second. Chrome's first-run screens are off for the form.
+        ISSUE_ARG=""
+        ISSUE_MARKER=""
+        if [ -f "$test_dir/github_issue.txt" ]; then
+            ISSUE_MARKER="otg-e2e-$(openssl rand -hex 16)"
+            ISSUE_ARG="-e issue_marker $ISSUE_MARKER"
+            $CMD_ADB -s $SERIAL shell 'echo "_ --disable-fre --no-default-browser-check --no-first-run" > /data/local/tmp/chrome-command-line'
+            $CMD_ADB -s $SERIAL shell am set-debug-app --persistent com.android.chrome
+        fi
         # Bounded: when the test runner itself dies before the test starts (a class R8
         # stripped from the app, for one), `am instrument -w` never returns, and the
         # minified run once sat four hours on its first case.
@@ -553,6 +563,7 @@ for test_dir in "$TESTDATA_DIR"/*/; do
             $JOURNAL_ARG \
             $HIDDEN_ARG \
             $EJECT_ARG \
+            $ISSUE_ARG \
             -e class app.fayaz.otgmaster.E2EAutomatedTest \
             $PACKAGE_NAME.test/androidx.test.runner.AndroidJUnitRunner)
 
@@ -594,8 +605,25 @@ for test_dir in "$TESTDATA_DIR"/*/; do
             fi
         fi
 
+        # Report issue: GitHub must hold the random string the test typed. This runs after
+        # a failed test too, with a shorter wait, so an issue that did get created is
+        # deleted rather than left on a public tracker.
+        if [ -n "$ISSUE_MARKER" ]; then
+            ISSUE_WAIT=120
+            [ $TEST_EXIT_CODE -ne 0 ] && ISSUE_WAIT=30
+            HOST_OUT=$(python3 scripts/check_github_issue.py "$(cat "$test_dir/github_issue.txt")" "$ISSUE_MARKER" --wait $ISSUE_WAIT 2>&1)
+            echo "$HOST_OUT"
+            if echo "$HOST_OUT" | grep -q "^GITHUB ISSUE OK"; then
+                [ $TEST_EXIT_CODE -eq 0 ] && HOST_CHECK="checked on GitHub, issue deleted"
+            else
+                TEST_EXIT_CODE=1
+                HOST_CHECK="GitHub issue check failed"
+            fi
+        fi
 
         if [ $TEST_EXIT_CODE -ne 0 ] && [ $ATTEMPT -eq 1 ]; then
+            # The form refuses a second report within 2 minutes of one that went through.
+            [ -n "$ISSUE_MARKER" ] && sleep 130
             echo "Attempt 1 of $TEST_NAME failed; retrying once."
             mv "logcat_${TEST_NAME}.txt" "logcat_${TEST_NAME}_attempt1.txt"
             for f in e2e_${TEST_NAME}_e2e_*; do [ -e "$f" ] && mv "$f" "attempt1_$f"; done
