@@ -112,7 +112,10 @@
     <string name="action_unavailable_hidden">Not available for a hidden or protected outer volume</string>
     <string name="read_only_mode_title">Read-only mode</string>
     <string name="backups_disable_title">Disable backups</string>
-    <string name="backups_disable_description">Hides the backup reminder icon, the Backups tab and Manage backups. Backups you have already scheduled keep running.</string>
+    <string name="backups_enable_title">Enable backups?</string>
+    <string name="backups_enable_text">Backups are disabled in Settings. Enable them to back up this drive?</string>
+    <string name="backups_enable_confirm">Enable</string>
+    <string name="backups_disable_description">Hides the backup reminder icon, the Backups tab, Manage backups and each drive\'s list of backups. Backups you have already scheduled keep running.</string>
     <string name="read_only_mode_description">Mount encrypted partitions read-only by default</string>
     <string name="auto_mount_clear_credentials">Clear all cached credentials</string>
     <string name="log_auto_mount_credentials_cleared">All Auto mount cached credentials cleared.</string>

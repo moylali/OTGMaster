@@ -2374,11 +2374,50 @@ class E2EAutomatedTest {
         assertNotNull("the app did not come back", device.wait(Until.findObject(By.desc(bkContext.getString(R.string.cd_settings))), 30000L))
         assertBackupUiShown(false)
 
-        setBackupsDisabled(false)
+        // Under More actions: Backups is gone, Back up stays and asks to enable backups first.
+        val prefs = bkContext.getSharedPreferences("otgmaster_prefs", Context.MODE_PRIVATE)
+        openSlider()
+        val backUp = bkDriveAction("backup_action")
+        assertNotNull("Back up left More actions", backUp)
+        assertNull("Backups is still under More actions", device.findObject(By.desc("backups_action")))
+        backUp!!.click()
+        assertNotNull("no dialog offering to enable backups", device.wait(Until.findObject(By.desc("backups_enable_confirm")), timeout))
+        assertTrue(clickByDesc("backups_enable_cancel"))
+        assertTrue("Cancel left the dialog up", device.wait(Until.gone(By.desc("backups_enable_confirm")), timeout))
+        assertTrue("Cancel enabled backups", prefs.getBoolean("backups_hidden", false))
+        assertNull("Cancel went on to the backup form", device.findObject(By.desc("backup_name")))
+
+        bkDriveAction("backup_action")!!.click()
+        assertTrue(clickByDesc("backups_enable_confirm"))
+        val form = device.wait(Until.findObject(By.desc("backup_name")), timeout)
+        if (form == null) captureScreen("no_backup_form_after_enable")
+        assertNotNull("Enable did not go on to the backup form", form)
+        assertFalse("Enable did not change the setting", prefs.getBoolean("backups_hidden", false))
+        device.pressBack()
+        assertTrue("Back left the backup form up", device.wait(Until.gone(By.desc("backup_name")), timeout))
+
+        closeSlider()
         assertBackupUiShown(true)
         openSlider("mounted_tab_backups")
         assertNotNull("the Drives tab did not come back", device.findObject(By.desc("mounted_tab_drives")))
+        assertTrue(clickByDesc("mounted_tab_drives"))
+        assertNotNull("Backups did not come back under More actions", bkDriveAction("backups_action"))
+        device.pressBack()
         closeSlider()
+
+        // The switch in Settings turns it off as well as on.
+        setBackupsDisabled(true)
+        setBackupsDisabled(false)
+        assertBackupUiShown(true)
+    }
+
+    /** A drive card's action: a button if it fit, otherwise in its More actions. */
+    private fun bkDriveAction(id: String): androidx.test.uiautomator.UiObject2? {
+        device.findObject(By.desc(id))?.let { return it }
+        val more = findScrolling(By.desc("more_actions_button"), desc = "more_actions_button")
+        assertNotNull("no More actions on the drive", more)
+        more!!.click()
+        return device.wait(Until.findObject(By.desc(id)), timeout)
     }
 
     private fun setBackupsDisabled(disabled: Boolean) {
