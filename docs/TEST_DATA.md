@@ -579,6 +579,17 @@ The keybag was decrypted and decoded by hand to confirm it is well-formed. With
 the first encrypted volume block, as expected. The patch was not kept: it only shows
 that the keybag is not the problem.
 
+## 6j. Eject and USB access (E2E, no root)
+
+`python3 scripts/make_eject_fixtures.py` builds `testdata/eject_*` and `testdata/usb_mode_*`, except
+the two below. Each case copies the image and credentials of an existing case and adds an
+`eject_flow.txt`, so build those cases first. `eject_not_offered` and `eject_backup_running` come
+from `scripts/make_backup_run_fixtures.py`, which needs a backup repository on the drive.
+
+An emulator has no Android storage stack behind its USB disk, so whether Android mounted a drive is
+answered by the debug-only preference `test_android_holds_usb`. Android taking a drive back after
+Eject can only be checked on a phone.
+
 ## 7. The VeraCrypt benchmark drive (macOS, scripted)
 
 This one is fully scripted. It is the drive every figure in

@@ -1,0 +1,1 @@
+Dismiss on the transfer dialog: the card says it is waiting, and a notification comes after the Eject.

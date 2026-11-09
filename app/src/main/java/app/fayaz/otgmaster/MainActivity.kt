@@ -215,6 +215,10 @@ class MainActivity : AppCompatActivity() {
         private const val PREF_LAST_BOOT_TIME = "last_boot_time_ms"
         private const val PREF_READ_ONLY_DEFAULT = "read_only_default"
         private const val PREF_BACKUPS_HIDDEN = "backups_hidden"
+        private const val PREF_USB_ACCESS = "usb_access_mode"
+        private const val PREF_KNOWN_VOLUMES = "known_removable_volumes"
+        /** Debug builds only: answers "did Android mount it?", which an emulator cannot show. */
+        private const val PREF_TEST_ANDROID_HOLDS = "test_android_holds_usb"
         private const val PREF_READ_ONLY_CHOICES = "read_only_partitions"
     }
 
@@ -233,6 +237,21 @@ class MainActivity : AppCompatActivity() {
     // suppressed for these until the device is physically detached and re-attached.
     private val manuallyUnmountedDevices = mutableSetOf<String>()
     private var isAutoMountPromptShowing = false
+
+    // ── USB access and Eject ──────────────────────────────────────────────────
+    private val usbAccessMode = mutableStateOf(app.fayaz.otgmaster.usb.UsbAccessMode.ALWAYS)
+    /** Why an attached drive is not being opened, as a string resource; null if it is. */
+    private val usbHint = mutableStateOf<Int?>(null)
+    private val usbScanWarning = mutableStateOf(false)
+    private var usbWaitSince = 0L
+    private var usbWaitJob: kotlinx.coroutines.Job? = null
+    /** A drive whose Eject would take other partitions with it, while that is asked. */
+    private val ejectConfirm = mutableStateOf<MountedDrive?>(null)
+    /** The device whose "transfer in progress" dialog is up. */
+    private val ejectBusyDialog = mutableStateOf<String?>(null)
+    private val ejectWatchers = HashMap<String, kotlinx.coroutines.Job>()
+    private class EjectInFlight(val title: String, val androidCanRead: Boolean, val notify: Boolean)
+    private val ejectsInFlight = HashMap<String, EjectInFlight>()
 
     /**
      * Candidates withheld from the unlock form while an auto-mount prompt is pending.
@@ -436,6 +455,8 @@ class MainActivity : AppCompatActivity() {
                 // Unlocked: a refresh deferred at the lock screen runs now (see onWindowFocusChanged).
                 Intent.ACTION_USER_PRESENT -> if (refreshWaitsForScreen) refreshDevices()
                 UsbManager.ACTION_USB_DEVICE_ATTACHED -> {
+                    usbWaitSince = 0L
+                    forgetEjected(intent.getParcelableExtraCompat<UsbDevice>(UsbManager.EXTRA_DEVICE))
                     scanFoundNoDrive.value = false
                     notificationAskedThisPlugIn = false
                     notificationsOffLogged = false
@@ -443,6 +464,7 @@ class MainActivity : AppCompatActivity() {
                     refreshDevices()
                 }
                 UsbManager.ACTION_USB_DEVICE_DETACHED -> {
+                    usbWaitSince = 0L
                     val detached = intent.getParcelableExtraCompat<UsbDevice>(UsbManager.EXTRA_DEVICE)
                     // Unplugged with its permission prompt still unanswered: say so, once.
                     detached?.let { d -> permissionAskedAt.remove(d.deviceName)?.let { t ->
@@ -608,6 +630,9 @@ class MainActivity : AppCompatActivity() {
         _themeMode.value = ThemeMode.valueOf(savedTheme ?: ThemeMode.SYSTEM.name)
         credentialStore = app.fayaz.otgmaster.security.CredentialStore(this)
         autoMountEnabled.value = sharedPreferences.getBoolean("auto_mount", false)
+        usbAccessMode.value = app.fayaz.otgmaster.usb.UsbAccessMode.fromPref(sharedPreferences.getString(PREF_USB_ACCESS, null))
+        // An Eject that was waiting when the last instance of this activity went away.
+        OtgMasterState.pendingEjects.value.keys.forEach { watchPendingEject(it) }
         excludedDeviceKeys.value = credentialStore.loadExcludedKeys()
         readOnlyDefault.value = sharedPreferences.getBoolean(PREF_READ_ONLY_DEFAULT, false)
         backupsHidden.value = sharedPreferences.getBoolean(PREF_BACKUPS_HIDDEN, false)
@@ -643,6 +668,7 @@ class MainActivity : AppCompatActivity() {
                     modifier = Modifier.fillMaxSize(),
                     color = MaterialTheme.colorScheme.background
                 ) {
+                    UsbAccessDialogs()
                     if (notificationSettingsPrompt.value) {
                         androidx.compose.material3.AlertDialog(
                             onDismissRequest = { answerNotificationSettingsPrompt(false) },
@@ -674,6 +700,14 @@ class MainActivity : AppCompatActivity() {
                         versionCode = versionCode,
                         formResetKey = mountFormResetKey.value,
                         autoMountEnabled = autoMountEnabled.value,
+                        usbAccessMode = usbAccessMode.value,
+                        onUsbAccessModeChange = { mode ->
+                            usbAccessMode.value = mode
+                            sharedPreferences.edit().putString(PREF_USB_ACCESS, mode.prefValue).apply()
+                        },
+                        usbHint = usbHint.value,
+                        onEject = { drive -> ejectTapped(drive) },
+                        onCancelEject = { key -> cancelEject(key) },
                         sessionCredentials = sessionPlaintextCreds,
                         hasCachedCreds = { deviceKey, startBlock ->
                             if (startBlock == null) credentialStore.hasAny(deviceKey)
@@ -692,11 +726,7 @@ class MainActivity : AppCompatActivity() {
                         },
                         isPartitionReadOnly = { deviceKey, startBlock -> isPartitionReadOnly(deviceKey, startBlock) },
                         onSetPartitionReadOnly = { deviceKey, startBlock, ro -> setPartitionReadOnly(deviceKey, startBlock, ro) },
-                        onRefreshDevices = {
-                            refreshDevices()
-                            scanFoundNoDrive.value = usbDeviceProvider.getDevices()
-                                .none { UsbDeviceDescriber.isMassStorageDevice(it) }
-                        },
+                        onRefreshDevices = { scanTapped() },
                         showNoDriveHelp = scanFoundNoDrive.value,
                         onUnlock = { deviceName, candidate, pwd, pim, keyfiles, cipher, hash, protect, onComplete ->
                             attemptUnlock(deviceName, candidate, pwd, pim, keyfiles, cipher, hash, protectHidden = protect, onComplete = onComplete)
@@ -776,6 +806,8 @@ class MainActivity : AppCompatActivity() {
         setIntent(intent)
         app.fayaz.otgmaster.backup.BackupPrompts.handleIntent(this, intent)
         if (intent.action == UsbManager.ACTION_USB_DEVICE_ATTACHED) {
+            usbWaitSince = 0L
+            forgetEjected(intent.getParcelableExtraCompat<UsbDevice>(UsbManager.EXTRA_DEVICE))
             attachLaunchAt = android.os.SystemClock.elapsedRealtime()
             notificationAskedThisPlugIn = false
             notificationsOffLogged = false
@@ -975,7 +1007,7 @@ class MainActivity : AppCompatActivity() {
         lifecycle.currentState.isAtLeast(androidx.lifecycle.Lifecycle.State.STARTED) &&
             getSystemService(android.app.KeyguardManager::class.java)?.isKeyguardLocked != true
 
-    private fun refreshDevices() {
+    private fun refreshDevices(userScan: Boolean = false) {
         if (!onScreen()) {
             // onCreate's own call lands here too; onResume runs it, so it says nothing.
             if (!refreshWaitsForScreen && lifecycle.currentState != androidx.lifecycle.Lifecycle.State.INITIALIZED) {
@@ -1019,6 +1051,13 @@ class MainActivity : AppCompatActivity() {
             staleKeys.forEach { key -> openedDevices.remove(key)?.close() }
             _deviceCandidates.value = _deviceCandidates.value.filterNot { it.deviceName in staleKeys }
         }
+        // Unplugged while this was not listening: the next plug-in is a fresh start.
+        OtgMasterState.ejectedDevices.removeAll { it != QEMU_DEVICE_KEY && vendorProductOf(it) !in attachedIds }
+        if (devices.none { UsbDeviceDescriber.isMassStorageDevice(it) } && !java.io.File("/dev/block/sda").canRead()) {
+            sharedPreferences.edit().putStringSet(PREF_KNOWN_VOLUMES,
+                app.fayaz.otgmaster.usb.UsbAccess.removableVolumes(this)).apply()
+            usbHint.value = null
+        }
 
         reofferPartlyMountedDevices(mountedDeviceKeys)
 
@@ -1029,6 +1068,7 @@ class MainActivity : AppCompatActivity() {
             if (!qemuAlreadyHandled) {
                 val sda = java.io.File("/dev/block/sda")
                 if (sda.exists() && sda.canRead()) {
+                    if (QEMU_DEVICE_KEY in OtgMasterState.ejectedDevices || !mayOpenDrives(userScan)) return
                     probeQemuDisk(sda)
                     return
                 }
@@ -1040,16 +1080,23 @@ class MainActivity : AppCompatActivity() {
         }
         lastNoDeviceHints = null
 
-        mountMtpDevices(devices, mountedDeviceKeys)
+        // Manual means nothing is opened before a Scan; Android does not mount phones and cameras.
+        if (userScan || usbAccessMode.value != app.fayaz.otgmaster.usb.UsbAccessMode.MANUAL) {
+            mountMtpDevices(devices, mountedDeviceKeys)
+        }
 
         // Devices not already mounted, not already sitting in the dropdown unprobed, and
         // that actually expose a mass-storage interface (skips USB hubs/keyboards/etc.).
         val candidateDevices = devices.filter {
             val key = UsbDeviceDescriber.stableKey(it, usbDeviceProvider.hasPermission(it))
             key !in mountedDeviceKeys && key !in openedDevices && !isUnmounting(key) &&
-                UsbDeviceDescriber.isMassStorageDevice(it)
+                key !in OtgMasterState.ejectedDevices && UsbDeviceDescriber.isMassStorageDevice(it)
         }
-        if (candidateDevices.isEmpty()) return
+        if (candidateDevices.isEmpty()) {
+            usbHint.value = null
+            return
+        }
+        if (!mayOpenDrives(userScan)) return
 
         val deviceNeedingPermission = candidateDevices.firstOrNull { !usbDeviceProvider.hasPermission(it) }
         if (deviceNeedingPermission != null) {
@@ -1270,7 +1317,8 @@ class MainActivity : AppCompatActivity() {
         lifecycleScope.launch(Dispatchers.IO) {
             try {
                 val excludeKeys = OtgMasterState.mountedDrives.mapNotNull { it.sourceDeviceName }.toSet() +
-                    openedDevices.keys + pendingUnmounts.filterValues { it > 0 }.keys
+                    openedDevices.keys + pendingUnmounts.filterValues { it > 0 }.keys +
+                    OtgMasterState.ejectedDevices
                 val opener = LibaumsRawBlockDeviceOpener(this@MainActivity)
                 val openedList = try {
                     opener.openAllAvailable(excludeKeys).also {
@@ -1724,6 +1772,9 @@ class MainActivity : AppCompatActivity() {
         // Clear suppression flags so the next plug-in triggers auto-mount again.
         manuallyUnmountedDevices.removeAll { matchesDetached(it) }
         autoMountAttempted.removeAll { matchesDetached(it) }
+        OtgMasterState.ejectedDevices.removeAll { matchesDetached(it) }
+        // Unplugged while waiting to eject: nothing is left to eject.
+        OtgMasterState.pendingEjects.value.keys.filter { matchesDetached(it) }.forEach { dropPendingEject(it) }
         sessionPlaintextCreds.keys.filter { matchesDetached(it) }.forEach { sessionPlaintextCreds.remove(it) }
         saveManuallyUnmountedDevices()
         // Unmount any mounted drives from this device. A drive still mounted
@@ -1848,8 +1899,10 @@ class MainActivity : AppCompatActivity() {
                 drive.blockDevice?.close()
             }
             withContext(Dispatchers.Main) {
-                // A green "Unmounted" would overwrite the disconnect warning with good news.
-                if (!disconnected) toastState.value = Pair("Unmounted: ${drive.name}", true)
+                val ejecting = drive.sourceDeviceName?.let { it in OtgMasterState.ejectedDevices } == true
+                // A green "Unmounted" would overwrite the disconnect warning with good news,
+                // and the message at the end of an Eject says more than one per partition.
+                if (!disconnected && !ejecting) toastState.value = Pair("Unmounted: ${drive.name}", true)
                 appendLog(getString(R.string.log_drive_unmounted, drive.name))
 
                 val sourceKey = drive.sourceDeviceName
@@ -1875,8 +1928,8 @@ class MainActivity : AppCompatActivity() {
                         // this one over it put a dead connection back in openedDevices,
                         // and every unlock through it failed with result == -1.
                         if (!rawInUse) rawDevice.close()
-                    } else if (!stillUnmounting && !otherMounted && !candidatesInForm &&
-                            !OtgMasterState.holdConnections) {
+                    } else if (!stillUnmounting && !otherMounted && (ejecting || !candidatesInForm) &&
+                            (ejecting || !OtgMasterState.holdConnections)) {
                         // Last partition from this USB — release the connection.
                         //
                         // This used to close only if openedDevices still held it, but a
@@ -1886,7 +1939,8 @@ class MainActivity : AppCompatActivity() {
                         // another to the same device.
                         openedDevices.remove(sourceKey)
                         if (!rawInUse) rawDevice.close()
-                    } else if (!drive.isPlain && volCandidate != null) {
+                        if (ejecting) finishEject(sourceKey)
+                    } else if (!ejecting && !drive.isPlain && volCandidate != null) {
                         // Other partitions still alive; restore this candidate so the user can remount.
                         openedDevices[sourceKey] = rawDevice
                         val existing = _deviceCandidates.value.find { it.deviceName == sourceKey }
@@ -1914,6 +1968,229 @@ class MainActivity : AppCompatActivity() {
           } finally {
             OtgMasterState.unmountsInFlight.decrementAndGet()
           }
+        }
+    }
+
+    // ── USB access and Eject ──────────────────────────────────────────────────
+
+    /** Whether the USB access setting lets the app open attached drives now, and says why not. */
+    private fun mayOpenDrives(userScan: Boolean): Boolean {
+        val now = android.os.SystemClock.elapsedRealtime()
+        if (usbWaitSince == 0L) usbWaitSince = now
+        val decision = app.fayaz.otgmaster.usb.UsbAccess.decide(usbAccessMode.value, userScan, now - usbWaitSince) { androidHoldsUsb() }
+        val hint = when (decision) {
+            app.fayaz.otgmaster.usb.UsbAccess.Decision.OPEN -> null
+            app.fayaz.otgmaster.usb.UsbAccess.Decision.WAIT -> R.string.usb_hint_waiting
+            app.fayaz.otgmaster.usb.UsbAccess.Decision.LEAVE_UNTIL_SCAN -> R.string.usb_hint_manual
+            app.fayaz.otgmaster.usb.UsbAccess.Decision.LEFT_WITH_ANDROID -> R.string.usb_hint_android
+        }
+        if (hint != null && hint != usbHint.value) appendLog(getString(hint))
+        usbHint.value = hint
+        if (decision == app.fayaz.otgmaster.usb.UsbAccess.Decision.WAIT && usbWaitJob?.isActive != true) {
+            usbWaitJob = lifecycleScope.launch {
+                delay(app.fayaz.otgmaster.usb.UsbAccess.ANDROID_WAIT_MS - (now - usbWaitSince) + 100)
+                refreshDevices()
+            }
+        }
+        return decision == app.fayaz.otgmaster.usb.UsbAccess.Decision.OPEN
+    }
+
+    private fun androidHoldsUsb(): Boolean {
+        if (BuildConfig.DEBUG && sharedPreferences.contains(PREF_TEST_ANDROID_HOLDS)) {
+            return sharedPreferences.getBoolean(PREF_TEST_ANDROID_HOLDS, false)
+        }
+        return app.fayaz.otgmaster.usb.UsbAccess.androidHolds(
+            app.fayaz.otgmaster.usb.UsbAccess.removableVolumes(this),
+            sharedPreferences.getStringSet(PREF_KNOWN_VOLUMES, emptySet()).orEmpty(),
+        )
+    }
+
+    /** Scan USB devices: takes attached drives whatever the setting says, after a warning if Android has one. */
+    private fun scanTapped(confirmed: Boolean = false) {
+        val storageAttached = usbDeviceProvider.getDevices().any { UsbDeviceDescriber.isMassStorageDevice(it) } ||
+            java.io.File("/dev/block/sda").canRead()
+        if (!confirmed && storageAttached &&
+            usbAccessMode.value == app.fayaz.otgmaster.usb.UsbAccessMode.WAIT_FOR_ANDROID && androidHoldsUsb()) {
+            usbScanWarning.value = true
+            return
+        }
+        OtgMasterState.ejectedDevices.clear()
+        refreshDevices(userScan = true)
+        scanFoundNoDrive.value = usbDeviceProvider.getDevices().none { UsbDeviceDescriber.isMassStorageDevice(it) }
+    }
+
+    /** A new plug-in of [device]: the app may open it again. */
+    private fun forgetEjected(device: UsbDevice?) {
+        if (device == null) return
+        OtgMasterState.ejectedDevices.removeAll { it.startsWith("${device.vendorId}:${device.productId}") }
+    }
+
+    private fun ejectTargets(key: String) = OtgMasterState.mountedDrives.filter { it.sourceDeviceName == key }
+
+    private fun ejectTapped(drive: MountedDrive) {
+        val key = drive.sourceDeviceName ?: return
+        if (ejectTargets(key).size > 1) ejectConfirm.value = drive else startEject(key)
+    }
+
+    /** True while something still needs the drive: an open file, or a backup that uses it. */
+    private fun deviceBusy(key: String): Boolean {
+        val ids = ejectTargets(key).flatMap { d ->
+            listOf(d.id) + app.fayaz.otgmaster.backup.BackupMounts.dependents(d.id).map { it.id }
+        }
+        if (ids.any { app.fayaz.otgmaster.provider.VeraCryptDocumentProvider.driveInUse(it) }) return true
+        val jobs = app.fayaz.otgmaster.backup.JobStore.get(this).jobs.value
+        return ids.any { id ->
+            app.fayaz.otgmaster.ui.jobsForDrive(jobs, id).any { app.fayaz.otgmaster.backup.BackupExecutor.isBusy(it.id) }
+        }
+    }
+
+    private fun startEject(key: String) {
+        if (!deviceBusy(key)) return ejectNow(key, notify = false)
+        val title = ejectTargets(key).firstNotNullOfOrNull { it.sourceDeviceDisplayName } ?: key
+        OtgMasterState.pendingEjects.value = OtgMasterState.pendingEjects.value +
+            (key to PendingEject(key, title))
+        appendLog(getString(R.string.log_eject_waiting, title))
+        ejectBusyDialog.value = key
+        watchPendingEject(key)
+    }
+
+    /** Ejects [key] at the first moment nothing needs it; new transfers just move that moment. */
+    private fun watchPendingEject(key: String) {
+        if (ejectWatchers[key]?.isActive == true) return
+        ejectWatchers[key] = lifecycleScope.launch {
+            while (true) {
+                delay(500)
+                val pending = OtgMasterState.pendingEjects.value[key] ?: return@launch
+                if (!deviceBusy(key)) {
+                    ejectNow(key, pending.notify)
+                    return@launch
+                }
+            }
+        }
+    }
+
+    private fun dropPendingEject(key: String) {
+        OtgMasterState.pendingEjects.value = OtgMasterState.pendingEjects.value - key
+        ejectWatchers.remove(key)?.cancel()
+        if (ejectBusyDialog.value == key) ejectBusyDialog.value = null
+    }
+
+    private fun cancelEject(key: String) {
+        val pending = OtgMasterState.pendingEjects.value[key] ?: return
+        dropPendingEject(key)
+        appendLog(getString(R.string.log_eject_cancelled, pending.title))
+    }
+
+    /** Dismiss on the dialog: keeps waiting, and a notification will say when it has ejected. */
+    private fun dismissEjectDialog(key: String) {
+        OtgMasterState.pendingEjects.value[key]?.let {
+            OtgMasterState.pendingEjects.value = OtgMasterState.pendingEjects.value + (key to it.copy(notify = true))
+        }
+        ejectBusyDialog.value = null
+    }
+
+    /**
+     * Unmounts every partition of [key] and releases the device, so Android can take it.
+     * What was only offered for unlocking goes too: its connection holds the interface as well.
+     */
+    private fun ejectNow(key: String, notify: Boolean) {
+        val targets = ejectTargets(key)
+        val title = OtgMasterState.pendingEjects.value[key]?.title
+            ?: targets.firstNotNullOfOrNull { it.sourceDeviceDisplayName } ?: key
+        OtgMasterState.pendingEjects.value = OtgMasterState.pendingEjects.value - key
+        ejectWatchers.remove(key)
+        if (ejectBusyDialog.value == key) ejectBusyDialog.value = null
+        if (targets.isEmpty()) return
+
+        ejectsInFlight[key] = EjectInFlight(
+            title,
+            app.fayaz.otgmaster.usb.UsbAccess.androidCanRead(targets.map {
+                app.fayaz.otgmaster.usb.EjectedPartition(it.isPlain, it.filesystemName)
+            }),
+            notify,
+        )
+        OtgMasterState.ejectedDevices.add(key)
+        _deviceCandidates.value = _deviceCandidates.value.filterNot { it.deviceName == key }
+        deferredCandidates.remove(key)
+        val raws = targets.mapNotNull { it.rawBlockDevice }
+        openedDevices.remove(key)?.takeIf { o -> raws.none { it === o } }?.let { o ->
+            lifecycleScope.launch(Dispatchers.IO) { runCatching { o.close() } }
+        }
+        targets.forEach { unmountDrive(it) }
+    }
+
+    /** The last partition is unmounted and the connection closed. */
+    private fun finishEject(key: String) {
+        val done = ejectsInFlight.remove(key) ?: return
+        val message = getString(if (done.androidCanRead) R.string.eject_done_android else R.string.eject_done_other)
+        appendLog(getString(R.string.log_ejected, done.title))
+        toastState.value = Pair(message, true)
+        if (done.notify || !lifecycle.currentState.isAtLeast(androidx.lifecycle.Lifecycle.State.RESUMED)) {
+            MountedDriveService.driveEjected(this, done.title, message)
+        }
+    }
+
+    /** The dialogs of Eject and of Scan under Wait for Android. */
+    @Composable
+    private fun UsbAccessDialogs() {
+        ejectConfirm.value?.let { drive ->
+            val key = drive.sourceDeviceName.orEmpty()
+            val others = ejectTargets(key).size - 1
+            androidx.compose.material3.AlertDialog(
+                onDismissRequest = { ejectConfirm.value = null },
+                title = { Text(stringResource(R.string.eject_confirm_title)) },
+                text = { Text(androidx.compose.ui.res.pluralStringResource(R.plurals.eject_confirm_others, others, others)) },
+                confirmButton = {
+                    androidx.compose.material3.TextButton(
+                        onClick = { ejectConfirm.value = null; startEject(key) },
+                        modifier = Modifier.semantics { contentDescription = "eject_confirm" },
+                    ) { Text(stringResource(R.string.eject)) }
+                },
+                dismissButton = {
+                    androidx.compose.material3.TextButton(
+                        onClick = { ejectConfirm.value = null },
+                        modifier = Modifier.semantics { contentDescription = "eject_keep_mounted" },
+                    ) { Text(stringResource(R.string.eject_confirm_cancel)) }
+                },
+            )
+        }
+        ejectBusyDialog.value?.let { key ->
+            androidx.compose.material3.AlertDialog(
+                onDismissRequest = { dismissEjectDialog(key) },
+                title = { Text(stringResource(R.string.eject_busy_title)) },
+                text = { Text(stringResource(R.string.eject_busy_text)) },
+                confirmButton = {
+                    androidx.compose.material3.TextButton(
+                        onClick = { dismissEjectDialog(key) },
+                        modifier = Modifier.semantics { contentDescription = "eject_busy_dismiss" },
+                    ) { Text(stringResource(R.string.eject_busy_dismiss)) }
+                },
+                dismissButton = {
+                    androidx.compose.material3.TextButton(
+                        onClick = { cancelEject(key) },
+                        modifier = Modifier.semantics { contentDescription = "eject_busy_cancel" },
+                    ) { Text(stringResource(R.string.eject_cancel)) }
+                },
+            )
+        }
+        if (usbScanWarning.value) {
+            androidx.compose.material3.AlertDialog(
+                onDismissRequest = { usbScanWarning.value = false },
+                title = { Text(stringResource(R.string.usb_scan_warning_title)) },
+                text = { Text(stringResource(R.string.usb_scan_warning_text)) },
+                confirmButton = {
+                    androidx.compose.material3.TextButton(
+                        onClick = { usbScanWarning.value = false; scanTapped(confirmed = true) },
+                        modifier = Modifier.semantics { contentDescription = "usb_scan_continue" },
+                    ) { Text(stringResource(R.string.usb_scan_continue)) }
+                },
+                dismissButton = {
+                    androidx.compose.material3.TextButton(
+                        onClick = { usbScanWarning.value = false },
+                        modifier = Modifier.semantics { contentDescription = "usb_scan_cancel" },
+                    ) { Text(stringResource(R.string.eject_confirm_cancel)) }
+                },
+            )
         }
     }
 
@@ -2938,6 +3215,11 @@ fun OtgMasterApp(
     versionCode: Long,
     formResetKey: Int,
     autoMountEnabled: Boolean,
+    usbAccessMode: app.fayaz.otgmaster.usb.UsbAccessMode = app.fayaz.otgmaster.usb.UsbAccessMode.ALWAYS,
+    onUsbAccessModeChange: (app.fayaz.otgmaster.usb.UsbAccessMode) -> Unit = {},
+    usbHint: Int? = null,
+    onEject: (MountedDrive) -> Unit = {},
+    onCancelEject: (String) -> Unit = {},
     sessionCredentials: Map<String, app.fayaz.otgmaster.security.CredentialStore.Credentials>,
     hasCachedCreds: (String, Long?) -> Boolean,
     isExcluded: (String) -> Boolean,
@@ -3210,16 +3492,34 @@ fun OtgMasterApp(
                             // drive the unencrypted partition's card offered to clear the
                             // *encrypted* partition's credentials.
                             val canClearCredentials = !drive.isPlain && deviceKey != null && hasCachedCreds(deviceKey, null)
+                            // A phone or camera over MTP, or a mounted backup, is read-only: browsing is all there is.
+                            val browseOnly = drive.fileSystem is app.fayaz.otgmaster.mtp.MtpStorageFileSystem ||
+                                drive.fileSystem is app.fayaz.otgmaster.backup.restic.ResticFileSystem
+                            val ejectPending = deviceKey != null && deviceKey in OtgMasterState.pendingEjects.value
+                            if (ejectPending) {
+                                Text(
+                                    stringResource(R.string.eject_pending),
+                                    style = MaterialTheme.typography.bodyMedium,
+                                    modifier = Modifier.semantics { contentDescription = "eject_pending" },
+                                )
+                                Spacer(modifier = Modifier.height(8.dp))
+                            }
                             app.fayaz.otgmaster.ui.DriveActionRow(
                                 primary = buildList {
                                     add(app.fayaz.otgmaster.ui.DriveAction(null, stringResource(R.string.open_files_app)) { onOpenFilesApp(drive) })
-                                    if (!drive.isPlain) {
-                                        add(app.fayaz.otgmaster.ui.DriveAction("unmount_button", stringResource(R.string.unmount)) { onUnmount(drive) })
+                                    if (ejectPending) {
+                                        add(app.fayaz.otgmaster.ui.DriveAction("eject_card_cancel", stringResource(R.string.eject_cancel)) { deviceKey?.let(onCancelEject) })
+                                    } else {
+                                        if (!drive.isPlain) {
+                                            add(app.fayaz.otgmaster.ui.DriveAction("unmount_button", stringResource(R.string.unmount)) { onUnmount(drive) })
+                                        }
+                                        if (!browseOnly && deviceKey != null) {
+                                            add(app.fayaz.otgmaster.ui.DriveAction("eject_button", stringResource(R.string.eject)) { onEject(drive) })
+                                        }
                                     }
                                 },
-                                // A phone or camera over MTP, or a mounted backup, is read-only: browsing is all there is.
-                                secondary = if (drive.fileSystem is app.fayaz.otgmaster.mtp.MtpStorageFileSystem ||
-                                    drive.fileSystem is app.fayaz.otgmaster.backup.restic.ResticFileSystem) emptyList() else buildList {
+                                // While it waits to eject, nothing new is started on the drive from here.
+                                secondary = if (browseOnly || ejectPending) emptyList() else buildList {
                                     add(app.fayaz.otgmaster.ui.DriveAction("format_action", stringResource(R.string.format_drive_menu),
                                         formatUnavailable(drive)) { formatTarget = drive })
                                     add(app.fayaz.otgmaster.ui.DriveAction("encrypt_action", stringResource(R.string.encrypt_drive_menu),
@@ -3355,6 +3655,7 @@ fun OtgMasterApp(
                             VeraCryptMountSection(
                                 unlockingPartitions = unlockingPartitions,
                                 showNoDriveHelp = showNoDriveHelp,
+                                usbHint = usbHint,
                                 deviceCandidates = deviceCandidates,
                                 onUnlock = onUnlock,
                                 autoMountEnabled = autoMountEnabled,
@@ -3463,6 +3764,8 @@ fun OtgMasterApp(
         versionName = versionName,
         versionCode = versionCode,
         autoMountEnabled = autoMountEnabled,
+        usbAccessMode = usbAccessMode,
+        onUsbAccessModeChange = onUsbAccessModeChange,
         onThemeSelected = onThemeChange,
         onAutoMountEnabledChange = onAutoMountEnabledChange,
         onClearAllCredentials = onClearAllCredentials,
@@ -3498,11 +3801,18 @@ fun OtgMasterApp(
 /** Names one partition of one device in [MainActivity.unlockingPartitions]. */
 private fun unlockKey(deviceName: String, startBlock: Long) = "$deviceName@$startBlock"
 
+private fun usbAccessLabel(mode: app.fayaz.otgmaster.usb.UsbAccessMode) = when (mode) {
+    app.fayaz.otgmaster.usb.UsbAccessMode.MANUAL -> R.string.usb_access_manual
+    app.fayaz.otgmaster.usb.UsbAccessMode.ALWAYS -> R.string.usb_access_always
+    app.fayaz.otgmaster.usb.UsbAccessMode.WAIT_FOR_ANDROID -> R.string.usb_access_wait
+}
+
 @Composable
 fun VeraCryptMountSection(
     unlockingPartitions: Set<String> = emptySet(),
     deviceCandidates: List<UsbDeviceCandidate>,
     showNoDriveHelp: Boolean = false,
+    usbHint: Int? = null,
     onUnlock: (String, VolumeCandidate, String, Int?, List<Uri>, app.fayaz.otgmaster.veracrypt.VeraCryptCipher, app.fayaz.otgmaster.veracrypt.VeraCryptHash, app.fayaz.otgmaster.veracrypt.HiddenVolumeCredentials?, () -> Unit) -> Unit,
     autoMountEnabled: Boolean = false,
     sessionCredentials: Map<String, app.fayaz.otgmaster.security.CredentialStore.Credentials> = emptyMap(),
@@ -3583,7 +3893,9 @@ fun VeraCryptMountSection(
         modifier = Modifier.padding(top = 16.dp),
         verticalArrangement = Arrangement.spacedBy(8.dp)
     ) {
-        if (deviceCandidates.isEmpty()) {
+        if (deviceCandidates.isEmpty() && usbHint != null) {
+            Text(stringResource(usbHint), modifier = Modifier.semantics { contentDescription = "usb_hint" })
+        } else if (deviceCandidates.isEmpty()) {
             Text(stringResource(R.string.no_devices_available), color = MaterialTheme.colorScheme.error)
             if (showNoDriveHelp) app.fayaz.otgmaster.ui.NoDriveHelpLink()
         } else {
@@ -4032,6 +4344,8 @@ fun SettingsDrawer(
     versionName: String,
     versionCode: Long,
     autoMountEnabled: Boolean,
+    usbAccessMode: app.fayaz.otgmaster.usb.UsbAccessMode = app.fayaz.otgmaster.usb.UsbAccessMode.ALWAYS,
+    onUsbAccessModeChange: (app.fayaz.otgmaster.usb.UsbAccessMode) -> Unit = {},
     onThemeSelected: (ThemeMode) -> Unit,
     onAutoMountEnabledChange: (Boolean) -> Unit,
     onClearAllCredentials: () -> Unit,
@@ -4149,6 +4463,38 @@ fun SettingsDrawer(
                                 modifier = Modifier.fillMaxWidth()
                             ) {
                                 Text(stringResource(R.string.auto_mount_clear_credentials))
+                            }
+                        }
+                    }
+
+                    SettingsDialogRow(
+                        id = "usb_access",
+                        title = stringResource(R.string.usb_access_title),
+                        summary = stringResource(usbAccessLabel(usbAccessMode))
+                    ) {
+                        app.fayaz.otgmaster.usb.UsbAccessMode.entries.forEach { mode ->
+                            Row(
+                                verticalAlignment = Alignment.CenterVertically,
+                                modifier = Modifier
+                                    .fillMaxWidth()
+                                    .clickable { onUsbAccessModeChange(mode) }
+                                    .padding(vertical = 4.dp)
+                                    .semantics { contentDescription = "usb_access_${mode.prefValue}" }
+                            ) {
+                                RadioButton(selected = mode == usbAccessMode, onClick = { onUsbAccessModeChange(mode) })
+                                Spacer(modifier = Modifier.width(8.dp))
+                                Column {
+                                    Text(stringResource(usbAccessLabel(mode)))
+                                    Text(
+                                        stringResource(when (mode) {
+                                            app.fayaz.otgmaster.usb.UsbAccessMode.MANUAL -> R.string.usb_access_manual_text
+                                            app.fayaz.otgmaster.usb.UsbAccessMode.ALWAYS -> R.string.usb_access_always_text
+                                            app.fayaz.otgmaster.usb.UsbAccessMode.WAIT_FOR_ANDROID -> R.string.usb_access_wait_text
+                                        }),
+                                        style = MaterialTheme.typography.bodySmall,
+                                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                                    )
+                                }
                             }
                         }
                     }

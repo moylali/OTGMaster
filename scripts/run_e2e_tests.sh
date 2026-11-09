@@ -440,6 +440,8 @@ for test_dir in "$TESTDATA_DIR"/*/; do
     for f in hidden_password hidden_pim hidden_keyfile hidden_cipher hidden_hash expected_volume_tag expect_file; do
         [ -f "$test_dir/$f.txt" ] && HIDDEN_ARG="$HIDDEN_ARG -e $f $(cat "$test_dir/$f.txt")"
     done
+    EJECT_ARG=""
+    [ -f "$test_dir/eject_flow.txt" ] && EJECT_ARG="-e eject_flow $(cat "$test_dir/eject_flow.txt")"
     CASE_ARG=""
     [ -f "$test_dir/case_sensitive.txt" ] && CASE_ARG="-e expect_case_sensitive $(cat "$test_dir/case_sensitive.txt")"
     FLOWER_ARG=""
@@ -550,6 +552,7 @@ for test_dir in "$TESTDATA_DIR"/*/; do
             $BACKUP_FLOW_ARG \
             $JOURNAL_ARG \
             $HIDDEN_ARG \
+            $EJECT_ARG \
             -e class app.fayaz.otgmaster.E2EAutomatedTest \
             $PACKAGE_NAME.test/androidx.test.runner.AndroidJUnitRunner)
 

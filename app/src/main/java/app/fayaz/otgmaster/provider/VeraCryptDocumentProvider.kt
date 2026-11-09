@@ -205,6 +205,36 @@ class VeraCryptDocumentProvider : DocumentsProvider() {
             if (left > 0) openWriters[docId] = left else openWriters.remove(docId)
         }
 
+        private val openHandles = HashMap<String, Int>()
+        private val lastHandleEvent = HashMap<String, Long>()
+
+        /** The part of a document id before its path, which names the mounted drive. */
+        private fun driveIdOf(docId: String?) = docId?.substringBefore(':')
+
+        private fun handleOpened(docId: String?) = driveIdOf(docId)?.let { id -> synchronized(openHandles) {
+            openHandles[id] = (openHandles[id] ?: 0) + 1
+            lastHandleEvent[id] = android.os.SystemClock.uptimeMillis()
+        } }
+
+        private fun handleClosed(docId: String?) = driveIdOf(docId)?.let { id -> synchronized(openHandles) {
+            val left = (openHandles[id] ?: 1) - 1
+            if (left > 0) openHandles[id] = left else openHandles.remove(id)
+            lastHandleEvent[id] = android.os.SystemClock.uptimeMillis()
+        } }
+
+        /**
+         * True if a file on [driveId] is open, or one was opened or closed in the last [settleMs].
+         *
+         * The second half is for a copy of several files. The file manager closes one and opens
+         * the next a moment later, so "nothing is open" alone would be true between two files.
+         */
+        fun driveInUse(driveId: String, settleMs: Long = IDLE_SETTLE_MS): Boolean = synchronized(openHandles) {
+            (openHandles[driveId] ?: 0) > 0 ||
+                lastHandleEvent[driveId]?.let { android.os.SystemClock.uptimeMillis() - it < settleMs } == true
+        }
+
+        const val IDLE_SETTLE_MS = 3_000L
+
         private fun writerInside(docId: String) = synchronized(openWriters) {
             openWriters.keys.any { it == docId || it.startsWith("$docId/") }
         }
@@ -430,17 +460,20 @@ class VeraCryptDocumentProvider : DocumentsProvider() {
                         onDrive(documentId, "close") { file.close() }
                     } finally {
                         documentId?.let { writerClosed(it) }
+                        handleClosed(documentId)
                     }
                 }
             }
 
             val pfdMode = ParcelFileDescriptor.parseMode(mode ?: "r")
             documentId?.let { writerOpened(it) }
+            handleOpened(documentId)
             try {
                 return storageManager.openProxyFileDescriptor(pfdMode, callback, proxyHandler)
             } catch (e: Exception) {
                 // No descriptor, so no onRelease will ever come for this one.
                 documentId?.let { writerClosed(it) }
+                handleClosed(documentId)
                 throw e
             }
         }
@@ -454,12 +487,24 @@ class VeraCryptDocumentProvider : DocumentsProvider() {
             override fun onRead(offset: Long, size: Int, data: ByteArray): Int =
                 onDrive(documentId, "read") { readInto(file, offset, size, data) }
 
-            override fun onRelease() = onDrive(documentId, "close") { file.close() }
+            override fun onRelease() {
+                try {
+                    onDrive(documentId, "close") { file.close() }
+                } finally {
+                    handleClosed(documentId)
+                }
+            }
         }
 
-        return storageManager.openProxyFileDescriptor(
-            ParcelFileDescriptor.MODE_READ_ONLY, callback, readHandlerFor(documentId)
-        )
+        handleOpened(documentId)
+        try {
+            return storageManager.openProxyFileDescriptor(
+                ParcelFileDescriptor.MODE_READ_ONLY, callback, readHandlerFor(documentId)
+            )
+        } catch (e: Exception) {
+            handleClosed(documentId)
+            throw e
+        }
     }
     
     private fun getFileForDocId(docId: String?): UsbFile? {

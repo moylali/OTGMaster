@@ -1,0 +1,1 @@
+Eject of a LUKS volume, and the warning that Android may call it corrupted.
