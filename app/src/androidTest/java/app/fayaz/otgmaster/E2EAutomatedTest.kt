@@ -96,8 +96,16 @@ class E2EAutomatedTest {
         // choice left by one case made the next case's writes fail, and backups left hidden
         // would take the next case's Manage backups away. commit(): the activity reads these
         // in onCreate.
-        context.getSharedPreferences("otgmaster_prefs", Context.MODE_PRIVATE).edit()
-            .remove("read_only_partitions").remove("backups_hidden").remove("auto_mount").commit()
+        val prefs = context.getSharedPreferences("otgmaster_prefs", Context.MODE_PRIVATE)
+        prefs.edit().remove("read_only_partitions").remove("backups_hidden").remove("auto_mount")
+            .remove("usb_access_mode").remove("test_android_holds_usb").commit()
+        // Before the launch: under Always the launch itself would open the drive.
+        when (InstrumentationRegistry.getArguments().getString("eject_flow", "")) {
+            "usb_mode_manual", "usb_mode_manual_auto_mount" -> prefs.edit().putString("usb_access_mode", "manual").commit()
+            "usb_mode_wait_free" -> prefs.edit().putString("usb_access_mode", "wait").putBoolean("test_android_holds_usb", false).commit()
+            "usb_mode_wait_held", "usb_mode_scan_warning" ->
+                prefs.edit().putString("usb_access_mode", "wait").putBoolean("test_android_holds_usb", true).commit()
+        }
         // Named explicitly: the debug build has a second launcher entry (OTG Bench),
         // and getLaunchIntentForPackage returned that one, so every case ran against
         // the bench screen and failed with "password input not shown".
@@ -127,6 +135,7 @@ class E2EAutomatedTest {
         if (arguments.getString("disconnect_test", "false") == "true") return runDisconnectCase()
         if (arguments.getString("journal_repair", "false") == "true") return runJournalRepairCase()
         arguments.getString("hidden_flow")?.let { return runHiddenFlow(it) }
+        arguments.getString("eject_flow")?.let { return runEjectFlow(it) }
         if (arguments.getString("backup_flow") == "device") return bkFlowDevice()
         if (arguments.getString("backup_flow") == "delete_tree") return deviceDeleteTree()
         if (arguments.getString("backup_flow") == "main_screen") return runMainScreenCase()
@@ -1212,6 +1221,8 @@ class E2EAutomatedTest {
                 "interrupted" -> bkFlowInterrupted(drive)
                 "encrypt_form" -> bkFlowEncryptForm()
                 "backups_disabled" -> bkFlowBackupsDisabled(drive)
+                "eject_not_offered" -> bkFlowEjectNotOffered(drive)
+                "eject_backup_running" -> bkFlowEjectBackupRunning(drive)
                 else -> fail("unknown backup flow $flow")
             }
         } catch (t: Throwable) {
@@ -2406,6 +2417,43 @@ class E2EAutomatedTest {
         setBackupsDisabled(true)
         setBackupsDisabled(false)
         assertBackupUiShown(true)
+    }
+
+    /** A mounted backup is unmounted, not ejected. The drive under it still offers Eject. */
+    private fun bkFlowEjectNotOffered(drive: MountedDrive) {
+        val title = "E2E_noeject (backup)"
+        val job = bkJob(drive, "E2E_noeject", agoHours = 1)
+        bkExpectSuccess(bkRunNow(job, "the backup to mount"), "the backup to mount")
+        bkMountFromPicker(drive.name, "E2E_noeject")
+        assertNotNull("the mount did not open the slider", device.wait(Until.findObject(By.desc("mounted_drawer")), 60000L))
+        assertNotNull("the backup is not on Backups", device.wait(Until.findObject(By.textContains(title)), 60000L))
+        android.os.SystemClock.sleep(500)
+        assertNull("Eject offered on a mounted backup", device.findObject(By.desc("eject_button")))
+        bkUnmountBackup(BackupMounts.driveIdFor(job.id), title)
+        openSlider()
+        assertNotNull("no Eject on the drive itself", findScrolling(By.desc("eject_button"), desc = "eject_button"))
+    }
+
+    /** A running backup holds the Eject, and the notification comes when the backup ends. */
+    private fun bkFlowEjectBackupRunning(drive: MountedDrive) {
+        val job = bkJob(drive, "E2E_ejectrun", agoHours = 1)
+        BackupExecutor.testProgressDelayMs = 3000
+        try {
+            assertTrue("the backup did not start", BackupExecutor.start(bkContext, job.id, BackupExecutor.Op.Backup("manual")))
+            val end = android.os.SystemClock.uptimeMillis() + 30_000L
+            while (!BackupExecutor.isBusy(job.id) && android.os.SystemClock.uptimeMillis() < end) android.os.SystemClock.sleep(100)
+            assertTrue("the backup is not running", BackupExecutor.isBusy(job.id))
+            ejTapEject()
+            assertNotNull("no transfer dialog with a backup running", device.wait(Until.findObject(By.desc("eject_busy_dismiss")), timeout))
+            assertEquals("it ejected under a running backup", 1, OtgMasterState.mountedDrives.count { it.id == drive.id })
+            assertTrue(clickByDesc("eject_busy_dismiss"))
+            assertNotNull("the card does not say it is waiting", findInSlider(By.desc("eject_pending")))
+        } finally {
+            BackupExecutor.testProgressDelayMs = 0
+        }
+        bkExpectSuccess(bkAwait(job.id, "the backup"), "the backup")
+        ejAwaitGone(120_000L)
+        ejAwaitNotification()
     }
 
     /** A drive card's action: a button if it fit, otherwise in its More actions. */
@@ -3739,6 +3787,359 @@ class E2EAutomatedTest {
         device.wait(Until.findObject(By.text(java.util.regex.Pattern.compile("(?i)Allow|OK"))), 3000L)?.click()
     }
 
+    // ── Eject and USB access (testdata/eject_*, testdata/usb_mode_*, scripts/make_eject_fixtures.py) ──
+
+    private fun ejMount(context: String = "to eject"): MountedDrive {
+        val a = InstrumentationRegistry.getArguments()
+        if (a.getString("plain_mount", "false") == "true") {
+            scan(context)
+            if (waitForMounted(60000L) == null) captureScreen("no_plain_mount")
+        } else {
+            scanAndMount(a.getString("password", ""), a.getString("pim", ""), a.getString("testCase", ""), context)
+        }
+        val d = OtgMasterState.mountedDrives.firstOrNull()
+        assertNotNull("the drive did not mount ($context)", d)
+        return d!!
+    }
+
+    private fun ejTapEject() {
+        android.os.SystemClock.sleep(UNMOUNT_SETTLE_MS)
+        val eject = findInSlider(By.desc("eject_button"))
+        if (eject == null) captureScreen("no_eject_button")
+        assertNotNull("no Eject on the drive card", eject)
+        eject!!.click()
+    }
+
+    private fun ejAwaitGone(ms: Long = 30_000L) {
+        val end = android.os.SystemClock.uptimeMillis() + ms
+        while (OtgMasterState.mountedDrives.isNotEmpty() && android.os.SystemClock.uptimeMillis() < end) android.os.SystemClock.sleep(200)
+        if (OtgMasterState.mountedDrives.isNotEmpty()) captureScreen("not_ejected")
+        assertTrue("a partition is still mounted after Eject", OtgMasterState.mountedDrives.isEmpty())
+        assertTrue("the Eject is still pending", OtgMasterState.pendingEjects.value.isEmpty())
+    }
+
+    private fun ejAwaitMessage(resId: Int) {
+        val text = bkContext.getString(resId).replace("\\'", "'")
+        val banner = device.wait(Until.findObject(By.textContains(text.take(30))), 30_000L)
+        if (banner == null) captureScreen("no_eject_message")
+        assertNotNull("no message after Eject: $text", banner)
+    }
+
+    private fun ejAwaitNotification() {
+        val posted = (0 until 40).any {
+            android.os.SystemClock.sleep(250)
+            bkTitles().any { t -> t.endsWith(" ejected") }
+        }
+        assertTrue("no notification after a dismissed Eject: ${bkTitles()}", posted)
+    }
+
+    private fun ejAssertNoNotification() {
+        android.os.SystemClock.sleep(1000)
+        assertFalse("a notification though the dialog stayed up: ${bkTitles()}", bkTitles().any { it.endsWith(" ejected") })
+    }
+
+    /** Over a relaunch, which runs the same refresh a resume does: nothing opens the drive again. */
+    private fun ejAssertLeftAlone() {
+        closeSlider()
+        relaunchApp()
+        android.os.SystemClock.sleep(5000)
+        assertNull("an ejected drive was offered for unlocking", device.findObject(By.desc("password_input")))
+        assertTrue("an ejected drive was mounted", OtgMasterState.mountedDrives.isEmpty())
+        assertTrue("the app forgot the drive was ejected", OtgMasterState.ejectedDevices.isNotEmpty())
+    }
+
+    /** Opens a file on [drive] through the provider and holds it, as a copy in Files would. */
+    private fun ejHoldFile(drive: MountedDrive, name: String = "flower.jpg"): android.os.ParcelFileDescriptor {
+        val uri = DocumentsContract.buildDocumentUri(AUTHORITY, "${drive.id}:/$name")
+        return bkContext.contentResolver.openFileDescriptor(uri, "r")!!
+    }
+
+    private fun ejAssertBusyDialog() {
+        val d = device.wait(Until.findObject(By.desc("eject_busy_dismiss")), timeout)
+        if (d == null) captureScreen("no_busy_dialog")
+        assertNotNull("no dialog with a file open", d)
+        assertNotNull("the dialog's title", device.findObject(By.text("Data transfer in progress")))
+        assertNotNull("the dialog's text", device.findObject(By.text("Will eject once the transfer is complete.")))
+        assertEquals("it did not stay mounted", 1, OtgMasterState.mountedDrives.size)
+    }
+
+    private fun ejAssertStaysMounted(ms: Long = 5000L) {
+        android.os.SystemClock.sleep(ms)
+        assertEquals("it ejected", 1, OtgMasterState.mountedDrives.size)
+    }
+
+    private fun usbText(id: Int): java.util.regex.Pattern =
+        java.util.regex.Pattern.compile(java.util.regex.Pattern.quote(bkContext.getString(id)))
+
+    private fun usbAwaitHint(id: Int, ms: Long = 15_000L) {
+        val hint = device.wait(Until.findObject(By.text(usbText(id))), ms)
+        if (hint == null) captureScreen("no_usb_hint")
+        assertNotNull("no hint: ${bkContext.getString(id)}", hint)
+    }
+
+    private fun usbAssertNotOpened(what: String) {
+        assertNull("$what: the unlock form is up", device.findObject(By.desc("password_input")))
+        assertTrue("$what: something was mounted", OtgMasterState.mountedDrives.isEmpty())
+    }
+
+    private fun usbPickInSettings(value: String) {
+        val prefs = bkContext.getSharedPreferences("otgmaster_prefs", Context.MODE_PRIVATE)
+        device.wait(Until.findObject(By.desc(bkContext.getString(R.string.cd_settings))), timeout)!!.click()
+        val row = device.wait(Until.findObject(By.res("settings_row_usb_access")), timeout)
+        if (row == null) captureScreen("no_settings_row_usb_access")
+        assertNotNull("no USB access row in Settings", row)
+        row!!.click()
+        assertNotNull("USB access opened no dialog", device.wait(Until.findObject(By.desc("settings_dialog_usb_access")), timeout))
+        assertTrue(clickByDesc("usb_access_$value"))
+        android.os.SystemClock.sleep(500)
+        assertEquals("the option did not change the setting", value, prefs.getString("usb_access_mode", null))
+        assertTrue(clickByDesc("settings_dialog_close"))
+        assertTrue("Close left the dialog up", device.wait(Until.gone(By.desc("settings_dialog_usb_access")), timeout))
+        device.findObject(By.desc(bkContext.getString(R.string.cd_close_settings))).click()
+        assertTrue("Settings stayed open", device.wait(Until.gone(By.res("settings_row_theme")), timeout))
+    }
+
+    private fun runEjectFlow(flow: String) {
+        val args = InstrumentationRegistry.getArguments()
+        val password = args.getString("password", "")
+        val pim = args.getString("pim", "")
+        val testCase = args.getString("testCase", "")
+        device.executeShellCommand("pm grant app.fayaz.otgmaster android.permission.POST_NOTIFICATIONS")
+        android.os.SystemClock.sleep(1000)
+        when (flow) {
+            // One partition, nothing in use: no dialog of any kind.
+            "single" -> {
+                ejMount()
+                ejTapEject()
+                ejAwaitMessage(R.string.eject_done_other)
+                assertNull("a dialog for an idle drive with one partition", device.findObject(By.desc("eject_confirm")))
+                assertNull("a transfer dialog for an idle drive", device.findObject(By.desc("eject_busy_dismiss")))
+                ejAwaitGone()
+                ejAssertNoNotification()
+                ejAssertLeftAlone()
+            }
+            "rescan" -> {
+                ejMount()
+                ejTapEject()
+                ejAwaitGone()
+                ejAssertLeftAlone()
+                // Scan is the way back, as a re-plug is.
+                val back = ejMount("after Eject")
+                assertTrue("Scan left the drive marked ejected", OtgMasterState.ejectedDevices.isEmpty())
+                readRootFile(bkContext, "flower.jpg")
+                assertNotNull(back)
+                doUnmount()
+            }
+            // A plain partition mounted by itself and an encrypted one beside it.
+            "multi_confirm" -> {
+                ejMount("the VeraCrypt partition")
+                assertEquals("two partitions should be mounted", 2, OtgMasterState.mountedDrives.size)
+                ejTapEject()
+                assertNotNull("no confirmation with two partitions", device.wait(Until.findObject(By.desc("eject_confirm")), timeout))
+                assertNotNull("the confirmation does not name the other partition",
+                    device.findObject(By.textContains("the other partition on this drive")))
+                assertTrue(clickByDesc("eject_keep_mounted"))
+                assertTrue("Cancel left the dialog up", device.wait(Until.gone(By.desc("eject_confirm")), timeout))
+                android.os.SystemClock.sleep(1000)
+                assertEquals("Cancel ejected", 2, OtgMasterState.mountedDrives.size)
+
+                ejTapEject()
+                assertTrue(clickByDesc("eject_confirm"))
+                ejAwaitMessage(R.string.eject_done_other)
+                ejAwaitGone()
+                ejAssertLeftAlone()
+
+                // Only the plain one mounted, the encrypted one waiting on the form: it goes as well.
+                findScanButton()!!.click()
+                if (waitForMounted(60000L) == null) captureScreen("no_plain_after_scan")
+                assertEquals("the plain partition did not come back", 1, OtgMasterState.mountedDrives.size)
+                closeSlider()
+                assertNotNull("the encrypted partition is not offered", device.wait(Until.findObject(By.desc("password_input")), 15000L))
+                ejTapEject()
+                assertNull("a confirmation for one mounted partition", device.findObject(By.desc("eject_confirm")))
+                ejAwaitGone()
+                ejAssertLeftAlone()
+            }
+            "message_encrypted" -> {
+                ejMount()
+                ejTapEject()
+                ejAwaitMessage(R.string.eject_done_other)
+                ejAwaitGone()
+                ejAssertLeftAlone()
+            }
+            "message_plain" -> {
+                ejMount()
+                assertNull("a plain drive has no Unmount of its own", device.findObject(By.desc("unmount_button")))
+                ejTapEject()
+                ejAwaitMessage(R.string.eject_done_android)
+                ejAwaitGone()
+                ejAssertLeftAlone()
+            }
+            // The dialog is left up: it closes by itself and there is no notification.
+            "busy_wait" -> {
+                val drive = ejMount()
+                val file = ejHoldFile(drive)
+                try {
+                    ejTapEject()
+                    ejAssertBusyDialog()
+                    ejAssertStaysMounted()
+                    assertNotNull("the dialog went away by itself", device.findObject(By.desc("eject_busy_dismiss")))
+                } finally { file.close() }
+                assertTrue("the dialog did not close after the Eject", device.wait(Until.gone(By.desc("eject_busy_dismiss")), 30_000L))
+                ejAwaitGone()
+                ejAwaitMessage(R.string.eject_done_other)
+                ejAssertNoNotification()
+            }
+            "busy_dismiss" -> {
+                val drive = ejMount()
+                val file = ejHoldFile(drive)
+                try {
+                    ejTapEject()
+                    ejAssertBusyDialog()
+                    assertTrue(clickByDesc("eject_busy_dismiss"))
+                    assertTrue("Dismiss left the dialog up", device.wait(Until.gone(By.desc("eject_busy_dismiss")), timeout))
+                    assertNotNull("the card does not say it is waiting", findInSlider(By.desc("eject_pending")))
+                    assertNotNull("Eject still offered while waiting", device.findObject(By.desc("eject_card_cancel")))
+                    assertNull("Eject offered while waiting", device.findObject(By.desc("eject_button")))
+                    assertNull("Unmount offered while waiting", device.findObject(By.desc("unmount_button")))
+                    assertNull("More actions offered while waiting", device.findObject(By.desc("more_actions_button")))
+                    ejAssertStaysMounted()
+                    assertTrue("it forgot the Eject", OtgMasterState.pendingEjects.value.isNotEmpty())
+                } finally { file.close() }
+                ejAwaitGone()
+                ejAwaitNotification()
+            }
+            "busy_cancel" -> {
+                val drive = ejMount()
+                val file = ejHoldFile(drive)
+                try {
+                    ejTapEject()
+                    ejAssertBusyDialog()
+                    assertTrue(clickByDesc("eject_busy_cancel"))
+                    assertTrue("Cancel eject left the dialog up", device.wait(Until.gone(By.desc("eject_busy_cancel")), timeout))
+                    assertTrue("still pending", OtgMasterState.pendingEjects.value.isEmpty())
+                } finally { file.close() }
+                ejAssertStaysMounted(6000L)
+                assertNotNull("Eject is not back", findInSlider(By.desc("eject_button")))
+                doUnmount()
+            }
+            "card_cancel" -> {
+                val drive = ejMount()
+                val file = ejHoldFile(drive)
+                try {
+                    ejTapEject()
+                    ejAssertBusyDialog()
+                    assertTrue(clickByDesc("eject_busy_dismiss"))
+                    assertNotNull("no Cancel eject on the card", findInSlider(By.desc("eject_card_cancel")))
+                    assertTrue(clickByDesc("eject_card_cancel"))
+                    assertTrue("the card still says it is waiting", device.wait(Until.gone(By.desc("eject_pending")), timeout))
+                    assertTrue("still pending", OtgMasterState.pendingEjects.value.isEmpty())
+                } finally { file.close() }
+                ejAssertStaysMounted(6000L)
+                doUnmount()
+            }
+            // A second copy starts before the first has settled: Eject waits for that one too.
+            "new_transfer" -> {
+                val drive = ejMount()
+                val first = ejHoldFile(drive)
+                var second: android.os.ParcelFileDescriptor? = null
+                try {
+                    ejTapEject()
+                    ejAssertBusyDialog()
+                    assertTrue(clickByDesc("eject_busy_dismiss"))
+                    first.close()
+                    android.os.SystemClock.sleep(500)
+                    second = ejHoldFile(drive)
+                    ejAssertStaysMounted(6000L)
+                } finally {
+                    first.close()
+                    second?.close()
+                }
+                ejAwaitGone()
+                ejAwaitNotification()
+            }
+            "unplug_pending" -> {
+                val drive = ejMount()
+                val key = drive.sourceDeviceName!!
+                val file = ejHoldFile(drive)
+                try {
+                    ejTapEject()
+                    ejAssertBusyDialog()
+                    val detach = OtgMasterState.detachRequest
+                    assertNotNull("no detach handler", detach)
+                    detach!!(key)
+                    assertTrue("the dialog stayed after the drive went", device.wait(Until.gone(By.desc("eject_busy_dismiss")), 15_000L))
+                    val end = android.os.SystemClock.uptimeMillis() + 15_000L
+                    while (OtgMasterState.mountedDrives.isNotEmpty() && android.os.SystemClock.uptimeMillis() < end) android.os.SystemClock.sleep(200)
+                    assertTrue("the Eject outlived the drive", OtgMasterState.pendingEjects.value.isEmpty())
+                    assertTrue("a drive that went away is marked ejected", OtgMasterState.ejectedDevices.isEmpty())
+                } finally { runCatching { file.close() } }
+                ejAssertNoNotification()
+            }
+            "usb_mode_always" -> {
+                val prefs = bkContext.getSharedPreferences("otgmaster_prefs", Context.MODE_PRIVATE)
+                assertNull("the default is saved before anyone chose", prefs.getString("usb_access_mode", null))
+                assertNotNull("the default did not open the drive by itself", device.wait(Until.findObject(By.desc("password_input")), 30_000L))
+                usbPickInSettings("manual")
+                usbPickInSettings("wait")
+                usbPickInSettings("always")
+                relaunchApp()
+                assertNotNull("Always did not open the drive by itself", device.wait(Until.findObject(By.desc("password_input")), 30_000L))
+                assertTrue("the volume did not mount", doMount(password, pim, testCase, clearFields = true))
+                doUnmount()
+            }
+            "usb_mode_manual" -> {
+                usbAwaitHint(R.string.usb_hint_manual)
+                android.os.SystemClock.sleep(3000)
+                usbAssertNotOpened("Manual, before a Scan")
+                ejMount("after a Scan")
+                doUnmount()
+                // Released at the last Unmount, and not taken again. The open slider hides the form.
+                closeSlider()
+                usbAwaitHint(R.string.usb_hint_manual)
+                usbAssertNotOpened("Manual, after the Unmount")
+            }
+            "usb_mode_manual_auto_mount" -> {
+                usbAwaitHint(R.string.usb_hint_manual)
+                android.os.SystemClock.sleep(3000)
+                usbAssertNotOpened("Manual, a plain drive before a Scan")
+                ejMount("after a Scan")
+                assertTrue("a plain drive did not mount by itself after Scan", OtgMasterState.mountedDrives.isNotEmpty())
+            }
+            "usb_mode_wait_free" -> {
+                relaunchApp()
+                usbAwaitHint(R.string.usb_hint_waiting, 6000L)
+                usbAssertNotOpened("Wait, inside the wait")
+                assertNotNull("Wait did not open a drive Android left alone",
+                    device.wait(Until.findObject(By.desc("password_input")), 30_000L))
+                assertTrue("the volume did not mount", doMount(password, pim, testCase, clearFields = true))
+                doUnmount()
+            }
+            "usb_mode_wait_held" -> {
+                usbAwaitHint(R.string.usb_hint_android)
+                android.os.SystemClock.sleep(12_000)
+                usbAssertNotOpened("Wait, a drive Android took")
+                assertNotNull("the hint went away", device.findObject(By.text(usbText(R.string.usb_hint_android))))
+            }
+            "usb_mode_scan_warning" -> {
+                usbAwaitHint(R.string.usb_hint_android)
+                findScanButton()!!.click()
+                assertNotNull("no warning for a drive Android took", device.wait(Until.findObject(By.desc("usb_scan_continue")), timeout))
+                assertTrue(clickByDesc("usb_scan_cancel"))
+                assertTrue("Cancel left the warning up", device.wait(Until.gone(By.desc("usb_scan_continue")), timeout))
+                android.os.SystemClock.sleep(2000)
+                usbAssertNotOpened("Wait, after Cancel on the warning")
+
+                findScanButton()!!.click()
+                assertTrue(clickByDesc("usb_scan_continue", waitMs = timeout))
+                assertNotNull("Continue did not open the drive", device.wait(Until.findObject(By.desc("password_input")), 30_000L))
+                assertTrue("the volume did not mount", doMount(password, pim, testCase, clearFields = true))
+                doUnmount()
+            }
+            else -> fail("unknown eject_flow $flow")
+        }
+    }
+
     // ── VeraCrypt hidden volumes (testdata/hidden_*, scripts/make_hidden_volume_fixtures.py) ──
 
     private fun hiddenArg(name: String): String = InstrumentationRegistry.getArguments().getString(name, "")
@@ -4345,7 +4746,7 @@ class E2EAutomatedTest {
             }
         }
 
-        if (testCase == "partitioned_mbr") {
+        if (testCase == "partitioned_mbr" || testCase == "eject_multi_confirm") {
             val candidatePicker = device.findObject(By.descContains("candidate_picker"))
             if (candidatePicker != null) {
                 candidatePicker.click()

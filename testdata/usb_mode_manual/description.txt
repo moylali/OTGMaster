@@ -1,0 +1,1 @@
+USB access, Manual: nothing is opened until Scan, and not again after the last Unmount.

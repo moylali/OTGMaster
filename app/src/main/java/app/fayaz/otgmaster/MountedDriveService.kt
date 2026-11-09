@@ -81,6 +81,7 @@ class MountedDriveService : Service() {
         private const val NOTIFICATION_ID = 0x07D6
         private const val RESULT_ID = 0x07D7
         private const val HIDDEN_PROTECTION_ID = 0x07D8
+        private const val EJECTED_ID = 0x07D9
         /** Android drops updates posted faster than this; progress need not be smoother. */
         private const val PROGRESS_INTERVAL_MS = 1_000L
 
@@ -184,6 +185,24 @@ class MountedDriveService : Service() {
                 .setContentText(text)
                 .setStyle(NotificationCompat.BigTextStyle().bigText(text))
                 .setVisibility(NotificationCompat.VISIBILITY_SECRET)
+                .setContentIntent(openApp(app))
+                .setAutoCancel(true)
+                .build())
+        }
+
+        /** An Eject the user did not stay to watch has finished. */
+        fun driveEjected(context: Context, name: String, message: String) {
+            val app = context.applicationContext
+            val nm = app.getSystemService(NotificationManager::class.java) ?: return
+            if (nm.getNotificationChannel(RESULT_CHANNEL) == null) {
+                nm.createNotificationChannel(NotificationChannel(RESULT_CHANNEL,
+                    app.getString(R.string.notification_channel_operations), NotificationManager.IMPORTANCE_DEFAULT))
+            }
+            nm.notify(EJECTED_ID, NotificationCompat.Builder(app, RESULT_CHANNEL)
+                .setSmallIcon(R.drawable.ic_stat_drive)
+                .setContentTitle(app.getString(R.string.notification_ejected_title, name))
+                .setContentText(message)
+                .setStyle(NotificationCompat.BigTextStyle().bigText(message))
                 .setContentIntent(openApp(app))
                 .setAutoCancel(true)
                 .build())

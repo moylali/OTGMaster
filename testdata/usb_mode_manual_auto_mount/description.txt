@@ -1,0 +1,1 @@
+USB access, Manual: a plain drive mounts by itself only after Scan.

@@ -101,6 +101,9 @@ data class DisconnectedDrive(
     val event: DisconnectEvent,
 )
 
+/** An Eject waiting for a transfer to finish. [notify]: the user dismissed the dialog, so tell them after. */
+data class PendingEject(val deviceKey: String, val title: String, val notify: Boolean = false)
+
 object OtgMasterState {
     val mountedDrives = CopyOnWriteArrayList<MountedDrive>()
 
@@ -304,6 +307,15 @@ object OtgMasterState {
      */
     @Volatile
     var holdConnections = false
+
+    /**
+     * USB devices Eject released, by [MountedDrive.sourceDeviceName]. The app leaves these alone
+     * until the device is unplugged or the user taps Scan, so Android can take them.
+     */
+    val ejectedDevices: MutableSet<String> = java.util.concurrent.ConcurrentHashMap.newKeySet()
+
+    /** Devices waiting to eject once they are idle, by the same key. */
+    val pendingEjects = mutableStateOf<Map<String, PendingEject>>(emptyMap())
 
     /** Unmounts every drive. Installed by MainActivity while it is alive. */
     @Volatile

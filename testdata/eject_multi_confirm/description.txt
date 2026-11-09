@@ -1,0 +1,1 @@
+Eject with two partitions asks first, Cancel changes nothing, and a partition waiting on the unlock form goes as well.

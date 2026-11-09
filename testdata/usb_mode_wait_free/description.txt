@@ -1,0 +1,1 @@
+USB access, Wait for Android: a drive Android left alone is opened after the wait, with no Scan.

@@ -1,0 +1,1 @@
+USB access: the default opens a drive by itself, and each option can be chosen in Settings.

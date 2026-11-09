@@ -1,0 +1,1 @@
+A file open: the transfer dialog stays up, Eject happens when the file closes, the dialog closes by itself, no notification.

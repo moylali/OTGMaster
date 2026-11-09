@@ -1,0 +1,1 @@
+Cancel eject on the card, after Dismiss: the drive stays mounted after the file closes.

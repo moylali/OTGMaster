@@ -1,0 +1,1 @@
+After Eject, Scan USB devices opens the drive again.

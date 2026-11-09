@@ -1,0 +1,1 @@
+Eject while a backup uses the drive: it waits, the card says so, and it ejects and notifies when the backup ends.

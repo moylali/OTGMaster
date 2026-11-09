@@ -1,0 +1,1 @@
+Eject of a plain FAT32 drive, and the advice to use Android's Eject.

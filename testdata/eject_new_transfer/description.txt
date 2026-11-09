@@ -1,0 +1,1 @@
+A second file opened while waiting: Eject waits for that one too.

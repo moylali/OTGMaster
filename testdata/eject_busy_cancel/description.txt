@@ -1,0 +1,1 @@
+Cancel eject on the transfer dialog: the drive stays mounted after the file closes.

@@ -1,0 +1,1 @@
+The drive goes away while Eject waits: the Eject is dropped and the dialog closes.

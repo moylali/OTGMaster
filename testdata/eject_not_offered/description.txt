@@ -1,0 +1,1 @@
+Eject: a mounted backup has no Eject, and the drive under it does.

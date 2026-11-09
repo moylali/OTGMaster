@@ -1,0 +1,1 @@
+Eject with one partition and nothing in use: no dialog, the card goes, and the drive is not opened again.
