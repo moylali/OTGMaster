@@ -290,8 +290,15 @@ Java_app_fayaz_otgmaster_exfat_ExFatNative_flush(JNIEnv *env, jclass clazz, jlon
     struct exfat* ef = (struct exfat*) exfatPtr;
     if (!ef) return -1;
     
-    exfat_flush_nodes(ef);
-    exfat_flush(ef);  /* write cluster allocation bitmap */
+    /* LOCAL PATCH (docs/VENDOR_FIXES.md E4): report a failed metadata write. Both
+     * results were dropped and exfat_fsync() (a no-op here) always returns 0, so a
+     * flush whose directory entry or bitmap never reached the drive said it had. Both
+     * still run, so the bitmap is written even if a node is not; a node or bitmap that
+     * fails stays dirty in libexfat, and the next flush retries it. */
+    int nodes = exfat_flush_nodes(ef);
+    int bitmap = exfat_flush(ef);  /* write cluster allocation bitmap */
+    if (nodes != 0) return nodes;
+    if (bitmap != 0) return bitmap;
     return exfat_fsync(ef->dev);
 }
 

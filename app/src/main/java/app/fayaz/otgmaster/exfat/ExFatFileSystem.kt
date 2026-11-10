@@ -153,10 +153,23 @@ class ExFatFileSystem(
     override val type: Int
         get() = 0 // exfat partition type, maybe just 0 or custom
 
+    /**
+     * Writes libexfat's dirty metadata (directory entries, the allocation bitmap), and
+     * throws if it did not reach the drive. Review finding 6, 2026-11-09: the result was
+     * ignored, so fsync() and the close at the end of a copy reported success for
+     * metadata that was never written. Caller holds [lock].
+     */
+    internal fun flushOrThrow() {
+        val rc = ExFatNative.flush(exfatPtr)
+        if (rc != 0) throw java.io.IOException("exFAT could not write its directory or allocation data to the drive (error $rc)")
+    }
+
     fun unmount() {
         lock.withLock {
             if (isUnmounted) return
             isUnmounted = true
+            // Unmount goes ahead whatever the flush says: the drive is being let go. A
+            // failure is already in the app's log through libexfat's own error (E3).
             if (!readOnly) ExFatNative.flush(exfatPtr)
             ExFatNative.unmount(exfatPtr)
         }
