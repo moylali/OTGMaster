@@ -9,6 +9,7 @@ import android.provider.DocumentsProvider
 import android.webkit.MimeTypeMap
 import app.fayaz.otgmaster.OtgMasterState
 import app.fayaz.otgmaster.extension.ExtensionContract
+import me.jahnen.libaums.core.fs.FileSystem
 import me.jahnen.libaums.core.fs.UsbFile
 import java.io.FileNotFoundException
 import java.nio.ByteBuffer
@@ -274,13 +275,59 @@ class VeraCryptDocumentProvider : DocumentsProvider() {
          * finished before it. Review finding 8, 2026-11-09.
          */
         internal fun openUnderLock(documentId: String?, write: Boolean, truncate: Boolean,
-                                   resolve: () -> UsbFile?): UsbFile = onDrive(documentId, "open") {
+                                   resolve: () -> UsbFile?): OpenFile = onDrive(documentId, "open") {
+            // The filesystem the file belongs to, read under the same lock as the
+            // resolution, so the handle is tied to the volume it was really opened on.
+            val fs = driveIdOf(documentId)?.let { OtgMasterState.getDrive(it)?.fileSystem }
             val file = resolve() ?: throw FileNotFoundException("File not found")
             if (truncate) file.length = 0
             if (write) documentId?.let { writerOpened(it) }
             handleOpened(documentId)
-            file
+            OpenFile(documentId, file, fs)
         }
+
+        /**
+         * An open file and the mounted filesystem it was opened on.
+         *
+         * Review finding 7, 2026-11-09: a descriptor kept working after its drive was
+         * unmounted, and after Format or Encrypt put a new filesystem on the partition,
+         * because the callbacks held the old file object and only took the provider's
+         * lock. Its writes went through the old filesystem's allocation state onto the
+         * new one, and its close wrote the old directory table over the new. Each call now
+         * checks that the drive is still mounted with the same filesystem; when it is not,
+         * reads, writes and syncs fail with an I/O error. The release still closes after a
+         * plain unmount, as before, since that writes the file's size to its own volume;
+         * it skips the close only once Format or Encrypt has [retire]d the filesystem, or
+         * the drive is mounted again with a different one.
+         */
+        internal class OpenFile(val documentId: String?, val file: UsbFile, private val fs: FileSystem?) {
+            val isLive: Boolean
+                get() = fs != null && driveIdOf(documentId)?.let { OtgMasterState.getDrive(it)?.fileSystem } === fs
+
+            fun <T> use(op: String, body: (UsbFile) -> T): T = onDrive(documentId, op) {
+                if (!isLive) throw java.io.IOException(
+                    "The drive this file was opened on was unmounted, formatted or encrypted since")
+                body(file)
+            }
+
+            /** Closes the file unless its filesystem was erased or replaced; then only lets it go. */
+            fun release() = onDrive(documentId, "close") {
+                val now = driveIdOf(documentId)?.let { OtgMasterState.getDrive(it)?.fileSystem }
+                val replaced = now != null && now !== fs
+                if (!replaced && !isRetired(fs)) file.close()
+            }
+        }
+
+        /** Filesystems Format or Encrypt is replacing; weak, so they do not outlive the volume. */
+        private val retired = java.util.Collections.newSetFromMap(java.util.WeakHashMap<FileSystem, Boolean>())
+
+        private fun isRetired(fs: FileSystem?) = fs != null && synchronized(retired) { fs in retired }
+
+        /**
+         * Marks [fs] as about to be overwritten by Format or Encrypt, so a handle still
+         * open on it can no longer write to the partition, not even its closing flush.
+         */
+        fun retire(fs: FileSystem) { synchronized(retired) { retired.add(fs) } }
 
         /**
          * Blocks until all previously-queued proxyHandler messages have run, then returns.
@@ -458,29 +505,30 @@ class VeraCryptDocumentProvider : DocumentsProvider() {
         val isWrite = mode?.contains("w") == true || mode?.contains("a") == true || mode?.contains("t") == true
         val storageManager = context?.getSystemService(StorageManager::class.java)
             ?: throw IllegalStateException("StorageManager not available")
-        val file = openUnderLock(documentId, write = isWrite, truncate = isWrite && mode?.contains("t") == true) {
+        val handle = openUnderLock(documentId, write = isWrite, truncate = isWrite && mode?.contains("t") == true) {
             getFileForDocId(documentId)
         }
+        val file = handle.file
         if (!file.isDirectory) extendReadGrant(documentId)
 
         if (isWrite) {
             val callback = object : ProxyFileDescriptorCallback() {
-                override fun onGetSize(): Long = onDrive(documentId, "size") { file.length }
+                override fun onGetSize(): Long = handle.use("size") { it.length }
 
                 override fun onRead(offset: Long, size: Int, data: ByteArray): Int =
-                    onDrive(documentId, "read") { readInto(file, offset, size, data) }
+                    handle.use("read") { readInto(it, offset, size, data) }
 
                 override fun onWrite(offset: Long, size: Int, data: ByteArray): Int =
-                    onDrive(documentId, "write") {
-                        file.write(offset, ByteBuffer.wrap(data, 0, size))
+                    handle.use("write") {
+                        it.write(offset, ByteBuffer.wrap(data, 0, size))
                         size
                     }
 
-                override fun onFsync() = onDrive(documentId, "sync") { file.flush() }
+                override fun onFsync() = handle.use("sync") { it.flush() }
 
                 override fun onRelease() {
                     try {
-                        onDrive(documentId, "close") { file.close() }
+                        handle.release()
                     } finally {
                         documentId?.let { writerClosed(it) }
                         handleClosed(documentId)
@@ -500,14 +548,14 @@ class VeraCryptDocumentProvider : DocumentsProvider() {
         }
 
         val callback = object : ProxyFileDescriptorCallback() {
-            override fun onGetSize(): Long = onDrive(documentId, "size") { file.length }
+            override fun onGetSize(): Long = handle.use("size") { it.length }
 
             override fun onRead(offset: Long, size: Int, data: ByteArray): Int =
-                onDrive(documentId, "read") { readInto(file, offset, size, data) }
+                handle.use("read") { readInto(it, offset, size, data) }
 
             override fun onRelease() {
                 try {
-                    onDrive(documentId, "close") { file.close() }
+                    handle.release()
                 } finally {
                     handleClosed(documentId)
                 }

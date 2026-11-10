@@ -2396,6 +2396,9 @@ class MainActivity : AppCompatActivity() {
      * open for the caller to write through.
      */
     private suspend fun detachForErase(drive: MountedDrive) {
+        // Before the drive leaves the list: from here on, a descriptor still open on the
+        // old filesystem fails its reads and writes, and its close writes nothing.
+        app.fayaz.otgmaster.provider.VeraCryptDocumentProvider.retire(drive.fileSystem)
         withContext(Dispatchers.Main) {
             OtgMasterState.removeDrive(drive.id)
             contentResolver.notifyChange(
