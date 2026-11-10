@@ -1682,8 +1682,8 @@ class MainActivity : AppCompatActivity() {
                 }
                 // Stable across mounts, so a companion app's persisted folder grant
                 // still resolves next time (see ExtensionContract).
-                val driveId = app.fayaz.otgmaster.extension.ExtensionContract.stableDriveId(
-                    deviceName, candidate.startBlock, OtgMasterState.mountedDrives.map { it.id })
+                val driveId = app.fayaz.otgmaster.extension.ExtensionContract.veraCryptDriveId(
+                    deviceName, candidate.startBlock, veraCryptVolume?.volumeType, OtgMasterState.mountedDrives.map { it.id })
                 val mountedDrive = MountedDrive(
                     id = driveId,
                     name = getString(R.string.mounted_drive_name, deviceDisplayName, driveId),
