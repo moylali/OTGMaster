@@ -3387,7 +3387,7 @@ internal fun suggestedVolumeLabel(drive: MountedDrive): String {
 }
 
 /** How long after the app opens with drives mounted the hint at the Drives icon appears. */
-const val SLIDER_HINT_OPEN_DELAY_MS = 10_000L
+const val SLIDER_HINT_OPEN_DELAY_MS = 6_000L
 
 @OptIn(ExperimentalMaterial3Api::class, ExperimentalComposeUiApi::class)
 @Composable
