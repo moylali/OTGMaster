@@ -412,9 +412,19 @@ Rebase-merged. The E2E report and hardware results in #134 name the commits in t
 | `4b5d2a7` | `18cdf9c` | #134 | fix(luks): Argon2 runs a LUKS2 key slot's lanes on threads again |
 | `27a958e` | `10da2b4` | #134 | feat(usb): Eject, and a USB access setting (#113) |
 
+### Commit hashes after the merges of #135 and #136
+
+Rebase-merged; neither PR changed app code, tests or test data.
+
+| At the PR head | On `main` | PR | Commit |
+|---|---|---|---|
+| `1179bd4` | `7ef3189` | #135 | docs(agents): record every unlock time and fail a run on a 5% median regression |
+| `135dd16` | `da10008` | #135 | docs: hash table for #134; the D1 and D2/2 runs on 0.5.1 |
+| `1fe6aee` | `61d138d` | #136 | store: retake phone, 7" and 10" screenshots for 0.5.1 |
+
 ## 2026-11-09: 0.5.1 on the Pixel 7 Pro, without bigwrite
 
-Debug APK from `27a958e`. The owner waived the three-device matrix for 0.5.1 and left bigwrite out to save time, so these runs do not exercise large writes. Sections: free, block, dir, path, seq, random, opens, write, unaligned, correct, fixtures. Debug native code is not optimised, so no timing here compares with a release build. Unlock time per partition was not logged: the rule that requires it landed after these runs. D3, D4 and D5/1 were not finished when this was written.
+Debug APK from `27a958e`. The owner waived the three-device matrix for 0.5.1 and left bigwrite out to save time, so these runs do not exercise large writes. Sections: free, block, dir, path, seq, random, opens, write, unaligned, correct, fixtures. Debug native code is not optimised, so no timing here compares with a release build. Unlock time per partition was not logged for D1 to D4: the rule that requires it landed after these runs. For D5/1 it was read from the logcat stream afterwards and compared with the 0.5.0 run (below).
 
 ### Pixel 7 Pro · Android 17 · Drive 1 · 11-09 07:53 – 08:57
 
@@ -449,6 +459,70 @@ Laptop: **ALL CLEAN** on all ten partitions (`matrix/d1-after-px-051a.md`). The 
 | D2L4NTFS | 07:10 | ALL 20927 MATCHED | write verify ✓; correctness ✓ |
 
 Laptop: **ALL CLEAN** on all ten partitions (`matrix/d2copy-after-px-051b.md`).
+
+### Pixel 7 Pro · Android 17 · Drive 3 · 11-09 09:11 – 10:47
+
+| Partition | Finished | Fixtures | Verdict |
+|---|---|---|---|
+| D3EXT2 | 09:15 | ALL 21821 MATCHED | read sections ✓; writes SKIPPED (ro) |
+| D3EXT3 | 09:20 | ALL 21883 MATCHED | read sections ✓; writes SKIPPED (ro) |
+| D3L1EXFAT | 09:32 | ALL 20929 MATCHED | write verify ✓; correctness ✓ |
+| D3L1NTFS | 09:42 | ALL 20920 MATCHED | write verify ✓; correctness ✓ |
+| D3L2FAT32 | 09:52 | ALL 20913 MATCHED | write verify ✓; correctness ✓ |
+| D3L2NTFS | 10:03 | ALL 20925 MATCHED | write verify ✓; correctness ✓ |
+| D3L2EXT4 | 10:13 | ALL 20939 MATCHED | write verify ✓; correctness ✓ |
+| D3L4FAT32 | 10:24 | ALL 20972 MATCHED | write verify ✓; correctness ✓ |
+| D3L4EXFAT | 10:38 | ALL 20910 MATCHED | write verify ✓; correctness ✓ |
+| D3BLNTFS | 10:47 | ALL 21023 MATCHED | write verify ✓; correctness ✓ |
+
+Laptop: **ALL CLEAN** on all ten partitions (`matrix/d3-after-px-051a.md`).
+
+### Pixel 7 Pro · Android 17 · Drive 4 · 11-09 11:01 – 12:05
+
+| Partition | Finished | Fixtures | Verdict |
+|---|---|---|---|
+| D4VCEXT2 | 11:06 | ALL 21948 MATCHED | read sections ✓; writes SKIPPED (ro) |
+| D4VCEXT3 | 11:12 | ALL 21956 MATCHED | read sections ✓; writes SKIPPED (ro) |
+| D4L1EXT2 | 11:17 | ALL 21870 MATCHED | read sections ✓; writes SKIPPED (ro) |
+| D4L1EXT3 | 11:22 | ALL 21875 MATCHED | read sections ✓; writes SKIPPED (ro) |
+| D4L2EXT2 | 11:28 | ALL 21678 MATCHED | read sections ✓; writes SKIPPED (ro) |
+| D4L2EXT3 | 11:33 | ALL 21971 MATCHED | read sections ✓; writes SKIPPED (ro) |
+| D4L4EXT2 | 11:38 | ALL 21916 MATCHED | read sections ✓; writes SKIPPED (ro) |
+| D4L4EXT3 | 11:44 | ALL 21846 MATCHED | read sections ✓; writes SKIPPED (ro) |
+| D4BLFAT32 | 11:54 | ALL 20918 MATCHED | write verify ✓; correctness ✓ |
+| D4BLEXFAT | 12:05 | ALL 21073 MATCHED | write verify ✓; correctness ✓ |
+
+Laptop: **ALL CLEAN** on all ten partitions (`matrix/d4-after-px-051a.md`).
+
+### Pixel 7 Pro · Android 17 · Drive 5/1 (…EF449) · 11-09 12:43 – 15:50 · FAILED (unlock time)
+
+| Partition | Finished | Fixtures | Verdict |
+|---|---|---|---|
+| VC_ATS_ARGON_PIM0 | 13:13 | ALL 20902 MATCHED | write verify ✓; correctness ✓ |
+| VC_STA_ARGON_PIM1 | 13:26 | ALL 20965 MATCHED | write verify ✓; correctness ✓ |
+| VC_TWO_SHA512_PIM0 | 13:31 | ALL 20962 MATCHED | write verify ✓; correctness ✓ |
+| VC_AT_ARGON_PIM1 | 13:40 | ALL 20950 MATCHED | write verify ✓; correctness ✓ |
+| VC_SA_SHA512_PIM1 | 13:47 | ALL 20027 MATCHED | write verify ✓; correctness ✓ |
+| VC_TS_ARGON_PIM31 | 15:37 | ALL 20984 MATCHED | write verify ✓; correctness ✓ |
+| FMT_EXFAT | 15:40 | ALL 20027 MATCHED | write verify ✓; correctness ✓ |
+| FMT_FAT32 | 15:44 | ALL 20027 MATCHED | write verify ✓; correctness ✓ |
+| ENC_TO_EXFAT | 15:47 | ALL 20027 MATCHED | write verify ✓; correctness ✓ |
+| ENC_TO_FAT32 | 15:50 | ALL 20027 MATCHED | write verify ✓; correctness ✓ |
+
+Laptop: p1 to p7, p9 and p10 fsck-clean with every fixture matched. p8 (plain FAT32) is **NOT CLEAN** by `fsck.fat -n`: the dirty bit is set and nothing else is reported. `reserved.bin` differs in 7 bytes, the first at byte 66 (0x41) and the rest FSInfo's free count, which is the vold mount at plug-in, not app damage (the same cause as Drive 5 p8 on 0.5.0). All 20027 fixtures matched. `laptop-check` itself reported p7 to p10 not clean because the matrix config points Drive 5 at `matrix/vcx` instead of `matrix/vcx-EF449`; checked again with the right manifests in `matrix/hostcheck-051-after-px-EF449-p7to10.log`. Both are in `matrix/ISSUES-051.md`.
+
+**Unlock time fails the 5% rule.** Request to mount, from the logcat stream, against the 0.5.0 run on the same phone and drive (`cae0e9e`, `px-050a`):
+
+| Partition | 0.5.0 | 0.5.1 |
+|---|---|---|
+| VC_ATS_ARGON_PIM0 | 118 s | 217 s |
+| VC_STA_ARGON_PIM1 | 10 s | 17 s |
+| VC_TWO_SHA512_PIM0 | 12 s | 21 s |
+| VC_AT_ARGON_PIM1 | 9 s | 17 s |
+| VC_SA_SHA512_PIM1 | 5 s | 5 s |
+| VC_TS_ARGON_PIM31 | 732 s | 1399 s |
+
+A mount request tries the password on every locked partition at once, and since the hidden volume work (`8e82a40`) each failed standard header is followed by a hidden header try, so a request now runs 11 key derivations where 0.5.0 ran 6. That is the likely cause; it is not proven. The owner shipped 0.5.1 with this known and will fix it afterwards. The phone's CPU clocks were also lower during this run than during the 0.5.0 one.
 
 ## 2026-11-04: Deleting a folder on real ext4 and exFAT, Galaxy Tab A9+
 
