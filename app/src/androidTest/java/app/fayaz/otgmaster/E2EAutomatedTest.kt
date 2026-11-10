@@ -4004,6 +4004,63 @@ class E2EAutomatedTest {
                 ejAssertStaysMounted(6000L)
                 doUnmount()
             }
+            // A copy writing to the partition when Unmount is tapped, as Files would make one:
+            // Unmount waits for it, the copy completes, and every byte of it is there after a remount.
+            "unmount_during_copy" -> {
+                val cr = bkContext.contentResolver
+                val drive = ejMount("to copy to")
+                val name = "copy_during_unmount.bin"
+                val uri = DocumentsContract.createDocument(cr,
+                    DocumentsContract.buildDocumentUri(AUTHORITY, "${drive.id}:/"), "application/octet-stream", name)
+                assertNotNull("createDocument($name) returned null", uri)
+                val md = java.security.MessageDigest.getInstance("SHA-256")
+                var copyError: Throwable? = null
+                val chunks = 64   // 4 MiB in 64 KiB writes, paced to last about 10 s
+                val copy = Thread {
+                    try {
+                        cr.openOutputStream(uri!!)!!.use { out ->
+                            val rnd = java.util.Random(52)
+                            val buf = ByteArray(64 * 1024)
+                            repeat(chunks) {
+                                rnd.nextBytes(buf)
+                                out.write(buf)
+                                md.update(buf)
+                                android.os.SystemClock.sleep(150)
+                            }
+                        }
+                    } catch (t: Throwable) { copyError = t }
+                }
+                copy.start()
+                android.os.SystemClock.sleep(1500)
+                assertTrue("the copy ended before Unmount was tapped: $copyError", copy.isAlive)
+                umTapUnmount()
+                umAssertBusyDialog()
+                assertTrue("the copy was still going when the dialog came up", copy.isAlive)
+                copy.join(120_000L)
+                assertFalse("the copy did not finish", copy.isAlive)
+                assertNull("the copy failed: $copyError", copyError)
+                val expected = md.digest().joinToString("") { "%02x".format(it) }
+                assertTrue("the dialog did not close after the Unmount", device.wait(Until.gone(By.desc("unmount_busy_dismiss")), 30_000L))
+                umAwaitUnmounted()
+
+                val again = ejMount("after the copy")
+                val got = java.security.MessageDigest.getInstance("SHA-256").let { d ->
+                    cr.openInputStream(DocumentsContract.buildDocumentUri(AUTHORITY, "${again.id}:/$name"))!!.use { input ->
+                        val buf = ByteArray(64 * 1024)
+                        var total = 0L
+                        while (true) {
+                            val n = input.read(buf)
+                            if (n < 0) break
+                            d.update(buf, 0, n)
+                            total += n
+                        }
+                        assertEquals("the copied file's size after the remount", chunks * 64L * 1024L, total)
+                    }
+                    d.digest().joinToString("") { "%02x".format(it) }
+                }
+                assertEquals("the copied file changed across the Unmount", expected, got)
+                doUnmount()
+            }
             else -> fail("unknown unmount flow $flow")
         }
     }
