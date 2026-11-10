@@ -422,6 +422,34 @@ Rebase-merged; neither PR changed app code, tests or test data.
 | `135dd16` | `da10008` | #135 | docs: hash table for #134; the D1 and D2/2 runs on 0.5.1 |
 | `1fe6aee` | `61d138d` | #136 | store: retake phone, 7" and 10" screenshots for 0.5.1 |
 
+### Commit hashes after the merge of #141
+
+Rebase-merged. The E2E report in #141 names its head `15ad245`, which is `4591c24` on `main`; the hardware results there and the 0.5.2 benchmark builds name the commits in the first column. `1bd7c9e`, the benchmark build in #141's hardware results, was not merged; it held the same code as `ca189ca`.
+
+| At the PR head | On `main` | PR | Commit |
+|---|---|---|---|
+| `ab19614` | `3184b72` | #141 | fix(veracrypt): a mount request tries every standard header before any hidden one |
+| `0150e75` | `adfcd03` | #141 | fix(veracrypt): no hidden pass on a partition the request did not try |
+| `e292c74` | `8384794` | #141 | perf(argon2): a NEON fill_block for arm64, about 1.3x faster |
+| `ca189ca` | `a51a5cb` | #141 | build: a benchmark build type, separate from debug and release |
+| `6bafe43` | `fc491fb` | #141 | fix(usb): Unmount waits for a transfer to finish, as Eject does |
+| `0d7770f` | `4a0aa1b` | #141 | feat(settings): the Donate dialog shows Ko-fi's button instead of a bare URL |
+| `96f7dd4` | `c4c9a51` | #141 | feat(settings): the Donate dialog links to the site's Support section |
+| `dd9e3b5` | `558171f` | #141 | feat(settings): "See more options here" in the Donate dialog; Support stands out at #support |
+| `dcbbb4a` | `7e6b9f2` | #141 | test(e2e): Unmount while a copy is writing to the partition |
+| `e45e275` | `79f0532` | #141 | test(e2e): Report issue reaches GitHub with what was typed |
+| `889f27e` | `95ed373` | #141 | changelog: 0.5.2 (51), faster Argon2 unlocks and the Donate dialog |
+| `3957a36` | `3df414e` | #141 | test(e2e): wait for Unmount's busy dialog and for the slider before looking for Scan |
+| `a618742` | `6bd9fb0` | #141 | feat(ui): a one-time hint at the Drives icon; the mounted notification opens the slider |
+| `b3c3b5d` | `5fc36d3` | #141 | feat(ui): the Drives hint also shows when the app opens with drives mounted |
+| `f958ec9` | `3131e50` | #141 | feat(ui): the Drives hint on opening the app waits 10 s |
+| `d0dc4b5` | `afa54a4` | #141 | feat(ui): the Drives hint on opening the app waits 6 s, not 10 |
+| `ec6eb9f` | `5b46282` | #141 | feat(ui): "Don't show again" on the Drives hint |
+| `27523c9` | `d7e3810` | #141 | feat(ui): "Don't show again" shows its tick before the hint goes |
+| `8aed75c` | `adad43e` | #141 | test(e2e): look for the Don't show again tick once, partway through its 0.7 s |
+| `4ad628a` | `2d00a77` | #141 | test(e2e): look for the Don't show again tick without UiAutomator's idle wait |
+| `15ad245` | `4591c24` | #141 | fix(ui): Settings dialogs expose their test tags to UiAutomator |
+
 ## 2026-11-09: 0.5.1 on the Pixel 7 Pro, without bigwrite
 
 Debug APK from `27a958e`. The owner waived the three-device matrix for 0.5.1 and left bigwrite out to save time, so these runs do not exercise large writes. Sections: free, block, dir, path, seq, random, opens, write, unaligned, correct, fixtures. Debug native code is not optimised, so no timing here compares with a release build. Unlock time per partition was not logged for D1 to D4: the rule that requires it landed after these runs. For D5/1 it was read from the logcat stream afterwards and compared with the 0.5.0 run (below).
