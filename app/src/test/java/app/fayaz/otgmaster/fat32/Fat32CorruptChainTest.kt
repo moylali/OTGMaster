@@ -183,4 +183,48 @@ class Fat32CorruptChainTest {
                 "the data area, and delete must not have written there",
             strayBefore, readAt(strayOffset, 4))
     }
+
+    /**
+     * A chain that loops back on itself must end, not grow until the process runs out of
+     * memory. Review finding 12, 2026-11-09: getChain checked that each cluster was in
+     * range but not that it was new, so A -> B -> A was walked forever, and the
+     * OutOfMemoryError took down every mounted drive in the app. V29.
+     */
+    @Test(timeout = 60_000)
+    fun aLoopingChainEndsInsteadOfExhaustingMemory() {
+        val bytesPerSector = le16(11)
+        val reserved = le16(14)
+        val sectorsPerFat = le32(36)
+        val fatStart = reserved.toLong() * bytesPerSector
+        val fatBytes = sectorsPerFat * bytesPerSector
+        val before = readAt(fatStart, fatBytes.toInt())
+
+        val payload = ByteArray(256 * 1024) { (it % 249).toByte() }
+        withFs { fs ->
+            val f = fs.rootDirectory.createFile("loop.bin")
+            f.write(0, ByteBuffer.wrap(payload))
+            f.close()
+        }
+        val after = readAt(fatStart, fatBytes.toInt())
+        val chain = (0 until (fatBytes / 4).toInt()).filter { e ->
+            val o = e * 4
+            (0 until 4).any { before[o + it] != after[o + it] }
+        }
+        assumeTrue("expected a multi-cluster chain, got ${chain.size}", chain.size >= 3)
+
+        // The last cluster points back at the first: an endless chain.
+        val first = chain.first().toLong()
+        val last = chain.last()
+        writeAt(fatStart + last * 4L, byteArrayOf(
+            (first and 0xFF).toByte(), ((first shr 8) and 0xFF).toByte(),
+            ((first shr 16) and 0xFF).toByte(), ((first shr 24) and 0xFF).toByte()))
+
+        withFs { fs ->
+            val f = fs.rootDirectory.listFiles().first { it.name == "loop.bin" }
+            val buf = ByteBuffer.allocate(payload.size)
+            f.read(0, buf)
+            // Every cluster of the file is still in the truncated chain, so it reads intact.
+            assertArrayEquals(payload, buf.array())
+        }
+    }
 }

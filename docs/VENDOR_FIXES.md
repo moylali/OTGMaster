@@ -356,6 +356,20 @@ Vendored fork of [magnusja/libaums](https://github.com/magnusja/libaums).
 | `ScsiBlockDevice` | V25: a count of the Bulk-Only Mass Storage Resets sent, including those inside a retry that succeeded, so the app can tell that a reset happened. A reset can make a drive lose writes it had already acknowledged: on a OnePlus 7 (2026-10-30) a write failed at block 17,607,921, libaums reset the drive six times, and block 17,607,920 (written and confirmed by the command before) read back as zeros, because it shares a 4 KiB unit with the failed write's start. `LibaumsRawBlockDevice` keeps the last 1 MiB written and writes it again after any reset. `WriteReplayTest` fails on the code without the replay | the commit adding this row |
 | `FatFile` | V27: a grow zeroes the bytes it exposes between the old end and the new data (old last cluster's slack, reallocated clusters), so deleted data cannot be read back through a write past the end. `Fat32GrowTest` | see below |
 | `FatFile` | V28: a length or write past 0xFFFFFFFF bytes is refused with an IOException before anything is allocated, instead of the size wrapping modulo 4 GiB. `Fat32GrowTest` | see below |
+| `FAT` | V29: `getChain` stops at a cluster the chain has already named, so a looping chain ends instead of growing until the process runs out of memory. `Fat32CorruptChainTest` | see below |
+
+## V29: a looping FAT chain exhausted memory
+
+From the 2026-11-09 review (finding 12). V8 made `getChain` stop at a cluster outside
+the table, but a cluster inside it was always followed, so a chain whose last entry
+points back to its first (A -> B -> A), on damaged or hostile media, was walked forever.
+Each step appended to the result list until the process ran out of memory, and with it
+every other mounted drive and transfer. Now, once a chain passes 4,096 clusters,
+`getChain` keeps a bitmap of the clusters it has visited and stops at the first repeat,
+keeping the chain up to it, as V8 does, and not caching it. Short chains, nearly every
+file, never build the bitmap, and a short loop gets caught once it passes 4,096 steps.
+`Fat32CorruptChainTest.aLoopingChainEndsInsteadOfExhaustingMemory` makes a 64-cluster
+file loop: the old code threw `OutOfMemoryError`, and now the file reads back intact.
 
 ## V27 and V28: growing a file exposed old data, and could pass 4 GiB
 
