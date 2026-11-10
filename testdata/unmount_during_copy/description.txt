@@ -1,0 +1,1 @@
+Unmount while a copy writes to the partition: it waits, the copy completes, and the file reads back whole after a remount.
