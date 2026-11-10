@@ -178,7 +178,39 @@ internal constructor(private val blockDevice: BlockDeviceDriver, bootSector: Fat
         var lastOffset: Long = -1
         var corrupt = false
 
+        // LOCAL PATCH (docs/VENDOR_FIXES.md V29): stop at a cluster the chain has already
+        // named. A loop (A -> B -> A) on damaged or hostile media was followed forever,
+        // appending to `result` until the process ran out of memory, which took every
+        // other mounted drive and transfer down with it. The visited set is a bitmap over
+        // the data clusters, created only once a chain is long enough to be worth it:
+        // a short loop reaches that length after a few thousand steps and is caught then.
+        var seen: java.util.BitSet? = null
         do {
+            if (seen == null && result.size >= LOOP_CHECK_AFTER) {
+                seen = java.util.BitSet()
+                var firstRepeat = -1
+                for ((i, c) in result.withIndex()) {
+                    if (seen.get(c.toInt())) { firstRepeat = i; break }
+                    seen.set(c.toInt())
+                }
+                // A repeat among the clusters already walked is a loop too; keep the
+                // chain up to it, so nothing is listed twice.
+                if (firstRepeat >= 0) {
+                    Log.w(TAG, "corrupt FAT: chain from $startCluster loops; truncating it")
+                    result.subList(firstRepeat, result.size).clear()
+                    corrupt = true
+                    break
+                }
+            }
+            if (seen != null) {
+                if (seen.get(currentCluster.toInt())) {
+                    Log.w(TAG, "corrupt FAT: chain from $startCluster loops back to " +
+                            "cluster $currentCluster; truncating it")
+                    corrupt = true
+                    break
+                }
+                seen.set(currentCluster.toInt())
+            }
             result.add(currentCluster)
             offset = (fatOffset[0] + currentCluster * 4) / bufferSize * bufferSize
             offsetInBlock = (fatOffset[0] + currentCluster * 4) % bufferSize
@@ -478,6 +510,9 @@ internal constructor(private val blockDevice: BlockDeviceDriver, bootSector: Fat
     companion object {
 
         private val TAG = FAT::class.java.simpleName
+
+        /** Chain length after which getChain starts tracking visited clusters (V29). */
+        private const val LOOP_CHECK_AFTER = 4096
 
         /**
          * End of file / chain marker. This is used to determine when following a
