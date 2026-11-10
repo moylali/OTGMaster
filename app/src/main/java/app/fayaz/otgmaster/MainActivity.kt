@@ -2744,6 +2744,13 @@ class MainActivity : AppCompatActivity() {
             }
         }
         if (requested.isEmpty()) return
+        // A partition already being unlocked, by the form, auto mount or an earlier request,
+        // refuses this request's attempt, so its standard header was not tried here. Its
+        // hidden one is not either: that only repeated the refusal (main_screen's second
+        // request was refused twice).
+        fun beingUnlocked(deviceName: String, candidate: VolumeCandidate) =
+            unlockKey(deviceName, candidate.startBlock) in unlockingPartitions.value
+        val alreadyUnlocking = requested.filter { (d, c) -> beingUnlocked(d, c) }.toSet()
         // Held from the first pass until the second has started, so that a caller waiting for
         // the count to reach zero does not stop between the two.
         OtgMasterState.unlocksInFlight.incrementAndGet()
@@ -2751,7 +2758,9 @@ class MainActivity : AppCompatActivity() {
         val standardPassDone = {
             val hiddenPass = requested.filter { (deviceName, candidate) ->
                 candidate.containerType == app.fayaz.otgmaster.veracrypt.ContainerType.VERACRYPT &&
-                    !isMounted(deviceName, candidate)
+                    !isMounted(deviceName, candidate) &&
+                    (deviceName to candidate) !in alreadyUnlocking &&
+                    !beingUnlocked(deviceName, candidate)
             }
             if (requested.none { (deviceName, candidate) -> isMounted(deviceName, candidate) } &&
                 hiddenPass.isNotEmpty()) {
