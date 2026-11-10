@@ -158,7 +158,7 @@ key derivation (VeraCrypt 1.26.24 and later). Called from
 
 | Area | Patch | Commit |
 |---|---|---|
-| — | none | — |
+| arm64 fill code | `src/opt_neon.c` and `src/blake2/blamka-round-neon.h` are a local NEON port of upstream's `opt.c` and its SSSE3 `blamka-round-opt.h` (pinned commit), built instead of `ref.c` for `arm64-v8a` only. Every other ABI, and the host tests, keep `ref.c`. Checked on a Redmi 4: the RFC 9106 Argon2id vector, and byte-identical 192-byte keys from `ref.c` and the port at VeraCrypt PIM 1 and default and a 4-lane LUKS2-like case; about 1.3x faster at each. Upstream files are unchanged. | (this branch) |
 
 ---
 

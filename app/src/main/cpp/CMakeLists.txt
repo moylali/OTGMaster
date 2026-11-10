@@ -102,14 +102,21 @@ add_library(twofish STATIC
 target_compile_definitions(twofish PUBLIC LTC_NOTHING LTC_TWOFISH LTC_TWOFISH_TABLES LTC_NO_TEST)
 target_include_directories(twofish PUBLIC libtomcrypt/src/headers)
 
-# argon2: the PHC reference implementation, unmodified (docs/VENDOR_FIXES.md). ref.c, not
-# the SSE opt.c, which does not build for ARM. Threads stay on: VeraCrypt derives with one
-# lane, but cryptsetup gives a LUKS2 key slot four, and run in turn they take over twice as long.
+# argon2: the PHC reference implementation, unmodified (docs/VENDOR_FIXES.md). Upstream's
+# opt.c is x86 SSE and does not build for ARM; arm64 gets opt_neon.c, a local NEON port of it
+# (about 1.3x faster than ref.c on a Redmi 4, same output), and every other ABI keeps ref.c.
+# Threads stay on: VeraCrypt derives with one lane, but cryptsetup gives a LUKS2 key slot
+# four, and run in turn they take over twice as long.
+if(ANDROID_ABI STREQUAL "arm64-v8a")
+    set(ARGON2_FILL argon2/src/opt_neon.c)
+else()
+    set(ARGON2_FILL argon2/src/ref.c)
+endif()
 add_library(argon2 STATIC
         argon2/src/argon2.c
         argon2/src/core.c
         argon2/src/encoding.c
-        argon2/src/ref.c
+        ${ARGON2_FILL}
         argon2/src/thread.c
         argon2/src/blake2/blake2b.c)
 target_include_directories(argon2 PUBLIC argon2/include)
