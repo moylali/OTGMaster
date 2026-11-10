@@ -28,7 +28,9 @@ class VeraCryptHiddenVolumeTest {
         override val blockSize = 512
         override val blockCount = file.length() / 512
         var writes = 0
+        val reads = mutableListOf<Long>()
         override fun readBlocks(startBlock: Long, blockCount: Int): ByteArray {
+            reads += startBlock
             val out = ByteArray(blockCount * 512)
             raf.seek(startBlock * 512); raf.readFully(out); return out
         }
@@ -114,6 +116,43 @@ class VeraCryptHiddenVolumeTest {
     @Test fun `a password that opens neither volume is refused`() {
         val dev = ImageDevice(pair())
         assertThrows(IllegalArgumentException::class.java) { unlock(dev, "neither-volume-password-2026") }
+    }
+
+    private fun unlockOnly(dev: RawBlockDevice, password: String, headers: VeraCryptUnlocker.Headers) =
+        VeraCryptUnlocker().unlock(dev, candidate(dev), password.toCharArray(), pim = 1, headers = headers)
+
+    private val hiddenHeaderBlock = VeraCryptHeader.HIDDEN_HEADER_OFFSET / 512
+
+    @Test fun `standard only opens the outer volume and refuses the hidden password`() {
+        val dev = ImageDevice(pair())
+        assertEquals(VeraCryptVolumeType.NORMAL, unlockOnly(dev, OUTER, VeraCryptUnlocker.Headers.STANDARD_ONLY).volumeType)
+        assertThrows(IllegalArgumentException::class.java) {
+            unlockOnly(dev, HIDDEN, VeraCryptUnlocker.Headers.STANDARD_ONLY)
+        }
+    }
+
+    // A mount request tries one password on every locked partition. Each header tried is a
+    // full key derivation, so a partition the password does not fit must cost one, not two:
+    // the hidden header is never even read.
+    @Test fun `a refused standard-only unlock never reads the hidden header`() {
+        val dev = ImageDevice(pair())
+        assertThrows(IllegalArgumentException::class.java) {
+            unlockOnly(dev, "neither-volume-password-2026", VeraCryptUnlocker.Headers.STANDARD_ONLY)
+        }
+        assertEquals(listOf(0L), dev.reads)
+        dev.reads.clear()
+        assertThrows(IllegalArgumentException::class.java) { unlock(dev, "neither-volume-password-2026") }
+        assertEquals("both headers, by default", listOf(0L, hiddenHeaderBlock), dev.reads)
+    }
+
+    @Test fun `hidden only opens the hidden volume and refuses the outer password`() {
+        val dev = ImageDevice(pair())
+        assertEquals(VeraCryptVolumeType.HIDDEN, unlockOnly(dev, HIDDEN, VeraCryptUnlocker.Headers.HIDDEN_ONLY).volumeType)
+        dev.reads.clear()
+        assertThrows(IllegalArgumentException::class.java) {
+            unlockOnly(dev, OUTER, VeraCryptUnlocker.Headers.HIDDEN_ONLY)
+        }
+        assertEquals(listOf(hiddenHeaderBlock), dev.reads)
     }
 
     @Test fun `protection takes its range from the hidden header`() {

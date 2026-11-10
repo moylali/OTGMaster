@@ -117,6 +117,9 @@ class VeraCryptUnlocker {
 
     class UnsupportedAlgorithmException(message: String) : Exception(message)
 
+    /** Which of a volume's two headers [unlock] tries. Each one costs a full key derivation. */
+    enum class Headers { BOTH, STANDARD_ONLY, HIDDEN_ONLY }
+
     fun unlock(
         device: RawBlockDevice,
         candidate: VolumeCandidate,
@@ -128,6 +131,12 @@ class VeraCryptUnlocker {
         hash: VeraCryptHash = VeraCryptHash.DEFAULT,
         /** Non-null mounts the outer volume with its hidden volume protected against writes to it. */
         protect: HiddenVolumeCredentials? = null,
+        /**
+         * BOTH for a single partition. A caller trying one password on many partitions passes
+         * STANDARD_ONLY to all of them first, so that the partitions the password does not fit
+         * cost one derivation each rather than two.
+         */
+        headers: Headers = Headers.BOTH,
     ): NativeDecryptedBlockDevice {
         requireSupported(cipher, hash)
         protect?.let { requireSupported(it.cipher, it.hash) }
@@ -141,12 +150,19 @@ class VeraCryptUnlocker {
         // In VeraCrypt's own order. Each header has its own salt and so costs a full key
         // derivation, which is why the hidden one is tried only after the standard one fails:
         // an ordinary unlock costs exactly what it always did.
-        val header = try {
+        fun standard() = if (headers == Headers.HIDDEN_ONLY) null else
             readHeader(device, candidate, VeraCryptHeader.STANDARD_HEADER_OFFSET, passwordBytes, cipher, hash, kdf)
-                ?: readHeader(device, candidate, VeraCryptHeader.HIDDEN_HEADER_OFFSET, passwordBytes, cipher, hash, kdf)
+        fun hidden() = if (headers == Headers.STANDARD_ONLY) null else
+            readHeader(device, candidate, VeraCryptHeader.HIDDEN_HEADER_OFFSET, passwordBytes, cipher, hash, kdf)
+        val header = try {
+            standard() ?: hidden()
         } finally {
             passwordBytes.fill(0)
-        } ?: throw IllegalArgumentException(WRONG_PASSWORD)
+        } ?: throw IllegalArgumentException(when (headers) {
+            Headers.BOTH -> WRONG_PASSWORD
+            Headers.STANDARD_ONLY -> WRONG_PASSWORD_STANDARD
+            Headers.HIDDEN_ONLY -> WRONG_PASSWORD_HIDDEN
+        })
 
         // Volume::Open: the main password must open the outer volume when protecting a hidden one.
         if (protect != null && header.isHidden) {
@@ -301,5 +317,9 @@ class VeraCryptUnlocker {
     private companion object {
         const val WRONG_PASSWORD = "Wrong password, PIM, keyfile, or cipher/hash selection. " +
             "Neither the standard nor the hidden volume header could be decrypted."
+        const val WRONG_PASSWORD_STANDARD = "Wrong password, PIM, keyfile, or cipher/hash selection. " +
+            "The standard volume header could not be decrypted."
+        const val WRONG_PASSWORD_HIDDEN = "Wrong password, PIM, keyfile, or cipher/hash selection. " +
+            "The hidden volume header could not be decrypted."
     }
 }
