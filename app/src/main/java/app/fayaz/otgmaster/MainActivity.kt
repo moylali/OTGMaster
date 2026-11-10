@@ -4746,12 +4746,31 @@ fun SettingsDrawer(
                         )
                         // The site's Support section: translations and bug reports as well as donations.
                         val supportUrl = stringResource(R.string.support_page_url)
-                        TextButton(
-                            onClick = { uriHandler.openUri(supportUrl) },
-                            modifier = Modifier.semantics { contentDescription = "donate_support_link" },
-                        ) {
-                            Text(stringResource(R.string.support_page_link))
-                        }
+                        val linkWord = stringResource(R.string.support_page_link)
+                        val sentence = stringResource(R.string.support_page_text, linkWord)
+                        val linkAt = sentence.indexOf(linkWord)
+                        val linkColor = MaterialTheme.colorScheme.primary
+                        Text(
+                            androidx.compose.ui.text.buildAnnotatedString {
+                                append(sentence)
+                                if (linkAt >= 0) addLink(
+                                    androidx.compose.ui.text.LinkAnnotation.Url(
+                                        supportUrl,
+                                        androidx.compose.ui.text.TextLinkStyles(
+                                            androidx.compose.ui.text.SpanStyle(
+                                                color = linkColor,
+                                                textDecoration = androidx.compose.ui.text.style.TextDecoration.Underline,
+                                            )
+                                        ),
+                                    ),
+                                    linkAt, linkAt + linkWord.length,
+                                )
+                            },
+                            style = MaterialTheme.typography.bodyMedium,
+                            modifier = Modifier
+                                .padding(horizontal = 8.dp, vertical = 4.dp)
+                                .testTag("donate_support_link"),
+                        )
                         Text(
                             stringResource(R.string.donate_thank_you),
                             style = MaterialTheme.typography.bodyMedium,
