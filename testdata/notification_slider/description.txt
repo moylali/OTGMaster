@@ -1,0 +1,1 @@
+A tap on the mounted-drives notification opens the app on the slider of mounted drives.

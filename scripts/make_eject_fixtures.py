@@ -42,6 +42,8 @@ CASES = {
     "usb_mode_wait_free": (VC, "usb_mode_wait_free", "USB access, Wait for Android: a drive Android left alone is opened after the wait, with no Scan."),
     "usb_mode_wait_held": (VC, "usb_mode_wait_held", "USB access, Wait for Android: a drive Android took stays with it."),
     "usb_mode_scan_warning": (VC, "usb_mode_scan_warning", "USB access, Wait for Android: Scan warns before taking a drive from Android."),
+    "slider_hint": (VC, "slider_hint", "The first time the slider closes with a drive mounted, a hint points at the Drives icon; a tap dismisses it and it does not come back."),
+    "notification_slider": (VC, "notification_slider", "A tap on the mounted-drives notification opens the app on the slider of mounted drives."),
     "report_issue": (PLAIN, "report_issue", "Report issue: the details and a random string reach a GitHub issue, which is then deleted."),
 }
 

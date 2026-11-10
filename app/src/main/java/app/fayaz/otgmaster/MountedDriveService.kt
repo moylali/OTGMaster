@@ -80,6 +80,8 @@ class MountedDriveService : Service() {
         private const val RESULT_CHANNEL = "drive_operations"
         private const val NOTIFICATION_ID = 0x07D6
         private const val RESULT_ID = 0x07D7
+        /** Request code of the intent that opens the app on the mounted-drives slider. */
+        private const val OPEN_MOUNTED_REQUEST = 1
         private const val HIDDEN_PROTECTION_ID = 0x07D8
         private const val EJECTED_ID = 0x07D9
         /** Android drops updates posted faster than this; progress need not be smoother. */
@@ -245,10 +247,16 @@ class MountedDriveService : Service() {
             }
         } }
 
-        /** Opens the main screen, and over it the progress dialog of [backupJobId] if there is one. */
-        private fun openApp(context: Context, backupJobId: String? = null): PendingIntent = PendingIntent.getActivity(context, backupJobId?.hashCode() ?: 0,
+        /**
+         * Opens the main screen, and over it the progress dialog of [backupJobId] if there is
+         * one, or with [mountedSlider] the slider of mounted drives. Each kind has its own
+         * request code: with FLAG_UPDATE_CURRENT a shared one would rewrite the others' extras.
+         */
+        private fun openApp(context: Context, backupJobId: String? = null, mountedSlider: Boolean = false): PendingIntent =
+            PendingIntent.getActivity(context, backupJobId?.hashCode() ?: if (mountedSlider) OPEN_MOUNTED_REQUEST else 0,
             Intent(context, MainActivity::class.java).addFlags(Intent.FLAG_ACTIVITY_SINGLE_TOP).apply {
                 backupJobId?.let { putExtra(app.fayaz.otgmaster.backup.BackupNotifications.EXTRA_PROGRESS_JOB, it) }
+                if (mountedSlider) putExtra(MainActivity.EXTRA_OPEN_MOUNTED, true)
             },
             PendingIntent.FLAG_IMMUTABLE or PendingIntent.FLAG_UPDATE_CURRENT)
 
@@ -260,7 +268,7 @@ class MountedDriveService : Service() {
             }
             val b = NotificationCompat.Builder(context, CHANNEL)
                 .setSmallIcon(R.drawable.ic_stat_drive)
-                .setContentIntent(openApp(context))
+                .setContentIntent(openApp(context, mountedSlider = true))
                 .setOngoing(true)
                 .setOnlyAlertOnce(true)
                 .setShowWhen(false)
