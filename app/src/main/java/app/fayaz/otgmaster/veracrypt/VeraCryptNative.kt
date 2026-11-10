@@ -58,8 +58,19 @@ object VeraCryptNative {
      * Throws IllegalStateException with Argon2's message when it fails (usually memory).
      */
     @JvmStatic
-    external fun argon2id(password: ByteArray, salt: ByteArray, timeCost: Int, memoryKiB: Int,
-                          lanes: Int, outLen: Int): ByteArray?
+    fun argon2id(password: ByteArray, salt: ByteArray, timeCost: Int, memoryKiB: Int,
+                 lanes: Int, outLen: Int): ByteArray? =
+        argon2(password, salt, timeCost, memoryKiB, lanes, outLen, dataIndependent = false)
+
+    /** Argon2i (version 0x13): as [argon2id], for LUKS2 keyslots made with `--pbkdf argon2i`. */
+    @JvmStatic
+    fun argon2i(password: ByteArray, salt: ByteArray, timeCost: Int, memoryKiB: Int,
+                lanes: Int, outLen: Int): ByteArray? =
+        argon2(password, salt, timeCost, memoryKiB, lanes, outLen, dataIndependent = true)
+
+    @JvmStatic
+    private external fun argon2(password: ByteArray, salt: ByteArray, timeCost: Int, memoryKiB: Int,
+                                lanes: Int, outLen: Int, dataIndependent: Boolean): ByteArray?
 
         external fun cryptSectorsInPlace(
         ciphers: IntArray,

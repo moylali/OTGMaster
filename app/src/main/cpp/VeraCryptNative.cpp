@@ -217,17 +217,22 @@ Java_app_fayaz_otgmaster_veracrypt_VeraCryptNative_encryptHeader(
  * on failure.
  */
 extern "C" JNIEXPORT jbyteArray JNICALL
-Java_app_fayaz_otgmaster_veracrypt_VeraCryptNative_argon2id(
+Java_app_fayaz_otgmaster_veracrypt_VeraCryptNative_argon2(
         JNIEnv *env, jobject thiz, jbyteArray jPassword, jbyteArray jSalt,
-        jint timeCost, jint memoryKiB, jint lanes, jint outLen) {
+        jint timeCost, jint memoryKiB, jint lanes, jint outLen, jboolean dataIndependent) {
     if (outLen <= 0 || outLen > 1024) return nullptr;
     jsize pwdLen = env->GetArrayLength(jPassword);
     jbyte* pwd = env->GetByteArrayElements(jPassword, NULL);
     jsize saltLen = env->GetArrayLength(jSalt);
     jbyte* salt = env->GetByteArrayElements(jSalt, NULL);
     uint8_t out[1024];
-    int ret = argon2id_hash_raw((uint32_t) timeCost, (uint32_t) memoryKiB, (uint32_t) lanes,
-                                pwd, (size_t) pwdLen, salt, (size_t) saltLen, out, (size_t) outLen);
+    // Argon2i for LUKS2 keyslots made with --pbkdf argon2i, Argon2id otherwise. Both were
+    // derived as Argon2id, so an Argon2i volume never unlocked (review, 2026-11-09).
+    int ret = dataIndependent
+        ? argon2i_hash_raw((uint32_t) timeCost, (uint32_t) memoryKiB, (uint32_t) lanes,
+                           pwd, (size_t) pwdLen, salt, (size_t) saltLen, out, (size_t) outLen)
+        : argon2id_hash_raw((uint32_t) timeCost, (uint32_t) memoryKiB, (uint32_t) lanes,
+                            pwd, (size_t) pwdLen, salt, (size_t) saltLen, out, (size_t) outLen);
     mbedtls_platform_zeroize(pwd, pwdLen);
     env->ReleaseByteArrayElements(jPassword, pwd, JNI_ABORT);
     env->ReleaseByteArrayElements(jSalt, salt, JNI_ABORT);
