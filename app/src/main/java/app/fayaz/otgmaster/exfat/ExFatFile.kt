@@ -184,7 +184,7 @@ class ExFatFile(
         if (isClosed) return
         fileSystem.lock.withLock {
             if (!isClosed && !fileSystem.isUnmounted && !fileSystem.readOnly) {
-                ExFatNative.flush(fileSystem.exfatPtr)
+                fileSystem.flushOrThrow()
             }
         }
     }
@@ -197,15 +197,17 @@ class ExFatFile(
             if (!fileSystem.isUnmounted) {
                 // Only flush if this handle mutated the volume. Flushing on every
                 // close made read-only access pay for a metadata write.
-                if (dirty) {
-                    ExFatNative.flush(fileSystem.exfatPtr)
-                    dirty = false
-                }
+                // A failed flush is reported, after the node is released as it would be
+                // anyway: the handle is closed either way, and libexfat keeps the
+                // metadata dirty, so the next flush or the unmount retries it.
+                val failure = if (dirty) runCatching { fileSystem.flushOrThrow() }.exceptionOrNull() else null
+                dirty = false
                 // Root node ref count is NOT incremented by getRootNode (it just wraps the
                 // pointer), so putNode must not be called on root — exfat_unmount handles it.
                 if (!isRoot) {
                     ExFatNative.putNode(fileSystem.exfatPtr, node.nodePtr)
                 }
+                if (failure != null) throw failure
             }
         }
     }
