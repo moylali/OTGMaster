@@ -18,6 +18,12 @@ import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.LaunchedEffect
+import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.remember
+import androidx.compose.runtime.setValue
+import kotlinx.coroutines.delay
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.geometry.Offset
@@ -38,6 +44,16 @@ import kotlin.math.roundToInt
  */
 @Composable
 fun BoxScope.SliderHint(anchor: Offset, onDismiss: () -> Unit, onNeverShow: () -> Unit) {
+    // A tick saves the choice at once ([onNeverShow]), then shows in the box for a moment before
+    // the hint goes, so the tap visibly took.
+    var ticked by remember { mutableStateOf(false) }
+    LaunchedEffect(ticked) {
+        if (ticked) {
+            delay(TICK_FEEDBACK_MS)
+            onDismiss()
+        }
+    }
+    val tick = { if (!ticked) { ticked = true; onNeverShow() } }
     val density = LocalDensity.current
     val arrowW = 18.dp
     val arrowH = 9.dp
@@ -60,7 +76,7 @@ fun BoxScope.SliderHint(anchor: Offset, onDismiss: () -> Unit, onNeverShow: () -
                 .padding(top = arrowH, end = 8.dp, start = 24.dp)
                 .widthIn(max = 280.dp)
                 .semantics { contentDescription = "slider_hint" }
-                .clickable(onClick = onDismiss),
+                .clickable(enabled = !ticked, onClick = onDismiss),
         ) {
             Column(Modifier.padding(start = 14.dp, end = 14.dp, top = 10.dp, bottom = 2.dp)) {
                 Text(stringResource(R.string.slider_hint), style = MaterialTheme.typography.bodyMedium)
@@ -69,11 +85,11 @@ fun BoxScope.SliderHint(anchor: Offset, onDismiss: () -> Unit, onNeverShow: () -
                     verticalAlignment = Alignment.CenterVertically,
                     modifier = Modifier
                         .semantics { contentDescription = "slider_hint_never" }
-                        .clickable(onClick = onNeverShow),
+                        .clickable(enabled = !ticked, onClick = tick),
                 ) {
                     Checkbox(
-                        checked = false,
-                        onCheckedChange = { onNeverShow() },
+                        checked = ticked,
+                        onCheckedChange = { tick() },
                         colors = CheckboxDefaults.colors(uncheckedColor = MaterialTheme.colorScheme.inverseOnSurface),
                     )
                     Text(stringResource(R.string.slider_hint_never), style = MaterialTheme.typography.bodySmall)
@@ -82,3 +98,6 @@ fun BoxScope.SliderHint(anchor: Offset, onDismiss: () -> Unit, onNeverShow: () -
         }
     }
 }
+
+/** How long the ticked box shows before the hint goes. */
+const val TICK_FEEDBACK_MS = 700L

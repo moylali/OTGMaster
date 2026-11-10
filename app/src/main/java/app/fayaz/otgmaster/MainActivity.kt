@@ -3989,7 +3989,7 @@ fun OtgMasterApp(
     if (!showMounted) MountedEdgeSwipe(onOpen = { showMounted = true })
     if (sliderHint && !showMounted) drivesIconAnchor?.let { anchor ->
         SliderHint(anchor, onDismiss = { sliderHint = false },
-            onNeverShow = { sliderHint = false; onSliderHintOff() })
+            onNeverShow = onSliderHintOff)
     }
     MountedDrawer(visible = showMounted, onDismiss = { showMounted = false }) {
         app.fayaz.otgmaster.ui.MountedPanel(
