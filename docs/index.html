@@ -57,6 +57,12 @@
     ol li, ul li { margin: 0.35rem 0; }
     ol ul, ul ul { margin-top: 0.35rem; }
     .kofi { vertical-align: middle; height: 32px; }
+    /* Opened at #support (the app's Donate dialog links here): it is the last section, so it is
+       made tall enough to scroll to the top of the window, and set off like a card. */
+    #support { scroll-margin-top: 16px; }
+    #support:target { min-height: calc(100vh - 32px); box-sizing: border-box; margin: 2rem -16px 0; padding: 0 16px 16px;
+      background: var(--card); border: 1px solid var(--border); border-radius: 8px; }
+    #support:target h2 { margin-top: 1rem; }
     footer { max-width: 760px; margin: 0 auto; padding: 24px 16px 48px; color: var(--muted); font-size: 0.875rem; border-top: 1px solid var(--border); }
     footer a { color: var(--muted); text-decoration: underline; }
     @media (max-width: 480px) {
@@ -159,12 +165,14 @@
       <li><strong>APFS</strong>: write support. APFS is read-only today, plain or encrypted.</li>
     </ul>
 
+    <section id="support">
     <h2>Support</h2>
     <ul>
       <li>Help with refinement and translations of the text shown in the app.</li>
       <li>Report issues via the <a href="https://otgmaster-feedback.moylali.workers.dev/">feedback form</a> or <a href="https://github.com/moylali/OTGMaster/issues">GitHub issues</a> to help make the app stable.</li>
       <li>Donate to support the app via Ko-fi: <a href="https://ko-fi.com/moylali"><img class="kofi" src="https://ko-fi.com/img/githubbutton_sm.svg" alt="Support Me on Ko-fi"></a></li>
     </ul>
+    </section>
   </main>
   <footer>
     <a href="https://github.com/moylali/OTGMaster">Source on GitHub</a> ·
