@@ -1,6 +1,1 @@
-• New: open VeraCrypt hidden volumes, with hidden volume protection as in VeraCrypt
-• New: Eject unmounts a whole drive and hands it back to Android
-• New: USB access setting: open drives always, only when you tap Scan, or only if Android did not
-• New: a setting to disable backups, which hides their icon, tab and form
-• New: on tablets in landscape the form stays centred, and mounted drives open in the slider
-• Fixed: LUKS2 drives unlock as fast as they did before 0.5.0
+• Fixed: Unmount waits for a file copy or a backup to finish, as Eject does

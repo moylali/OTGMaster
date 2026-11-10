@@ -190,8 +190,9 @@ class MountedDriveService : Service() {
                 .build())
         }
 
-        /** An Eject the user did not stay to watch has finished. */
-        fun driveEjected(context: Context, name: String, message: String) {
+        /** An Eject, or with [titleRes] an Unmount, the user did not stay to watch has finished. */
+        fun driveEjected(context: Context, name: String, message: String,
+                         titleRes: Int = R.string.notification_ejected_title) {
             val app = context.applicationContext
             val nm = app.getSystemService(NotificationManager::class.java) ?: return
             if (nm.getNotificationChannel(RESULT_CHANNEL) == null) {
@@ -200,7 +201,7 @@ class MountedDriveService : Service() {
             }
             nm.notify(EJECTED_ID, NotificationCompat.Builder(app, RESULT_CHANNEL)
                 .setSmallIcon(R.drawable.ic_stat_drive)
-                .setContentTitle(app.getString(R.string.notification_ejected_title, name))
+                .setContentTitle(app.getString(titleRes, name))
                 .setContentText(message)
                 .setStyle(NotificationCompat.BigTextStyle().bigText(message))
                 .setContentIntent(openApp(app))

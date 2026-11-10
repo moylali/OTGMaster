@@ -35,6 +35,13 @@
     <string name="log_ejected">Ejected %1$s and released it.</string>
     <string name="log_eject_waiting">Eject of %1$s is waiting for a transfer to finish.</string>
     <string name="log_eject_cancelled">Eject of %1$s cancelled.</string>
+    <string name="unmount_busy_text">Will unmount once the transfer is complete.</string>
+    <string name="unmount_cancel">Cancel unmount</string>
+    <string name="unmount_pending">Unmounting when transfer finishes</string>
+    <string name="unmount_done">Unmounted after the transfer finished.</string>
+    <string name="notification_unmounted_title">%1$s unmounted</string>
+    <string name="log_unmount_waiting">Unmount of %1$s is waiting for a transfer to finish.</string>
+    <string name="log_unmount_cancelled">Unmount of %1$s cancelled.</string>
     <string name="usb_access_title">USB access</string>
     <string name="usb_access_manual">Manual</string>
     <string name="usb_access_manual_text">OTG Master leaves a drive alone until you tap Scan USB devices.</string>
