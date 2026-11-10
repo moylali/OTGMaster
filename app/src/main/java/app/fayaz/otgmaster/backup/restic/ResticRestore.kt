@@ -15,6 +15,12 @@ class ResticRestore(private val repo: ResticRepository) {
     var filesRestored = 0L; private set
     var bytesRestored = 0L; private set
 
+    /** Polled before each file and each blob; a restore asked to stop throws [CancelledException]. */
+    var isCancelled: () -> Boolean = { false }
+
+    /** Told after each file is in place. */
+    var onFileDone: () -> Unit = {}
+
     /** The node at [path] inside the snapshot ("" is its top), or null. */
     fun find(snapshot: ResticRepository.Snapshot, path: String): ResticRepository.Node? {
         var tree = snapshot.tree
@@ -33,10 +39,23 @@ class ResticRestore(private val repo: ResticRepository) {
         return repo.tree(n.subtree ?: throw IOException("$path is a file, not a folder"))
     }
 
-    /** Writes [node] (a file or a whole folder) to [targetPath] in [target]. */
+    /**
+     * Writes [node] (a file or a whole folder) to [targetPath] in [target].
+     *
+     * A file is written to a hidden sibling first and moved over the destination only
+     * once every blob has been read and checked, so a damaged or missing blob, a backup
+     * drive that goes away, or Cancel leaves what was there. It used to truncate the
+     * destination before reading the first blob. Something of the other kind in the way
+     * (a folder where a file goes, or a file where a folder goes) is an error, not a
+     * deletion. Review finding 10, 2026-11-09.
+     */
     fun restore(node: ResticRepository.Node, target: FileTree, targetPath: String) {
+        if (isCancelled()) throw CancelledException()
+        val existing = target.stat(targetPath)
         when (node.type) {
             "dir" -> {
+                if (existing != null && !existing.isDirectory)
+                    throw IOException("$targetPath: a file is in the way of the folder being restored, so it was left as it is")
                 target.mkdirs(targetPath)
                 for (child in repo.tree(node.subtree ?: return)) {
                     Paths.requireSafeName(child.name)
@@ -44,14 +63,33 @@ class ResticRestore(private val repo: ResticRepository) {
                 }
             }
             "file" -> {
-                target.openWrite(targetPath).use { out ->
-                    for (id in node.content) {
-                        val b = repo.blob(id)
-                        out.write(b)
-                        bytesRestored += b.size
+                if (existing?.isDirectory == true)
+                    throw IOException("$targetPath: a folder is in the way of the file being restored, so it was left as it is")
+                val name = Paths.name(targetPath)
+                val partial = Paths.join(Paths.parent(targetPath), ".$name$PARTIAL_SUFFIX")
+                target.delete(partial)   // from an earlier run that did not finish
+                var written = 0L
+                try {
+                    target.openWrite(partial).use { out ->
+                        for (id in node.content) {
+                            if (isCancelled()) throw CancelledException()
+                            val b = repo.blob(id)
+                            out.write(b)
+                            written += b.size
+                        }
                     }
+                    if (written != node.size) throw DamagedException("$targetPath: restored $written bytes, the snapshot says ${node.size}")
+                } catch (t: Throwable) {
+                    runCatching { target.delete(partial) }
+                    throw t
                 }
+                // Only now is the old file let go. Should the rename fail, the restored copy
+                // is still there under its temporary name.
+                if (existing != null) target.delete(targetPath)
+                target.rename(partial, name)
+                bytesRestored += written
                 filesRestored++
+                onFileDone()
             }
             // Symlinks, devices and the like have no meaning on a phone folder or a USB drive.
             else -> Unit
@@ -65,5 +103,10 @@ class ResticRestore(private val repo: ResticRepository) {
             Paths.requireSafeName(child.name)
             restore(child, target, Paths.join(targetPath, child.name))
         }
+    }
+
+    companion object {
+        /** Suffix of the hidden file a restore writes before moving it into place. */
+        const val PARTIAL_SUFFIX = ".otgrestore"
     }
 }

@@ -278,6 +278,8 @@ class BackupRunner(private val context: Context) {
                 val repo = repository(job)
                 val snap = repo.snapshots().firstOrNull { it.id == snapshotId } ?: throw IllegalStateException("snapshot ${snapshotId.take(8)} is gone")
                 val r = ResticRestore(repo)
+                // Checked before each file and blob, not just once before the copy began.
+                r.isCancelled = control.isCancelled
                 val tree = SafFileTree(context.contentResolver, target)
                 val inSnapshot = Paths.join(snapshotPath(job).trim('/'), subPath.trim('/'))
                 val node = r.find(snap, inSnapshot) ?: throw IllegalStateException("$subPath is not in that snapshot")
