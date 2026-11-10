@@ -260,6 +260,29 @@ class VeraCryptDocumentProvider : DocumentsProvider() {
         }
 
         /**
+         * Resolves [documentId] for an open, truncates it if [truncate], and registers the
+         * handle (and, if [write], the writer), all under the drive's lock.
+         *
+         * openDocument() used to do all of this outside the lock, on the binder thread.
+         * Resolution walks directories and truncation frees clusters, so both could run
+         * at the same time as a write on the proxy thread or another binder call on the
+         * same volume: on FAT32, which has no lock of its own, two threads then changed
+         * the allocation table at once. And because the writer was registered after
+         * resolution, a delete could check for writers, find none, and then remove the
+         * file an open had just resolved. Registering under the lock lets
+         * deleteDocument() check again under the same lock and see every open that
+         * finished before it. Review finding 8, 2026-11-09.
+         */
+        internal fun openUnderLock(documentId: String?, write: Boolean, truncate: Boolean,
+                                   resolve: () -> UsbFile?): UsbFile = onDrive(documentId, "open") {
+            val file = resolve() ?: throw FileNotFoundException("File not found")
+            if (truncate) file.length = 0
+            if (write) documentId?.let { writerOpened(it) }
+            handleOpened(documentId)
+            file
+        }
+
+        /**
          * Blocks until all previously-queued proxyHandler messages have run, then returns.
          * Call this on a background thread before unmounting a filesystem to ensure any
          * in-flight onRelease() callbacks (which call file.close()) finish before the
@@ -297,7 +320,10 @@ class VeraCryptDocumentProvider : DocumentsProvider() {
     override fun deleteDocument(documentId: String?) {
         val settled = documentId == null || awaitWriters(documentId)
         onDrive(documentId, "delete") {
-            if (!settled) throw java.io.IOException("Cannot delete: a file there is still open for writing")
+            // Checked again under the lock: an open that registered its writer after the
+            // wait above did so under this lock (openUnderLock), so it is seen here.
+            if (!settled || (documentId != null && writerInside(documentId)))
+                throw java.io.IOException("Cannot delete: a file there is still open for writing")
             deleteDocumentImpl(documentId)
         }
     }
@@ -429,18 +455,15 @@ class VeraCryptDocumentProvider : DocumentsProvider() {
         mode: String?,
         signal: CancellationSignal?
     ): ParcelFileDescriptor {
-        val file = getFileForDocId(documentId) ?: throw FileNotFoundException("File not found")
-        if (!file.isDirectory) extendReadGrant(documentId)
-        
         val isWrite = mode?.contains("w") == true || mode?.contains("a") == true || mode?.contains("t") == true
-        if (isWrite) {
-            val storageManager = context?.getSystemService(StorageManager::class.java)
-                ?: throw IllegalStateException("StorageManager not available")
+        val storageManager = context?.getSystemService(StorageManager::class.java)
+            ?: throw IllegalStateException("StorageManager not available")
+        val file = openUnderLock(documentId, write = isWrite, truncate = isWrite && mode?.contains("t") == true) {
+            getFileForDocId(documentId)
+        }
+        if (!file.isDirectory) extendReadGrant(documentId)
 
-            if (mode?.contains("t") == true) {
-                file.length = 0 // truncate
-            }
-            
+        if (isWrite) {
             val callback = object : ProxyFileDescriptorCallback() {
                 override fun onGetSize(): Long = onDrive(documentId, "size") { file.length }
 
@@ -466,8 +489,6 @@ class VeraCryptDocumentProvider : DocumentsProvider() {
             }
 
             val pfdMode = ParcelFileDescriptor.parseMode(mode ?: "r")
-            documentId?.let { writerOpened(it) }
-            handleOpened(documentId)
             try {
                 return storageManager.openProxyFileDescriptor(pfdMode, callback, proxyHandler)
             } catch (e: Exception) {
@@ -477,9 +498,6 @@ class VeraCryptDocumentProvider : DocumentsProvider() {
                 throw e
             }
         }
-
-        val storageManager = context?.getSystemService(StorageManager::class.java)
-            ?: throw IllegalStateException("StorageManager not available")
 
         val callback = object : ProxyFileDescriptorCallback() {
             override fun onGetSize(): Long = onDrive(documentId, "size") { file.length }
@@ -496,7 +514,6 @@ class VeraCryptDocumentProvider : DocumentsProvider() {
             }
         }
 
-        handleOpened(documentId)
         try {
             return storageManager.openProxyFileDescriptor(
                 ParcelFileDescriptor.MODE_READ_ONLY, callback, readHandlerFor(documentId)
