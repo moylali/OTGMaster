@@ -4179,7 +4179,15 @@ class E2EAutomatedTest {
                 repeat(2) { round ->
                     InstrumentationRegistry.getInstrumentation().targetContext.startActivity(mainActivityIntent()
                         .addFlags(Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_CLEAR_TASK))
-                    val again = device.wait(Until.findObject(By.desc("slider_hint")), timeout)
+                    assertTrue("the app did not open", device.wait(Until.hasObject(By.pkg("app.fayaz.otgmaster").depth(0)), timeout))
+                    val opened = android.os.SystemClock.uptimeMillis()
+                    // Not straight away: it waits SLIDER_HINT_OPEN_DELAY_MS.
+                    android.os.SystemClock.sleep(SLIDER_HINT_OPEN_DELAY_MS / 2)
+                    assertNull("the hint came up before its delay", device.findObject(By.desc("slider_hint")))
+                    val again = device.wait(Until.findObject(By.desc("slider_hint")), SLIDER_HINT_OPEN_DELAY_MS + 10_000L)
+                    val after = android.os.SystemClock.uptimeMillis() - opened
+                    assertTrue("the hint came up ${after} ms after the app opened, before its delay",
+                        again == null || after >= SLIDER_HINT_OPEN_DELAY_MS - 1000L)
                     if (again == null) captureScreen("no_slider_hint_on_open_$round")
                     assertNotNull("no hint when the app was opened with a drive mounted (open ${round + 1})", again)
                     assertNull("the slider opened by itself", device.findObject(By.desc("mounted_drawer")))
