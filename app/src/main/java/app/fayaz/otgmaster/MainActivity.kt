@@ -29,6 +29,7 @@ import androidx.compose.ui.graphics.lerp
 import kotlinx.coroutines.delay
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
+import androidx.compose.ui.draw.clip
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
@@ -4733,12 +4734,16 @@ fun SettingsDrawer(
                         title = stringResource(R.string.donate_title),
                         summary = stringResource(R.string.donate_summary)
                     ) {
-                        TextButton(
-                            onClick = { uriHandler.openUri(donateUrl) },
-                            modifier = Modifier.fillMaxWidth()
-                        ) {
-                            Text(donateUrl)
-                        }
+                        // Ko-fi's own button, as on the README and the site, in place of the bare URL.
+                        androidx.compose.foundation.Image(
+                            painter = androidx.compose.ui.res.painterResource(R.drawable.kofi_button),
+                            contentDescription = stringResource(R.string.donate_kofi),
+                            modifier = Modifier
+                                .padding(horizontal = 8.dp, vertical = 8.dp)
+                                .height(36.dp)
+                                .clip(RoundedCornerShape(8.dp))
+                                .clickable(role = androidx.compose.ui.semantics.Role.Button) { uriHandler.openUri(donateUrl) }
+                        )
                         Text(
                             stringResource(R.string.donate_thank_you),
                             style = MaterialTheme.typography.bodyMedium,
