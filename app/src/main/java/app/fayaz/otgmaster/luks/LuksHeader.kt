@@ -72,7 +72,9 @@ sealed class Luks2Keyslot {
         val timeCost: Int,
         val memoryCostKiB: Int,
         val parallelism: Int,
-        val salt: ByteArray
+        val salt: ByteArray,
+        /** "argon2id" or "argon2i", as the header names it; the key must be derived with that one. */
+        val kdfType: String = "argon2id",
     ) : Luks2Keyslot()
 
     data class Pbkdf2(
@@ -234,7 +236,8 @@ object LuksParser {
                         timeCost     = kdf.getInt("time"),
                         memoryCostKiB= kdf.getInt("memory"),
                         parallelism  = kdf.getInt("cpus"),
-                        salt         = Base64.getDecoder().decode(kdf.getString("salt"))
+                        salt         = Base64.getDecoder().decode(kdf.getString("salt")),
+                        kdfType      = kdf.getString("type"),
                     ))
                 }
                 "pbkdf2" -> {

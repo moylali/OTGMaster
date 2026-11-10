@@ -212,9 +212,15 @@ class LuksUnlocker {
                 // same code then runs in host tests, where a LUKS2 volume made by
                 // LuksVolumeCreator or by cryptsetup is unlocked against a loopback image.
                 try {
-                    app.fayaz.otgmaster.veracrypt.VeraCryptNative.argon2id(password, slot.salt,
-                        slot.timeCost, slot.memoryCostKiB, slot.parallelism, slot.keySize)
-                        ?: throw UnsupportedFormatException("Argon2id could not run")
+                    // The variant the keyslot names: Argon2i keyslots were derived as Argon2id
+                    // and never unlocked (review, 2026-11-09).
+                    (if (slot.kdfType == "argon2i")
+                        app.fayaz.otgmaster.veracrypt.VeraCryptNative.argon2i(password, slot.salt,
+                            slot.timeCost, slot.memoryCostKiB, slot.parallelism, slot.keySize)
+                    else
+                        app.fayaz.otgmaster.veracrypt.VeraCryptNative.argon2id(password, slot.salt,
+                            slot.timeCost, slot.memoryCostKiB, slot.parallelism, slot.keySize))
+                        ?: throw UnsupportedFormatException("Argon2 could not run")
                 } catch (e: IllegalStateException) {
                     throw UnsupportedFormatException(
                         "This LUKS2 volume requires ${slot.memoryCostKiB / 1024} MiB to unlock " +
