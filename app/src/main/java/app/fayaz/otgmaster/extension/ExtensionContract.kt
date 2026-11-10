@@ -4,6 +4,7 @@ import android.content.Context
 import android.content.Intent
 import app.fayaz.otgmaster.BuildConfig
 import app.fayaz.otgmaster.MountedDrive
+import app.fayaz.otgmaster.veracrypt.VeraCryptVolumeType
 import java.security.MessageDigest
 
 /**
@@ -76,9 +77,29 @@ object ExtensionContract {
      * their id still changes between plugs; nothing on such a device is stable
      * enough to do better without reading the volume.
      */
-    fun stableDriveId(deviceKey: String?, startBlock: Long, taken: Collection<String>): String {
-        val digest = MessageDigest.getInstance("SHA-256")
-            .digest("${deviceKey ?: "unknown"}@$startBlock".toByteArray())
+    fun stableDriveId(deviceKey: String?, startBlock: Long, taken: Collection<String>): String =
+        driveIdFrom("${deviceKey ?: "unknown"}@$startBlock", taken)
+
+    /**
+     * The drive id for an unlocked VeraCrypt volume: [stableDriveId], except that a hidden
+     * volume gets an id of its own.
+     *
+     * The outer and the hidden volume of one partition start at the same block, so they
+     * shared an id, and with it every document id. A folder grant another app was given
+     * on the outer volume, which Android keeps across unmounts, then opened the hidden
+     * volume's files as soon as it was unlocked, with no new permission asked, and to
+     * that app the two looked like the same drive. Review finding 1, 2026-11-09. The
+     * outer and normal volumes keep the id they had, so existing grants on them still
+     * work; a grant made on a hidden volume before this change has to be given again.
+     */
+    fun veraCryptDriveId(deviceKey: String?, startBlock: Long, volumeType: VeraCryptVolumeType?,
+                         taken: Collection<String>): String =
+        if (volumeType == VeraCryptVolumeType.HIDDEN)
+            driveIdFrom("${deviceKey ?: "unknown"}@$startBlock#hidden", taken)
+        else stableDriveId(deviceKey, startBlock, taken)
+
+    private fun driveIdFrom(key: String, taken: Collection<String>): String {
+        val digest = MessageDigest.getInstance("SHA-256").digest(key.toByteArray())
         val base = digest.joinToString("") { "%02x".format(it) }.take(10)
         // The same partition is never mounted twice, but two serial-less devices
         // could in principle share a bus path across a replug race; never alias.
