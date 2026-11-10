@@ -354,6 +354,30 @@ Vendored fork of [magnusja/libaums](https://github.com/magnusja/libaums).
 | `ScsiBlockDevice`, new `ScsiBlock16` | V23: drives over 2 TiB: READ CAPACITY(16) when READ CAPACITY(10) answers 0xFFFFFFFF, and READ(16)/WRITE(16) for transfers reaching past block 0xFFFFFFFF. Upstream threw "Device requires SCSI READ CAPACITY(16)" at open, so such a drive did not open at all, and its `deviceOffset.toInt()` would have sent a transfer past 2^32 blocks to the start of the drive. Transfers below keep the 10-byte commands. `LargeDiskScsiTest` (issue #87's 5,860,532,224-sector disk) fails on the old code | the commit adding this row |
 | `ScsiBlockDevice` | V26: READ CAPACITY(10) asked again, up to 3 times a second apart, before 0xFFFFFFFF is believed. Issue #87's 2 TB SSD (3,907,029,168 blocks) in a Realtek RTL9210 (0bda:9210) enclosure said 0xFFFFFFFF on first plug, then answered no READ CAPACITY(16) (6 attempts, the last Reset Recovery failed) until replugged, and on the replug gave its real size. A disk really over 2 TiB costs 3 s once at open. Both answers go to the app's log. Two `LargeDiskScsiTest` cases; the first sends READ CAPACITY(16) on the old code | the commit adding this row |
 | `ScsiBlockDevice` | V25: a count of the Bulk-Only Mass Storage Resets sent, including those inside a retry that succeeded, so the app can tell that a reset happened. A reset can make a drive lose writes it had already acknowledged: on a OnePlus 7 (2026-10-30) a write failed at block 17,607,921, libaums reset the drive six times, and block 17,607,920 (written and confirmed by the command before) read back as zeros, because it shares a 4 KiB unit with the failed write's start. `LibaumsRawBlockDevice` keeps the last 1 MiB written and writes it again after any reset. `WriteReplayTest` fails on the code without the replay | the commit adding this row |
+| `FatFile` | V27: a grow zeroes the bytes it exposes between the old end and the new data (old last cluster's slack, reallocated clusters), so deleted data cannot be read back through a write past the end. `Fat32GrowTest` | see below |
+| `FatFile` | V28: a length or write past 0xFFFFFFFF bytes is refused with an IOException before anything is allocated, instead of the size wrapping modulo 4 GiB. `Fat32GrowTest` | see below |
+
+## V27 and V28: growing a file exposed old data, and could pass 4 GiB
+
+Both came from the security and data-integrity review of 2026-11-09 (findings 2 and 3).
+
+**V27.** `FatFile.length` and `FatFile.write` grew the cluster chain and moved the size,
+and wrote nothing into the bytes between the old end of the file and the new data. Those
+bytes are whatever the drive held: the slack of the old last cluster and every cluster
+the allocator handed out. On a VeraCrypt or LUKS volume that is the decrypted plaintext
+of deleted files, and any app allowed to write one file could read it back by writing
+past the end. `FatFile.read` (V3) stopped reads at the file's size, which did not help,
+because these bytes were inside it. Now the grow zeroes them, a 1 MiB chunk at a time.
+A write starts zeroing at the old end and stops at its own offset, so an append, which
+starts at the old end, writes no extra bytes. `Fat32GrowTest` fills every free cluster
+with a pattern first: on the old code a write 200,000 bytes past a 100-byte file read
+back 199,900 non-zero bytes, and a grow inside the last cluster 2,990.
+
+**V28.** A FAT32 directory entry stores the size in 32 bits, and `FatDirectoryEntry`
+keeps the low 32 bits of whatever it is given. Nothing refused more, so copying a 5 GB
+video allocated every cluster and recorded the size modulo 4 GiB. Now a length or write
+past 0xFFFFFFFF throws an IOException before anything is allocated. The test's write
+ending at 4 GiB + 1 byte was accepted on the old code, which recorded the size as 1.
 
 ## V19: `ClusterChain.write` stopped at four clusters
 
