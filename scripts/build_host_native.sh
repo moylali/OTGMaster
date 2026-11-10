@@ -60,6 +60,8 @@ for f in "$cpp"/mbedtls/library/*.c "$cpp"/bitlocker/*.c "$cpp"/serpent/*.c \
     objs+=("$o")
 done
 for f in "$cpp"/argon2/src/*.c "$cpp"/argon2/src/blake2/*.c; do
+    # The host is x86: the NEON port is for arm64 devices only, as in CMakeLists.txt.
+    [ "$(basename "$f")" = opt_neon.c ] && continue
     o="$obj/argon2_$(basename "$f" .c).o"
     gcc -c -fPIC -O2 -w -I"$cpp/argon2/include" "$f" -o "$o" & pids+=($!)
     objs+=("$o")
