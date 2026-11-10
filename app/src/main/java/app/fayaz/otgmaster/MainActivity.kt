@@ -3386,6 +3386,9 @@ internal fun suggestedVolumeLabel(drive: MountedDrive): String {
         .trim().take(11).ifEmpty { "OTGMASTER" }
 }
 
+/** How long after the app opens with drives mounted the hint at the Drives icon appears. */
+const val SLIDER_HINT_OPEN_DELAY_MS = 10_000L
+
 @OptIn(ExperimentalMaterial3Api::class, ExperimentalComposeUiApi::class)
 @Composable
 fun OtgMasterApp(
@@ -3544,10 +3547,14 @@ fun OtgMasterApp(
             onSliderHintSeen()
         }
     }
-    // Opened with drives already mounted: point at where they are, unless the slider is up
-    // (a tap on the mounted-drives notification opens it).
+    // Opened with drives already mounted: point at where they are, after a pause so the screen
+    // has settled and it does not land on the first tap, unless by then the slider is up (a tap
+    // on the mounted-drives notification opens it) or the drives are gone.
+    val currentMounted by androidx.compose.runtime.rememberUpdatedState(mountedDrives)
     LaunchedEffect(Unit) {
-        if (sliderHintOnOpen && !showMounted && mountedDrives.isNotEmpty()) sliderHint = true
+        if (!sliderHintOnOpen) return@LaunchedEffect
+        kotlinx.coroutines.delay(SLIDER_HINT_OPEN_DELAY_MS)
+        if (!showMounted && currentMounted.isNotEmpty()) sliderHint = true
     }
     // A tap on the mounted-drives notification.
     LaunchedEffect(openMountedRequest) {
