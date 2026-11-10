@@ -258,7 +258,7 @@ class CachedBlockDeviceTest {
     /**
      * A write that lands while a line is being fetched must win.
      *
-     * lineFor() releases the lock for the device read, so the fetched bytes can
+     * copyFromLine() releases the lock for the device read, so the fetched bytes can
      * predate a concurrent write. Publishing them would leave the cache disagreeing
      * with the device until the line is evicted — every later read wrong. This is
      * the lost update that "do the I/O outside the lock, then patch" produces if the
@@ -423,5 +423,57 @@ class CachedBlockDeviceTest {
         }
 
         override fun close() {}
+    }
+
+    /**
+     * A hit must not hand back bytes another thread is zeroing.
+     *
+     * lineFor() returned the cached array itself and readBlocks() copied from it after
+     * the lock was released, so an eviction on another thread (which zeroes the
+     * evicted line, as plaintext must not linger) could land mid-copy: the read
+     * returned zeros, or a mix, and reported success. Thread A re-reads line 0 while
+     * thread B walks other lines through a four-line cache, evicting constantly.
+     */
+    @Test
+    fun `a hit is never zeroed by an eviction on another thread`() {
+        val dev = object : RawBlockDevice {
+            override val blockSize = 512
+            override val blockCount = 4096L
+            // No zero bytes anywhere, so any zero a read returns came from the cache.
+            val store = ByteArray((blockCount * blockSize).toInt()) { (1 + it % 250).toByte() }
+            override fun readBlocks(startBlock: Long, blockCount: Int): ByteArray {
+                val from = (startBlock * blockSize).toInt()
+                return store.copyOfRange(from, from + blockCount * blockSize)
+            }
+            override fun writeBlocks(startBlock: Long, data: ByteArray) =
+                throw UnsupportedOperationException()
+            override fun close() {}
+        }
+        val lineBlocks = 64
+        val cache = CachedBlockDevice(dev, maxCacheBytes = 4 * lineBlocks * 512, readAheadBytes = lineBlocks * 512)
+        val want = dev.store.copyOfRange(0, (lineBlocks - 1) * 512)
+        val stop = java.util.concurrent.atomic.AtomicBoolean(false)
+        val bad = java.util.concurrent.atomic.AtomicReference<String?>(null)
+        val evictor = Thread {
+            var line = 1L
+            while (!stop.get()) {
+                cache.readBlocks(line * lineBlocks, 1)
+                line = 1 + line % 60
+            }
+        }
+        evictor.start()
+        val end = System.nanoTime() + TimeUnit.SECONDS.toNanos(3)
+        try {
+            while (System.nanoTime() < end && bad.get() == null) {
+                val got = cache.readBlocks(0, lineBlocks - 1)
+                if (!got.contentEquals(want)) {
+                    bad.set("read of line 0 returned ${got.count { it == 0.toByte() }} zero bytes")
+                }
+            }
+        } finally {
+            stop.set(true)
+            evictor.join()
+        }
+        assertEquals(null, bad.get())
     }
 }
