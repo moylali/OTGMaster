@@ -1,0 +1,1 @@
+Unmount with nothing in use: no dialog, and it unmounts straight away.

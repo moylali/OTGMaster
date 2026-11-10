@@ -3899,7 +3899,117 @@ class E2EAutomatedTest {
         assertTrue("Settings stayed open", device.wait(Until.gone(By.res("settings_row_theme")), timeout))
     }
 
+    private fun umTapUnmount() {
+        android.os.SystemClock.sleep(UNMOUNT_SETTLE_MS)
+        val unmount = findInSlider(By.desc("unmount_button"))
+        if (unmount == null) captureScreen("no_unmount_button")
+        assertNotNull("no Unmount on the drive card", unmount)
+        unmount!!.click()
+    }
+
+    private fun umAssertBusyDialog() {
+        val d = device.wait(Until.findObject(By.desc("unmount_busy_dismiss")), timeout)
+        if (d == null) captureScreen("no_unmount_busy_dialog")
+        assertNotNull("no dialog with a file open", d)
+        assertNotNull("the dialog's title", device.findObject(By.text("Data transfer in progress")))
+        assertNotNull("the dialog's text", device.findObject(By.text("Will unmount once the transfer is complete.")))
+        assertEquals("it did not stay mounted", 1, OtgMasterState.mountedDrives.size)
+    }
+
+    private fun umAwaitUnmounted(ms: Long = 30_000L) {
+        val end = android.os.SystemClock.uptimeMillis() + ms
+        while (OtgMasterState.mountedDrives.isNotEmpty() && android.os.SystemClock.uptimeMillis() < end) android.os.SystemClock.sleep(200)
+        if (OtgMasterState.mountedDrives.isNotEmpty()) captureScreen("not_unmounted")
+        assertTrue("still mounted after the file closed", OtgMasterState.mountedDrives.isEmpty())
+        assertTrue("the Unmount is still pending", OtgMasterState.pendingUnmounts.value.isEmpty())
+        assertTrue("Unmount ejected the drive", OtgMasterState.ejectedDevices.isEmpty())
+    }
+
+    private fun umNotified(): Boolean = bkTitles().any { it.endsWith(" unmounted") }
+
+    private fun runUnmountFlow(flow: String) {
+        device.executeShellCommand("pm grant app.fayaz.otgmaster android.permission.POST_NOTIFICATIONS")
+        android.os.SystemClock.sleep(1000)
+        when (flow) {
+            // Nothing open: it unmounts straight away, with no dialog.
+            "unmount_idle" -> {
+                ejMount("to unmount")
+                umTapUnmount()
+                assertNull("a transfer dialog for an idle partition", device.findObject(By.desc("unmount_busy_dismiss")))
+                umAwaitUnmounted()
+            }
+            // The dialog is left up: it closes by itself and there is no notification.
+            "unmount_busy_wait" -> {
+                val drive = ejMount("to unmount")
+                val file = ejHoldFile(drive)
+                try {
+                    umTapUnmount()
+                    umAssertBusyDialog()
+                    ejAssertStaysMounted()
+                    assertNotNull("the dialog went away by itself", device.findObject(By.desc("unmount_busy_dismiss")))
+                } finally { file.close() }
+                assertTrue("the dialog did not close after the Unmount", device.wait(Until.gone(By.desc("unmount_busy_dismiss")), 30_000L))
+                umAwaitUnmounted()
+                android.os.SystemClock.sleep(1000)
+                assertFalse("a notification though the dialog stayed up: ${bkTitles()}", umNotified())
+            }
+            "unmount_busy_dismiss" -> {
+                val drive = ejMount("to unmount")
+                val file = ejHoldFile(drive)
+                try {
+                    umTapUnmount()
+                    umAssertBusyDialog()
+                    assertTrue(clickByDesc("unmount_busy_dismiss"))
+                    assertTrue("Dismiss left the dialog up", device.wait(Until.gone(By.desc("unmount_busy_dismiss")), timeout))
+                    assertNotNull("the card does not say it is waiting", findInSlider(By.desc("unmount_pending")))
+                    assertNull("Unmount offered while waiting", device.findObject(By.desc("unmount_button")))
+                    assertNull("Eject offered while waiting", device.findObject(By.desc("eject_button")))
+                    assertNull("More actions offered while waiting", device.findObject(By.desc("more_actions_button")))
+                    ejAssertStaysMounted()
+                    assertTrue("it forgot the Unmount", OtgMasterState.pendingUnmounts.value.isNotEmpty())
+                } finally { file.close() }
+                umAwaitUnmounted()
+                val posted = (0 until 40).any {
+                    android.os.SystemClock.sleep(250)
+                    umNotified()
+                }
+                assertTrue("no notification after a dismissed Unmount: ${bkTitles()}", posted)
+            }
+            "unmount_busy_cancel" -> {
+                val drive = ejMount("to unmount")
+                val file = ejHoldFile(drive)
+                try {
+                    umTapUnmount()
+                    umAssertBusyDialog()
+                    assertTrue(clickByDesc("unmount_busy_cancel"))
+                    assertTrue("Cancel unmount left the dialog up", device.wait(Until.gone(By.desc("unmount_busy_cancel")), timeout))
+                    assertTrue("still pending", OtgMasterState.pendingUnmounts.value.isEmpty())
+                } finally { file.close() }
+                ejAssertStaysMounted(6000L)
+                assertNotNull("Unmount is not back", findInSlider(By.desc("unmount_button")))
+                doUnmount()
+            }
+            "unmount_card_cancel" -> {
+                val drive = ejMount("to unmount")
+                val file = ejHoldFile(drive)
+                try {
+                    umTapUnmount()
+                    umAssertBusyDialog()
+                    assertTrue(clickByDesc("unmount_busy_dismiss"))
+                    assertNotNull("no Cancel unmount on the card", findInSlider(By.desc("unmount_card_cancel")))
+                    assertTrue(clickByDesc("unmount_card_cancel"))
+                    assertTrue("the card still says it is waiting", device.wait(Until.gone(By.desc("unmount_pending")), timeout))
+                    assertTrue("still pending", OtgMasterState.pendingUnmounts.value.isEmpty())
+                } finally { file.close() }
+                ejAssertStaysMounted(6000L)
+                doUnmount()
+            }
+            else -> fail("unknown unmount flow $flow")
+        }
+    }
+
     private fun runEjectFlow(flow: String) {
+        if (flow.startsWith("unmount_")) return runUnmountFlow(flow)
         val args = InstrumentationRegistry.getArguments()
         val password = args.getString("password", "")
         val pim = args.getString("pim", "")

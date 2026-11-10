@@ -104,6 +104,9 @@ data class DisconnectedDrive(
 /** An Eject waiting for a transfer to finish. [notify]: the user dismissed the dialog, so tell them after. */
 data class PendingEject(val deviceKey: String, val title: String, val notify: Boolean = false)
 
+/** The same for an Unmount of one partition, by [MountedDrive.id]. */
+data class PendingUnmount(val driveId: String, val title: String, val notify: Boolean = false)
+
 object OtgMasterState {
     val mountedDrives = CopyOnWriteArrayList<MountedDrive>()
 
@@ -316,6 +319,9 @@ object OtgMasterState {
 
     /** Devices waiting to eject once they are idle, by the same key. */
     val pendingEjects = mutableStateOf<Map<String, PendingEject>>(emptyMap())
+
+    /** Partitions waiting to unmount once they are idle, by [MountedDrive.id]. */
+    val pendingUnmounts = mutableStateOf<Map<String, PendingUnmount>>(emptyMap())
 
     /** Unmounts every drive. Installed by MainActivity while it is alive. */
     @Volatile

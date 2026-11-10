@@ -1,0 +1,1 @@
+• Fixed: Unmount waits for a file copy or a backup to finish, as Eject does

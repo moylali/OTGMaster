@@ -250,6 +250,9 @@ class MainActivity : AppCompatActivity() {
     /** The device whose "transfer in progress" dialog is up. */
     private val ejectBusyDialog = mutableStateOf<String?>(null)
     private val ejectWatchers = HashMap<String, kotlinx.coroutines.Job>()
+    /** The partition whose "transfer in progress" dialog is up, for Unmount. */
+    private val unmountBusyDialog = mutableStateOf<String?>(null)
+    private val unmountWatchers = HashMap<String, kotlinx.coroutines.Job>()
     private class EjectInFlight(val title: String, val androidCanRead: Boolean, val notify: Boolean)
     private val ejectsInFlight = HashMap<String, EjectInFlight>()
 
@@ -633,6 +636,7 @@ class MainActivity : AppCompatActivity() {
         usbAccessMode.value = app.fayaz.otgmaster.usb.UsbAccessMode.fromPref(sharedPreferences.getString(PREF_USB_ACCESS, null))
         // An Eject that was waiting when the last instance of this activity went away.
         OtgMasterState.pendingEjects.value.keys.forEach { watchPendingEject(it) }
+        OtgMasterState.pendingUnmounts.value.keys.forEach { watchPendingUnmount(it) }
         excludedDeviceKeys.value = credentialStore.loadExcludedKeys()
         readOnlyDefault.value = sharedPreferences.getBoolean(PREF_READ_ONLY_DEFAULT, false)
         backupsHidden.value = sharedPreferences.getBoolean(PREF_BACKUPS_HIDDEN, false)
@@ -731,7 +735,8 @@ class MainActivity : AppCompatActivity() {
                         onUnlock = { deviceName, candidate, pwd, pim, keyfiles, cipher, hash, protect, onComplete ->
                             attemptUnlock(deviceName, candidate, pwd, pim, keyfiles, cipher, hash, protectHidden = protect, onComplete = onComplete)
                         },
-                        onUnmount = { drive -> unmountDrive(drive, isManual = true) },
+                        onUnmount = { drive -> unmountTapped(drive) },
+                        onCancelUnmount = { id -> cancelUnmount(id) },
                         onOpenFilesApp = { drive -> openFilesApp(drive) },
                         journalRepairPrompt = journalRepairPrompt.value,
                         journalRepairs = journalRepairs.intValue,
@@ -1778,6 +1783,9 @@ class MainActivity : AppCompatActivity() {
         OtgMasterState.ejectedDevices.removeAll { matchesDetached(it) }
         // Unplugged while waiting to eject: nothing is left to eject.
         OtgMasterState.pendingEjects.value.keys.filter { matchesDetached(it) }.forEach { dropPendingEject(it) }
+        // Nor to unmount.
+        OtgMasterState.mountedDrives.filter { it.sourceDeviceName?.let(matchesDetached) == true }
+            .forEach { dropPendingUnmount(it.id) }
         sessionPlaintextCreds.keys.filter { matchesDetached(it) }.forEach { sessionPlaintextCreds.remove(it) }
         saveManuallyUnmountedDevices()
         // Unmount any mounted drives from this device. A drive still mounted
@@ -2036,8 +2044,11 @@ class MainActivity : AppCompatActivity() {
     }
 
     /** True while something still needs the drive: an open file, or a backup that uses it. */
-    private fun deviceBusy(key: String): Boolean {
-        val ids = ejectTargets(key).flatMap { d ->
+    private fun deviceBusy(key: String): Boolean = drivesBusy(ejectTargets(key))
+
+    /** The same for [drives] alone, and the backups mounted from them. */
+    private fun drivesBusy(drives: List<MountedDrive>): Boolean {
+        val ids = drives.flatMap { d ->
             listOf(d.id) + app.fayaz.otgmaster.backup.BackupMounts.dependents(d.id).map { it.id }
         }
         if (ids.any { app.fayaz.otgmaster.provider.VeraCryptDocumentProvider.driveInUse(it) }) return true
@@ -2045,6 +2056,65 @@ class MainActivity : AppCompatActivity() {
         return ids.any { id ->
             app.fayaz.otgmaster.ui.jobsForDrive(jobs, id).any { app.fayaz.otgmaster.backup.BackupExecutor.isBusy(it.id) }
         }
+    }
+
+    /**
+     * Unmount waits for a transfer as Eject does, so that a copy in Files or a backup running
+     * against the partition is not cut off part way.
+     */
+    private fun unmountTapped(drive: MountedDrive) {
+        if (!drivesBusy(listOf(drive))) return unmountDrive(drive, isManual = true)
+        OtgMasterState.pendingUnmounts.value = OtgMasterState.pendingUnmounts.value +
+            (drive.id to PendingUnmount(drive.id, drive.name))
+        appendLog(getString(R.string.log_unmount_waiting, drive.name))
+        unmountBusyDialog.value = drive.id
+        watchPendingUnmount(drive.id)
+    }
+
+    private fun watchPendingUnmount(id: String) {
+        if (unmountWatchers[id]?.isActive == true) return
+        unmountWatchers[id] = lifecycleScope.launch {
+            while (true) {
+                delay(500)
+                val pending = OtgMasterState.pendingUnmounts.value[id] ?: return@launch
+                val drive = OtgMasterState.mountedDrives.find { it.id == id }
+                if (drive == null) {
+                    dropPendingUnmount(id)
+                    return@launch
+                }
+                if (!drivesBusy(listOf(drive))) {
+                    unmountWatchers.remove(id)
+                    dropPendingUnmount(id)
+                    unmountDrive(drive, isManual = true)
+                    toastState.value = Pair(getString(R.string.unmount_done), true)
+                    if (pending.notify || !lifecycle.currentState.isAtLeast(androidx.lifecycle.Lifecycle.State.RESUMED)) {
+                        MountedDriveService.driveEjected(this@MainActivity, pending.title,
+                            getString(R.string.unmount_done), R.string.notification_unmounted_title)
+                    }
+                    return@launch
+                }
+            }
+        }
+    }
+
+    private fun dropPendingUnmount(id: String) {
+        OtgMasterState.pendingUnmounts.value = OtgMasterState.pendingUnmounts.value - id
+        unmountWatchers.remove(id)?.cancel()
+        if (unmountBusyDialog.value == id) unmountBusyDialog.value = null
+    }
+
+    private fun cancelUnmount(id: String) {
+        val pending = OtgMasterState.pendingUnmounts.value[id] ?: return
+        dropPendingUnmount(id)
+        appendLog(getString(R.string.log_unmount_cancelled, pending.title))
+    }
+
+    /** Dismiss on the dialog: keeps waiting, and a notification will say when it has unmounted. */
+    private fun dismissUnmountDialog(id: String) {
+        OtgMasterState.pendingUnmounts.value[id]?.let {
+            OtgMasterState.pendingUnmounts.value = OtgMasterState.pendingUnmounts.value + (id to it.copy(notify = true))
+        }
+        unmountBusyDialog.value = null
     }
 
     private fun startEject(key: String) {
@@ -2173,6 +2243,25 @@ class MainActivity : AppCompatActivity() {
                         onClick = { cancelEject(key) },
                         modifier = Modifier.semantics { contentDescription = "eject_busy_cancel" },
                     ) { Text(stringResource(R.string.eject_cancel)) }
+                },
+            )
+        }
+        unmountBusyDialog.value?.let { id ->
+            androidx.compose.material3.AlertDialog(
+                onDismissRequest = { dismissUnmountDialog(id) },
+                title = { Text(stringResource(R.string.eject_busy_title)) },
+                text = { Text(stringResource(R.string.unmount_busy_text)) },
+                confirmButton = {
+                    androidx.compose.material3.TextButton(
+                        onClick = { dismissUnmountDialog(id) },
+                        modifier = Modifier.semantics { contentDescription = "unmount_busy_dismiss" },
+                    ) { Text(stringResource(R.string.eject_busy_dismiss)) }
+                },
+                dismissButton = {
+                    androidx.compose.material3.TextButton(
+                        onClick = { cancelUnmount(id) },
+                        modifier = Modifier.semantics { contentDescription = "unmount_busy_cancel" },
+                    ) { Text(stringResource(R.string.unmount_cancel)) }
                 },
             )
         }
@@ -3275,6 +3364,7 @@ fun OtgMasterApp(
     usbHint: Int? = null,
     onEject: (MountedDrive) -> Unit = {},
     onCancelEject: (String) -> Unit = {},
+    onCancelUnmount: (String) -> Unit = {},
     sessionCredentials: Map<String, app.fayaz.otgmaster.security.CredentialStore.Credentials>,
     hasCachedCreds: (String, Long?) -> Boolean,
     isExcluded: (String) -> Boolean,
@@ -3551,11 +3641,14 @@ fun OtgMasterApp(
                             val browseOnly = drive.fileSystem is app.fayaz.otgmaster.mtp.MtpStorageFileSystem ||
                                 drive.fileSystem is app.fayaz.otgmaster.backup.restic.ResticFileSystem
                             val ejectPending = deviceKey != null && deviceKey in OtgMasterState.pendingEjects.value
-                            if (ejectPending) {
+                            val unmountPending = !ejectPending && drive.id in OtgMasterState.pendingUnmounts.value
+                            if (ejectPending || unmountPending) {
                                 Text(
-                                    stringResource(R.string.eject_pending),
+                                    stringResource(if (ejectPending) R.string.eject_pending else R.string.unmount_pending),
                                     style = MaterialTheme.typography.bodyMedium,
-                                    modifier = Modifier.semantics { contentDescription = "eject_pending" },
+                                    modifier = Modifier.semantics {
+                                        contentDescription = if (ejectPending) "eject_pending" else "unmount_pending"
+                                    },
                                 )
                                 Spacer(modifier = Modifier.height(8.dp))
                             }
@@ -3564,6 +3657,8 @@ fun OtgMasterApp(
                                     add(app.fayaz.otgmaster.ui.DriveAction(null, stringResource(R.string.open_files_app)) { onOpenFilesApp(drive) })
                                     if (ejectPending) {
                                         add(app.fayaz.otgmaster.ui.DriveAction("eject_card_cancel", stringResource(R.string.eject_cancel)) { deviceKey?.let(onCancelEject) })
+                                    } else if (unmountPending) {
+                                        add(app.fayaz.otgmaster.ui.DriveAction("unmount_card_cancel", stringResource(R.string.unmount_cancel)) { onCancelUnmount(drive.id) })
                                     } else {
                                         if (!drive.isPlain) {
                                             add(app.fayaz.otgmaster.ui.DriveAction("unmount_button", stringResource(R.string.unmount)) { onUnmount(drive) })
@@ -3573,8 +3668,8 @@ fun OtgMasterApp(
                                         }
                                     }
                                 },
-                                // While it waits to eject, nothing new is started on the drive from here.
-                                secondary = if (browseOnly || ejectPending) emptyList() else buildList {
+                                // While it waits to eject or unmount, nothing new is started on the drive from here.
+                                secondary = if (browseOnly || ejectPending || unmountPending) emptyList() else buildList {
                                     add(app.fayaz.otgmaster.ui.DriveAction("format_action", stringResource(R.string.format_drive_menu),
                                         formatUnavailable(drive)) { formatTarget = drive })
                                     add(app.fayaz.otgmaster.ui.DriveAction("encrypt_action", stringResource(R.string.encrypt_drive_menu),

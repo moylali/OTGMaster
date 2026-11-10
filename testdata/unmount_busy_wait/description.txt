@@ -1,0 +1,1 @@
+Unmount with a file open: the transfer dialog stays up, Unmount happens when the file closes, the dialog closes by itself, no notification.
