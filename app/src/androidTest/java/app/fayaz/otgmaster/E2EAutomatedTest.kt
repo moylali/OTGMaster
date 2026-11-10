@@ -5095,6 +5095,9 @@ class E2EAutomatedTest {
         val gone = device.wait(Until.gone(By.descContains("unmount_button")), UNMOUNT_WAIT_MS)
         if (!gone) captureScreen("unmount_not_gone")
         assertTrue("Drive was not successfully unmounted!", gone)
+        // A tap within the 3 s settle after a write waits as for a transfer, behind a
+        // dialog that closes when the drive unmounts. Let it go before the next step.
+        device.wait(Until.gone(By.desc("unmount_busy_dismiss")), 5000L)
     }
 
     /**
@@ -5144,8 +5147,17 @@ class E2EAutomatedTest {
 
     private fun sliderOpen() = device.findObject(By.desc("mounted_drawer")) != null
 
+    /**
+     * Closes the mounted slider if it is up. Looked for with a short wait rather than
+     * once: an Unmount tapped within 3 s of a file write shows "Will unmount once the
+     * transfer is complete" for a moment, and while that dialog's window was going away
+     * a single look found no slider. The slider stayed open over the Scan button, and
+     * every Encrypt and Format case that remounts failed "Scan button not found for the
+     * remount" (#141's E2E, 7 cases).
+     */
     private fun closeSlider() {
-        if (!sliderOpen()) return
+        InstrumentationRegistry.getInstrumentation().uiAutomation.clearCache()
+        if (device.wait(Until.hasObject(By.desc("mounted_drawer")), 2000L) != true) return
         device.pressBack()
         assertTrue("Back did not close the slider", device.wait(Until.gone(By.desc("mounted_drawer")), timeout))
         android.os.SystemClock.sleep(500)
@@ -5216,6 +5228,7 @@ class E2EAutomatedTest {
         scrollToTop()
         return device.wait(Until.findObject(By.textContains("Scan").clickable(true)), timeout)
             ?: device.wait(Until.findObject(By.descContains("scan_button")), timeout)
+            ?: null.also { captureScreen("scan_button_missing") }
     }
 
     private enum class MountClick { CLICKED, NOT_FOUND, DISABLED }
