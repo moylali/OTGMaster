@@ -119,7 +119,9 @@
     <string name="donate_url">https://ko-fi.com/moylali</string>
     <string name="donate_thank_you">Thank you</string>
     <string name="donate_kofi">Support me on Ko-fi</string>
-    <string name="support_page_link">Other ways to help</string>
+    <!-- %1$s is support_page_link, which becomes the link to the site's Support section. -->
+    <string name="support_page_text">See more options %1$s</string>
+    <string name="support_page_link">here</string>
     <string name="support_page_url">https://moylali.github.io/OTGMaster/#support</string>
     <string name="version_label_short">Version</string>
     <string name="app_version_label">App version</string>
