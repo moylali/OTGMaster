@@ -56,23 +56,61 @@ internal constructor(private val blockDevice: BlockDeviceDriver, private val fat
     override var length: Long
         get() = entry.fileSize
         @Throws(IOException::class)
-        set(newLength) {
-            initChain()
-            dirty = true
-            chain.length = newLength
-            entry.fileSize = newLength
-            // LOCAL PATCH (docs/VENDOR_FIXES.md V2): keep the directory entry's start
-            // cluster in step with the chain.
-            //
-            // ClusterChain replaces its whole chain array when allocating or freeing,
-            // so the first cluster can change -- and truncating to 0 frees every
-            // cluster, after which a rewrite allocates a brand new one. Without this,
-            // flush() wrote the entry back still naming the original, now-freed
-            // cluster: the file read as garbage after remount, or cross-linked into
-            // whatever had since been given that cluster. SAF truncates on every
-            // mode "t" open, so this was a routine path, not an edge case.
-            entry.startCluster = chain.firstCluster
+        set(newLength) = resize(newLength, zeroUntil = newLength)
+
+    /**
+     * Sets the file's length to [newLength], zeroing the newly exposed bytes from the old
+     * end up to [zeroUntil] (a write passes its own offset, since it fills the rest).
+     *
+     * LOCAL PATCH (docs/VENDOR_FIXES.md V27): zero what a grow exposes.
+     *
+     * Growing allocated clusters and moved the length but left the bytes between the old
+     * end and the new data as they were on the drive: the slack of the old last cluster,
+     * and whole reallocated clusters. On an encrypted volume that is the decrypted
+     * plaintext of deleted files, readable by any app that can write one file. Appends,
+     * the common case, start at the old end and zero nothing.
+     *
+     * LOCAL PATCH (docs/VENDOR_FIXES.md V28): refuse a size past 0xFFFFFFFF, before
+     * allocating. The directory entry keeps 32 bits of size, so a larger file was
+     * recorded as its size modulo 4 GiB with its whole chain still allocated.
+     */
+    @Throws(IOException::class)
+    private fun resize(newLength: Long, zeroUntil: Long) {
+        if (newLength < 0 || newLength > MAX_FILE_SIZE) {
+            throw IOException("FAT32 files cannot be larger than 4 GiB minus one byte " +
+                "($MAX_FILE_SIZE bytes); this would make it $newLength")
         }
+        initChain()
+        dirty = true
+        val oldLength = entry.fileSize
+        chain.length = newLength
+        entry.fileSize = newLength
+        // LOCAL PATCH (docs/VENDOR_FIXES.md V2): keep the directory entry's start
+        // cluster in step with the chain.
+        //
+        // ClusterChain replaces its whole chain array when allocating or freeing,
+        // so the first cluster can change -- and truncating to 0 frees every
+        // cluster, after which a rewrite allocates a brand new one. Without this,
+        // flush() wrote the entry back still naming the original, now-freed
+        // cluster: the file read as garbage after remount, or cross-linked into
+        // whatever had since been given that cluster. SAF truncates on every
+        // mode "t" open, so this was a routine path, not an edge case.
+        entry.startCluster = chain.firstCluster
+        val zeroEnd = minOf(zeroUntil, newLength)
+        if (zeroEnd > oldLength) zero(oldLength, zeroEnd)
+    }
+
+    /** Writes zeros over [from, until) of the file, a chunk at a time. */
+    @Throws(IOException::class)
+    private fun zero(from: Long, until: Long) {
+        val zeros = ByteArray(minOf(ZERO_CHUNK.toLong(), until - from).toInt())
+        var pos = from
+        while (pos < until) {
+            val n = minOf(zeros.size.toLong(), until - pos).toInt()
+            chain.write(pos, ByteBuffer.wrap(zeros, 0, n))
+            pos += n
+        }
+    }
 
     override val isRoot: Boolean
         get() = false
@@ -148,7 +186,7 @@ internal constructor(private val blockDevice: BlockDeviceDriver, private val fat
         dirty = true
         val length = offset + source.remaining()
         if (length > this.length)
-            this.length = length
+            resize(length, zeroUntil = offset)
         entry.setLastModifiedTimeToNow()
         chain.write(offset, source)
         // The length setter above syncs startCluster when it grows the chain, but a
@@ -209,4 +247,11 @@ internal constructor(private val blockDevice: BlockDeviceDriver, private val fat
         chain.length = 0
     }
 
+    companion object {
+        /** The largest size a FAT32 directory entry can record (V28). */
+        const val MAX_FILE_SIZE = 0xFFFFFFFFL
+
+        /** Zeros written per call when a grow exposes a gap (V27). */
+        private const val ZERO_CHUNK = 1 shl 20
+    }
 }
