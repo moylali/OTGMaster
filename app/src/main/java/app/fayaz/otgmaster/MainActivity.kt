@@ -4744,6 +4744,14 @@ fun SettingsDrawer(
                                 .clip(RoundedCornerShape(8.dp))
                                 .clickable(role = androidx.compose.ui.semantics.Role.Button) { uriHandler.openUri(donateUrl) }
                         )
+                        // The site's Support section: translations and bug reports as well as donations.
+                        val supportUrl = stringResource(R.string.support_page_url)
+                        TextButton(
+                            onClick = { uriHandler.openUri(supportUrl) },
+                            modifier = Modifier.semantics { contentDescription = "donate_support_link" },
+                        ) {
+                            Text(stringResource(R.string.support_page_link))
+                        }
                         Text(
                             stringResource(R.string.donate_thank_you),
                             style = MaterialTheme.typography.bodyMedium,

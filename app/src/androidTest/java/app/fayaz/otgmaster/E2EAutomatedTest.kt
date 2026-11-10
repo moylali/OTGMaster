@@ -4541,6 +4541,8 @@ class E2EAutomatedTest {
             if (id == "donate") {
                 assertNotNull("no Ko-fi button in the Donate dialog",
                     device.findObject(By.desc(context.getString(R.string.donate_kofi))))
+                assertNotNull("no link to the site's Support section in the Donate dialog",
+                    device.findObject(By.desc("donate_support_link")))
             }
             if (id == "read_only") {
                 val prefs = context.getSharedPreferences("otgmaster_prefs", Context.MODE_PRIVATE)
