@@ -75,6 +75,9 @@ import app.fayaz.otgmaster.usb.RealUsbDeviceProvider
 import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import app.fayaz.otgmaster.ui.SliderHint
+import androidx.compose.ui.layout.boundsInRoot
+import androidx.compose.ui.layout.onGloballyPositioned
 import androidx.compose.ui.text.input.PasswordVisualTransformation
 import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.unit.dp
@@ -198,6 +201,8 @@ class MainActivity : AppCompatActivity() {
         private const val REQUEST_USB_PERMISSION = "app.fayaz.otgmaster.USB_PERMISSION"
         private const val QEMU_DEVICE_KEY = "qemu:/dev/block/sda"
         const val EXTRA_DRIVE_ID = "app.fayaz.otgmaster.EXTRA_DRIVE_ID"
+        /** Set on the mounted-drives notification's intent: the app opens with the slider up. */
+        const val EXTRA_OPEN_MOUNTED = "app.fayaz.otgmaster.EXTRA_OPEN_MOUNTED"
         private const val SHARE_TARGET_CATEGORY = "app.fayaz.otgmaster.category.SHARE_TARGET"
         private const val PREF_ASKED_NOTIFICATIONS = "asked_notification_permission"
 
@@ -216,6 +221,8 @@ class MainActivity : AppCompatActivity() {
         private const val PREF_LAST_BOOT_TIME = "last_boot_time_ms"
         private const val PREF_READ_ONLY_DEFAULT = "read_only_default"
         private const val PREF_BACKUPS_HIDDEN = "backups_hidden"
+        /** Whether the hint pointing at the Drives icon has been shown; it is shown once. */
+        const val PREF_SLIDER_HINT_SEEN = "slider_hint_seen"
         private const val PREF_USB_ACCESS = "usb_access_mode"
         private const val PREF_KNOWN_VOLUMES = "known_removable_volumes"
         /** Debug builds only: answers "did Android mount it?", which an emulator cannot show. */
@@ -275,6 +282,9 @@ class MainActivity : AppCompatActivity() {
     /** Settings → Read-only mode: the default for any partition with no choice of its own. */
     private val readOnlyDefault = mutableStateOf(false)
     private val backupsHidden = mutableStateOf(false)
+    private val sliderHintSeen = mutableStateOf(true)
+    /** Counts taps on the mounted-drives notification; each one opens the slider. */
+    private val openMountedRequest = mutableStateOf(0)
     /** Per-partition read-only choices made in the unlock form, keyed by [partitionKey]. */
     private val readOnlyChoices = mutableStateOf<Map<String, Boolean>>(emptyMap())
 
@@ -641,11 +651,13 @@ class MainActivity : AppCompatActivity() {
         excludedDeviceKeys.value = credentialStore.loadExcludedKeys()
         readOnlyDefault.value = sharedPreferences.getBoolean(PREF_READ_ONLY_DEFAULT, false)
         backupsHidden.value = sharedPreferences.getBoolean(PREF_BACKUPS_HIDDEN, false)
+        sliderHintSeen.value = sharedPreferences.getBoolean(PREF_SLIDER_HINT_SEEN, false)
         readOnlyChoices.value = sharedPreferences.getStringSet(PREF_READ_ONLY_CHOICES, emptySet()).orEmpty()
             .mapNotNull { e -> e.substringBeforeLast('|', "").takeIf { it.isNotEmpty() }?.let { it to e.endsWith("|1") } }
             .toMap()
         loadManuallyUnmountedDevices(usbMgr)
         app.fayaz.otgmaster.backup.BackupPrompts.handleIntent(this, intent)
+        handleOpenMounted(intent)
 
         setContent {
             val themeMode = _themeMode.value
@@ -779,6 +791,12 @@ class MainActivity : AppCompatActivity() {
                         toastMessage = toastState.value?.first,
                         toastIsSuccess = toastState.value?.second ?: true,
                         onToastDismiss = { msg -> if (toastState.value?.first == msg) toastState.value = null },
+                        sliderHintSeen = sliderHintSeen.value,
+                        onSliderHintSeen = {
+                            sliderHintSeen.value = true
+                            sharedPreferences.edit().putBoolean(PREF_SLIDER_HINT_SEEN, true).apply()
+                        },
+                        openMountedRequest = openMountedRequest.value,
                         newlyMountedDriveIds = newlyMountedDriveIds.value,
                         onHighlightConsumed = { driveId -> newlyMountedDriveIds.value = newlyMountedDriveIds.value - driveId },
                         formatUnavailable = { formatUnavailable(it) },
@@ -807,10 +825,21 @@ class MainActivity : AppCompatActivity() {
         handleShareIntent(intent)
     }
 
+    /**
+     * A tap on the mounted-drives notification opens the app on the slider. The extra is
+     * removed once used, so turning the phone does not open the slider again.
+     */
+    private fun handleOpenMounted(intent: Intent?) {
+        if (intent?.getBooleanExtra(EXTRA_OPEN_MOUNTED, false) != true) return
+        intent.removeExtra(EXTRA_OPEN_MOUNTED)
+        openMountedRequest.value++
+    }
+
     override fun onNewIntent(intent: Intent) {
         super.onNewIntent(intent)
         setIntent(intent)
         app.fayaz.otgmaster.backup.BackupPrompts.handleIntent(this, intent)
+        handleOpenMounted(intent)
         if (intent.action == UsbManager.ACTION_USB_DEVICE_ATTACHED) {
             usbWaitSince = 0L
             forgetEjected(intent.getParcelableExtraCompat<UsbDevice>(UsbManager.EXTRA_DEVICE))
@@ -3396,6 +3425,9 @@ fun OtgMasterApp(
     toastMessage: String? = null,
     toastIsSuccess: Boolean = true,
     onToastDismiss: (String) -> Unit = {},
+    sliderHintSeen: Boolean = true,
+    onSliderHintSeen: () -> Unit = {},
+    openMountedRequest: Int = 0,
     newlyMountedDriveIds: Set<String> = emptySet(),
     onHighlightConsumed: (String) -> Unit = {},
     formatUnavailable: (MountedDrive) -> String? = { "" },
@@ -3487,6 +3519,27 @@ fun OtgMasterApp(
     val scrollState = rememberScrollState()
     var showMounted by androidx.compose.runtime.saveable.rememberSaveable { mutableStateOf(false) }
     var mountedTab by androidx.compose.runtime.saveable.rememberSaveable { mutableStateOf(app.fayaz.otgmaster.ui.MountedTab.DRIVES) }
+    // The first time the slider closes with a drive mounted, a hint points at the Drives
+    // icon, which is the way back to it. Once ever; a tap on it or opening the slider ends it.
+    var sliderHint by androidx.compose.runtime.saveable.rememberSaveable { mutableStateOf(false) }
+    var sliderWasOpen by remember { mutableStateOf(false) }
+    var drivesIconAnchor by remember { mutableStateOf<androidx.compose.ui.geometry.Offset?>(null) }
+    LaunchedEffect(showMounted) {
+        if (showMounted) {
+            sliderWasOpen = true
+            sliderHint = false
+        } else if (sliderWasOpen && !sliderHintSeen && mountedDrives.isNotEmpty()) {
+            sliderHint = true
+            onSliderHintSeen()
+        }
+    }
+    // A tap on the mounted-drives notification.
+    LaunchedEffect(openMountedRequest) {
+        if (openMountedRequest > 0 && mountedDrives.isNotEmpty()) {
+            mountedTab = app.fayaz.otgmaster.ui.MountedTab.DRIVES
+            showMounted = true
+        }
+    }
     driveOperation?.let {
         app.fayaz.otgmaster.ui.DriveOperationDialog(it) {
             onDriveOperationClose()
@@ -3711,7 +3764,10 @@ fun OtgMasterApp(
             TopAppBar(
                 title = { Text(stringResource(R.string.app_name)) },
                 actions = {
-                    IconButton(onClick = { showMounted = true }) {
+                    IconButton(onClick = { showMounted = true }, modifier = Modifier.onGloballyPositioned { c ->
+                        val b = c.boundsInRoot()
+                        drivesIconAnchor = androidx.compose.ui.geometry.Offset(b.center.x, b.bottom)
+                    }) {
                         // What is mounted: partitions and backups, the same as the two tabs add up to.
                         val count = driveCount + backupCount
                         BadgedBox(badge = { if (count > 0) Badge { Text(count.toString()) } }) {
@@ -3896,6 +3952,9 @@ fun OtgMasterApp(
     }
 
     if (!showMounted) MountedEdgeSwipe(onOpen = { showMounted = true })
+    if (sliderHint && !showMounted) drivesIconAnchor?.let { anchor ->
+        SliderHint(anchor, onDismiss = { sliderHint = false })
+    }
     MountedDrawer(visible = showMounted, onDismiss = { showMounted = false }) {
         app.fayaz.otgmaster.ui.MountedPanel(
             tab = shownTab,

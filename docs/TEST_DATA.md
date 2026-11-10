@@ -584,7 +584,10 @@ that the keybag is not the problem.
 `python3 scripts/make_eject_fixtures.py` builds `testdata/eject_*`, `testdata/unmount_*` and
 `testdata/usb_mode_*`, except the two below. The `unmount_*` cases check that Unmount waits for an
 open file the way Eject does, and `unmount_during_copy` that a copy writing to the partition
-completes and reads back whole after a remount. Each case copies the image and credentials of an existing case and adds an
+completes and reads back whole after a remount. `slider_hint` checks the one-time hint at the
+Drives icon after the slider first closes (every other case starts with it marked as seen, since
+it covers the top of the screen), and `notification_slider` that a tap on the mounted-drives
+notification opens the app on the slider. Each case copies the image and credentials of an existing case and adds an
 `eject_flow.txt`, so build those cases first. `eject_not_offered` and `eject_backup_running` come
 from `scripts/make_backup_run_fixtures.py`, which needs a backup repository on the drive.
 

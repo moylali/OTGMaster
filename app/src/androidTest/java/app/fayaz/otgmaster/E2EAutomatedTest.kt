@@ -99,6 +99,10 @@ class E2EAutomatedTest {
         val prefs = context.getSharedPreferences("otgmaster_prefs", Context.MODE_PRIVATE)
         prefs.edit().remove("read_only_partitions").remove("backups_hidden").remove("auto_mount")
             .remove("usb_access_mode").remove("test_android_holds_usb").commit()
+        // The one-time hint at the Drives icon sits over the top of the screen, where Scan is.
+        // Every case but the one that tests it starts with it already seen.
+        prefs.edit().putBoolean(MainActivity.PREF_SLIDER_HINT_SEEN,
+            InstrumentationRegistry.getArguments().getString("eject_flow", "") != "slider_hint").commit()
         // Before the launch: under Always the launch itself would open the drive.
         when (InstrumentationRegistry.getArguments().getString("eject_flow", "")) {
             "usb_mode_manual", "usb_mode_manual_auto_mount" -> prefs.edit().putString("usb_access_mode", "manual").commit()
@@ -4137,8 +4141,64 @@ class E2EAutomatedTest {
         }
     }
 
+    /**
+     * slider_hint: the first time the slider closes with a drive mounted, a hint points at the
+     * Drives icon; a tap dismisses it, and it does not come back.
+     * notification_slider: a tap on the mounted-drives notification opens the app on the slider.
+     */
+    private fun runSliderFlow(flow: String) {
+        device.executeShellCommand("pm grant app.fayaz.otgmaster android.permission.POST_NOTIFICATIONS")
+        android.os.SystemClock.sleep(1000)
+        val prefs = InstrumentationRegistry.getInstrumentation().targetContext
+            .getSharedPreferences("otgmaster_prefs", Context.MODE_PRIVATE)
+        val drive = ejMount("for the slider")
+        // A new mount opens the slider by itself.
+        assertTrue("the slider did not open on the mount", device.wait(Until.hasObject(By.desc("mounted_drawer")), timeout))
+        when (flow) {
+            "slider_hint" -> {
+                assertNull("the hint showed while the slider was open", device.findObject(By.desc("slider_hint")))
+                device.pressBack()
+                assertTrue("Back did not close the slider", device.wait(Until.gone(By.desc("mounted_drawer")), timeout))
+                val hint = device.wait(Until.findObject(By.desc("slider_hint")), 5000L)
+                if (hint == null) captureScreen("no_slider_hint")
+                assertNotNull("no hint at the Drives icon after the slider closed", hint)
+                assertNotNull("the hint's text", device.findObject(By.text("Tap here or swipe left for mounted devices")))
+                // It points at the Drives icon: its arrow sits under the icon, the bubble below the bar.
+                val icon = device.findObject(By.descStartsWith("Mounted:"))
+                assertNotNull("no Drives icon", icon)
+                assertTrue("the hint is not below the Drives icon", hint!!.visibleBounds.top >= icon!!.visibleBounds.bottom)
+                assertTrue("it was not remembered as shown", prefs.getBoolean(MainActivity.PREF_SLIDER_HINT_SEEN, false))
+                hint.click()
+                assertTrue("a tap did not dismiss the hint", device.wait(Until.gone(By.desc("slider_hint")), timeout))
+                // Once only: open and close the slider again.
+                openSlider()
+                closeSlider()
+                android.os.SystemClock.sleep(1500)
+                assertNull("the hint came back", device.findObject(By.desc("slider_hint")))
+            }
+            "notification_slider" -> {
+                closeSlider()
+                device.pressHome()
+                assertTrue("the app is still in front", device.wait(Until.gone(By.pkg("app.fayaz.otgmaster").depth(0)), timeout))
+                device.openNotification()
+                val n = device.wait(Until.findObject(By.text("Files stay available in other apps until you unmount.")), timeout)
+                if (n == null) captureScreen("no_mounted_notification")
+                assertNotNull("no mounted-drives notification for ${drive.name}", n)
+                n!!.click()
+                assertTrue("the app did not open from the notification",
+                    device.wait(Until.hasObject(By.pkg("app.fayaz.otgmaster").depth(0)), timeout))
+                val slider = device.wait(Until.hasObject(By.desc("mounted_drawer")), timeout)
+                if (!slider) captureScreen("notification_no_slider")
+                assertTrue("the notification opened the app without the slider", slider)
+                assertNotNull("the drive's card is not on the slider", findInSlider(By.desc("unmount_button")))
+            }
+        }
+        doUnmount()
+    }
+
     private fun runEjectFlow(flow: String) {
         if (flow.startsWith("unmount_")) return runUnmountFlow(flow)
+        if (flow == "slider_hint" || flow == "notification_slider") return runSliderFlow(flow)
         val args = InstrumentationRegistry.getArguments()
         val password = args.getString("password", "")
         val pim = args.getString("pim", "")
