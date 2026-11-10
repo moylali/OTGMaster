@@ -36,6 +36,7 @@
     <string name="log_eject_waiting">Eject of %1$s is waiting for a transfer to finish.</string>
     <string name="log_eject_cancelled">Eject of %1$s cancelled.</string>
     <string name="slider_hint">Tap here or swipe left for mounted devices</string>
+    <string name="slider_hint_never">Don\'t show again</string>
     <string name="unmount_busy_text">Will unmount once the transfer is complete.</string>
     <string name="unmount_cancel">Cancel unmount</string>
     <string name="unmount_pending">Unmounting when transfer finishes</string>

@@ -4,6 +4,10 @@ import androidx.compose.foundation.Canvas
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.BoxScope
+import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.layout.Row
+import androidx.compose.material3.Checkbox
+import androidx.compose.material3.CheckboxDefaults
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.offset
 import androidx.compose.foundation.layout.padding
@@ -30,10 +34,10 @@ import kotlin.math.roundToInt
 /**
  * A one-time hint under the top bar's Drives icon, its arrow pointing at [anchor] (the
  * icon's bottom centre, in root coordinates): where the mounted drives went when the
- * slider closed. A tap on it dismisses it.
+ * slider closed. A tap on it dismisses it; "Don't show again" turns it off for good.
  */
 @Composable
-fun BoxScope.SliderHint(anchor: Offset, onDismiss: () -> Unit) {
+fun BoxScope.SliderHint(anchor: Offset, onDismiss: () -> Unit, onNeverShow: () -> Unit) {
     val density = LocalDensity.current
     val arrowW = 18.dp
     val arrowH = 9.dp
@@ -58,8 +62,23 @@ fun BoxScope.SliderHint(anchor: Offset, onDismiss: () -> Unit) {
                 .semantics { contentDescription = "slider_hint" }
                 .clickable(onClick = onDismiss),
         ) {
-            Text(stringResource(R.string.slider_hint), style = MaterialTheme.typography.bodyMedium,
-                modifier = Modifier.padding(horizontal = 14.dp, vertical = 10.dp))
+            Column(Modifier.padding(start = 14.dp, end = 14.dp, top = 10.dp, bottom = 2.dp)) {
+                Text(stringResource(R.string.slider_hint), style = MaterialTheme.typography.bodyMedium)
+                // Ticking it is the answer: the hint goes, and does not come back.
+                Row(
+                    verticalAlignment = Alignment.CenterVertically,
+                    modifier = Modifier
+                        .semantics { contentDescription = "slider_hint_never" }
+                        .clickable(onClick = onNeverShow),
+                ) {
+                    Checkbox(
+                        checked = false,
+                        onCheckedChange = { onNeverShow() },
+                        colors = CheckboxDefaults.colors(uncheckedColor = MaterialTheme.colorScheme.inverseOnSurface),
+                    )
+                    Text(stringResource(R.string.slider_hint_never), style = MaterialTheme.typography.bodySmall)
+                }
+            }
         }
     }
 }

@@ -223,6 +223,8 @@ class MainActivity : AppCompatActivity() {
         private const val PREF_BACKUPS_HIDDEN = "backups_hidden"
         /** Whether the hint pointing at the Drives icon has been shown; it is shown once. */
         const val PREF_SLIDER_HINT_SEEN = "slider_hint_seen"
+        /** Set by the hint's "Don't show again": it never shows, on close or on open. */
+        const val PREF_SLIDER_HINT_OFF = "slider_hint_off"
         private const val PREF_USB_ACCESS = "usb_access_mode"
         private const val PREF_KNOWN_VOLUMES = "known_removable_volumes"
         /** Debug builds only: answers "did Android mount it?", which an emulator cannot show. */
@@ -283,6 +285,7 @@ class MainActivity : AppCompatActivity() {
     private val readOnlyDefault = mutableStateOf(false)
     private val backupsHidden = mutableStateOf(false)
     private val sliderHintSeen = mutableStateOf(true)
+    private val sliderHintOff = mutableStateOf(false)
     /**
      * Set when the app is opened (a new activity, not one turned or brought back) while drives
      * are mounted: the main screen then shows the hint at the Drives icon, since the drives are
@@ -658,7 +661,8 @@ class MainActivity : AppCompatActivity() {
         readOnlyDefault.value = sharedPreferences.getBoolean(PREF_READ_ONLY_DEFAULT, false)
         backupsHidden.value = sharedPreferences.getBoolean(PREF_BACKUPS_HIDDEN, false)
         sliderHintSeen.value = sharedPreferences.getBoolean(PREF_SLIDER_HINT_SEEN, false)
-        sliderHintOnOpen = savedInstanceState == null && OtgMasterState.mountedDrives.isNotEmpty() &&
+        sliderHintOff.value = sharedPreferences.getBoolean(PREF_SLIDER_HINT_OFF, false)
+        sliderHintOnOpen = !sliderHintOff.value && savedInstanceState == null && OtgMasterState.mountedDrives.isNotEmpty() &&
             intent?.getBooleanExtra(EXTRA_OPEN_MOUNTED, false) != true   // that opens the slider itself
         readOnlyChoices.value = sharedPreferences.getStringSet(PREF_READ_ONLY_CHOICES, emptySet()).orEmpty()
             .mapNotNull { e -> e.substringBeforeLast('|', "").takeIf { it.isNotEmpty() }?.let { it to e.endsWith("|1") } }
@@ -806,6 +810,11 @@ class MainActivity : AppCompatActivity() {
                         },
                         openMountedRequest = openMountedRequest.value,
                         sliderHintOnOpen = sliderHintOnOpen,
+                        sliderHintOff = sliderHintOff.value,
+                        onSliderHintOff = {
+                            sliderHintOff.value = true
+                            sharedPreferences.edit().putBoolean(PREF_SLIDER_HINT_OFF, true).apply()
+                        },
                         newlyMountedDriveIds = newlyMountedDriveIds.value,
                         onHighlightConsumed = { driveId -> newlyMountedDriveIds.value = newlyMountedDriveIds.value - driveId },
                         formatUnavailable = { formatUnavailable(it) },
@@ -3441,6 +3450,8 @@ fun OtgMasterApp(
     onSliderHintSeen: () -> Unit = {},
     openMountedRequest: Int = 0,
     sliderHintOnOpen: Boolean = false,
+    sliderHintOff: Boolean = false,
+    onSliderHintOff: () -> Unit = {},
     newlyMountedDriveIds: Set<String> = emptySet(),
     onHighlightConsumed: (String) -> Unit = {},
     formatUnavailable: (MountedDrive) -> String? = { "" },
@@ -3542,7 +3553,7 @@ fun OtgMasterApp(
         if (showMounted) {
             sliderWasOpen = true
             sliderHint = false
-        } else if (sliderWasOpen && !sliderHintSeen && mountedDrives.isNotEmpty()) {
+        } else if (sliderWasOpen && !sliderHintSeen && !sliderHintOff && mountedDrives.isNotEmpty()) {
             sliderHint = true
             onSliderHintSeen()
         }
@@ -3551,10 +3562,11 @@ fun OtgMasterApp(
     // has settled and it does not land on the first tap, unless by then the slider is up (a tap
     // on the mounted-drives notification opens it) or the drives are gone.
     val currentMounted by androidx.compose.runtime.rememberUpdatedState(mountedDrives)
+    val sliderHintOffNow by androidx.compose.runtime.rememberUpdatedState(sliderHintOff)
     LaunchedEffect(Unit) {
         if (!sliderHintOnOpen) return@LaunchedEffect
         kotlinx.coroutines.delay(SLIDER_HINT_OPEN_DELAY_MS)
-        if (!showMounted && currentMounted.isNotEmpty()) sliderHint = true
+        if (!showMounted && currentMounted.isNotEmpty() && !sliderHintOffNow) sliderHint = true
     }
     // A tap on the mounted-drives notification.
     LaunchedEffect(openMountedRequest) {
@@ -3976,7 +3988,8 @@ fun OtgMasterApp(
 
     if (!showMounted) MountedEdgeSwipe(onOpen = { showMounted = true })
     if (sliderHint && !showMounted) drivesIconAnchor?.let { anchor ->
-        SliderHint(anchor, onDismiss = { sliderHint = false })
+        SliderHint(anchor, onDismiss = { sliderHint = false },
+            onNeverShow = { sliderHint = false; onSliderHintOff() })
     }
     MountedDrawer(visible = showMounted, onDismiss = { showMounted = false }) {
         app.fayaz.otgmaster.ui.MountedPanel(

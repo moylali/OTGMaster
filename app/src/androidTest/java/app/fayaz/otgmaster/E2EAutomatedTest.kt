@@ -101,7 +101,7 @@ class E2EAutomatedTest {
             .remove("usb_access_mode").remove("test_android_holds_usb").commit()
         // The one-time hint at the Drives icon sits over the top of the screen, where Scan is.
         // Every case but the one that tests it starts with it already seen.
-        prefs.edit().putBoolean(MainActivity.PREF_SLIDER_HINT_SEEN,
+        prefs.edit().remove(MainActivity.PREF_SLIDER_HINT_OFF).putBoolean(MainActivity.PREF_SLIDER_HINT_SEEN,
             InstrumentationRegistry.getArguments().getString("eject_flow", "") != "slider_hint").commit()
         // Before the launch: under Always the launch itself would open the drive.
         when (InstrumentationRegistry.getArguments().getString("eject_flow", "")) {
@@ -4194,6 +4194,24 @@ class E2EAutomatedTest {
                     again!!.click()
                     assertTrue("a tap did not dismiss the hint", device.wait(Until.gone(By.desc("slider_hint")), timeout))
                 }
+                // "Don't show again" turns it off for good.
+                InstrumentationRegistry.getInstrumentation().targetContext.startActivity(mainActivityIntent()
+                    .addFlags(Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_CLEAR_TASK))
+                assertNotNull("no hint before Don't show again",
+                    device.wait(Until.findObject(By.desc("slider_hint")), SLIDER_HINT_OPEN_DELAY_MS + 10_000L))
+                assertNotNull("no Don't show again on the hint", device.findObject(By.text("Don't show again")))
+                assertTrue(clickByDesc("slider_hint_never"))
+                assertTrue("Don't show again left the hint up", device.wait(Until.gone(By.desc("slider_hint")), timeout))
+                assertTrue("Don't show again was not saved", prefs.getBoolean(MainActivity.PREF_SLIDER_HINT_OFF, false))
+                InstrumentationRegistry.getInstrumentation().targetContext.startActivity(mainActivityIntent()
+                    .addFlags(Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_CLEAR_TASK))
+                assertTrue(device.wait(Until.hasObject(By.pkg("app.fayaz.otgmaster").depth(0)), timeout))
+                android.os.SystemClock.sleep(SLIDER_HINT_OPEN_DELAY_MS + 3000L)
+                assertNull("the hint came back after Don't show again", device.findObject(By.desc("slider_hint")))
+                openSlider()
+                closeSlider()
+                android.os.SystemClock.sleep(1500)
+                assertNull("the hint came back on close after Don't show again", device.findObject(By.desc("slider_hint")))
             }
             "notification_slider" -> {
                 closeSlider()
