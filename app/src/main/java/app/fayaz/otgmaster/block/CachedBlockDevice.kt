@@ -104,79 +104,86 @@ class CachedBlockDevice(
             while (done < blockCount) {
                 val block = startBlock + done
                 val lineIndex = block / blocksPerLine
-                val line = lineFor(lineIndex)
-                val blocksInLine = line.size / blockSize
                 val offsetInLine = (block - lineIndex * blocksPerLine).toInt()
-                // Short only for a final partial line at the end of the device.
-                val available = blocksInLine - offsetInLine
-                check(available > 0) { "cache line $lineIndex too short for block $block" }
-                val take = minOf(available, blockCount - done)
-                System.arraycopy(
-                    line, offsetInLine * blockSize,
-                    out, done * blockSize,
-                    take * blockSize,
-                )
-                done += take
+                done += copyFromLine(lineIndex, offsetInLine, out, done, blockCount - done)
             }
         }
         return out
     }
 
     /**
-     * Returns line [lineIndex], fetching it if absent.
+     * Copies up to [maxBlocks] blocks of line [lineIndex], from block [offsetInLine] of
+     * it, into [out] at block [outBlock], fetching the line if absent. Returns the
+     * number of blocks copied.
      *
-     * Takes [lock] only to look up and to publish; the device read happens with the
-     * lock released, so a cache hit on another thread is not stuck behind it.
+     * The copy happens under [lock]. This used to return the cached array itself and
+     * let the caller copy from it after the lock was released, so an eviction or an
+     * invalidate on another thread, both of which zero the line, could land mid-copy:
+     * the read returned zeros, or a mix, and reported success. A partial patch from a
+     * write could be seen the same way. `CachedBlockDeviceTest` reproduced 18,176 zero
+     * bytes in one 31.5 KiB read within three seconds.
      *
-     * The window that opens is a write landing on this line while the fetch is in
-     * flight: publishing the fetched data would then discard that write and leave the
-     * cache disagreeing with the disk for as long as the line survives. [fetching]
-     * and [dirtiedWhileFetching] close it — a write to a line being fetched marks it,
-     * and the fetch is then used for this read but not published.
+     * The device read happens with the lock released, so a hit on another thread is
+     * not stuck behind it. The window that opens is a write landing on this line
+     * while the fetch is in flight: publishing the fetched data would then discard
+     * that write and leave the cache disagreeing with the disk for as long as the line
+     * survives. [fetching] and [dirtiedWhileFetching] close it: a write to a line
+     * being fetched marks it, and the fetch is then discarded rather than published.
+     * If the writer left no line behind either, the fetch is repeated, since the
+     * bytes it got may predate the write.
      *
      * Publishing outside the lock, or relying on a ConcurrentHashMap, does not work:
      * the invariant is "device and cache agree", which spans two operations, and
      * making each one individually atomic does not make the pair atomic.
      */
-    private fun lineFor(lineIndex: Long): ByteArray {
-        synchronized(lock) {
-            lines[lineIndex]?.let {
-                hits++
-                return it
-            }
-            misses++
-            fetching.add(lineIndex)
+    private fun copyFromLine(lineIndex: Long, offsetInLine: Int, out: ByteArray, outBlock: Int, maxBlocks: Int): Int {
+        fun copy(line: ByteArray): Int {
+            // Short only for a final partial line at the end of the device.
+            val available = line.size / blockSize - offsetInLine
+            check(available > 0) { "cache line $lineIndex too short for block offset $offsetInLine" }
+            val take = minOf(available, maxBlocks)
+            System.arraycopy(line, offsetInLine * blockSize, out, outBlock * blockSize, take * blockSize)
+            return take
         }
-
-        val start = lineIndex * blocksPerLine
-        val count = minOf(blocksPerLine.toLong(), blockCount - start).toInt()
-        check(count > 0) { "cache line $lineIndex starts past the end of the device" }
-
-        val data: ByteArray
-        try {
-            data = delegate.readBlocks(start, count)
-        } catch (t: Throwable) {
+        while (true) {
             synchronized(lock) {
-                fetching.remove(lineIndex)
-                dirtiedWhileFetching.remove(lineIndex)
+                lines[lineIndex]?.let {
+                    hits++
+                    return copy(it)
+                }
+                misses++
+                fetching.add(lineIndex)
             }
-            throw t
-        }
 
-        synchronized(lock) {
-            delegateBlocksRead += count
-            fetching.remove(lineIndex)
-            val superseded = dirtiedWhileFetching.remove(lineIndex)
-            if (superseded) {
-                // A write changed these blocks while we were reading them. Whatever
-                // the device held mid-write is not what the cache should serve, and
-                // the writer has already patched or dropped the line.
-                lines[lineIndex]?.let { return it }
-            } else {
-                lines[lineIndex] = data
+            val start = lineIndex * blocksPerLine
+            val count = minOf(blocksPerLine.toLong(), blockCount - start).toInt()
+            check(count > 0) { "cache line $lineIndex starts past the end of the device" }
+
+            val data: ByteArray
+            try {
+                data = delegate.readBlocks(start, count)
+            } catch (t: Throwable) {
+                synchronized(lock) {
+                    fetching.remove(lineIndex)
+                    dirtiedWhileFetching.remove(lineIndex)
+                }
+                throw t
             }
+
+            synchronized(lock) {
+                delegateBlocksRead += count
+                fetching.remove(lineIndex)
+                if (!dirtiedWhileFetching.remove(lineIndex)) {
+                    lines[lineIndex] = data
+                    return copy(data)
+                }
+                // A write changed these blocks while we were reading them. Whatever the
+                // device held mid-write is not what the cache should serve; the writer
+                // has already patched or dropped the line.
+                lines[lineIndex]?.let { return copy(it) }
+            }
+            data.fill(0)
         }
-        return data
     }
 
     /** Caller must hold [lock]. */
@@ -214,10 +221,10 @@ class CachedBlockDevice(
         // evicted. Writes are far rarer than reads here and are already serialised
         // by the layer above, so holding the lock across the transfer costs little;
         // the concurrency that matters was reads queueing behind it, and that is
-        // handled in readBlocks and lineFor instead.
+        // handled in readBlocks and copyFromLine instead.
         synchronized(lock) {
             // Flag any line currently being fetched that this write overlaps, before
-            // touching the device. lineFor() releases the lock for its read, so a
+            // touching the device. copyFromLine() releases the lock for its read, so a
             // fetch in flight is about to publish blocks that predate this write; it
             // must not. Flag first, so a write that fails partway is covered too.
             markFetchesDirty(startBlock, blocks)
