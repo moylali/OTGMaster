@@ -4170,14 +4170,26 @@ class E2EAutomatedTest {
                 assertTrue("it was not remembered as shown", prefs.getBoolean(MainActivity.PREF_SLIDER_HINT_SEEN, false))
                 hint.click()
                 assertTrue("a tap did not dismiss the hint", device.wait(Until.gone(By.desc("slider_hint")), timeout))
-                // Once only: open and close the slider again.
+                // The first-close hint is once only: open and close the slider again.
                 openSlider()
                 closeSlider()
                 android.os.SystemClock.sleep(1500)
                 assertNull("the hint came back", device.findObject(By.desc("slider_hint")))
+                // Opening the app with a drive mounted shows it again, every time.
+                repeat(2) { round ->
+                    InstrumentationRegistry.getInstrumentation().targetContext.startActivity(mainActivityIntent()
+                        .addFlags(Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_CLEAR_TASK))
+                    val again = device.wait(Until.findObject(By.desc("slider_hint")), timeout)
+                    if (again == null) captureScreen("no_slider_hint_on_open_$round")
+                    assertNotNull("no hint when the app was opened with a drive mounted (open ${round + 1})", again)
+                    assertNull("the slider opened by itself", device.findObject(By.desc("mounted_drawer")))
+                    again!!.click()
+                    assertTrue("a tap did not dismiss the hint", device.wait(Until.gone(By.desc("slider_hint")), timeout))
+                }
             }
             "notification_slider" -> {
                 closeSlider()
+                dismissSliderHint()
                 device.pressHome()
                 assertTrue("the app is still in front", device.wait(Until.gone(By.pkg("app.fayaz.otgmaster").depth(0)), timeout))
                 device.openNotification()
@@ -4191,6 +4203,7 @@ class E2EAutomatedTest {
                 if (!slider) captureScreen("notification_no_slider")
                 assertTrue("the notification opened the app without the slider", slider)
                 assertNotNull("the drive's card is not on the slider", findInSlider(By.desc("unmount_button")))
+                assertNull("the hint showed although the notification opened the slider", device.findObject(By.desc("slider_hint")))
             }
         }
         doUnmount()
@@ -5283,8 +5296,20 @@ class E2EAutomatedTest {
      * click on a missing button was skipped silently — the remount then found no
      * candidate and failed as "Mount #2 failed" (m_luks1_exfat).
      */
+    /**
+     * Taps away the hint at the Drives icon if it is up. It shows whenever the app is opened
+     * with a drive mounted, and sits over the top of the screen, where Scan is.
+     */
+    private fun dismissSliderHint() {
+        device.findObject(By.desc("slider_hint"))?.let {
+            it.click()
+            device.wait(Until.gone(By.desc("slider_hint")), timeout)
+        }
+    }
+
     private fun findScanButton(): androidx.test.uiautomator.UiObject2? {
         closeSlider()
+        dismissSliderHint()
         scrollToTop()
         return device.wait(Until.findObject(By.textContains("Scan").clickable(true)), timeout)
             ?: device.wait(Until.findObject(By.descContains("scan_button")), timeout)
