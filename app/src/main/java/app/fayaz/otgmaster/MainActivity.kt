@@ -4570,7 +4570,12 @@ fun SettingsDialogRow(
     if (open) {
         AlertDialog(
             onDismissRequest = { open = false },
-            modifier = Modifier.semantics { contentDescription = "settings_dialog_$id" },
+            // A dialog is its own window, so the drawer's testTagsAsResourceId does not reach
+            // into it; set it here too, or the tags inside are invisible to UiAutomator.
+            modifier = Modifier.semantics {
+                contentDescription = "settings_dialog_$id"
+                testTagsAsResourceId = true
+            },
             title = { Text(title) },
             text = { Column(modifier = Modifier.verticalScroll(rememberScrollState()), content = content) },
             confirmButton = {
