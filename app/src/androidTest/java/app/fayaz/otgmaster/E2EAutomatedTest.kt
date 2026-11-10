@@ -4201,9 +4201,14 @@ class E2EAutomatedTest {
                     device.wait(Until.findObject(By.desc("slider_hint")), SLIDER_HINT_OPEN_DELAY_MS + 10_000L))
                 assertNotNull("no Don't show again on the hint", device.findObject(By.text("Don't show again")))
                 assertTrue(clickByDesc("slider_hint_never"))
-                // The tick shows before the hint goes (TICK_FEEDBACK_MS).
-                assertTrue("no tick in the box after Don't show again",
-                    device.wait(Until.hasObject(By.checkable(true).checked(true)), app.fayaz.otgmaster.ui.TICK_FEEDBACK_MS))
+                // The tick shows before the hint goes (TICK_FEEDBACK_MS). One look partway through:
+                // device.wait polls about once a second, which lands either before the tick is drawn
+                // or after the hint has gone.
+                android.os.SystemClock.sleep(app.fayaz.otgmaster.ui.TICK_FEEDBACK_MS / 2)
+                InstrumentationRegistry.getInstrumentation().uiAutomation.clearCache()
+                val ticked = device.findObject(By.checkable(true).checked(true))
+                if (ticked == null) captureScreen("no_tick")
+                assertNotNull("no tick in the box after Don't show again", ticked)
                 assertTrue("Don't show again left the hint up", device.wait(Until.gone(By.desc("slider_hint")), timeout))
                 assertTrue("Don't show again was not saved", prefs.getBoolean(MainActivity.PREF_SLIDER_HINT_OFF, false))
                 InstrumentationRegistry.getInstrumentation().targetContext.startActivity(mainActivityIntent()
