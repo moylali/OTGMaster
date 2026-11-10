@@ -23,6 +23,15 @@ interface Progress {
  */
 object CopyEngine {
     const val MANIFEST = "otgmaster-copy.json"
+
+    /**
+     * Marks a manifest as ours, so Verify can tell it from a user's file of the same name.
+     * Manifests from before it existed have no marker and are found by [MANIFEST] alone.
+     */
+    private const val MANIFEST_KIND = "otgmaster-copy-manifest"
+
+    /** Names tried for the manifest, in order; the first one the source's top folder does not use is taken. */
+    private fun manifestNames() = sequenceOf(MANIFEST) + (1..99).asSequence().map { "otgmaster-copy-$it.json" }
     const val MAX_ERRORS = 200
 
     data class ManifestFile(val path: String, val size: Long, val mtime: Long, val sha256: String)
@@ -49,6 +58,7 @@ object CopyEngine {
             }))
             put("dirs", dirs); put("totalBytes", totalBytes); put("errors", JSONArray(errors))
             put("durationMs", durationMs); put("appVersion", appVersion)
+            put("kind", MANIFEST_KIND)
         }
 
         companion object {
@@ -85,6 +95,13 @@ object CopyEngine {
         if (source.stat("")?.isDirectory != true) throw IOException("source ${source.description} is not available")
         if (target.stat(targetDir) != null) throw IOException("$targetDir already exists in ${target.description}")
         target.mkdirs(targetDir)
+        // The manifest goes in the copy's top folder, so it takes a name nothing copied
+        // there uses. It was always otgmaster-copy.json, written after the files: a source
+        // file of that name was copied, verified, then overwritten, and a source folder of
+        // that name deleted with what was in it. Case-insensitive, as FAT32 and exFAT are.
+        val topNames = runCatching { source.list("") }.getOrDefault(emptyList()).map { it.name.lowercase() }.toSet()
+        val manifestName = manifestNames().firstOrNull { it.lowercase() !in topNames }
+            ?: throw IOException("the source's top folder uses every name the copy's manifest could take")
         val files = ArrayList<ManifestFile>()
         val errors = ArrayList<String>()
         var dirs = 0L
@@ -141,7 +158,7 @@ object CopyEngine {
             files = files, dirs = dirs, totalBytes = bytes, errors = errors,
             durationMs = now() - started, appVersion = options.appVersion,
         )
-        target.openWrite(Paths.join(targetDir, MANIFEST)).use { it.write(manifest.toJson().toString(1).toByteArray()) }
+        target.openWrite(Paths.join(targetDir, manifestName)).use { it.write(manifest.toJson().toString(1).toByteArray()) }
         return manifest
     }
 
@@ -151,16 +168,40 @@ object CopyEngine {
     /** Whether a problem from [verify] means the copy is damaged, as opposed to a read that failed. */
     fun isDamage(problem: String) = problem.endsWith(DIFFERS) || problem.endsWith(MISSING)
 
+    /**
+     * The manifest of the copy in [copyDir]: the file among [manifestNames] that carries
+     * the marker, or, for a copy made before the marker, the one named [MANIFEST].
+     */
+    private fun readManifest(target: FileTree, copyDir: String): Manifest {
+        var legacy: JSONObject? = null
+        var unreadable: Exception? = null
+        for (name in manifestNames()) {
+            val path = Paths.join(copyDir, name)
+            if (target.stat(path)?.isDirectory != false) continue
+            val o = try {
+                JSONObject(String(target.openRead(path).use { it.readBytes() }, Charsets.UTF_8))
+            } catch (e: Exception) { if (name == MANIFEST) unreadable = e; continue }
+            if (o.optString("kind") == MANIFEST_KIND) return Manifest.fromJson(o)
+            if (name == MANIFEST) legacy = o
+        }
+        legacy?.let { o ->
+            return try { Manifest.fromJson(o) } catch (e: org.json.JSONException) {
+                throw app.fayaz.otgmaster.backup.restic.DamagedException("the manifest of $copyDir cannot be read", e)
+            }
+        }
+        if (unreadable != null)
+            throw app.fayaz.otgmaster.backup.restic.DamagedException("the manifest of $copyDir cannot be read", unreadable)
+        throw app.fayaz.otgmaster.backup.restic.DamagedException("the copy $copyDir has no manifest",
+            java.io.FileNotFoundException(Paths.join(copyDir, MANIFEST)))
+    }
+
     /** Re-hashes every file of a copy against its manifest; returns the problems found. */
     fun verify(target: FileTree, copyDir: String, progress: Progress = Progress.None): List<String> {
-        val manifest = try {
-            Manifest.fromJson(JSONObject(String(target.openRead(Paths.join(copyDir, MANIFEST)).use { it.readBytes() }, Charsets.UTF_8)))
-        } catch (e: java.io.FileNotFoundException) {
-            throw app.fayaz.otgmaster.backup.restic.DamagedException("the copy $copyDir has no manifest", e)
-        } catch (e: org.json.JSONException) {
-            throw app.fayaz.otgmaster.backup.restic.DamagedException("the manifest of $copyDir cannot be read", e)
-        }
+        val manifest = readManifest(target, copyDir)
         val problems = ArrayList<String>()
+        // What the copy itself could not read is not in it, so the copy is not complete,
+        // however well the rest checks out. Verify used to pass such a copy.
+        for (e in manifest.errors) problems += "not copied: $e"
         for ((i, f) in manifest.files.withIndex()) {
             if (progress.isCancelled()) throw CancelledException()
             progress.update("verify", i.toLong(), 0, f.path)
