@@ -20,11 +20,17 @@ object GptParser {
         val numPartEntries = headerBuf.int
         val partEntrySize = headerBuf.int
         
-        if (numPartEntries <= 0 || partEntrySize < 128) return emptyList()
-
-        val totalBytes = numPartEntries * partEntrySize
+        // The header comes from whatever drive is plugged in. Its counts sized the read as an
+        // Int with no cap: a bad header overflowed it (and the parse threw), or asked for a
+        // table bigger than the drive. The spec makes the entry size 128 x 2^n; 128 entries
+        // is usual, and MAX_TABLE_BYTES allows 64 times that. Review, 2026-11-09.
+        if (numPartEntries <= 0 || partEntrySize < 128 || partEntrySize % 128 != 0 ||
+            partEntrySize > MAX_ENTRY_SIZE) return emptyList()
+        val totalBytes = numPartEntries.toLong() * partEntrySize
+        if (totalBytes > MAX_TABLE_BYTES) return emptyList()
         val blocksToRead = (totalBytes + device.blockSize - 1) / device.blockSize
-        
+        if (partEntryLba < 2 || partEntryLba + blocksToRead > device.blockCount) return emptyList()
+
         val entriesData = device.readBlocks(startBlock = partEntryLba, blockCount = blocksToRead.toInt())
         val entriesBuf = ByteBuffer.wrap(entriesData).order(ByteOrder.LITTLE_ENDIAN)
         
@@ -41,7 +47,8 @@ object GptParser {
             val lastLba = entriesBuf.long
             
             val sectorCount = (lastLba - firstLba) + 1
-            if (sectorCount > 0) {
+            // An entry must lie on the drive; one that does not is skipped, not probed.
+            if (firstLba >= 1 && sectorCount > 0 && lastLba < device.blockCount) {
                 partitions.add(PartitionEntry(
                     index = i,
                     type = 0xEE,
@@ -52,4 +59,10 @@ object GptParser {
         }
         return partitions
     }
+
+    /** Largest entry size accepted; the spec allows 128 x 2^n, and nothing uses more than 512. */
+    private const val MAX_ENTRY_SIZE = 4096
+
+    /** Largest entry table read: 1 MiB, 64 times the usual 128 entries of 128 bytes. */
+    private const val MAX_TABLE_BYTES = 1L shl 20
 }
