@@ -283,6 +283,12 @@ class MainActivity : AppCompatActivity() {
     private val readOnlyDefault = mutableStateOf(false)
     private val backupsHidden = mutableStateOf(false)
     private val sliderHintSeen = mutableStateOf(true)
+    /**
+     * Set when the app is opened (a new activity, not one turned or brought back) while drives
+     * are mounted: the main screen then shows the hint at the Drives icon, since the drives are
+     * only reachable from there.
+     */
+    private var sliderHintOnOpen = false
     /** Counts taps on the mounted-drives notification; each one opens the slider. */
     private val openMountedRequest = mutableStateOf(0)
     /** Per-partition read-only choices made in the unlock form, keyed by [partitionKey]. */
@@ -652,6 +658,8 @@ class MainActivity : AppCompatActivity() {
         readOnlyDefault.value = sharedPreferences.getBoolean(PREF_READ_ONLY_DEFAULT, false)
         backupsHidden.value = sharedPreferences.getBoolean(PREF_BACKUPS_HIDDEN, false)
         sliderHintSeen.value = sharedPreferences.getBoolean(PREF_SLIDER_HINT_SEEN, false)
+        sliderHintOnOpen = savedInstanceState == null && OtgMasterState.mountedDrives.isNotEmpty() &&
+            intent?.getBooleanExtra(EXTRA_OPEN_MOUNTED, false) != true   // that opens the slider itself
         readOnlyChoices.value = sharedPreferences.getStringSet(PREF_READ_ONLY_CHOICES, emptySet()).orEmpty()
             .mapNotNull { e -> e.substringBeforeLast('|', "").takeIf { it.isNotEmpty() }?.let { it to e.endsWith("|1") } }
             .toMap()
@@ -797,6 +805,7 @@ class MainActivity : AppCompatActivity() {
                             sharedPreferences.edit().putBoolean(PREF_SLIDER_HINT_SEEN, true).apply()
                         },
                         openMountedRequest = openMountedRequest.value,
+                        sliderHintOnOpen = sliderHintOnOpen,
                         newlyMountedDriveIds = newlyMountedDriveIds.value,
                         onHighlightConsumed = { driveId -> newlyMountedDriveIds.value = newlyMountedDriveIds.value - driveId },
                         formatUnavailable = { formatUnavailable(it) },
@@ -3428,6 +3437,7 @@ fun OtgMasterApp(
     sliderHintSeen: Boolean = true,
     onSliderHintSeen: () -> Unit = {},
     openMountedRequest: Int = 0,
+    sliderHintOnOpen: Boolean = false,
     newlyMountedDriveIds: Set<String> = emptySet(),
     onHighlightConsumed: (String) -> Unit = {},
     formatUnavailable: (MountedDrive) -> String? = { "" },
@@ -3520,7 +3530,8 @@ fun OtgMasterApp(
     var showMounted by androidx.compose.runtime.saveable.rememberSaveable { mutableStateOf(false) }
     var mountedTab by androidx.compose.runtime.saveable.rememberSaveable { mutableStateOf(app.fayaz.otgmaster.ui.MountedTab.DRIVES) }
     // The first time the slider closes with a drive mounted, a hint points at the Drives
-    // icon, which is the way back to it. Once ever; a tap on it or opening the slider ends it.
+    // icon, which is the way back to it (once ever), and again whenever the app is opened with
+    // drives mounted. A tap on it or opening the slider ends it.
     var sliderHint by androidx.compose.runtime.saveable.rememberSaveable { mutableStateOf(false) }
     var sliderWasOpen by remember { mutableStateOf(false) }
     var drivesIconAnchor by remember { mutableStateOf<androidx.compose.ui.geometry.Offset?>(null) }
@@ -3532,6 +3543,11 @@ fun OtgMasterApp(
             sliderHint = true
             onSliderHintSeen()
         }
+    }
+    // Opened with drives already mounted: point at where they are, unless the slider is up
+    // (a tap on the mounted-drives notification opens it).
+    LaunchedEffect(Unit) {
+        if (sliderHintOnOpen && !showMounted && mountedDrives.isNotEmpty()) sliderHint = true
     }
     // A tap on the mounted-drives notification.
     LaunchedEffect(openMountedRequest) {

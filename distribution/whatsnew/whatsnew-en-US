@@ -1,5 +1,5 @@
 • Faster unlocks of VeraCrypt volumes and LUKS2 drives that use Argon2
 • Fixed: Unmount waits for a file copy or a backup to finish, as Eject does
 • Settings: Donate shows the Ko-fi button and links to more ways to help
-• New: a one-time hint shows where the mounted drives are
+• New: a hint shows where the mounted drives are
 • Tapping the mounted-drives notification opens their list
