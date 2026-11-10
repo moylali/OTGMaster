@@ -4201,13 +4201,25 @@ class E2EAutomatedTest {
                     device.wait(Until.findObject(By.desc("slider_hint")), SLIDER_HINT_OPEN_DELAY_MS + 10_000L))
                 assertNotNull("no Don't show again on the hint", device.findObject(By.text("Don't show again")))
                 assertTrue(clickByDesc("slider_hint_never"))
-                // The tick shows before the hint goes (TICK_FEEDBACK_MS). One look partway through:
-                // device.wait polls about once a second, which lands either before the tick is drawn
-                // or after the hint has gone.
-                android.os.SystemClock.sleep(app.fayaz.otgmaster.ui.TICK_FEEDBACK_MS / 2)
-                InstrumentationRegistry.getInstrumentation().uiAutomation.clearCache()
-                val ticked = device.findObject(By.checkable(true).checked(true))
-                if (ticked == null) captureScreen("no_tick")
+                // The tick shows before the hint goes (TICK_FEEDBACK_MS). One look partway through,
+                // without UiAutomator's wait for idle: findObject first waits until the screen has
+                // been quiet for a while, and the tick's own animation kept it busy past the 0.7 s,
+                // so the look always came after the hint had gone (#141, 3 runs).
+                val cfg = androidx.test.uiautomator.Configurator.getInstance()
+                val idleBefore = cfg.waitForIdleTimeout
+                cfg.waitForIdleTimeout = 0
+                val stillUp: Boolean
+                val ticked: androidx.test.uiautomator.UiObject2?
+                try {
+                    android.os.SystemClock.sleep(app.fayaz.otgmaster.ui.TICK_FEEDBACK_MS / 3)
+                    InstrumentationRegistry.getInstrumentation().uiAutomation.clearCache()
+                    stillUp = device.findObject(By.desc("slider_hint")) != null
+                    ticked = device.findObject(By.checkable(true).checked(true))
+                } finally {
+                    cfg.waitForIdleTimeout = idleBefore
+                }
+                if (!stillUp || ticked == null) captureScreen("no_tick")
+                assertTrue("the hint went at once, before showing the tick", stillUp)
                 assertNotNull("no tick in the box after Don't show again", ticked)
                 assertTrue("Don't show again left the hint up", device.wait(Until.gone(By.desc("slider_hint")), timeout))
                 assertTrue("Don't show again was not saved", prefs.getBoolean(MainActivity.PREF_SLIDER_HINT_OFF, false))
