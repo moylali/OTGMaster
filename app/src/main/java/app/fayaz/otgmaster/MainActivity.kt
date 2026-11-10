@@ -1461,6 +1461,8 @@ class MainActivity : AppCompatActivity() {
         readOnlyOverride: Boolean? = null,
         /** Mounts the outer volume with its hidden volume protected; never set by auto mount. */
         protectHidden: app.fayaz.otgmaster.veracrypt.HiddenVolumeCredentials? = null,
+        /** Which VeraCrypt headers to try; see [mountProbedCandidates] for why not always both. */
+        veraCryptHeaders: VeraCryptUnlocker.Headers = VeraCryptUnlocker.Headers.BOTH,
         onComplete: () -> Unit
     ) {
         // An exception after the success path's onComplete() reached the catch block,
@@ -1559,7 +1561,8 @@ class MainActivity : AppCompatActivity() {
                     }
                     else -> VeraCryptUnlocker().unlock(
                         device, candidate, password.toCharArray(), pim, keyfiles, contentResolver,
-                        cipher, hash, protect = protectHidden.takeUnless { readOnly }
+                        cipher, hash, protect = protectHidden.takeUnless { readOnly },
+                        headers = veraCryptHeaders,
                     )
                 }
                 val veraCryptVolume = decryptedDevice as? app.fayaz.otgmaster.veracrypt.NativeDecryptedBlockDevice
@@ -2716,12 +2719,55 @@ class MainActivity : AppCompatActivity() {
                 android.util.Log.i("OTGMaster", "Mount request: remounting plain ${plain.label}")
                 mountPlainDevice(device, plain)
             }
-            device.candidates.forEach { candidate ->
-                OtgMasterState.unlocksInFlight.incrementAndGet()
-                attemptUnlock(
-                    device.deviceName, candidate, password, pim,
-                    emptyList(), cipher, hash, readOnlyOverride = readOnly,
-                ) { OtgMasterState.unlocksInFlight.decrementAndGet() }
+        }
+
+        // One password against every locked partition, VeraCrypt's standard headers first.
+        // Trying each partition's hidden header straight after its standard one cost a second
+        // key derivation on every partition the password does not fit: on the matrix's Drive 5,
+        // eleven derivations per mount where 0.5.0 ran six, and 1399 s instead of 732 s at PIM
+        // 31. A password opens either a volume's standard header or its hidden one, so the
+        // hidden headers are tried only when no standard header opened, which still mounts a
+        // stick whose only match is a hidden volume.
+        val requested = devices.flatMap { device -> device.candidates.map { device.deviceName to it } }
+        fun isMounted(deviceName: String, candidate: VolumeCandidate) = OtgMasterState.mountedDrives.any {
+            it.sourceDeviceName == deviceName && it.partitionStartBlock == candidate.startBlock
+        }
+        fun unlock(deviceName: String, candidate: VolumeCandidate,
+                   headers: VeraCryptUnlocker.Headers, then: () -> Unit) {
+            OtgMasterState.unlocksInFlight.incrementAndGet()
+            attemptUnlock(
+                deviceName, candidate, password, pim,
+                emptyList(), cipher, hash, readOnlyOverride = readOnly, veraCryptHeaders = headers,
+            ) {
+                OtgMasterState.unlocksInFlight.decrementAndGet()
+                then()
+            }
+        }
+        if (requested.isEmpty()) return
+        // Held from the first pass until the second has started, so that a caller waiting for
+        // the count to reach zero does not stop between the two.
+        OtgMasterState.unlocksInFlight.incrementAndGet()
+        val remaining = java.util.concurrent.atomic.AtomicInteger(requested.size)
+        val standardPassDone = {
+            val hiddenPass = requested.filter { (deviceName, candidate) ->
+                candidate.containerType == app.fayaz.otgmaster.veracrypt.ContainerType.VERACRYPT &&
+                    !isMounted(deviceName, candidate)
+            }
+            if (requested.none { (deviceName, candidate) -> isMounted(deviceName, candidate) } &&
+                hiddenPass.isNotEmpty()) {
+                val note = "Mount request: no standard header opened; trying the hidden headers of " +
+                    "${hiddenPass.size} partition(s)"
+                appendLog(note)
+                android.util.Log.i("OTGMaster", note)
+                hiddenPass.forEach { (deviceName, candidate) ->
+                    unlock(deviceName, candidate, VeraCryptUnlocker.Headers.HIDDEN_ONLY) {}
+                }
+            }
+            OtgMasterState.unlocksInFlight.decrementAndGet()
+        }
+        requested.forEach { (deviceName, candidate) ->
+            unlock(deviceName, candidate, VeraCryptUnlocker.Headers.STANDARD_ONLY) {
+                if (remaining.decrementAndGet() == 0) standardPassDone()
             }
         }
     }
