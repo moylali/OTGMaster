@@ -4538,6 +4538,10 @@ class E2EAutomatedTest {
             row!!.click()
             assertNotNull("$id opened no dialog", device.wait(Until.findObject(By.desc("settings_dialog_$id")), timeout))
             assertNotNull("the $id dialog does not hold its content", device.wait(Until.findObject(inside), timeout))
+            if (id == "donate") {
+                assertNotNull("no Ko-fi button in the Donate dialog",
+                    device.findObject(By.desc(context.getString(R.string.donate_kofi))))
+            }
             if (id == "read_only") {
                 val prefs = context.getSharedPreferences("otgmaster_prefs", Context.MODE_PRIVATE)
                 val before = prefs.getBoolean("read_only_default", false)

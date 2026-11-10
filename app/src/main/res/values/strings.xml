@@ -118,6 +118,7 @@
     <string name="donate_summary">Support development</string>
     <string name="donate_url">https://ko-fi.com/moylali</string>
     <string name="donate_thank_you">Thank you</string>
+    <string name="donate_kofi">Support me on Ko-fi</string>
     <string name="version_label_short">Version</string>
     <string name="app_version_label">App version</string>
     <string name="cd_copy_version">Copy version</string>
