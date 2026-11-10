@@ -11,6 +11,7 @@ import app.fayaz.otgmaster.backup.restic.DamagedException
 import app.fayaz.otgmaster.backup.restic.CancelledException
 import app.fayaz.otgmaster.backup.restic.FileTreeBackend
 import app.fayaz.otgmaster.backup.restic.FileTreeSource
+import app.fayaz.otgmaster.backup.restic.KeepRules
 import app.fayaz.otgmaster.backup.restic.ResticMaintenance
 import app.fayaz.otgmaster.backup.restic.ResticRepository
 import app.fayaz.otgmaster.backup.restic.ResticRestore
@@ -75,7 +76,12 @@ class BackupRunner(private val context: Context) {
         return ResticWriter.init(backend, password.toByteArray(), hostname, USERNAME)
     }
 
-    fun backup(jobId: String, reason: String, overrideLowSpace: Boolean = false, control: Control = Control()): RunOutcome {
+    /**
+     * Backs up [jobId]. Snapshots in [pinned] survive this run's keep rules whatever they
+     * say; a restore pins the snapshot it is about to restore.
+     */
+    fun backup(jobId: String, reason: String, overrideLowSpace: Boolean = false, control: Control = Control(),
+               pinned: Set<String> = emptySet()): RunOutcome {
         val job = store.job(jobId) ?: return RunOutcome.Failed("job no longer exists")
         val started = System.currentTimeMillis()
         val srcUri = Uri.parse(job.source.uri)
@@ -157,14 +163,10 @@ class BackupRunner(private val context: Context) {
                 var message = "${Format.files(stats.files)}, ${Format.bytes(stats.bytesAdded)} added"
                 val policy = job.retention.toPolicy()
                 if (!policy.keepsEverything) {
-                    val m = ResticMaintenance(repo, hostname, USERNAME)
-                    val drop = m.toForget(snapshotsOf(job, repo), policy)
-                    if (drop.isNotEmpty()) {
-                        control.listener.onProgress(RunProgress("prune", 0, 0, ""))
-                        m.forget(drop.map { it.id })
-                        val pr = m.prune()
-                        message += "; removed ${drop.size} old snapshot(s), freed ${Format.bytes(pr.bytesFreed)}"
-                    }
+                    val kept = KeepRules.apply(ResticMaintenance(repo, hostname, USERNAME), snapshotsOf(job, repo), policy,
+                        pinned) { control.listener.onProgress(RunProgress("prune", 0, 0, "")) }
+                    if (kept.forgotten.isNotEmpty())
+                        message += "; removed ${kept.forgotten.size} old snapshot(s), freed ${Format.bytes(kept.bytesFreed)}"
                 }
                 if (w.errors.isNotEmpty()) message += "; ${w.errors.size} item(s) could not be read"
                 refreshSnapshotCache(job, repo)
@@ -255,9 +257,21 @@ class BackupRunner(private val context: Context) {
         return try {
             if (!VolumeInfo.isAvailable(context, target)) return RunOutcome.Failed("The restore target is not reachable.").also { record(RunStatus.UNAVAILABLE, it.message) }
             if (intoSource && safetySnapshot && job.type == JobType.INCREMENTAL) {
+                // The snapshot to restore is checked before the safety snapshot and pinned
+                // through its keep rules: they used to run first, and with "keep last 1"
+                // deleted it, so the restore then failed with "snapshot ... is gone" after
+                // the backup had already been pruned.
+                if (repository(job).snapshots().none { it.id == snapshotId })
+                    throw IllegalStateException("snapshot ${snapshotId.take(8)} is gone")
                 control.listener.onProgress(RunProgress("safety snapshot", 0, 0, ""))
-                val out = backup(jobId, "pre-restore", overrideLowSpace = true, control = control)
+                val out = backup(jobId, "pre-restore", overrideLowSpace = true, control = control, pinned = setOf(snapshotId))
                 if (out is RunOutcome.Failed) return RunOutcome.Failed("Safety snapshot failed, nothing was restored: ${out.message}").also { record(RunStatus.FAILED, it.message) }
+                // A safety snapshot that could not read everything does not protect what it
+                // left out, and the restore is about to overwrite the source.
+                val safety = (out as? RunOutcome.Success)?.record
+                if (safety != null && safety.status != RunStatus.SUCCESS)
+                    return RunOutcome.Failed("The safety snapshot could not read ${safety.stats?.errors ?: safety.errors.size} item(s), so nothing was restored. " +
+                        "Restore to another folder instead, or fix what could not be read.").also { record(RunStatus.FAILED, it.message) }
             }
             val clients = holdProviders(target, Uri.parse(job.destination.uri))
             try {

@@ -228,7 +228,10 @@ class ResticWriter(
                 .put("paths", JSONArray().put("/" + parts.joinToString("/")))
                 .put("hostname", hostname).put("username", username).put("uid", 0).put("gid", 0)
                 .put("program_version", programVersion)
-            if (tags.isNotEmpty()) snap.put("tags", JSONArray(tags))
+            // A snapshot that left out something it could not read says so, so the keep
+            // rules never let it stand in for the last complete one (KeepRules).
+            val allTags = if (errors.isEmpty()) tags else tags + KeepRules.INCOMPLETE_TAG
+            if (allTags.isNotEmpty()) snap.put("tags", JSONArray(allTags))
             if (parent != null) snap.put("parent", parent.id)
             // restic 0.17's snapshot summary, so `restic snapshots` and the app's timeline
             // show the same counts.
