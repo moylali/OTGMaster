@@ -1895,7 +1895,16 @@ class MainActivity : AppCompatActivity() {
         }
     }
 
-    private fun unmountDrive(drive: MountedDrive, isManual: Boolean = false, disconnected: Boolean = false) {
+    /**
+     * [onTornDown] runs on the main thread once the filesystem is unmounted and the decrypted
+     * device closed, and not at all if that fails: anything that tells the user the drive is
+     * safe to unplug belongs there, not after this function returns, because the teardown
+     * itself runs later on another thread and can wait behind another partition's unlock.
+     */
+    private fun unmountDrive(
+        drive: MountedDrive, isManual: Boolean = false, disconnected: Boolean = false,
+        onTornDown: (() -> Unit)? = null,
+    ) {
         if (isManual) {
             drive.sourceDeviceName?.let {
                 manuallyUnmountedDevices.add(it)
@@ -2024,6 +2033,7 @@ class MainActivity : AppCompatActivity() {
                 }
 
                 refreshDevices()
+                onTornDown?.invoke()
             }
           } finally {
             OtgMasterState.unmountsInFlight.decrementAndGet()
@@ -2134,11 +2144,15 @@ class MainActivity : AppCompatActivity() {
                 if (!drivesBusy(listOf(drive))) {
                     unmountWatchers.remove(id)
                     dropPendingUnmount(id)
-                    unmountDrive(drive, isManual = true)
-                    toastState.value = Pair(getString(R.string.unmount_done), true)
-                    if (pending.notify || !lifecycle.currentState.isAtLeast(androidx.lifecycle.Lifecycle.State.RESUMED)) {
-                        MountedDriveService.driveEjected(this@MainActivity, pending.title,
-                            getString(R.string.unmount_done), R.string.notification_unmounted_title)
+                    // "Unmounted" means safe to unplug, so it waits for the teardown, as
+                    // Eject's message does (finishEject). Saying it here, when unmountDrive
+                    // returns, came before the filesystem was flushed and closed.
+                    unmountDrive(drive, isManual = true) {
+                        toastState.value = Pair(getString(R.string.unmount_done), true)
+                        if (pending.notify || !lifecycle.currentState.isAtLeast(androidx.lifecycle.Lifecycle.State.RESUMED)) {
+                            MountedDriveService.driveEjected(this@MainActivity, pending.title,
+                                getString(R.string.unmount_done), R.string.notification_unmounted_title)
+                        }
                     }
                     return@launch
                 }
