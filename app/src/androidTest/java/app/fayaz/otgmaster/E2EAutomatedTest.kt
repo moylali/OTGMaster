@@ -4043,8 +4043,20 @@ class E2EAutomatedTest {
                     assertNull("More actions offered while waiting", device.findObject(By.desc("more_actions_button")))
                     ejAssertStaysMounted()
                     assertTrue("it forgot the Unmount", OtgMasterState.pendingUnmounts.value.isNotEmpty())
+                    // Hold the teardown (flush and close) once the file closes: "unmounted"
+                    // tells the user they may unplug, so it must not come before it.
+                    OtgMasterState.unmountTeardownGate = java.util.concurrent.CountDownLatch(1)
                 } finally { file.close() }
-                umAwaitUnmounted()
+                try {
+                    umAwaitUnmounted()
+                    assertTrue("no teardown waiting at the gate", OtgMasterState.unmountsInFlight.get() > 0)
+                    android.os.SystemClock.sleep(3000)
+                    assertFalse("said unmounted before the filesystem was flushed and closed: ${bkTitles()}", umNotified())
+                    assertTrue("the teardown finished though it was held", OtgMasterState.unmountsInFlight.get() > 0)
+                } finally {
+                    OtgMasterState.unmountTeardownGate?.countDown()
+                    OtgMasterState.unmountTeardownGate = null
+                }
                 val posted = (0 until 40).any {
                     android.os.SystemClock.sleep(250)
                     umNotified()
