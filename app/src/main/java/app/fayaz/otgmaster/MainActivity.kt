@@ -1932,6 +1932,7 @@ class MainActivity : AppCompatActivity() {
             " shortcut=${System.currentTimeMillis() - tUpdated}ms")
         lifecycleScope.launch(Dispatchers.IO) {
           try {
+            OtgMasterState.unmountTeardownGate?.await()
             // Wait for any in-flight ProxyFileDescriptor onRelease() callbacks to finish
             // before unmounting — prevents a use-after-free if the OS is still flushing a
             // file write when exfat_unmount frees the ef pointer.

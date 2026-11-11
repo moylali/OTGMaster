@@ -323,6 +323,14 @@ object OtgMasterState {
     /** Partitions waiting to unmount once they are idle, by [MountedDrive.id]. */
     val pendingUnmounts = mutableStateOf<Map<String, PendingUnmount>>(emptyMap())
 
+    /**
+     * For the E2E suite: while set, an unmount's teardown (flush and close) waits for it
+     * before it starts, so a test can check that nothing calls the drive safe to unplug
+     * before the teardown has run. Null in normal use.
+     */
+    @Volatile
+    var unmountTeardownGate: java.util.concurrent.CountDownLatch? = null
+
     /** Unmounts every drive. Installed by MainActivity while it is alive. */
     @Volatile
     var unmountAllRequest: (() -> Unit)? = null
