@@ -450,6 +450,15 @@ Rebase-merged. The E2E report in #141 names its head `15ad245`, which is `4591c2
 | `4ad628a` | `2d00a77` | #141 | test(e2e): look for the Don't show again tick without UiAutomator's idle wait |
 | `15ad245` | `4591c24` | #141 | fix(ui): Settings dialogs expose their test tags to UiAutomator |
 
+### Commit hashes after the merge of #147
+
+Rebase-merged. The E2E report and the Pixel 7 Pro check in #147 name `efc5aed`.
+
+| At the PR head | On `main` | PR | Commit |
+|---|---|---|---|
+| `92204d9` | `7487633` | #147 | test(e2e): a waited Unmount must not say unmounted before the teardown runs |
+| `efc5aed` | `64d220c` | #147 | fix(ui): a waited Unmount says unmounted only after the teardown |
+
 ## 2026-11-09 to 11-11: 0.5.2 on the OnePlus 7, without bigwrite
 
 Benchmark builds (release-optimised and minified, package `app.fayaz.otgmaster.bench`), installed after uninstalling the previous one. The owner waived the four-device rule for 0.5.2, which changes no filesystem or I/O code, and left bigwrite out. Sections: free, block, dir, path, seq, random, opens, write, unaligned, correct, fixtures. One partition per run via `sequence_runs.sh` → `start_run.sh`; the OnePlus is kept awake and unlocked between runs at the owner's request (`KEEP_AWAKE=1`). Unlock is request to mounted, from the logcat stream. Every drive was read back on the laptop: `read_matrix_drive.sh` + `verify_matrix_drive.py` for Drives 1 to 4, `hostcheck_d5.sh` for Drive 5/1.
@@ -559,6 +568,10 @@ Laptop after it: fsck clean and every manifest matched on all ten; p8 and p9 (pl
 | ENC_TO_FAT32 (op-052h) | 08:39 | 3.6 s | ALL 20027 MATCHED | write verify ✓; correctness ✓ |
 
 Laptop: **fsck clean on all ten**, p8 and p9 included, and every fixture matched (`matrix/hostcheck-052-after-op-052h.log`; p1 to p6 re-hashed against `matrix/vcx` in `…-manifests.log`, because the first pass looked in `matrix/vcx-EF449`, which holds no manifests). `volume_baseline compare --metadata-only` differs from the October baseline by what earlier runs left plus a few bytes (p1 FAT 1785736 bytes, 1785703 after the 0.5.1 round; p8 55652, 55638). VC_STA_ARGON_PIM1 unlocked in 4.2 s against 3.9 s on `1bd7c9e`, +8%, over the 5% rule; the owner accepted it ("+0.3 s is ok", `matrix/accepted-052.json`). Every other partition is within 0.1 s.
+
+### Pixel 7 Pro · Drive 1 · the #147 Unmount check · 11-11
+
+Benchmark build `efc5aed` (= `64d220c`). Not a benchmark run: D1's plain partitions mounted by the app on attach, the two BitLocker ones by `E2E_MOUNT` (password123), then D1BLEXFAT held busy by a slow `content read` of `BENCH/MANIFEST.txt` while Unmount and Dismiss were tapped on its card. Teardown `done` 09:26:59.663, "unmounted" notification first seen 09:26:59.941. Laptop (`matrix/d1-after-px-pr1.md`): 9 of 10 CLEAN, D1BLEXFAT included; D1FAT32 dirty bit only (offset 65, 01/00; Android's mount of the plain partition), clean after `fsck.fat -a` (`verify_volume.sh`, 21325 files).
 
 ### Unlock timing only: Pixel 7 Pro and Redmi 4, 11-09
 
