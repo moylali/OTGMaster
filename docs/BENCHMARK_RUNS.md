@@ -450,6 +450,131 @@ Rebase-merged. The E2E report in #141 names its head `15ad245`, which is `4591c2
 | `4ad628a` | `2d00a77` | #141 | test(e2e): look for the Don't show again tick without UiAutomator's idle wait |
 | `15ad245` | `4591c24` | #141 | fix(ui): Settings dialogs expose their test tags to UiAutomator |
 
+## 2026-11-09 to 11-11: 0.5.2 on the OnePlus 7, without bigwrite
+
+Benchmark builds (release-optimised and minified, package `app.fayaz.otgmaster.bench`), installed after uninstalling the previous one. The owner waived the four-device rule for 0.5.2, which changes no filesystem or I/O code, and left bigwrite out. Sections: free, block, dir, path, seq, random, opens, write, unaligned, correct, fixtures. One partition per run via `sequence_runs.sh` → `start_run.sh`; the OnePlus is kept awake and unlocked between runs at the owner's request (`KEEP_AWAKE=1`). Unlock is request to mounted, from the logcat stream. Every drive was read back on the laptop: `read_matrix_drive.sh` + `verify_matrix_drive.py` for Drives 1 to 4, `hostcheck_d5.sh` for Drive 5/1.
+
+OnePlus 7 (GM1901, LineageOS, Android 16, SDK 36, over Tailscale).
+
+### OnePlus 7 · Drive 1 on `27523c9` (op-052b, op-052c, 11-10)
+
+| Partition | Finished | Unlock | Fixtures | Verdict |
+|---|---|---|---|---|
+| D1FAT32 (op-052b) | 08:24 | 5.4 s | ALL 20995 MATCHED | write verify ✓; correctness ✓ |
+| D1EXFAT (op-052b) | 08:26 | 60.6 s | — | stopped: the ext4 Repair prompt (vold) interrupted the run; no result, rerun in op-052c |
+| D1EXFAT (op-052c) | 09:03 | 5.4 s | ALL 20963 MATCHED | write verify ✓; correctness ✓ |
+| D1NTFS (op-052c) | 09:07 | 5.4 s | ALL 21052 MATCHED | write verify ✓; correctness ✓ |
+| D1EXT4 (op-052c) | 09:11 | 5.4 s | ALL 20854 MATCHED | write verify ✓; correctness ✓ |
+| D1BLEXFAT (op-052c) | 09:16 | 5.4 s | ALL 20898 MATCHED | write verify ✓; correctness ✓ |
+| D1BLNTFS (op-052c) | 09:20 | 5.4 s | ALL 20905 MATCHED | write verify ✓; correctness ✓ |
+| D1APFSCI (op-052c) | 09:26 | 5.4 s | ALL 22129 MATCHED | read sections ✓; writes SKIPPED (ro) |
+| D1APFSCS (op-052c) | 09:33 | 5.4 s | ALL 22024 MATCHED | read sections ✓; writes SKIPPED (ro) |
+| D1APFSECI (op-052c) | 09:41 | 5.4 s | ALL 21777 MATCHED | read sections ✓; writes SKIPPED (ro) |
+| D1APFSECS (op-052c) | 09:48 | 5.4 s | ALL 21911 MATCHED | read sections ✓; writes SKIPPED (ro) |
+
+Laptop: **ALL CLEAN** on all ten partitions (`matrix/d1-after-op-052.md`), D1FAT32 without a dirty bit. The checker does not apply to the two encrypted APFS partitions, so those rest on every file matching. D1FAT32 came from `op-052b`; D1EXFAT there was stopped by the ext4 Repair prompt (vold had mounted D1EXT4 read-write at plug-in and the app's claim aborted its journal) and has no result. From `op-052c` on, `start_run.sh` runs `sm unmount` on vold's volumes before launching the app.
+
+### OnePlus 7 · Drive 2/2 on `0502f57` (op-052d, op-052e, 11-10)
+
+| Partition | Finished | Unlock | Fixtures | Verdict |
+|---|---|---|---|---|
+| D2BLFAT32 (op-052d) | 21:04 | — | - | no mount (USB permission prompt); no result, rerun as op-052e |
+| D2VCFAT32 (op-052d) | 21:09 | 20.4 s | ALL 20958 MATCHED | write verify ✓; correctness ✓ |
+| D2VCEXFAT (op-052d) | 21:15 | 20.7 s | ALL 20974 MATCHED | write verify ✓; correctness ✓ |
+| D2VCNTFS (op-052d) | 21:20 | 20.7 s | ALL 20919 MATCHED | write verify ✓; correctness ✓ |
+| D2VCEXT4 (op-052d) | 21:26 | 20.4 s | ALL 21071 MATCHED | write verify ✓; correctness ✓ |
+| D2L1FAT32 (op-052d) | 21:31 | 20.4 s | ALL 20953 MATCHED | write verify ✓; correctness ✓ |
+| D2L1EXT4 (op-052d) | 21:36 | 20.7 s | ALL 21024 MATCHED | write verify ✓; correctness ✓ |
+| D2L2EXFAT (op-052d) | 21:42 | 20.4 s | ALL 20942 MATCHED | write verify ✓; correctness ✓ |
+| D2L4EXT4 (op-052d) | 21:48 | 20.4 s | ALL 20888 MATCHED | write verify ✓; correctness ✓ |
+| D2L4NTFS (op-052d) | 21:53 | 20.4 s | ALL 20927 MATCHED | write verify ✓; correctness ✓ |
+| D2BLFAT32 (op-052e) | 22:32 | 20.7 s | ALL 20974 MATCHED | write verify ✓; correctness ✓ |
+
+Laptop: **ALL CLEAN** on all ten partitions (`matrix/d2copy-after-op-052.md`). D2BLFAT32 in `op-052d` never mounted: the reinstall had cleared the USB permission, and Android's prompt was answered after the mount request gave up (600 s), so it has no result and was rerun alone as `op-052e`. From this drive on, each sequence ends by ejecting the drive in the app (`matrix/helpers/eject_drive.sh`) and unmounting whatever vold mounts after it.
+
+### OnePlus 7 · Drive 3 on `0502f57` (op-052f, 11-11)
+
+| Partition | Finished | Unlock | Fixtures | Verdict |
+|---|---|---|---|---|
+| D3EXT2 (op-052f) | 06:01 | 24.6 s | ALL 21821 MATCHED | read sections ✓; writes SKIPPED (ro) |
+| D3EXT3 (op-052f) | 06:06 | 24.6 s | ALL 21883 MATCHED | read sections ✓; writes SKIPPED (ro) |
+| D3L1EXFAT (op-052f) | 06:12 | 24.3 s | ALL 20929 MATCHED | write verify ✓; correctness ✓ |
+| D3L1NTFS (op-052f) | 06:17 | 24.6 s | ALL 20920 MATCHED | write verify ✓; correctness ✓ |
+| D3L2FAT32 (op-052f) | 06:22 | 24.3 s | ALL 20913 MATCHED | write verify ✓; correctness ✓ |
+| D3L2NTFS (op-052f) | 06:28 | 24.6 s | ALL 20925 MATCHED | write verify ✓; correctness ✓ |
+| D3L2EXT4 (op-052f) | 06:34 | 24.6 s | ALL 20939 MATCHED | write verify ✓; correctness ✓ |
+| D3L4FAT32 (op-052f) | 06:39 | 24.3 s | ALL 20972 MATCHED | write verify ✓; correctness ✓ |
+| D3L4EXFAT (op-052f) | 06:46 | 24.3 s | ALL 20910 MATCHED | write verify ✓; correctness ✓ |
+| D3BLNTFS (op-052f) | 06:51 | 24.6 s | ALL 21023 MATCHED | write verify ✓; correctness ✓ |
+
+Laptop: fsck clean and every fixture matched on all ten (`matrix/d3-after-op-052.md`). **D3EXT2 and D3EXT3 changed in their first MiB only**, the superblock: Android's vold mounted both read-write at plug-in (11-11 05:56, kernel log `EXT4-fs (sdg9): mounting ext3 … recovery complete`) and again at 06:51:57, the second after the app's Eject released the drive; the superblocks record 4 mounts. The app only reads these partitions. Accepted by the owner on 11-11 (`matrix/accepted-052.json`); their baselines now hold the current superblock (the old ones are `.chunks.prev`). The first verify pass ran out of disk (19 GB free, about 6 GB per decryption); rerun with `-j 2`.
+
+### OnePlus 7 · Drive 4 on `0502f57` (op-052g, 11-11)
+
+| Partition | Finished | Unlock | Fixtures | Verdict |
+|---|---|---|---|---|
+| D4VCEXT2 (op-052g) | 06:58 | 23.4 s | ALL 21948 MATCHED | read sections ✓; writes SKIPPED (ro) |
+| D4VCEXT3 (op-052g) | 07:02 | 23.4 s | ALL 21956 MATCHED | read sections ✓; writes SKIPPED (ro) |
+| D4L1EXT2 (op-052g) | 07:07 | 23.4 s | ALL 21870 MATCHED | read sections ✓; writes SKIPPED (ro) |
+| D4L1EXT3 (op-052g) | 07:12 | 23.1 s | ALL 21875 MATCHED | read sections ✓; writes SKIPPED (ro) |
+| D4L2EXT2 (op-052g) | 07:16 | 23.4 s | ALL 21678 MATCHED | read sections ✓; writes SKIPPED (ro) |
+| D4L2EXT3 (op-052g) | 07:21 | 23.4 s | ALL 21971 MATCHED | read sections ✓; writes SKIPPED (ro) |
+| D4L4EXT2 (op-052g) | 07:25 | 23.4 s | ALL 21916 MATCHED | read sections ✓; writes SKIPPED (ro) |
+| D4L4EXT3 (op-052g) | 07:30 | 23.4 s | ALL 21846 MATCHED | read sections ✓; writes SKIPPED (ro) |
+| D4BLFAT32 (op-052g) | 07:35 | 23.4 s | ALL 20918 MATCHED | write verify ✓; correctness ✓ |
+| D4BLEXFAT (op-052g) | 07:41 | 23.1 s | ALL 21073 MATCHED | write verify ✓; correctness ✓ |
+
+Laptop: **ALL CLEAN** on all ten partitions (`matrix/d4-after-op-052.md`); every ext2/ext3 partition is encrypted, so vold mounted nothing and none changed (0 MiB).
+
+### OnePlus 7 · Drive 5/1 on `1bd7c9e` (op-052a, 11-09)
+
+| Partition | Finished | Unlock | Fixtures | Verdict |
+|---|---|---|---|---|
+| VC_ATS_ARGON_PIM0 (op-052a) | 21:22 | 21.3 s | ALL 20902 MATCHED | write verify ✓; correctness ✓ |
+| VC_STA_ARGON_PIM1 (op-052a) | 21:27 | 3.9 s | ALL 20965 MATCHED | write verify ✓; correctness ✓ |
+| VC_TWO_SHA512_PIM0 (op-052a) | 21:31 | 7.2 s | ALL 20962 MATCHED | write verify ✓; correctness ✓ |
+| VC_AT_ARGON_PIM1 (op-052a) | 21:36 | 4.5 s | ALL 20950 MATCHED | write verify ✓; correctness ✓ |
+| VC_SA_SHA512_PIM1 (op-052a) | 21:40 | 3.9 s | ALL 20027 MATCHED | write verify ✓; correctness ✓ |
+| VC_TS_ARGON_PIM31 (op-052a) | 21:52 | 114.0 s | ALL 20984 MATCHED | write verify ✓; correctness ✓ |
+| FMT_EXFAT (op-052a) | 21:55 | 3.6 s | ALL 20027 MATCHED | write verify ✓; correctness ✓ |
+| FMT_FAT32 (op-052a) | 21:59 | 3.6 s | ALL 20027 MATCHED | write verify ✓; correctness ✓ |
+| ENC_TO_EXFAT (op-052a) | 22:01 | 3.6 s | ALL 20027 MATCHED | write verify ✓; correctness ✓ |
+| ENC_TO_FAT32 (op-052a) | 22:04 | 3.6 s | ALL 20027 MATCHED | write verify ✓; correctness ✓ |
+
+Laptop after it: fsck clean and every manifest matched on all ten; p8 and p9 (plain FAT32) carried only the dirty bit, byte 66 of the reserved sectors (`matrix/hostcheck-052-after-op-EF449.log`, `…-p8p9.p8`/`.p9`).
+
+### OnePlus 7 · Drive 5/1 on `0502f57` (op-052h, 11-11)
+
+| Partition | Finished | Unlock | Fixtures | Verdict |
+|---|---|---|---|---|
+| VC_ATS_ARGON_PIM0 (op-052h) | 07:50 | 21.3 s | ALL 20902 MATCHED | write verify ✓; correctness ✓ |
+| VC_STA_ARGON_PIM1 (op-052h) | 07:57 | 4.2 s | ALL 20965 MATCHED | write verify ✓; correctness ✓ |
+| VC_TWO_SHA512_PIM0 (op-052h) | 08:01 | 7.2 s | ALL 20962 MATCHED | write verify ✓; correctness ✓ |
+| VC_AT_ARGON_PIM1 (op-052h) | 08:07 | 4.5 s | ALL 20950 MATCHED | write verify ✓; correctness ✓ |
+| VC_SA_SHA512_PIM1 (op-052h) | 08:12 | 3.9 s | ALL 20027 MATCHED | write verify ✓; correctness ✓ |
+| VC_TS_ARGON_PIM31 (op-052h) | 08:25 | 114.0 s | ALL 20984 MATCHED | write verify ✓; correctness ✓ |
+| FMT_EXFAT (op-052h) | 08:29 | 3.6 s | ALL 20027 MATCHED | write verify ✓; correctness ✓ |
+| FMT_FAT32 (op-052h) | 08:33 | 3.6 s | ALL 20027 MATCHED | write verify ✓; correctness ✓ |
+| ENC_TO_EXFAT (op-052h) | 08:36 | 3.6 s | ALL 20027 MATCHED | write verify ✓; correctness ✓ |
+| ENC_TO_FAT32 (op-052h) | 08:39 | 3.6 s | ALL 20027 MATCHED | write verify ✓; correctness ✓ |
+
+Laptop: **fsck clean on all ten**, p8 and p9 included, and every fixture matched (`matrix/hostcheck-052-after-op-052h.log`; p1 to p6 re-hashed against `matrix/vcx` in `…-manifests.log`, because the first pass looked in `matrix/vcx-EF449`, which holds no manifests). `volume_baseline compare --metadata-only` differs from the October baseline by what earlier runs left plus a few bytes (p1 FAT 1785736 bytes, 1785703 after the 0.5.1 round; p8 55652, 55638). VC_STA_ARGON_PIM1 unlocked in 4.2 s against 3.9 s on `1bd7c9e`, +8%, over the 5% rule; the owner accepted it ("+0.3 s is ok", `matrix/accepted-052.json`). Every other partition is within 0.1 s.
+
+### Unlock timing only: Pixel 7 Pro and Redmi 4, 11-09
+
+Runs that timed the unlock and stopped; no section after the mount ran, so they carry no verdict and no laptop check.
+
+| Run | Device | Build | Partition | Unlock |
+|---|---|---|---|---|
+| rm-052a | Redmi 4 · Android 16 | debug `4b16c56` (standard headers first) | D5/1 VC_ATS_ARGON_PIM0 | 598.7 s (this one also ran every section: write verify ✓, correctness ✓, ALL 20902 MATCHED) |
+| rm-052b | Redmi 4 | debug `a0ac127` (Argon2 at -O2 in debug; not merged) | VC_ATS_ARGON_PIM0 | 99.3 s |
+| rm-052c | Redmi 4 | debug `27417bd` (an earlier version of the NEON `fill_block` commit, `e292c74` in #141) | VC_ATS_ARGON_PIM0 | 72.1 s |
+| px-052b | Pixel 7 Pro · Android 17 | bench `1bd7c9e` | D5/1 VC_TS_ARGON_PIM31 | 102.7 s |
+| px-052d | Pixel 7 Pro | bench `1bd7c9e` | VC_ATS_ARGON_PIM0 / VC_TWO_SHA512_PIM0 / VC_AT_ARGON_PIM1 / VC_STA_ARGON_PIM1 / VC_SA_SHA512_PIM1 / FMT_EXFAT | 19.2 / 6.6 / 4.5 / 3.9 / 3.9 / 3.6 s |
+| px-052e | Pixel 7 Pro | bench `1bd7c9e` | D3 D3L4EXFAT / D3BLNTFS / D3EXT2 | 19.2 / 19.2 / 19.5 s |
+
+`rm-052a`'s stop during p2's unlock, `px-052a` (PIM 31, stopped with no result) and `px-052c` (replaced by `px-052d` before it started) produced nothing and are not rows.
+
 ## 2026-11-09: 0.5.1 on the Pixel 7 Pro, without bigwrite
 
 Debug APK from `27a958e`. The owner waived the three-device matrix for 0.5.1 and left bigwrite out to save time, so these runs do not exercise large writes. Sections: free, block, dir, path, seq, random, opens, write, unaligned, correct, fixtures. Debug native code is not optimised, so no timing here compares with a release build. Unlock time per partition was not logged for D1 to D4: the rule that requires it landed after these runs. For D5/1 it was read from the logcat stream afterwards and compared with the 0.5.0 run (below).
