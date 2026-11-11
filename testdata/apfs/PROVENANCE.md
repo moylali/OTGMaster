@@ -22,3 +22,19 @@ Checked on macOS: contents and case behaviour on all four, `fsck_apfs -n` on the
 two plain containers. Checked on Linux with `scripts/verify_apfs_images.py`: 4 of 4,
 `apfsck` clean on the two plain containers, contents through `apfs-fuse` on all four.
 No available checker covers the encrypted volumes' structure (`docs/TEST_DATA.md` §6b).
+
+# apfs_multi.tar.xz
+
+One APFS container with two volumes, for the multi-volume fix: volume 0 `OTGVOLA`
+(unencrypted, `volume_a.txt` and `a.bin`) and volume 1 `OTGVOLB` (encrypted,
+`password123`, `volume_b.txt` and `b.bin`), with each volume's SHA-256 list and
+`diskutil apfs list`. 1100 MiB, because APFS allows one volume per 512 MiB of
+container, so it does not fit the E2E emulator's 64 MiB slot; a host test uses it.
+
+- Built with the commands in `scripts/make_apfs_multi_macos.sh` on a Mac, 2026-11-11.
+- SHA-256 of the archive: `fb56840e7b38e7cd947979ea8eef1e91cd033fd79e40d5eff04a1da0498b827a`
+- SHA-256 of `test.img`: `fe6a0e33ec116d76148b1c039b2cafcf3071e841daef803120ab2c6ef9ffa69a`
+
+Checked on Linux with `apfs-fuse`: volume 0 opens without a password and volume 1
+with `password123`, and all four files match the hashes recorded on the Mac. `apfsck`
+stops at the encrypted volume's keybag, as it does on `apfs_enc_*`.
