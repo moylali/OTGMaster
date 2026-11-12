@@ -117,7 +117,9 @@ class LuksUnlocker {
 
             // Digest verification: PBKDF2(masterKey, mkDigestSalt, mkDigestIter, 20)
             val derived = pbkdf2(pbkdf2AlgFor(hdr.hashSpec), masterKey, hdr.mkDigestSalt, hdr.mkDigestIter, 20)
-            if (!derived.contentEquals(hdr.mkDigest)) {
+            val matches = MessageDigest.isEqual(derived, hdr.mkDigest)
+            Secrets.wipe(derived)
+            if (!matches) {
                 Log.w(TAG, "Keyslot ${slot.index}: key derived but digest mismatch — possible bug")
                 masterKey.fill(0)
                 continue
@@ -157,11 +159,13 @@ class LuksUnlocker {
         slotKey.fill(0)
         if (rc != 0) {
             Log.w(TAG, "Keyslot ${slot.index}: XTS decrypt failed (rc=$rc)")
+            Secrets.wipe(kmBlocks)
             return null
         }
 
         // Step 3: AF-split merge → master key candidate
         val keyMaterial = kmBlocks.copyOfRange(0, slot.stripes * hdr.keyBytes)
+        Secrets.wipe(kmBlocks)
         return afMerge(keyMaterial, slot.stripes, hdr.keyBytes, hdr.hashSpec)
     }
 
@@ -404,13 +408,20 @@ class LuksUnlocker {
     // See LUKS spec §7 and cryptsetup/lib/crypt_af.c.
     internal fun afMerge(keyMaterial: ByteArray, stripes: Int, keyLen: Int, hashSpec: String): ByteArray {
         val buf = ByteArray(keyLen)  // accumulator, starts as zeros
-        for (i in 0 until stripes - 1) {
-            val stripe = keyMaterial.copyOfRange(i * keyLen, (i + 1) * keyLen)
+        val stripe = ByteArray(keyLen)
+        try {
+            for (i in 0 until stripes - 1) {
+                keyMaterial.copyInto(stripe, 0, i * keyLen, (i + 1) * keyLen)
+                xorInto(buf, stripe)
+                hashDiffuse(buf, hashSpec)
+            }
+            keyMaterial.copyInto(stripe, 0, (stripes - 1) * keyLen, stripes * keyLen)
             xorInto(buf, stripe)
-            hashDiffuse(buf, hashSpec)
+            return buf
+        } finally {
+            // S01: the stripes and the material they came from are key material too.
+            Secrets.wipe(stripe, keyMaterial)
         }
-        xorInto(buf, keyMaterial.copyOfRange((stripes - 1) * keyLen, stripes * keyLen))
-        return buf
     }
 
     // Applies the LUKS hash-diffuse function in place.
@@ -440,10 +451,12 @@ class LuksUnlocker {
             md.update(buf, pos, count)
             val hash = md.digest()
             hash.copyInto(result, pos, 0, count)
+            hash.fill(0)
             pos   += hLen
             chunk += 1
         }
         result.copyInto(buf)
+        result.fill(0)
     }
 
     private fun xorInto(dest: ByteArray, src: ByteArray) {
