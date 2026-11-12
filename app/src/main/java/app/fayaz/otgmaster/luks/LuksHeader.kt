@@ -37,8 +37,24 @@ sealed class LuksHeader {
         val sectorSize: Int,
         val ivTweak: Long,
         val keyslots: List<Luks2Keyslot>,
-        val digest: Luks2Digest
-    ) : LuksHeader()
+        /** Every PBKDF2 digest, with the keyslots and segments each one covers. */
+        val digests: List<Luks2Digest>,
+        /** The id of the one data segment. */
+        val segmentId: String = "0",
+        /** The data segment's offset from the start of the partition, in bytes. */
+        val segmentOffsetBytes: Long = payloadOffsetSectors * 512,
+        /** The data segment's length in bytes, or null for "dynamic" (to the end of the partition). */
+        val segmentSizeBytes: Long? = null,
+        /** Size of one header copy (binary header plus JSON area). */
+        val hdrSize: Long = 16384,
+        /** Size of the binary keyslot area after the two header copies, if the header says. */
+        val keyslotsSize: Long? = null,
+        /** Keyslots the parser could not use, with why; reported if no usable slot is left. */
+        val unusableSlots: List<String> = emptyList(),
+    ) : LuksHeader() {
+        /** Where the metadata (two header copies and the keyslot area) ends, in bytes. */
+        val metadataEnd: Long get() = 2 * hdrSize + (keyslotsSize ?: 0)
+    }
 }
 
 data class Luks1Keyslot(
@@ -52,6 +68,8 @@ data class Luks1Keyslot(
 
 sealed class Luks2Keyslot {
     abstract val index: Int
+    /** 0 ignored, 1 normal, 2 preferred (LUKS2 spec); ignored slots are never parsed. */
+    abstract val priority: Int
     abstract val keySize: Int
     abstract val areaOffsetBytes: Long
     abstract val areaSizeBytes: Long
@@ -75,6 +93,7 @@ sealed class Luks2Keyslot {
         val salt: ByteArray,
         /** "argon2id" or "argon2i", as the header names it; the key must be derived with that one. */
         val kdfType: String = "argon2id",
+        override val priority: Int = 1,
     ) : Luks2Keyslot()
 
     data class Pbkdf2(
@@ -88,7 +107,8 @@ sealed class Luks2Keyslot {
         override val afHash: String,
         val hash: String,
         val iterations: Int,
-        val salt: ByteArray
+        val salt: ByteArray,
+        override val priority: Int = 1,
     ) : Luks2Keyslot()
 }
 
@@ -97,7 +117,11 @@ data class Luks2Digest(
     val hash: String,
     val iterations: Int,
     val salt: ByteArray,
-    val digest: ByteArray
+    val digest: ByteArray,
+    /** Ids of the keyslots whose key this digest verifies. */
+    val keyslots: Set<String> = emptySet(),
+    /** Ids of the segments that key decrypts. */
+    val segments: Set<String> = emptySet(),
 )
 
 object LuksParser {
@@ -155,138 +179,143 @@ object LuksParser {
         )
     }
 
-    // Parses a LUKS2 header from data starting at offset 0.
-    // data must contain the 4096-byte binary header followed by the JSON section.
+    /**
+     * Parses the primary LUKS2 header copy at the start of [data] (which must hold the whole
+     * copy), refusing it if its checksum or fields are not valid. The unlocker reads both
+     * copies through [Luks2Metadata.read] instead; this is for a header already in memory.
+     */
     fun parseLuks2(data: ByteArray): LuksHeader.Luks2 {
         require(data.size >= LUKS2_BINARY_HDR_SIZE) { "LUKS2 data too short: ${data.size}" }
         check(hasLuksMagic(data)) { "Not a LUKS volume" }
         check(getVersion(data) == 2) { "Expected LUKS version 2, got ${getVersion(data)}" }
-
-        val bb = ByteBuffer.wrap(data).order(ByteOrder.BIG_ENDIAN)
-        val hdrSize = bb.getLong(8)  // total size of primary + secondary headers
-        // hdrSize comes off the medium, so a malformed or hostile header can make it
-        // smaller than the binary header it must follow. copyOfRange then gets a
-        // fromIndex above its toIndex and throws IllegalArgumentException, taking the
-        // app down instead of refusing the volume.
-        if (hdrSize <= LUKS2_BINARY_HDR_SIZE) {
-            throw LuksUnlocker.UnsupportedFormatException(
-                "LUKS2 header size $hdrSize is not larger than the " +
-                "$LUKS2_BINARY_HDR_SIZE-byte binary header"
-            )
+        val hdrSize = ByteBuffer.wrap(data).order(ByteOrder.BIG_ENDIAN).getLong(8)
+        // hdrSize comes off the medium; a value that is not one LUKS2 allows (smaller than
+        // the binary header, negative, or larger than what was read) refuses the volume
+        // instead of sizing a copy from it.
+        if (hdrSize !in Luks2Metadata.HEADER_SIZES || hdrSize > data.size) {
+            throw LuksUnlocker.UnsupportedFormatException("LUKS2 header size $hdrSize is not valid")
         }
+        var why = "invalid"
+        val copy = Luks2Metadata.parseCopy(data.copyOf(hdrSize.toInt()), 0) { why = it }
+            ?: throw LuksUnlocker.UnsupportedFormatException("The LUKS2 header is damaged: $why")
+        return parseLuks2Json(copy.json, copy.hdrSize)
+    }
 
-        // JSON area: bytes [4096 .. hdrSize) of the primary header block
-        val jsonEnd = minOf(hdrSize, data.size.toLong()).toInt()
-        val jsonBytes = data.copyOfRange(LUKS2_BINARY_HDR_SIZE, jsonEnd)
-        val jsonStr = String(jsonBytes, Charsets.UTF_8).trimEnd('\u0000')
+    /**
+     * The LUKS2 JSON metadata, validated for what this app can safely open: exactly one
+     * ordinary "crypt" segment in aes-xts-plain64, no mandatory requirements, no integrity,
+     * no reencryption flags. Anything else is refused here, before a key is derived
+     * (review of 2026-11-11, L01, L09). Keyslots this app cannot use are listed in
+     * unusableSlots instead of failing the volume, so another slot can still open it.
+     */
+    fun parseLuks2Json(jsonStr: String, hdrSize: Long): LuksHeader.Luks2 {
+        fun refuse(msg: String): Nothing = throw LuksUnlocker.UnsupportedFormatException(msg)
+        val json = try { JSONObject(jsonStr) } catch (e: Exception) { refuse("The LUKS2 metadata is not valid JSON") }
 
-        val json = JSONObject(jsonStr)
+        val config = json.optJSONObject("config")
+        val mandatory = config?.optJSONObject("requirements")?.optJSONArray("mandatory")
+        if (mandatory != null && mandatory.length() > 0) {
+            val names = (0 until mandatory.length()).map { mandatory.optString(it) }
+            refuse("This LUKS2 volume requires ${names.joinToString()}, which OTG Master does not support " +
+                "(for example, a reencryption that has not finished). Open it with cryptsetup on a computer.")
+        }
+        val keyslotsSize = config?.optString("keyslots_size")?.toLongOrNull()
 
-        // --- segments: find the first "crypt" segment ---
         val segsJson = json.getJSONObject("segments")
-        var cipherName = ""
-        var cipherMode = ""
-        var payloadOffBytes = 0L
-        var sectorSize = 512
-        var ivTweak = 0L
-        for (key in segsJson.keys()) {
-            val seg = segsJson.getJSONObject(key)
-            if (seg.getString("type") == "crypt") {
-                val encryption = seg.getString("encryption")  // e.g. "aes-xts-plain64"
-                val parts = encryption.split("-")
-                cipherName = parts.getOrElse(0) { "aes" }
-                cipherMode = if (parts.size > 1) parts.drop(1).joinToString("-") else "xts-plain64"
-                payloadOffBytes = seg.getString("offset").toLong()
-                sectorSize = seg.optInt("sector_size", 512)
-                ivTweak = seg.optString("iv_tweak", "0").toLong()
-                break
-            }
+        val segIds = segsJson.keys().asSequence().toList()
+        if (segIds.size != 1) {
+            refuse("This LUKS2 volume has ${segIds.size} data segments (a reencryption in progress?); " +
+                "OTG Master opens only volumes with one.")
         }
+        val segId = segIds[0]
+        val seg = segsJson.getJSONObject(segId)
+        if (seg.optString("type") != "crypt") refuse("LUKS2 segment type \"${seg.optString("type")}\" is not supported")
+        seg.optJSONArray("flags")?.let { if (it.length() > 0) refuse("This LUKS2 volume's data segment is flagged ${(0 until it.length()).joinToString { i -> it.optString(i) }}; OTG Master does not open it") }
+        if (seg.has("integrity")) refuse("This LUKS2 volume uses dm-integrity, which OTG Master does not support")
+        val encryption = seg.getString("encryption")
+        LuksAlgorithms.requireAesXtsPlain64(encryption, "The LUKS2 data encryption")
+        val segOffset = seg.getString("offset").toLongOrNull() ?: refuse("LUKS2 segment offset is not a number")
+        val sizeField = seg.getString("size")
+        val segSize = if (sizeField == "dynamic") null
+            else sizeField.toLongOrNull()?.takeIf { it > 0 } ?: refuse("LUKS2 segment size \"$sizeField\" is not valid")
+        val sectorSize = seg.optInt("sector_size", 512)
+        val ivTweak = seg.optString("iv_tweak", "0").toLongOrNull()?.takeIf { it >= 0 }
+            ?: refuse("LUKS2 iv_tweak is not valid")
 
-        // --- keyslots: parse active LUKS2 keyslots ---
+        val unusable = mutableListOf<String>()
         val kslJson = json.getJSONObject("keyslots")
         val keyslots = mutableListOf<Luks2Keyslot>()
         for (key in kslJson.keys()) {
             val ksl = kslJson.getJSONObject(key)
-            if (ksl.getString("type") != "luks2") continue
-
-            val index     = key.toInt()
-            val keySize   = ksl.getInt("key_size")
-            val area      = ksl.getJSONObject("area")
-            val areaOff   = area.getString("offset").toLong()
-            val areaSize  = area.getString("size").toLong()
-            val areaEnc   = area.getString("encryption")
-            val areaKsz   = area.getInt("key_size")
-            val af        = ksl.getJSONObject("af")
-            val afStripes = af.getInt("stripes")
-            val afHash    = af.getString("hash")
-            val kdf       = ksl.getJSONObject("kdf")
-
-            when (kdf.getString("type")) {
-                "argon2id", "argon2i" -> {
-                    keyslots.add(Luks2Keyslot.Argon2id(
-                        index        = index,
-                        keySize      = keySize,
-                        areaOffsetBytes = areaOff,
-                        areaSizeBytes   = areaSize,
-                        areaEncryption  = areaEnc,
-                        areaKeySize  = areaKsz,
-                        afStripes    = afStripes,
-                        afHash       = afHash,
-                        timeCost     = kdf.getInt("time"),
-                        memoryCostKiB= kdf.getInt("memory"),
-                        parallelism  = kdf.getInt("cpus"),
-                        salt         = Base64.getDecoder().decode(kdf.getString("salt")),
-                        kdfType      = kdf.getString("type"),
-                    ))
+            try {
+                val index = key.toIntOrNull() ?: throw IllegalArgumentException("its id is not a number")
+                if (ksl.getString("type") != "luks2") throw IllegalArgumentException("type ${ksl.getString("type")}")
+                val priority = ksl.optInt("priority", 1)
+                if (priority == 0) { unusable += "keyslot $key: priority 0 (ignored)"; continue }
+                val area = ksl.getJSONObject("area")
+                if (area.optString("type", "raw") != "raw") throw IllegalArgumentException("area type ${area.optString("type")}")
+                val areaEnc = area.getString("encryption")
+                LuksAlgorithms.requireAesXtsPlain64(areaEnc, "Keyslot $key's area encryption")
+                val af = ksl.getJSONObject("af")
+                if (af.optString("type", "luks1") != "luks1") throw IllegalArgumentException("AF type ${af.optString("type")}")
+                val afHash = af.getString("hash").also { LuksAlgorithms.digest(it, "keyslot $key AF hash") }
+                val afStripes = af.getInt("stripes")
+                if (afStripes <= 0) throw IllegalArgumentException("$afStripes AF stripes")
+                val keySize = ksl.getInt("key_size")
+                val areaOff = area.getString("offset").toLong()
+                val areaSize = area.getString("size").toLong()
+                val areaKsz = area.getInt("key_size")
+                val kdf = ksl.getJSONObject("kdf")
+                val salt = Base64.getDecoder().decode(kdf.getString("salt"))
+                when (val type = kdf.getString("type")) {
+                    "argon2id", "argon2i" -> keyslots += Luks2Keyslot.Argon2id(
+                        index = index, keySize = keySize, areaOffsetBytes = areaOff, areaSizeBytes = areaSize,
+                        areaEncryption = areaEnc, areaKeySize = areaKsz, afStripes = afStripes, afHash = afHash,
+                        timeCost = kdf.getInt("time"), memoryCostKiB = kdf.getInt("memory"),
+                        parallelism = kdf.getInt("cpus"), salt = salt, kdfType = type, priority = priority)
+                    "pbkdf2" -> keyslots += Luks2Keyslot.Pbkdf2(
+                        index = index, keySize = keySize, areaOffsetBytes = areaOff, areaSizeBytes = areaSize,
+                        areaEncryption = areaEnc, areaKeySize = areaKsz, afStripes = afStripes, afHash = afHash,
+                        hash = kdf.getString("hash").also { LuksAlgorithms.hmac(it, "keyslot $key PBKDF2 hash") },
+                        iterations = kdf.getInt("iterations"), salt = salt, priority = priority)
+                    else -> throw IllegalArgumentException("KDF $type")
                 }
-                "pbkdf2" -> {
-                    keyslots.add(Luks2Keyslot.Pbkdf2(
-                        index        = index,
-                        keySize      = keySize,
-                        areaOffsetBytes = areaOff,
-                        areaSizeBytes   = areaSize,
-                        areaEncryption  = areaEnc,
-                        areaKeySize  = areaKsz,
-                        afStripes    = afStripes,
-                        afHash       = afHash,
-                        hash         = kdf.getString("hash"),
-                        iterations   = kdf.getInt("iterations"),
-                        salt         = Base64.getDecoder().decode(kdf.getString("salt"))
-                    ))
-                }
+            } catch (e: Exception) {
+                unusable += "keyslot $key: ${e.message}"
             }
         }
 
-        // --- digest (first pbkdf2 digest) ---
         val digsJson = json.getJSONObject("digests")
-        var digest = Luks2Digest("pbkdf2", "sha256", 0, ByteArray(0), ByteArray(0))
+        val digests = mutableListOf<Luks2Digest>()
         for (key in digsJson.keys()) {
             val d = digsJson.getJSONObject(key)
-            if (d.getString("type") == "pbkdf2") {
-                digest = Luks2Digest(
-                    type       = "pbkdf2",
-                    hash       = d.getString("hash"),
-                    iterations = d.getInt("iterations"),
-                    salt       = Base64.getDecoder().decode(d.getString("salt")),
-                    digest     = Base64.getDecoder().decode(d.getString("digest"))
-                )
-                break
-            }
+            if (d.optString("type") != "pbkdf2") continue
+            fun ids(name: String) = d.optJSONArray(name)?.let { a -> (0 until a.length()).map { a.optString(it) }.toSet() } ?: emptySet()
+            val hash = d.getString("hash")
+            runCatching { LuksAlgorithms.hmac(hash, "digest $key hash") }.getOrNull() ?: continue
+            val dig = Luks2Digest(
+                type = "pbkdf2", hash = hash, iterations = d.getInt("iterations"),
+                salt = Base64.getDecoder().decode(d.getString("salt")),
+                digest = Base64.getDecoder().decode(d.getString("digest")),
+                keyslots = ids("keyslots"), segments = ids("segments"))
+            if (dig.iterations > 0 && dig.salt.isNotEmpty() && dig.digest.isNotEmpty()) digests += dig
         }
 
-        // payloadOffBytes → sectors (512-byte units; LUKS2 always references the device in bytes)
-        val payloadOffSectors = payloadOffBytes / 512L
-
         return LuksHeader.Luks2(
-            cipherName           = cipherName,
-            cipherMode           = cipherMode,
-            payloadOffsetSectors = payloadOffSectors,
-            keyBytes             = keyslots.firstOrNull()?.keySize ?: 64,
-            sectorSize           = sectorSize,
-            ivTweak              = ivTweak,
-            keyslots             = keyslots,
-            digest               = digest
+            cipherName = "aes",
+            cipherMode = "xts-plain64",
+            payloadOffsetSectors = segOffset / 512L,
+            keyBytes = keyslots.firstOrNull()?.keySize ?: 64,
+            sectorSize = sectorSize,
+            ivTweak = ivTweak,
+            keyslots = keyslots,
+            digests = digests,
+            segmentId = segId,
+            segmentOffsetBytes = segOffset,
+            segmentSizeBytes = segSize,
+            hdrSize = hdrSize,
+            keyslotsSize = keyslotsSize,
+            unusableSlots = unusable,
         )
     }
 
