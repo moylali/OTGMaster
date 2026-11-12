@@ -3,14 +3,19 @@
 
     python3 scripts/check_github_issue.py REPO MARKER [--wait SECONDS]
 
-MARKER is the random string the E2E case typed into the description. Only an issue whose
-body contains it is ever deleted, so real reports in the same repository are safe. Every
-issue found is deleted even when a check fails, so a failed case leaves nothing public.
+MARKER is the random string the E2E case typed into the description: "otg-e2e-" and 32
+hex digits, as run_e2e_tests.sh makes it. It fails closed (review of #141): a marker of any
+other shape is refused before anything is read or deleted; an issue matches only if its
+Description section holds the marker as a whole word and it was created in the last
+MAX_AGE_MINUTES; and nothing is deleted unless exactly one issue matches, so an empty or
+reused marker can never sweep up real reports. A single matching issue is deleted even when
+another check fails, so a failed case leaves nothing public.
 
 Prints "GITHUB ISSUE OK" on success. Needs `gh` logged in with admin rights on REPO.
 """
 
 import argparse
+import calendar
 import json
 import re
 import subprocess
@@ -18,6 +23,8 @@ import sys
 import time
 
 POLL_SECONDS = 5
+MAX_AGE_MINUTES = 30
+MARKER_RE = re.compile(r"^otg-e2e-[0-9a-f]{32}$")
 
 
 def gh(*args):
@@ -35,11 +42,25 @@ def find_issues(repo, marker):
     if out.returncode != 0:
         print("gh api failed:", out.stderr.strip())
         return []
-    return [
-        issue
-        for issue in json.loads(out.stdout)
-        if "pull_request" not in issue and marker in (issue.get("body") or "")
-    ]
+    return matching(json.loads(out.stdout), marker, time.time())
+
+
+def matching(issues, marker, now):
+    """The issues (not PRs) created in the last MAX_AGE_MINUTES whose Description section
+    holds [marker] as a whole word."""
+    newest = now - MAX_AGE_MINUTES * 60
+    token = re.compile(r"(?<![\w-])" + re.escape(marker) + r"(?![\w-])")
+    found = []
+    for issue in issues:
+        if "pull_request" in issue:
+            continue
+        section = re.search(r"### Description\r?\n(.*?)(?=\r?\n### |\Z)", issue.get("body") or "", re.DOTALL)
+        if section is None or not token.search(section.group(1)):
+            continue
+        created = calendar.timegm(time.strptime(issue["created_at"], "%Y-%m-%dT%H:%M:%SZ"))
+        if created >= newest:
+            found.append(issue)
+    return found
 
 
 def problems_in(body, marker):
@@ -74,6 +95,9 @@ def main():
     parser.add_argument("marker")
     parser.add_argument("--wait", type=int, default=120)
     args = parser.parse_args()
+    if not MARKER_RE.match(args.marker):
+        print(f"GITHUB ISSUE FAILED: refusing marker {args.marker!r}: not otg-e2e- and 32 hex digits")
+        return 2
 
     deadline = time.monotonic() + args.wait
     while True:
@@ -88,17 +112,15 @@ def main():
         )
         return 1
 
-    problems = []
     if len(issues) != 1:
         numbers = ", ".join(f"#{issue['number']}" for issue in issues)
-        problems.append(f"expected one issue, found {len(issues)}: {numbers}")
-    for issue in issues:
-        problems += [
-            f"#{issue['number']}: {p}" for p in problems_in(issue["body"], args.marker)
-        ]
-        error = delete(args.repo, issue["number"])
-        if error:
-            problems.append(error)
+        print(f"GITHUB ISSUE FAILED: expected one issue, found {len(issues)} ({numbers}); "
+              "none deleted - check them by hand")
+        return 1
+    problems = [f"#{issues[0]['number']}: {p}" for p in problems_in(issues[0]["body"], args.marker)]
+    error = delete(args.repo, issues[0]["number"])
+    if error:
+        problems.append(error)
 
     if problems:
         print("GITHUB ISSUE FAILED: " + "; ".join(problems))

@@ -610,6 +610,9 @@ for test_dir in "$TESTDATA_DIR"/*/; do
         # a failed test too, with a shorter wait, so an issue that did get created is
         # deleted rather than left on a public tracker.
         if [ -n "$ISSUE_MARKER" ]; then
+            # Put Chrome back as it was before the case (review of #141).
+            $CMD_ADB -s $SERIAL shell rm -f /data/local/tmp/chrome-command-line >/dev/null 2>&1
+            $CMD_ADB -s $SERIAL shell am clear-debug-app >/dev/null 2>&1
             ISSUE_WAIT=120
             [ $TEST_EXIT_CODE -ne 0 ] && ISSUE_WAIT=30
             HOST_OUT=$(python3 scripts/check_github_issue.py "$(cat "$test_dir/github_issue.txt")" "$ISSUE_MARKER" --wait $ISSUE_WAIT 2>&1)
