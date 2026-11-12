@@ -171,9 +171,9 @@ class VeraCryptUnlocker {
 
         val passwordBytes = keyedPassword(password, keyfiles, contentResolver)
         val kdf = KdfParams.forVolume(hash, pim)
-        android.util.Log.i("VeraCryptUnlocker", "PIM: $pim, ${hash.displayName}: " +
-            if (hash == VeraCryptHash.ARGON2) "${kdf.iterations} passes over ${kdf.memoryKiB / 1024} MiB"
-            else "${kdf.iterations} iterations")
+        // The PIM is part of the credentials, and the work it sets reveals it, so neither is
+        // logged (review of 2026-11-11, V06).
+        android.util.Log.i("VeraCryptUnlocker", "PIM ${if (pim == null || pim == 0) "default" else "custom"}, ${hash.displayName}")
 
         // In VeraCrypt's own order. Each header has its own salt and so costs a full key
         // derivation, which is why the hidden one is tried only after the standard one fails:
@@ -196,6 +196,11 @@ class VeraCryptUnlocker {
         if (protect != null && header.isHidden) {
             header.keyArea.fill(0)
             throw IllegalArgumentException(WRONG_PASSWORD)
+        }
+
+        header.unsupportedReason(device.blockSize)?.let { why ->
+            header.keyArea.fill(0)
+            throw UnsupportedAlgorithmException("This VeraCrypt volume opened, but OTG Master cannot use it: $why.")
         }
 
         val masterKey = header.keyArea.copyOf(cipher.keySizeBytes)
@@ -276,7 +281,12 @@ class VeraCryptUnlocker {
         }
     }
 
-    /** The password's bytes with its keyfiles mixed in; [password] is wiped. An unreadable keyfile is skipped. */
+    /**
+     * The password's bytes with its keyfiles mixed in; [password] is wiped. A keyfile that
+     * cannot be read, or is empty, fails the unlock: skipping it let a volume that did not need
+     * it open, ignoring the user's choice, and turned a missing required keyfile into a
+     * "wrong password" (review of 2026-11-11, V04).
+     */
     private fun keyedPassword(
         password: CharArray,
         keyfiles: List<android.net.Uri>?,
@@ -286,7 +296,7 @@ class VeraCryptUnlocker {
         password.fill('\u0000')
         if (keyfiles.isNullOrEmpty() || contentResolver == null) return bytes
         return VeraCryptKeyfiles.apply(bytes,
-            keyfiles.map { uri -> { contentResolver.openInputStream(uri) } }, skipUnreadable = true)
+            keyfiles.map { uri -> { contentResolver.openInputStream(uri) } })
     }
 
     /** The header at [offset] bytes into the partition if these credentials open it, else null. */

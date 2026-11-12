@@ -39,6 +39,28 @@ data class VeraCryptHeader(
      */
     val hasDataAreaFields: Boolean get() = formatVersion >= 4
 
+    /**
+     * Why this app cannot use a header that decrypted and passed both CRCs, or null if it can.
+     *
+     * Review of 2026-11-11, V01: the CRCs say the header is intact, not that this app
+     * understands it. A system-encryption header, a volume whose in-place encryption has not
+     * finished (only part of its data is encrypted), a header format or minimum version newer
+     * than this app implements, or a sector size other than the drive's would each be opened
+     * as an ordinary volume and read or written wrongly.
+     */
+    fun unsupportedReason(deviceBlockSize: Int): String? = when {
+        formatVersion > MAX_FORMAT_VERSION ->
+            "its header format $formatVersion is newer than OTG Master supports ($MAX_FORMAT_VERSION)"
+        minProgramVersion > MAX_PROGRAM_VERSION ->
+            "it needs VeraCrypt ${versionName(minProgramVersion)} or later; OTG Master implements ${versionName(MAX_PROGRAM_VERSION)}"
+        flags and FLAG_SYSTEM_ENCRYPTION != 0 -> "it is a system-encryption volume"
+        hasDataAreaFields && encryptedAreaSize != volumeSize ->
+            "its in-place encryption has not finished (${encryptedAreaSize} of $volumeSize bytes encrypted)"
+        hasDataAreaFields && sectorSize != 0 && sectorSize != deviceBlockSize ->
+            "it was made with $sectorSize-byte sectors and this drive has $deviceBlockSize-byte sectors"
+        else -> null
+    }
+
     override fun equals(other: Any?): Boolean =
         other is VeraCryptHeader && formatVersion == other.formatVersion &&
             minProgramVersion == other.minProgramVersion &&
@@ -53,6 +75,17 @@ data class VeraCryptHeader(
     ).hashCode() * 31 + keyArea.contentHashCode()
 
     companion object {
+        /** The newest header format this parser reads (VeraCrypt's current one). */
+        const val MAX_FORMAT_VERSION = 5
+
+        /** The newest "minimum program version" a header may ask for: VeraCrypt 1.26. */
+        const val MAX_PROGRAM_VERSION = 0x0126
+
+        /** TC_HEADER_FLAG_ENCRYPTED_SYSTEM. */
+        const val FLAG_SYSTEM_ENCRYPTION = 0x1
+
+        private fun versionName(v: Int) = "${v shr 8}.${"%02x".format(v and 0xFF)}"
+
         /** Bytes of decrypted header the cipher produces, and this parser expects. */
         const val PLAIN_BYTES = 448
 

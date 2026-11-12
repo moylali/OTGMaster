@@ -75,13 +75,25 @@ enum class VeraCryptHash(val displayName: String, val kdfNativeId: Int?) {
 data class KdfParams(val iterations: Int, val memoryKiB: Int) {
     companion object {
         /** Non-system volumes only (OTG Master opens no system volumes). */
+        /**
+         * The largest PIM VeraCrypt accepts for a non-system volume: 15000 + PIM x 1000 must
+         * still fit a signed 32-bit iteration count.
+         */
+        const val MAX_PIM = 2_147_468
+
+        /**
+         * @throws IllegalArgumentException for a negative PIM or one above [MAX_PIM], which
+         * used to be taken as the default or to overflow into a negative iteration count
+         * (review of 2026-11-11, V06).
+         */
         fun forVolume(hash: VeraCryptHash, pim: Int?): KdfParams {
-            val p = pim?.coerceAtLeast(0) ?: 0
+            val p = pim ?: 0
+            require(p in 0..MAX_PIM) { "PIM must be a whole number from 0 to $MAX_PIM" }
             return when (hash) {
                 VeraCryptHash.ARGON2 -> argon2(p)
                 // VeraCrypt's get_pkcs5_iteration_count: 500000 by default for SHA-512,
                 // SHA-256, Whirlpool and Streebog alike, else 15000 + PIM x 1000.
-                else -> KdfParams(if (p == 0) 500_000 else 15_000 + p * 1000, 0)
+                else -> KdfParams(if (p == 0) 500_000 else Math.toIntExact(15_000L + p * 1000L), 0)
             }
         }
 
