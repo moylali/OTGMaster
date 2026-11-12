@@ -5285,19 +5285,36 @@ class E2EAutomatedTest {
      * "not mounted" failure that looked like a mount bug. Scrolls down first, then
      * back up, so it finds things on either side.
      */
+    /**
+     * The first node matching [selector] that is on screen, waiting up to [waitMs]. A node can
+     * be in the accessibility tree while scrolled out of view, with empty visible bounds, and a
+     * click on it lands at (0, 0): hidden_no_auto_mount found Unlock & mount that way once the
+     * backup-header switch made the unlock form taller, and its tap did nothing.
+     */
+    private fun findVisible(selector: androidx.test.uiautomator.BySelector, waitMs: Long): androidx.test.uiautomator.UiObject2? {
+        val end = android.os.SystemClock.uptimeMillis() + waitMs
+        do {
+            runCatching { device.findObjects(selector) }.getOrDefault(emptyList())
+                .firstOrNull { o -> runCatching { o.visibleBounds.let { it.width() > 0 && it.height() > 0 } }.getOrDefault(false) }
+                ?.let { return it }
+            android.os.SystemClock.sleep(200)
+        } while (android.os.SystemClock.uptimeMillis() < end)
+        return null
+    }
+
     private fun findScrolling(selector: androidx.test.uiautomator.BySelector, desc: String? = null,
                               text: String? = null, firstWaitMs: Long = 2000L): androidx.test.uiautomator.UiObject2? {
-        device.wait(Until.findObject(selector), firstWaitMs)?.let { return it }
+        findVisible(selector, firstWaitMs)?.let { return it }
         // The keyboard opened by the password field covers the lower half, and a swipe
         // starting on it types rather than scrolls. Close it first — with Back, and
         // only while it is up, since Back with no keyboard would leave the app.
         hideKeyboard()
-        device.findObject(selector)?.let { return it }
+        findVisible(selector, 0L)?.let { return it }
         // Cards are in the slider, and everything else behind it, out of the tree while it is open.
         if (sliderOpen()) {
             findInSlider(selector)?.let { return it }
             closeSlider()
-            device.wait(Until.findObject(selector), 1000L)?.let { return it }
+            findVisible(selector, 1000L)?.let { return it }
         }
         // Scroll the app's own container (a ScrollView covering the screen) rather
         // than swiping — a swipe near the top pulled down the notification shade.
@@ -5310,7 +5327,7 @@ class E2EAutomatedTest {
         for (toEnd in listOf(true, false)) {
             runCatching { if (toEnd) scrollable.scrollToEnd(10) else scrollable.scrollToBeginning(10) }
             device.waitForIdle()
-            device.wait(Until.findObject(selector), 5000L)?.let { return it }
+            findVisible(selector, 5000L)?.let { return it }
         }
         if (OtgMasterState.mountedDrives.isNotEmpty() || OtgMasterState.disconnectedDrives.value.isNotEmpty()) {
             openSlider()
