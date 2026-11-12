@@ -86,6 +86,17 @@ data class VeraCryptHeader(
 
         private fun versionName(v: Int) = "${v shr 8}.${"%02x".format(v and 0xFF)}"
 
+        /** The backup header group: the last 128 KiB of the host volume. */
+        const val BACKUP_GROUP_BYTES = 131072L
+
+        /**
+         * Where the standard and hidden headers are in a host volume of [hostBytes]: the
+         * main ones at 0 and 64 KiB, or the backups at 128 KiB and 64 KiB from the end.
+         */
+        fun headerOffsets(hostBytes: Long, backup: Boolean): Pair<Long, Long> =
+            if (backup) (hostBytes - BACKUP_GROUP_BYTES) to (hostBytes - BACKUP_GROUP_BYTES + HIDDEN_HEADER_OFFSET)
+            else STANDARD_HEADER_OFFSET to HIDDEN_HEADER_OFFSET
+
         /** Bytes of decrypted header the cipher produces, and this parser expects. */
         const val PLAIN_BYTES = 448
 

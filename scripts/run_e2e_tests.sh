@@ -422,6 +422,7 @@ for test_dir in "$TESTDATA_DIR"/*/; do
     READ_ONLY_ARG=""
     [ -f "$test_dir/read_only.txt" ] && READ_ONLY_ARG="-e expect_read_only true"
     [ -f "$test_dir/read_only_switch.txt" ] && READ_ONLY_ARG="$READ_ONLY_ARG -e read_only_switch true"
+    [ -f "$test_dir/backup_header_switch.txt" ] && READ_ONLY_ARG="$READ_ONLY_ARG -e backup_header_switch true"
     PLAIN_ARG=""
     [ -f "$test_dir/plain.txt" ] && PLAIN_ARG="-e plain_mount true"
     DISCONNECT_ARG=""

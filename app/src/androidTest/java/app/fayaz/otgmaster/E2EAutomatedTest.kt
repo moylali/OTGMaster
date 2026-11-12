@@ -263,6 +263,8 @@ class E2EAutomatedTest {
 
             if (cipher.isNotEmpty() && cipher != "AES") pickOption("cipher_picker", cipher)
             if (hash.isNotEmpty() && hash != "SHA-512") pickOption("hash_picker", hash)
+            // Review of 2026-11-11, V05: read the backup header at the end of the volume.
+            if (arguments.getString("backup_header_switch", "false") == "true") clickScrolling("backup_header_switch", "no backup header switch on the form")
 
             // Click Mount
             val clicked = clickMountButton()

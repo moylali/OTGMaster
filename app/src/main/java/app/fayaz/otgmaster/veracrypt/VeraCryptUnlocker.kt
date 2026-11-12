@@ -165,6 +165,12 @@ class VeraCryptUnlocker {
          * cost one derivation each rather than two.
          */
         headers: Headers = Headers.BOTH,
+        /**
+         * Read the backup headers VeraCrypt keeps in the last 128 KiB of the volume instead of
+         * the main ones at its start, for a volume whose main header is damaged. Opt-in: each
+         * header costs a full key derivation (review of 2026-11-11, V05).
+         */
+        useBackupHeader: Boolean = false,
     ): NativeDecryptedBlockDevice {
         requireSupported(cipher, hash)
         protect?.let { requireSupported(it.cipher, it.hash) }
@@ -178,10 +184,12 @@ class VeraCryptUnlocker {
         // In VeraCrypt's own order. Each header has its own salt and so costs a full key
         // derivation, which is why the hidden one is tried only after the standard one fails:
         // an ordinary unlock costs exactly what it always did.
+        val hostBytes = (candidate.blockCount ?: (device.blockCount - candidate.startBlock)) * device.blockSize
+        val (standardAt, hiddenAt) = VeraCryptHeader.headerOffsets(hostBytes, useBackupHeader)
         fun standard() = if (headers == Headers.HIDDEN_ONLY) null else
-            readHeader(device, candidate, VeraCryptHeader.STANDARD_HEADER_OFFSET, passwordBytes, cipher, hash, kdf)
+            readHeader(device, candidate, standardAt, passwordBytes, cipher, hash, kdf)
         fun hidden() = if (headers == Headers.STANDARD_ONLY) null else
-            readHeader(device, candidate, VeraCryptHeader.HIDDEN_HEADER_OFFSET, passwordBytes, cipher, hash, kdf)
+            readHeader(device, candidate, hiddenAt, passwordBytes, cipher, hash, kdf)
         val header = try {
             standard() ?: hidden()
         } finally {
