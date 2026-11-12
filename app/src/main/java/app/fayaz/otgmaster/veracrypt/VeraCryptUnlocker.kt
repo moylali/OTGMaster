@@ -51,7 +51,35 @@ class VeraCryptUnlocker {
             ))
         }
 
-        return candidates
+        return candidates.flatMap { listOf(it) + laterApfsVolumes(device, it) }
+    }
+
+    /**
+     * One candidate for each volume after the first in the APFS container at [c], if
+     * there is one. Review of 2026-11-09: only a container's first volume was ever
+     * opened, so a second volume, such as an encrypted one beside a plain one, could not
+     * be reached at all. They are offered through the unlock form whether encrypted or
+     * not, because the plain-partition mount opens a partition's first volume only; for
+     * a plain volume the password is not used.
+     */
+    private fun laterApfsVolumes(device: RawBlockDevice, c: VolumeCandidate): List<VolumeCandidate> {
+        if (c.containerType != ContainerType.APFS && c.containerType != ContainerType.UNENCRYPTED) return emptyList()
+        return runCatching {
+            if (!app.fayaz.otgmaster.apfs.ApfsFileSystem.hasSignature(device.readBlocks(c.startBlock, 1))) {
+                return emptyList()
+            }
+            val slice = app.fayaz.otgmaster.block.SlicedBlockDevice(
+                device, c.startBlock, c.blockCount ?: (device.blockCount - c.startBlock))
+            val count = app.fayaz.otgmaster.apfs.ApfsFileSystem.volumeCount(slice)
+            (1 until count).mapNotNull { i ->
+                app.fayaz.otgmaster.apfs.ApfsFileSystem.isEncrypted(slice, i) ?: return@mapNotNull null
+                VolumeCandidate(label = "${c.label} · volume ${i + 1}", startBlock = c.startBlock,
+                    blockCount = c.blockCount, containerType = ContainerType.APFS, apfsVolume = i)
+            }
+        }.onFailure {
+            app.fayaz.otgmaster.OtgMasterState.logFailure("container",
+                "Could not list the APFS volumes of the partition at block ${c.startBlock}", it)
+        }.getOrDefault(emptyList())
     }
 
     private fun classifyCandidate(

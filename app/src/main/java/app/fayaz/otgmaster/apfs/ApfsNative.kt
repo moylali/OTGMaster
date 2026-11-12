@@ -21,14 +21,18 @@ object ApfsNative {
     const val PROBE_PLAIN = 0
     const val PROBE_ENCRYPTED = 1
 
-    /** [PROBE_PLAIN], [PROBE_ENCRYPTED], or a negative errno if no APFS container opens. */
-    @JvmStatic external fun probe(device: RawBlockDevice, sizeBytes: Long): Int
+    /** How many volumes the container holds, or a negative errno if no APFS container opens. */
+    @JvmStatic external fun volumeCount(device: RawBlockDevice, sizeBytes: Long): Int
+
+    /** [PROBE_PLAIN], [PROBE_ENCRYPTED], or a negative errno, for volume [volumeIndex] (0 is the first). */
+    @JvmStatic external fun probe(device: RawBlockDevice, sizeBytes: Long, volumeIndex: Int): Int
 
     /**
-     * Volume handle for the container's first volume, or 0 with [lastErrno] set:
-     * EACCES for a wrong password, or for an encrypted volume given none.
+     * Volume handle for the container's volume [volumeIndex], or 0 with [lastErrno] set:
+     * EACCES for a wrong password, or for an encrypted volume given none; ENOENT for no
+     * such volume.
      */
-    @JvmStatic external fun mount(device: RawBlockDevice, sizeBytes: Long, password: ByteArray?): Long
+    @JvmStatic external fun mount(device: RawBlockDevice, sizeBytes: Long, password: ByteArray?, volumeIndex: Int): Long
     @JvmStatic external fun unmount(handle: Long): Int
     @JvmStatic external fun lastErrno(): Int
     @JvmStatic external fun volumeLabel(handle: Long): String

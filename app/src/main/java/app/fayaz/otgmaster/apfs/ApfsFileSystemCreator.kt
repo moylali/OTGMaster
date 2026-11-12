@@ -24,8 +24,8 @@ class ApfsFileSystemCreator : FileSystemCreator {
     }
 
     companion object {
-        fun mount(blockDevice: BlockDeviceDriver, password: String?): ApfsFileSystem =
-            ApfsFileSystem.mount(rawOf(blockDevice), password)
+        fun mount(blockDevice: BlockDeviceDriver, password: String?, volumeIndex: Int = 0): ApfsFileSystem =
+            ApfsFileSystem.mount(rawOf(blockDevice), password, volumeIndex)
 
         private fun rawOf(blockDevice: BlockDeviceDriver) = object : RawBlockDevice {
             override val blockSize: Int = blockDevice.blockSize

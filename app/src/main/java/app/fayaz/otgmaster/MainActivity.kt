@@ -1281,11 +1281,11 @@ class MainActivity : AppCompatActivity() {
                         .filter { it.sourceDeviceName == key }.map { it.partitionLabel }.toSet()
                     val mountedStarts = OtgMasterState.mountedDrives
                         .filter { it.sourceDeviceName == key }
-                        .mapNotNull { it.sourceVolumeCandidate?.startBlock }.toSet()
+                        .mapNotNull { it.sourceVolumeCandidate?.slotKey }.toSet()
                     val locked = probed.filter {
                         it.containerType != app.fayaz.otgmaster.veracrypt.ContainerType.UNKNOWN &&
                             it.containerType != app.fayaz.otgmaster.veracrypt.ContainerType.UNENCRYPTED &&
-                            it.label !in mountedLabels && it.startBlock !in mountedStarts
+                            it.label !in mountedLabels && it.slotKey !in mountedStarts
                     }
                     withContext(Dispatchers.Main) {
                         if (locked.isNotEmpty() && _deviceCandidates.value.none { it.deviceName == key }) {
@@ -1331,7 +1331,7 @@ class MainActivity : AppCompatActivity() {
                     // (mirrors the USB mixed-device path). If there are no plain partitions this
                     // is a no-op and all candidates are passed through as before.
                     val plainStarts = plainPartitions.map { it.startBlock }.toSet()
-                    val encryptedCandidates = candidates.filter { it.startBlock !in plainStarts }
+                    val encryptedCandidates = candidates.filter { !it.isIn(plainStarts) }
                     if (encryptedCandidates.isNotEmpty()) {
                         val encryptedQemuCandidate = qemuCandidate.copy(candidates = encryptedCandidates)
                         appendLog(getString(R.string.log_found_candidates_qemu, encryptedCandidates.size))
@@ -1458,7 +1458,7 @@ class MainActivity : AppCompatActivity() {
                     val (hasPlain, pureEncrypted) = uniqueNew.partition { it.plainPartitions.isNotEmpty() }
                     val (purePlain, mixed) = hasPlain.partition { device ->
                         val plainStarts = device.plainPartitions.map { it.startBlock }.toSet()
-                        device.candidates.all { it.startBlock in plainStarts }
+                        device.candidates.all { it.isIn(plainStarts) }
                     }
 
                     // Auto-mount ALL plain partitions on pure-plain and mixed devices
@@ -1473,7 +1473,7 @@ class MainActivity : AppCompatActivity() {
                     // the VeraCrypt form only shows the encrypted partitions still to unlock.
                     val mixedEncrypted = mixed.map { device ->
                         val plainStarts = device.plainPartitions.map { it.startBlock }.toSet()
-                        val kept = device.candidates.filter { it.startBlock !in plainStarts }
+                        val kept = device.candidates.filter { !it.isIn(plainStarts) }
                         device.copy(
                             candidates = kept,
                             hiddenPartitions = device.hiddenPartitions + (device.candidates.size - kept.size),
@@ -1523,7 +1523,7 @@ class MainActivity : AppCompatActivity() {
         // zero while other unlocks were still running. Once, whichever path ends it.
         val completed = java.util.concurrent.atomic.AtomicBoolean(false)
         val callerOnComplete = onComplete
-        val partition = unlockKey(deviceName, candidate.startBlock)
+        val partition = unlockKey(deviceName, candidate.slotKey)
         if (partition in unlockingPartitions.getAndUpdate { it + partition }) {
             appendLog(getString(R.string.log_unlock_already_running, candidate.label))
             callerOnComplete()
@@ -1660,7 +1660,7 @@ class MainActivity : AppCompatActivity() {
                     if (readOnly) app.fayaz.otgmaster.block.ReadOnlyBlockDeviceDriver(byteDevice) else byteDevice
                 val fileSystem = try {
                     if (isApfs) {
-                        app.fayaz.otgmaster.apfs.ApfsFileSystemCreator.mount(fsDevice, password).also {
+                        app.fayaz.otgmaster.apfs.ApfsFileSystemCreator.mount(fsDevice, password, candidate.apfsVolume).also {
                             withContext(Dispatchers.Main) { appendLog(getString(R.string.log_unlock_successful)) }
                         }
                     } else {
@@ -1683,7 +1683,8 @@ class MainActivity : AppCompatActivity() {
                 // Stable across mounts, so a companion app's persisted folder grant
                 // still resolves next time (see ExtensionContract).
                 val driveId = app.fayaz.otgmaster.extension.ExtensionContract.veraCryptDriveId(
-                    deviceName, candidate.startBlock, veraCryptVolume?.volumeType, OtgMasterState.mountedDrives.map { it.id })
+                    deviceName, candidate.startBlock, veraCryptVolume?.volumeType, OtgMasterState.mountedDrives.map { it.id },
+                    apfsVolume = candidate.apfsVolume)
                 val mountedDrive = MountedDrive(
                     id = driveId,
                     name = getString(R.string.mounted_drive_name, deviceDisplayName, driveId),
@@ -1742,7 +1743,7 @@ class MainActivity : AppCompatActivity() {
                     // Remove only this candidate; keep others for the same device (multi-partition).
                     val updatedCandidates = _deviceCandidates.value.map { udc ->
                         if (udc.deviceName == deviceName)
-                            udc.copy(candidates = udc.candidates.filter { it.startBlock != candidate.startBlock })
+                            udc.copy(candidates = udc.candidates.filter { it.slotKey != candidate.slotKey })
                         else udc
                     }.filter { it.candidates.isNotEmpty() }
                     _deviceCandidates.value = updatedCandidates
@@ -2016,8 +2017,8 @@ class MainActivity : AppCompatActivity() {
                         if (existing != null) {
                             _deviceCandidates.value = _deviceCandidates.value.map {
                                 if (it.deviceName == sourceKey &&
-                                        it.candidates.none { c -> c.startBlock == volCandidate.startBlock })
-                                    it.copy(candidates = (it.candidates + volCandidate).sortedBy { c -> c.startBlock })
+                                        it.candidates.none { c -> c.slotKey == volCandidate.slotKey })
+                                    it.copy(candidates = (it.candidates + volCandidate).sortedWith(compareBy({ c -> c.startBlock }, { c -> c.apfsVolume })))
                                 else it
                             }
                         } else {
@@ -2430,8 +2431,8 @@ class MainActivity : AppCompatActivity() {
         val existing = _deviceCandidates.value.find { it.deviceName == sourceKey }
         _deviceCandidates.value = if (existing != null) {
             _deviceCandidates.value.map {
-                if (it.deviceName == sourceKey && it.candidates.none { c -> c.startBlock == candidate.startBlock })
-                    it.copy(candidates = (it.candidates + candidate).sortedBy { c -> c.startBlock })
+                if (it.deviceName == sourceKey && it.candidates.none { c -> c.slotKey == candidate.slotKey })
+                    it.copy(candidates = (it.candidates + candidate).sortedWith(compareBy({ c -> c.startBlock }, { c -> c.apfsVolume })))
                 else it
             }
         } else {
@@ -2819,7 +2820,7 @@ class MainActivity : AppCompatActivity() {
             val locked = all.filter {
                 it.containerType != app.fayaz.otgmaster.veracrypt.ContainerType.UNKNOWN &&
                     it.containerType != app.fayaz.otgmaster.veracrypt.ContainerType.UNENCRYPTED &&
-                    it.startBlock !in plainStarts
+                    !it.isIn(plainStarts)
             }
             android.util.Log.i("OTGMaster", "re-probed held $key: ${locked.size} locked, ${plain.size} plain")
             val existing = _deviceCandidates.value.find { it.deviceName == key }
@@ -2885,7 +2886,8 @@ class MainActivity : AppCompatActivity() {
         // stick whose only match is a hidden volume.
         val requested = devices.flatMap { device -> device.candidates.map { device.deviceName to it } }
         fun isMounted(deviceName: String, candidate: VolumeCandidate) = OtgMasterState.mountedDrives.any {
-            it.sourceDeviceName == deviceName && it.partitionStartBlock == candidate.startBlock
+            it.sourceDeviceName == deviceName && it.partitionStartBlock == candidate.startBlock &&
+                (it.sourceVolumeCandidate?.apfsVolume ?: 0) == candidate.apfsVolume
         }
         fun unlock(deviceName: String, candidate: VolumeCandidate,
                    headers: VeraCryptUnlocker.Headers, then: () -> Unit) {
@@ -2904,7 +2906,7 @@ class MainActivity : AppCompatActivity() {
         // hidden one is not either: that only repeated the refusal (main_screen's second
         // request was refused twice).
         fun beingUnlocked(deviceName: String, candidate: VolumeCandidate) =
-            unlockKey(deviceName, candidate.startBlock) in unlockingPartitions.value
+            unlockKey(deviceName, candidate.slotKey) in unlockingPartitions.value
         val alreadyUnlocking = requested.filter { (d, c) -> beingUnlocked(d, c) }.toSet()
         // Held from the first pass until the second has started, so that a caller waiting for
         // the count to reach zero does not stop between the two.
@@ -4063,7 +4065,7 @@ fun OtgMasterApp(
 }
 
 /** Names one partition of one device in [MainActivity.unlockingPartitions]. */
-private fun unlockKey(deviceName: String, startBlock: Long) = "$deviceName@$startBlock"
+private fun unlockKey(deviceName: String, slot: Any) = "$deviceName@$slot"
 
 private fun usbAccessLabel(mode: app.fayaz.otgmaster.usb.UsbAccessMode) = when (mode) {
     app.fayaz.otgmaster.usb.UsbAccessMode.MANUAL -> R.string.usb_access_manual
