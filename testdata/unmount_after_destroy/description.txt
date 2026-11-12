@@ -1,0 +1,1 @@
+Dismiss on Unmount's transfer dialog, then Android destroys the app's screen: the Unmount still happens when the file closes, and its notification comes, without the screen coming back.

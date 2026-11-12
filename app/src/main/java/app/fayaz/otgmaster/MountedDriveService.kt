@@ -57,7 +57,7 @@ class MountedDriveService : Service() {
         // Everything ended while Android was starting us. Only now may it stop: stopping a
         // service before it has called startForeground crashes the process.
         synchronized(lock) {
-            if (titles.isEmpty() && operation == null) {
+            if (titles.isEmpty() && operation == null && teardowns.isEmpty()) {
                 running = false
                 stopForeground(STOP_FOREGROUND_REMOVE)
                 stopSelf()
@@ -112,6 +112,17 @@ class MountedDriveService : Service() {
         val isRunning: Boolean get() = running
         @Volatile private var titles: List<String> = emptyList()
         @Volatile private var operation: Operation? = null
+        /** Partitions whose unmount teardown (flush and close) is running, by name. */
+        private val teardowns = java.util.concurrent.CopyOnWriteArrayList<String>()
+
+        /**
+         * An unmount's teardown has started: the service stays in the foreground until
+         * [endTeardown], so Android cannot freeze or kill the process mid-flush once the last
+         * partition has left the mounted list (review of #141, PR-3).
+         */
+        fun beginTeardown(context: Context, name: String) { teardowns += name; refresh(context.applicationContext) }
+
+        fun endTeardown(context: Context, name: String) { teardowns.remove(name); refresh(context.applicationContext) }
         @Volatile private var lastProgressPost = 0L
 
         fun update(context: Context, titles: List<String>) {
@@ -212,7 +223,7 @@ class MountedDriveService : Service() {
         }
 
         private fun refresh(app: Context) { synchronized(lock) {
-            if (titles.isEmpty() && operation == null) {
+            if (titles.isEmpty() && operation == null && teardowns.isEmpty()) {
                 if (plainPosted) {
                     plainPosted = false
                     app.getSystemService(NotificationManager::class.java)?.cancel(NOTIFICATION_ID)
@@ -281,6 +292,11 @@ class MountedDriveService : Service() {
                     .setContentText(op.phase.ifEmpty { context.getString(R.string.notification_operation_keep_attached) })
                     .setSubText(context.getString(R.string.notification_operation_keep_attached))
                     .setProgress(1000, ((op.fraction ?: 0f) * 1000).toInt(), op.fraction == null)
+                    .build()
+            }
+            if (titles.isEmpty()) teardowns.firstOrNull()?.let { name ->
+                return b.setContentTitle(context.getString(R.string.notification_unmounting, name))
+                    .setContentText(context.getString(R.string.notification_operation_keep_attached))
                     .build()
             }
             val first = titles.firstOrNull().orEmpty()

@@ -323,6 +323,25 @@ object OtgMasterState {
     /** Devices waiting to eject once they are idle, by the same key. */
     val pendingEjects = mutableStateOf<Map<String, PendingEject>>(emptyMap())
 
+    /**
+     * Work that must outlive any one MainActivity: the watchers behind a pending Unmount or
+     * Eject, and an unmount's teardown (flush and close). Review of #141, PR-3: they ran in the
+     * activity's lifecycleScope, so Android destroying the activity (it keeps the process and
+     * the foreground service) cancelled a pending Unmount, and the volume stayed unlocked.
+     */
+    val appScope = kotlinx.coroutines.CoroutineScope(
+        kotlinx.coroutines.SupervisorJob() + kotlinx.coroutines.Dispatchers.Main.immediate)
+
+    /** The running watchers in [appScope], by "unmount:<drive id>" or "eject:<device key>". */
+    val driveWatchers = java.util.concurrent.ConcurrentHashMap<String, kotlinx.coroutines.Job>()
+
+    /**
+     * Serialises the device I/O of unlocks, mounts and unmounts across the process. It was a
+     * field of MainActivity, so a teardown still running after a recreated activity's mount
+     * started held a different lock from it.
+     */
+    val deviceMutex = kotlinx.coroutines.sync.Mutex()
+
     /** Partitions waiting to unmount once they are idle, by [MountedDrive.id]. */
     val pendingUnmounts = mutableStateOf<Map<String, PendingUnmount>>(emptyMap())
 
