@@ -1,10 +1,20 @@
 <manifest xmlns:android="http://schemas.android.com/apk/res/android">
 
+    <!--
+      Every receiver here acts on mounted, decrypted drives (copies, dumps, mounts), and the
+      benchmark APK that carries them is installable on any phone. Each requires
+      android.permission.DUMP: adb's shell holds it, so `adb shell am broadcast -n ...` works,
+      but an ordinary app cannot be granted it, so it cannot drive them. Review of #141, PR-2:
+      they were exported with no permission, so any app could, for example, copy a decrypted
+      partition to a plain one or dump it to a file. DebugManifestTest checks this.
+    -->
+
     <application>
         <!-- Debug-only: a backup between two mounted partitions with no UI. See BackupTestReceiver. -->
         <receiver
             android:name=".bench.BackupTestReceiver"
-            android:exported="true">
+            android:exported="true"
+            android:permission="android.permission.DUMP">
             <intent-filter>
                 <action android:name="app.fayaz.otgmaster.RUN_BACKUP" />
             </intent-filter>
@@ -25,7 +35,8 @@
         -->
         <receiver
             android:name=".bench.BenchmarkReceiver"
-            android:exported="true">
+            android:exported="true"
+            android:permission="android.permission.DUMP">
             <intent-filter>
                 <action android:name="app.fayaz.otgmaster.RUN_BENCHMARK" />
             </intent-filter>
@@ -39,7 +50,8 @@
         <!-- Debug-only: mount/unmount with no UI, for companion-app E2E. See E2eMountReceiver. -->
         <receiver
             android:name=".bench.E2eMountReceiver"
-            android:exported="true">
+            android:exported="true"
+            android:permission="android.permission.DUMP">
             <intent-filter>
                 <action android:name="app.fayaz.otgmaster.E2E_MOUNT" />
                 <action android:name="app.fayaz.otgmaster.E2E_UNMOUNT_ALL" />
@@ -48,7 +60,8 @@
 
         <receiver
             android:name=".bench.VolumeDumpReceiver"
-            android:exported="true">
+            android:exported="true"
+            android:permission="android.permission.DUMP">
             <intent-filter>
                 <action android:name="app.fayaz.otgmaster.DUMP_VOLUME" />
             </intent-filter>
@@ -66,7 +79,8 @@
 
         <receiver
             android:name=".spike.FdSpikeReceiver"
-            android:exported="true">
+            android:exported="true"
+            android:permission="android.permission.DUMP">
             <intent-filter>
                 <action android:name="app.fayaz.otgmaster.RUN_FD_SPIKE" />
             </intent-filter>
