@@ -1,0 +1,1 @@
+Unlock form, one option: Use backup header, on a 64 MiB volume desktop VeraCrypt made whose main header was then overwritten. Reaching the FAT16 refusal proves the backup header decrypted.

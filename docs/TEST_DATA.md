@@ -405,6 +405,7 @@ from a baseline, and no combinations.
 | Password + 2 keyfiles | `enc_opt_keyfiles_2` | `unlock_opt_keyfiles_2` |
 | Keyfiles only | `enc_opt_keyfiles_only` | `unlock_opt_keyfiles_only` |
 | Read-only switch | n/a | `unlock_opt_read_only` |
+| Use backup header | n/a | `unlock_opt_backup_header` (64 MiB, so the backup header sits at the end of the 64 MiB slot; main header overwritten) |
 | exFAT, FAT32, ext4, NTFS inside | `encrypt_plain_fat32`, `_exfat`, `_ntfs`, `_ext4` | n/a |
 | Quick, full | `enc_opt_baseline`, `encrypt_plain_fat32` | n/a |
 

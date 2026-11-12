@@ -104,6 +104,29 @@ def main():
         put(d, "expected_fs.txt", "FAT16")
         put(d, "description.txt", f"Unlock form, one option, on a volume desktop VeraCrypt made: {text} Reaching the FAT16 refusal proves it decrypted.")
         print(name)
+    # The backup header (review of 2026-11-11, V05): VeraCrypt keeps it in the last 128 KiB
+    # of the host volume, and the app looks for it at the end of the device, so this volume
+    # fills the E2E slot exactly (64 MiB). Its main header is then overwritten: without the
+    # switch it reads as a wrong password, with it the volume decrypts.
+    d = fresh("unlock_opt_backup_header")
+    img = os.path.join(d, "test.img")
+    p = subprocess.run(["veracrypt", "-t", "-c", "--volume-type=normal", img, "--size=64M",
+                        f"--password={PASSWORD}", "--encryption=AES", "--hash=SHA-512", "--filesystem=FAT",
+                        "--pim=1", "--random-source=/dev/urandom", "--non-interactive"], capture_output=True, text=True)
+    if p.returncode != 0:
+        raise SystemExit(f"veracrypt failed for unlock_opt_backup_header:\n{p.stdout}{p.stderr}")
+    with open(img, "r+b") as f:
+        f.write(b"\x5a" * 512)
+    put(d, "password.txt", PASSWORD)
+    put(d, "pim.txt", "1")
+    put(d, "cipher.txt", "AES")
+    put(d, "hash.txt", "SHA-512")
+    put(d, "backup_header_switch.txt", "true")
+    put(d, "expects_error.txt", "true")
+    put(d, "expected_fs.txt", "FAT16")
+    put(d, "description.txt", "Unlock form, one option: Use backup header, on a 64 MiB volume desktop VeraCrypt made whose main header was then overwritten. Reaching the FAT16 refusal proves the backup header decrypted.")
+    print("unlock_opt_backup_header")
+
     d = fresh("unlock_opt_read_only")
     for n in ("test.img", "password.txt", "pim.txt", "cipher.txt", "hash.txt"):
         shutil.copyfile(os.path.join(TD, "fat32", n), os.path.join(d, n))

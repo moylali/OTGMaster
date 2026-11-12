@@ -144,6 +144,8 @@
     <string name="clear_cached_credentials">Clear credentials</string>
     <string name="log_cached_credentials_invalid">The saved credentials for %1$s no longer work, so they were cleared. Enter them again to turn Auto mount back on.</string>
     <string name="auto_mount_exclude_device">Opt out of Auto mount for this device</string>
+    <string name="use_backup_header">Use backup header</string>
+    <string name="use_backup_header_help">If the right password does not open the volume, its main header may be damaged. This reads the copy at the end of the volume instead.</string>
     <string name="mount_read_only">Mount this partition read-only</string>
     <string name="hidden_protection_switch">Protect hidden volume against damage caused by writing to outer volume</string>
     <string name="hidden_protection_password">Password to hidden volume</string>

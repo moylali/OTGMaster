@@ -757,8 +757,9 @@ class MainActivity : AppCompatActivity() {
                         onSetPartitionReadOnly = { deviceKey, startBlock, ro -> setPartitionReadOnly(deviceKey, startBlock, ro) },
                         onRefreshDevices = { scanTapped() },
                         showNoDriveHelp = scanFoundNoDrive.value,
-                        onUnlock = { deviceName, candidate, pwd, pim, keyfiles, cipher, hash, protect, onComplete ->
-                            attemptUnlock(deviceName, candidate, pwd, pim, keyfiles, cipher, hash, protectHidden = protect, onComplete = onComplete)
+                        onUnlock = { deviceName, candidate, pwd, pim, keyfiles, cipher, hash, protect, backupHeader, onComplete ->
+                            attemptUnlock(deviceName, candidate, pwd, pim, keyfiles, cipher, hash, protectHidden = protect,
+                                useBackupHeader = backupHeader, onComplete = onComplete)
                         },
                         onUnmount = { drive -> unmountTapped(drive) },
                         onCancelUnmount = { id -> cancelUnmount(id) },
@@ -1516,6 +1517,8 @@ class MainActivity : AppCompatActivity() {
         protectHidden: app.fayaz.otgmaster.veracrypt.HiddenVolumeCredentials? = null,
         /** Which VeraCrypt headers to try; see [mountProbedCandidates] for why not always both. */
         veraCryptHeaders: VeraCryptUnlocker.Headers = VeraCryptUnlocker.Headers.BOTH,
+        /** VeraCrypt: read the backup headers at the end of the volume instead of the main ones. */
+        useBackupHeader: Boolean = false,
         onComplete: () -> Unit
     ) {
         // An exception after the success path's onComplete() reached the catch block,
@@ -1618,7 +1621,7 @@ class MainActivity : AppCompatActivity() {
                     else -> VeraCryptUnlocker().unlock(
                         device, candidate, password.toCharArray(), pim, keyfiles, contentResolver,
                         cipher, hash, protect = protectHidden.takeUnless { readOnly },
-                        headers = veraCryptHeaders,
+                        headers = veraCryptHeaders, useBackupHeader = useBackupHeader,
                     )
                 }
                 val veraCryptVolume = decryptedDevice as? app.fayaz.otgmaster.veracrypt.NativeDecryptedBlockDevice
@@ -1635,6 +1638,8 @@ class MainActivity : AppCompatActivity() {
                 withContext(Dispatchers.Main) { appendLog(getString(R.string.log_detected_filesystem, detected.displayName)) }
 
                 if (detected is DetectedFilesystem.Unsupported) {
+                    // S01: the decrypted device holds the volume key; nothing will mount it now.
+                    runCatching { decryptedDevice.close() }
                     withContext(Dispatchers.Main) {
                         onComplete()
                         appendLog(getString(R.string.log_cannot_mount_reason, detected.reason))
@@ -1673,6 +1678,9 @@ class MainActivity : AppCompatActivity() {
                     throw e   // an unlock failure, reported (and cached credentials dropped) below
                 } catch (e: Exception) {
                     android.util.Log.e("OTG_MOUNT", "Failed to mount file system", e)
+                    // S01: release the volume key held by the decrypted device (its close
+                    // leaves the USB connection alone).
+                    runCatching { decryptedDevice.close() }
                     val msg = if (detected is DetectedFilesystem.Unknown)
                         getString(R.string.log_unrecognized_fs_not_mounted)
                     else
@@ -3463,7 +3471,7 @@ fun OtgMasterApp(
     onSetPartitionReadOnly: (String, Long, Boolean) -> Unit,
     onRefreshDevices: () -> Unit,
     showNoDriveHelp: Boolean = false,
-    onUnlock: (String, VolumeCandidate, String, Int?, List<Uri>, app.fayaz.otgmaster.veracrypt.VeraCryptCipher, app.fayaz.otgmaster.veracrypt.VeraCryptHash, app.fayaz.otgmaster.veracrypt.HiddenVolumeCredentials?, () -> Unit) -> Unit,
+    onUnlock: (String, VolumeCandidate, String, Int?, List<Uri>, app.fayaz.otgmaster.veracrypt.VeraCryptCipher, app.fayaz.otgmaster.veracrypt.VeraCryptHash, app.fayaz.otgmaster.veracrypt.HiddenVolumeCredentials?, Boolean, () -> Unit) -> Unit,
     onUnmount: (MountedDrive) -> Unit,
     onOpenFilesApp: (MountedDrive) -> Unit,
     journalRepairPrompt: String? = null,
@@ -4095,7 +4103,7 @@ fun VeraCryptMountSection(
     deviceCandidates: List<UsbDeviceCandidate>,
     showNoDriveHelp: Boolean = false,
     usbHint: Int? = null,
-    onUnlock: (String, VolumeCandidate, String, Int?, List<Uri>, app.fayaz.otgmaster.veracrypt.VeraCryptCipher, app.fayaz.otgmaster.veracrypt.VeraCryptHash, app.fayaz.otgmaster.veracrypt.HiddenVolumeCredentials?, () -> Unit) -> Unit,
+    onUnlock: (String, VolumeCandidate, String, Int?, List<Uri>, app.fayaz.otgmaster.veracrypt.VeraCryptCipher, app.fayaz.otgmaster.veracrypt.VeraCryptHash, app.fayaz.otgmaster.veracrypt.HiddenVolumeCredentials?, Boolean, () -> Unit) -> Unit,
     autoMountEnabled: Boolean = false,
     sessionCredentials: Map<String, app.fayaz.otgmaster.security.CredentialStore.Credentials> = emptyMap(),
     hasCachedCreds: (String, Long?) -> Boolean = { _, _ -> false },
@@ -4133,6 +4141,7 @@ fun VeraCryptMountSection(
                  selectedCandidate?.containerType == app.fayaz.otgmaster.veracrypt.ContainerType.LUKS2 ||
                  isBitLocker || isApfs
     var expanded by remember { mutableStateOf(false) }
+    var useBackupHeader by remember(selectedCandidate) { mutableStateOf(false) }
 
     var password by remember(selectedDevice) { mutableStateOf(sessionCreds?.password ?: "") }
     var passwordVisible by remember { mutableStateOf(false) }
@@ -4305,21 +4314,12 @@ fun VeraCryptMountSection(
             // Above both branches: with saved credentials the form is only the
             // fingerprint button, and the switch has to be reachable there too.
             selectedCandidate?.let { sc ->
-                Row(
-                    verticalAlignment = Alignment.CenterVertically,
-                    modifier = Modifier.fillMaxWidth()
-                ) {
-                    Text(
-                        stringResource(R.string.mount_read_only),
-                        modifier = Modifier.weight(1f),
-                        style = MaterialTheme.typography.bodyMedium
-                    )
-                    Switch(
-                        checked = isPartitionReadOnly(currentDeviceName, sc.startBlock),
-                        onCheckedChange = { onSetPartitionReadOnly(currentDeviceName, sc.startBlock, it) },
-                        modifier = Modifier.semantics { contentDescription = "read_only_switch" }
-                    )
-                }
+                app.fayaz.otgmaster.ui.SwitchRow(
+                    text = stringResource(R.string.mount_read_only),
+                    checked = isPartitionReadOnly(currentDeviceName, sc.startBlock),
+                    onCheckedChange = { onSetPartitionReadOnly(currentDeviceName, sc.startBlock, it) },
+                    testTag = "read_only_switch",
+                )
                 if (!isLuks) {
                     app.fayaz.otgmaster.ui.HiddenVolumeProtectionSection(
                         hiddenProtection, mountReadOnly = isPartitionReadOnly(currentDeviceName, sc.startBlock))
@@ -4527,6 +4527,16 @@ fun VeraCryptMountSection(
                     }
                 }
             }
+                // Opt-in (owner, 2026-11-11): trying the backup headers costs a key derivation
+                // each, so doing it after every failed attempt would double how long a wrong
+                // password takes to fail. Review of 2026-11-11, V05.
+                app.fayaz.otgmaster.ui.SwitchRow(
+                    text = stringResource(R.string.use_backup_header),
+                    checked = useBackupHeader,
+                    onCheckedChange = { useBackupHeader = it },
+                    testTag = "backup_header_switch",
+                    help = stringResource(R.string.use_backup_header_help),
+                )
             } // end if (!isLuks) for cipher + hash
 
             Button(
@@ -4537,9 +4547,10 @@ fun VeraCryptMountSection(
                     if (device != null && candidate != null) {
                         unlockingHere = candidate.startBlock
                         onUnlock(device.deviceName, candidate, password, pim.toIntOrNull(), keyfiles, selectedCipher, selectedHash,
-                            if (isLuks) null else hiddenProtection.credentials()) {
+                            if (isLuks) null else hiddenProtection.credentials(), !isLuks && useBackupHeader) {
                             unlockingHere = null
                             hiddenProtection.reset()     // VeraCrypt: off after every attempt
+                            useBackupHeader = false      // and so is the backup header
                         }
                     }
                 },
