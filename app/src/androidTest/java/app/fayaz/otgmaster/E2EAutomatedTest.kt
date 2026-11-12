@@ -3183,7 +3183,7 @@ class E2EAutomatedTest {
         assertNotNull("no mount handler installed: is MainActivity running?", request)
         request!!.mount(
             args.getString("password", ""), args.getString("pim", "1").toInt(),
-            args.getString("cipher", ""), args.getString("hash", ""), false,
+            args.getString("cipher", ""), args.getString("hash", ""), false, hiddenHeaders = true,
         )
         fun writable(fs: String) = OtgMasterState.mountedDrives
             .firstOrNull { it.filesystemName == fs && !it.isReadOnly }
@@ -4864,7 +4864,7 @@ class E2EAutomatedTest {
             assertNotNull("no mount request handler", request)
             val cipher = app.fayaz.otgmaster.veracrypt.VeraCryptCipher.DEFAULT.name
             val hash = app.fayaz.otgmaster.veracrypt.VeraCryptHash.DEFAULT.name
-            request!!.mount(password, pim.toIntOrNull(), cipher, hash, null)
+            request!!.mount(password, pim.toIntOrNull(), cipher, hash, null, hiddenHeaders = true)
             val busyText = context.getString(R.string.unlocking_in_progress)
             val busy = findScrolling(By.text(busyText), text = busyText)
             if (busy == null) captureScreen("form_not_busy")
@@ -4874,7 +4874,7 @@ class E2EAutomatedTest {
             android.os.SystemClock.sleep(1000)
             assertEquals("the tap on the busy button started an unlock", 0, attempts())
             // A second path asking for the same partition is refused, and says so.
-            request.mount(password, pim.toIntOrNull(), cipher, hash, null)
+            request.mount(password, pim.toIntOrNull(), cipher, hash, null, hiddenHeaders = true)
             val end = android.os.SystemClock.uptimeMillis() + 20_000L
             while (attempts() == 0 && android.os.SystemClock.uptimeMillis() < end) android.os.SystemClock.sleep(200)
             assertEquals("a second unlock of the same partition was not refused", 1, attempts())

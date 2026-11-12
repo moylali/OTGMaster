@@ -628,7 +628,7 @@ class MainActivity : AppCompatActivity() {
         }
         OtgMasterState.detachRequest = installedDetachRequest
 
-        installedMountRequest = OtgMasterState.MountRequest { pw, pim, cipherName, hashName, readOnly ->
+        installedMountRequest = OtgMasterState.MountRequest { pw, pim, cipherName, hashName, readOnly, hiddenHeaders ->
             // Open and probe every attached drive not already held, whether or not
             // anything is listed. Without a probe the request depended on the UI having
             // scanned, which does not happen while the screen is off or locked. And it
@@ -643,7 +643,7 @@ class MainActivity : AppCompatActivity() {
                 withTimeoutOrNull(25_000) {
                     while (isProbingDevices || _deviceCandidates.value.isEmpty()) delay(300)
                 }
-                mountProbedCandidates(pw, pim, cipherName, hashName, readOnly)
+                mountProbedCandidates(pw, pim, cipherName, hashName, readOnly, hiddenHeaders)
             }
         }
         OtgMasterState.mountRequest = installedMountRequest
@@ -2863,6 +2863,7 @@ class MainActivity : AppCompatActivity() {
         cipherName: String,
         hashName: String,
         readOnly: Boolean? = null,
+        hiddenHeaders: Boolean = true,
     ) {
         val cipher = app.fayaz.otgmaster.veracrypt.VeraCryptCipher.entries
             .find { it.name == cipherName || it.displayName == cipherName }
@@ -2901,13 +2902,12 @@ class MainActivity : AppCompatActivity() {
             }
         }
 
-        // One password against every locked partition, VeraCrypt's standard headers first.
-        // Trying each partition's hidden header straight after its standard one cost a second
-        // key derivation on every partition the password does not fit: on the matrix's Drive 5,
-        // eleven derivations per mount where 0.5.0 ran six, and 1399 s instead of 732 s at PIM
-        // 31. A password opens either a volume's standard header or its hidden one, so the
-        // hidden headers are tried only when no standard header opened, which still mounts a
-        // stick whose only match is a hidden volume.
+        // One password against every locked partition, VeraCrypt's standard headers first, then
+        // the hidden header of each VeraCrypt partition still locked (MountPlan.hiddenPass).
+        // Trying each partition's hidden header straight after its standard one made the
+        // partitions that open with the password wait behind derivations for those that do not:
+        // on the matrix's Drive 5, 1399 s instead of 732 s at PIM 31. The benchmark, which
+        // times one partition, asks for standard headers only.
         val requested = devices.flatMap { device -> device.candidates.map { device.deviceName to it } }
         fun isMounted(deviceName: String, candidate: VolumeCandidate) = OtgMasterState.mountedDrives.any {
             it.sourceDeviceName == deviceName && it.partitionStartBlock == candidate.startBlock &&
@@ -2937,16 +2937,14 @@ class MainActivity : AppCompatActivity() {
         OtgMasterState.unlocksInFlight.incrementAndGet()
         val remaining = java.util.concurrent.atomic.AtomicInteger(requested.size)
         val standardPassDone = {
-            val hiddenPass = requested.filter { (deviceName, candidate) ->
-                candidate.containerType == app.fayaz.otgmaster.veracrypt.ContainerType.VERACRYPT &&
-                    !isMounted(deviceName, candidate) &&
+            val hiddenPass = app.fayaz.otgmaster.veracrypt.MountPlan.hiddenPass(requested, hiddenHeaders) { deviceName, candidate ->
+                !isMounted(deviceName, candidate) &&
                     (deviceName to candidate) !in alreadyUnlocking &&
                     !beingUnlocked(deviceName, candidate)
             }
-            if (requested.none { (deviceName, candidate) -> isMounted(deviceName, candidate) } &&
-                hiddenPass.isNotEmpty()) {
-                val note = "Mount request: no standard header opened; trying the hidden headers of " +
-                    "${hiddenPass.size} partition(s)"
+            if (hiddenPass.isNotEmpty()) {
+                val note = "Mount request: trying the hidden headers of " +
+                    "${hiddenPass.size} partition(s) still locked"
                 appendLog(note)
                 android.util.Log.i("OTGMaster", note)
                 hiddenPass.forEach { (deviceName, candidate) ->

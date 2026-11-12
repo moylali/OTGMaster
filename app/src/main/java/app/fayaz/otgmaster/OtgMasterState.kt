@@ -274,8 +274,11 @@ object OtgMasterState {
          *   encrypted partitions this mounts; null keeps it. The benchmark passes false
          *   when it means to write: on a phone set to read-only by default, a run's
          *   write sections otherwise all failed against read-only mounts.
+         * @param hiddenHeaders false tries VeraCrypt's standard headers only; true (the
+         *   default) then tries the hidden header of every VeraCrypt partition still locked.
          */
-        fun mount(password: String, pim: Int?, cipherName: String, hashName: String, readOnly: Boolean?)
+        fun mount(password: String, pim: Int?, cipherName: String, hashName: String, readOnly: Boolean?,
+                  hiddenHeaders: Boolean)
     }
 
     @Volatile
