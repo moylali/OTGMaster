@@ -50,6 +50,13 @@ class ApfsImageTest {
                     File(apfsDir, "apfs-images.tar.xz").path, "-C", apfsDir.path)
                 if (rc != 0) throw AssertionError("unpacking the APFS images failed:\n$out")
             }
+            // One container with two volumes (scripts/make_apfs_multi_macos.sh). Its own
+            // archive: 1100 MiB raw, since APFS allows one volume per 512 MiB.
+            if (!File(apfsDir, "apfs_multi/test.img").exists()) {
+                val (rc, out) = run("tar", "--warning=no-unknown-keyword", "-xJf",
+                    File(apfsDir, "apfs_multi.tar.xz").path, "-C", apfsDir.path)
+                if (rc != 0) throw AssertionError("unpacking the two-volume APFS image failed:\n$out")
+            }
             val lib = File(repo, "app/build/host-native/libotg-host.so")
             val (rc, out) = run(File(repo, "scripts/build_host_native.sh").path, lib.path)
             if (rc != 0) throw AssertionError("host native build failed:\n$out")
@@ -152,5 +159,84 @@ class ApfsImageTest {
         val flower = fs.rootDirectory.search("flower.jpg")!!
         fs.unmount()
         try { flower.read(0, ByteBuffer.allocate(16)); fail("read after unmount") } catch (_: IOException) {}
+    }
+
+    // ── One container, two volumes ────────────────────────────────────────────────
+    //
+    // Review of 2026-11-09, "APFS multi-volume": the app always opened the container's
+    // first volume, so any other volume on the drive could not be reached, and an
+    // encrypted second volume beside a plain first one was never even offered. apfs_multi
+    // holds OTGVOLA (volume 0, plain) and OTGVOLB (volume 1, encrypted with password123),
+    // each with two files whose SHA-256 the Mac recorded.
+
+    /** name -> SHA-256 hex, from the list the Mac wrote beside the image. */
+    private fun recorded(volume: String): Map<String, String> =
+        File(apfsDir, "apfs_multi/volume_$volume.sha256").readLines().filter { it.isNotBlank() }
+            .associate { line -> line.substringAfter("  ") to line.substringBefore("  ") }
+
+    private fun hex(bytes: ByteArray) = sha256(bytes).joinToString("") { "%02x".format(it) }
+
+    private fun assertVolume(fs: ApfsFileSystem, own: String, other: String) {
+        val root = fs.rootDirectory
+        for ((name, sum) in recorded(own)) {
+            val f = root.search(name)
+            assertNotNull("volume $own lacks $name", f)
+            assertEquals("volume $own: $name", sum, hex(readAll(f!!)))
+        }
+        for (name in recorded(other).keys) assertNull("volume $own shows volume $other's $name", root.search(name))
+    }
+
+    @Test fun multiVolumeCountsBothVolumes() {
+        assertEquals(2, ApfsFileSystem.volumeCount(partition("apfs_multi")))
+    }
+
+    @Test fun multiVolumeProbesEachVolume() {
+        val dev = partition("apfs_multi")
+        assertEquals("volume 0 is plain", false, ApfsFileSystem.isEncrypted(dev, 0))
+        assertEquals("volume 1 is encrypted", true, ApfsFileSystem.isEncrypted(dev, 1))
+    }
+
+    @Test fun multiVolumeMountsTheFirstVolume() {
+        val fs = ApfsFileSystem.mount(partition("apfs_multi"), null, 0)
+        try { assertEquals(0, fs.volumeIndex); assertVolume(fs, "a", "b") } finally { fs.unmount() }
+    }
+
+    @Test fun multiVolumeMountsTheSecondVolume() {
+        val fs = ApfsFileSystem.mount(partition("apfs_multi"), PASSWORD, 1)
+        try { assertEquals(1, fs.volumeIndex); assertVolume(fs, "b", "a") } finally { fs.unmount() }
+    }
+
+    @Test fun multiVolumeSecondVolumeNeedsItsPassword() {
+        try {
+            ApfsFileSystem.mount(partition("apfs_multi"), null, 1).unmount()
+            fail("the encrypted second volume mounted without its password")
+        } catch (_: ApfsFileSystem.WrongPasswordException) {}
+    }
+
+    @Test fun multiVolumeRefusesAVolumeThatIsNotThere() {
+        try {
+            ApfsFileSystem.mount(partition("apfs_multi"), PASSWORD, 2).unmount()
+            fail("volume 2 of a two-volume container mounted")
+        } catch (_: IOException) {
+            // Not WrongPasswordException, which is not an IOException: a missing volume
+            // must not read as a wrong password.
+        }
+    }
+
+    @Test fun multiVolumeProbeOffersTheSecondVolume() {
+        assumeTrue("host toolchain unavailable", ready)
+        val disk = FileBlockDevice(File(apfsDir, "apfs_multi/test.img"))
+        val found = app.fayaz.otgmaster.veracrypt.VeraCryptUnlocker().probeCandidates(disk)
+        assertEquals("one candidate per volume: $found", 2, found.size)
+        val (first, second) = found
+        assertEquals(app.fayaz.otgmaster.veracrypt.ContainerType.UNENCRYPTED, first.containerType)
+        assertEquals(0, first.apfsVolume)
+        assertEquals("the encrypted second volume is offered for unlocking",
+            app.fayaz.otgmaster.veracrypt.ContainerType.APFS, second.containerType)
+        assertEquals(1, second.apfsVolume)
+        assertEquals(first.startBlock, second.startBlock)
+        assertTrue("both volumes would be one slot", first.slotKey != second.slotKey)
+        assertFalse("the second volume would be taken for the plain partition",
+            second.isIn(setOf(first.startBlock)))
     }
 }

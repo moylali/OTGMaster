@@ -205,12 +205,14 @@ static void freeHandle(JNIEnv *env, otg_apfs *h) {
 }
 
 /*
- * Opens the container on `device` and its first volume. With a non-null password
+ * Opens the container on `device` and its volume number `volumeIndex` (0 is the
+ * first), storing how many it holds in `volumeCount` if given. With a non-null password
  * the volume is unlocked; a wrong one fails with EACCES. With a null password a
  * locked volume is left locked, which probe() reports and mount() refuses.
  */
 static otg_apfs *openContainer(JNIEnv *env, jclass clazz, jobject device, jlong size,
-                               const char *password, size_t passwordLen) {
+                               const char *password, size_t passwordLen, int volumeIndex,
+                               int *volumeCount = nullptr) {
     libcerror_error_t *error = nullptr;
     otg_apfs *h = new otg_apfs();
     h->io = new otg_io();
@@ -241,8 +243,14 @@ static otg_apfs *openContainer(JNIEnv *env, jclass clazz, jobject device, jlong 
         logError("container has no volume", &error);
         g_lastErrno = ENOENT; freeHandle(env, h); return nullptr;
     }
-    if (count > 1) LOGI("container holds %d volumes; mounting the first", count);
-    if (libfsapfs_container_get_volume_by_index(h->container, 0, &h->volume, &error) != 1) {
+    if (volumeCount) *volumeCount = count;
+    /* Any volume of the container, not only the first: a container can hold several
+     * (a plain one and an encrypted one, say), and the others were unreachable. Review,
+     * 2026-11-09. */
+    if (volumeIndex < 0 || volumeIndex >= count) {
+        g_lastErrno = ENOENT; freeHandle(env, h); return nullptr;
+    }
+    if (libfsapfs_container_get_volume_by_index(h->container, volumeIndex, &h->volume, &error) != 1) {
         logError("libfsapfs_container_get_volume_by_index", &error);
         g_lastErrno = EIO; freeHandle(env, h); return nullptr;
     }
@@ -338,8 +346,18 @@ static jobject toNode(JNIEnv *env, libfsapfs_file_entry_t *entry, const char *na
 extern "C" {
 
 JNIEXPORT jint JNICALL
-Java_app_fayaz_otgmaster_apfs_ApfsNative_probe(JNIEnv *env, jclass clazz, jobject device, jlong size) {
-    otg_apfs *h = openContainer(env, clazz, device, size, nullptr, 0);
+Java_app_fayaz_otgmaster_apfs_ApfsNative_volumeCount(JNIEnv *env, jclass clazz, jobject device, jlong size) {
+    int count = 0;
+    otg_apfs *h = openContainer(env, clazz, device, size, nullptr, 0, 0, &count);
+    if (!h) return -g_lastErrno;
+    freeHandle(env, h);
+    return count;
+}
+
+JNIEXPORT jint JNICALL
+Java_app_fayaz_otgmaster_apfs_ApfsNative_probe(JNIEnv *env, jclass clazz, jobject device, jlong size,
+                                                jint volumeIndex) {
+    otg_apfs *h = openContainer(env, clazz, device, size, nullptr, 0, volumeIndex);
     if (!h) return -g_lastErrno;
     int locked = libfsapfs_volume_is_locked(h->volume, nullptr);
     freeHandle(env, h);
@@ -348,7 +366,7 @@ Java_app_fayaz_otgmaster_apfs_ApfsNative_probe(JNIEnv *env, jclass clazz, jobjec
 
 JNIEXPORT jlong JNICALL
 Java_app_fayaz_otgmaster_apfs_ApfsNative_mount(JNIEnv *env, jclass clazz, jobject device, jlong size,
-                                                jbyteArray password) {
+                                                jbyteArray password, jint volumeIndex) {
     std::vector<char> pw;
     if (password) {
         jsize n = env->GetArrayLength(password);
@@ -356,7 +374,7 @@ Java_app_fayaz_otgmaster_apfs_ApfsNative_mount(JNIEnv *env, jclass clazz, jobjec
         env->GetByteArrayRegion(password, 0, n, (jbyte *) pw.data());
     }
     otg_apfs *h = openContainer(env, clazz, device, size, password ? pw.data() : nullptr,
-                                password ? pw.size() - 1 : 0);
+                                password ? pw.size() - 1 : 0, volumeIndex);
     if (!pw.empty()) memset(pw.data(), 0, pw.size());
     if (!h) return 0;
     if (libfsapfs_volume_is_locked(h->volume, nullptr) == 1) {

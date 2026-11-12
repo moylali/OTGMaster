@@ -93,10 +93,15 @@ object ExtensionContract {
      * work; a grant made on a hidden volume before this change has to be given again.
      */
     fun veraCryptDriveId(deviceKey: String?, startBlock: Long, volumeType: VeraCryptVolumeType?,
-                         taken: Collection<String>): String =
-        if (volumeType == VeraCryptVolumeType.HIDDEN)
-            driveIdFrom("${deviceKey ?: "unknown"}@$startBlock#hidden", taken)
-        else stableDriveId(deviceKey, startBlock, taken)
+                         taken: Collection<String>, apfsVolume: Int = 0): String =
+        when {
+            volumeType == VeraCryptVolumeType.HIDDEN ->
+                driveIdFrom("${deviceKey ?: "unknown"}@$startBlock#hidden", taken)
+            // A later volume of an APFS container shares its partition's start block; the
+            // first keeps the id it always had.
+            apfsVolume > 0 -> driveIdFrom("${deviceKey ?: "unknown"}@$startBlock#apfs$apfsVolume", taken)
+            else -> stableDriveId(deviceKey, startBlock, taken)
+        }
 
     private fun driveIdFrom(key: String, taken: Collection<String>): String {
         val digest = MessageDigest.getInstance("SHA-256").digest(key.toByteArray())

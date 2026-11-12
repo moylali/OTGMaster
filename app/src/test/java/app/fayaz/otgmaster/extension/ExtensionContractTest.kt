@@ -55,4 +55,20 @@ class ExtensionContractTest {
         assertEquals(2385, k.vendorId); assertEquals(5734, k.productId); assertEquals("ABC123", k.serial)
         assertNull(ExtensionContract.parseDeviceKey("1:2:/dev/bus/usb/001/004").serial)
     }
+
+    /**
+     * Review of 2026-11-09, "APFS multi-volume": a container's later volumes share their
+     * partition's start block, so without their own id two volumes of one partition would
+     * be one drive to a companion app. The first volume keeps the id it always had.
+     */
+    @Test
+    fun `a later APFS volume gets its own stable id and the first keeps its old one`() {
+        val key = "usb:1-1"
+        val first = ExtensionContract.veraCryptDriveId(key, 40, null, emptyList())
+        assertEquals(first, ExtensionContract.veraCryptDriveId(key, 40, null, emptyList(), apfsVolume = 0))
+        val second = ExtensionContract.veraCryptDriveId(key, 40, null, emptyList(), apfsVolume = 1)
+        assertNotEquals(first, second)
+        assertEquals(second, ExtensionContract.veraCryptDriveId(key, 40, null, emptyList(), apfsVolume = 1))
+        assertNotEquals(second, ExtensionContract.veraCryptDriveId(key, 40, null, emptyList(), apfsVolume = 2))
+    }
 }

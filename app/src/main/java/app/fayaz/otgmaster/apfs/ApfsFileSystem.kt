@@ -11,8 +11,8 @@ import kotlin.concurrent.withLock
 /**
  * APFS through libfsapfs, read-only, plain or natively encrypted.
  *
- * Mounts the first volume of the container, which is the only one on a drive Disk
- * Utility formatted. An encrypted volume is unlocked with its password inside
+ * Mounts one volume of the container: the first, which is the only one on a drive Disk
+ * Utility formatted, or any other the container holds ([volumeIndex]). An encrypted volume is unlocked with its password inside
  * libfsapfs, which unwraps the volume key from the keybags; there is no decrypting
  * block device underneath as there is for LUKS, VeraCrypt or BitLocker.
  *
@@ -22,6 +22,8 @@ import kotlin.concurrent.withLock
 class ApfsFileSystem private constructor(
     private val device: RawBlockDevice,
     private val handle: Long,
+    /** Which volume of the container this is; 0 is the first. */
+    val volumeIndex: Int = 0,
 ) : FileSystem {
 
     /** Always set: libfsapfs has no write support. */
@@ -116,16 +118,16 @@ class ApfsFileSystem private constructor(
         const val READ_ONLY_REASON = "OTG Master reads APFS but cannot write to it"
 
         /**
-         * Mounts the first volume of the APFS container on [device].
+         * Mounts volume [volumeIndex] (0, the first, by default) of the APFS container on [device].
          *
          * @param password for an encrypted volume; ignored for a plain one.
          * @throws WrongPasswordException if an encrypted volume does not unlock.
          * @throws IOException if libfsapfs cannot open the container.
          */
-        fun mount(device: RawBlockDevice, password: String?): ApfsFileSystem {
+        fun mount(device: RawBlockDevice, password: String?, volumeIndex: Int = 0): ApfsFileSystem {
             val pw = password?.toByteArray(Charsets.UTF_8)
             val handle = try {
-                ApfsNative.mount(device, device.blockCount * device.blockSize, pw)
+                ApfsNative.mount(device, device.blockCount * device.blockSize, pw, volumeIndex)
             } finally {
                 pw?.fill(0)
             }
@@ -138,15 +140,19 @@ class ApfsFileSystem private constructor(
                 }
                 throw IOException("APFS mount failed: ${errnoName(errno)}")
             }
-            return ApfsFileSystem(device, handle)
+            return ApfsFileSystem(device, handle, volumeIndex)
         }
+
+        /** How many volumes the APFS container on [device] holds; 0 if none opens. */
+        fun volumeCount(device: RawBlockDevice): Int =
+            ApfsNative.volumeCount(device, device.blockCount * device.blockSize).coerceAtLeast(0)
 
         /**
          * True if [device] holds an APFS container whose first volume is encrypted.
          * Null if it holds no APFS container libfsapfs can open.
          */
-        fun isEncrypted(device: RawBlockDevice): Boolean? =
-            when (ApfsNative.probe(device, device.blockCount * device.blockSize)) {
+        fun isEncrypted(device: RawBlockDevice, volumeIndex: Int = 0): Boolean? =
+            when (ApfsNative.probe(device, device.blockCount * device.blockSize, volumeIndex)) {
                 ApfsNative.PROBE_PLAIN -> false
                 ApfsNative.PROBE_ENCRYPTED -> true
                 else -> null
