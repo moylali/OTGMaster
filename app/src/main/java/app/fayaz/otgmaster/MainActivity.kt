@@ -146,7 +146,7 @@ class MainActivity : AppCompatActivity() {
      * already serialised inside LibaumsRawBlockDevice; this keeps whole unlock
      * sequences from interleaving, which is what the device could not take.
      */
-    private val deviceMutex = kotlinx.coroutines.sync.Mutex()
+    private val deviceMutex get() = OtgMasterState.deviceMutex
 
     /** Drive id whose journal-repair dialog is up, or null. */
     private val journalRepairPrompt = mutableStateOf<String?>(null)
@@ -197,6 +197,9 @@ class MainActivity : AppCompatActivity() {
     }
 
     companion object {
+        /** The MainActivity on screen now, for drive watchers running in OtgMasterState.appScope. */
+        @Volatile private var liveActivity: java.lang.ref.WeakReference<MainActivity>? = null
+
         const val TAG = "OTGMaster"
         private const val REQUEST_USB_PERMISSION = "app.fayaz.otgmaster.USB_PERMISSION"
         private const val QEMU_DEVICE_KEY = "qemu:/dev/block/sda"
@@ -259,10 +262,8 @@ class MainActivity : AppCompatActivity() {
     private val ejectConfirm = mutableStateOf<MountedDrive?>(null)
     /** The device whose "transfer in progress" dialog is up. */
     private val ejectBusyDialog = mutableStateOf<String?>(null)
-    private val ejectWatchers = HashMap<String, kotlinx.coroutines.Job>()
     /** The partition whose "transfer in progress" dialog is up, for Unmount. */
     private val unmountBusyDialog = mutableStateOf<String?>(null)
-    private val unmountWatchers = HashMap<String, kotlinx.coroutines.Job>()
     private class EjectInFlight(val title: String, val androidCanRead: Boolean, val notify: Boolean)
     private val ejectsInFlight = HashMap<String, EjectInFlight>()
 
@@ -537,6 +538,7 @@ class MainActivity : AppCompatActivity() {
             finish()
             return
         }
+        liveActivity = java.lang.ref.WeakReference(this)
         // Before the first frame, so it is laid out edge-to-edge from the start; the icon
         // colours follow the in-app theme once it is read (applySystemBarAppearance).
         enableEdgeToEdge()
@@ -923,6 +925,7 @@ class MainActivity : AppCompatActivity() {
         // the benchmark reported "no mount handler installed — is MainActivity
         // running?" twice in a row with MainActivity on screen. A user reaches the
         // same state by backing out and relaunching straight away.
+        if (liveActivity?.get() === this) liveActivity = null
         if (OtgMasterState.logSink === installedLogSink) OtgMasterState.logSink = null
         if (OtgMasterState.mountRequest === installedMountRequest) OtgMasterState.mountRequest = null
         if (OtgMasterState.unmountAllRequest === installedUnmountAll) OtgMasterState.unmountAllRequest = null
@@ -1964,7 +1967,11 @@ class MainActivity : AppCompatActivity() {
             "unmountDrive ${drive.id}: remove=${tRemoved - t0}ms" +
             " notify=${tNotified - tRemoved}ms update=${tUpdated - tNotified}ms" +
             " shortcut=${System.currentTimeMillis() - tUpdated}ms")
-        lifecycleScope.launch(Dispatchers.IO) {
+        // In the process scope, not the activity's: a teardown is flushing metadata, and it has
+        // to finish even if Android destroys the activity meanwhile (review of #141, PR-3). The
+        // service stays in the foreground until it has.
+        MountedDriveService.beginTeardown(applicationContext, drive.name)
+        OtgMasterState.appScope.launch(Dispatchers.IO) {
           try {
             OtgMasterState.unmountTeardownGate?.await()
             // Wait for any in-flight ProxyFileDescriptor onRelease() callbacks to finish
@@ -2062,6 +2069,7 @@ class MainActivity : AppCompatActivity() {
             }
           } finally {
             OtgMasterState.unmountsInFlight.decrementAndGet()
+            MountedDriveService.endTeardown(applicationContext, drive.name)
           }
         }
     }
@@ -2155,28 +2163,38 @@ class MainActivity : AppCompatActivity() {
         watchPendingUnmount(drive.id)
     }
 
+    /**
+     * The activity a watcher acts through: the one on screen now, or, if Android has destroyed
+     * it and made no other, the one that started the watcher. Its drive work runs in
+     * OtgMasterState.appScope, so it still completes (review of #141, PR-3).
+     */
+    private fun actor(): MainActivity = liveActivity?.get() ?: this
+
     private fun watchPendingUnmount(id: String) {
-        if (unmountWatchers[id]?.isActive == true) return
-        unmountWatchers[id] = lifecycleScope.launch {
+        val key = "unmount:$id"
+        if (OtgMasterState.driveWatchers[key]?.isActive == true) return
+        OtgMasterState.driveWatchers[key] = OtgMasterState.appScope.launch {
             while (true) {
                 delay(500)
                 val pending = OtgMasterState.pendingUnmounts.value[id] ?: return@launch
                 val drive = OtgMasterState.mountedDrives.find { it.id == id }
+                val a = actor()
                 if (drive == null) {
-                    dropPendingUnmount(id)
+                    a.dropPendingUnmount(id)
                     return@launch
                 }
-                if (!drivesBusy(listOf(drive))) {
-                    unmountWatchers.remove(id)
-                    dropPendingUnmount(id)
+                if (!a.drivesBusy(listOf(drive))) {
+                    OtgMasterState.driveWatchers.remove(key)
+                    a.dropPendingUnmount(id)
                     // "Unmounted" means safe to unplug, so it waits for the teardown, as
                     // Eject's message does (finishEject). Saying it here, when unmountDrive
                     // returns, came before the filesystem was flushed and closed.
-                    unmountDrive(drive, isManual = true) {
-                        toastState.value = Pair(getString(R.string.unmount_done), true)
-                        if (pending.notify || !lifecycle.currentState.isAtLeast(androidx.lifecycle.Lifecycle.State.RESUMED)) {
-                            MountedDriveService.driveEjected(this@MainActivity, pending.title,
-                                getString(R.string.unmount_done), R.string.notification_unmounted_title)
+                    a.unmountDrive(drive, isManual = true) {
+                        val now = actor()
+                        now.toastState.value = Pair(now.getString(R.string.unmount_done), true)
+                        if (pending.notify || !now.lifecycle.currentState.isAtLeast(androidx.lifecycle.Lifecycle.State.RESUMED)) {
+                            MountedDriveService.driveEjected(now.applicationContext, pending.title,
+                                now.getString(R.string.unmount_done), R.string.notification_unmounted_title)
                         }
                     }
                     return@launch
@@ -2187,7 +2205,7 @@ class MainActivity : AppCompatActivity() {
 
     private fun dropPendingUnmount(id: String) {
         OtgMasterState.pendingUnmounts.value = OtgMasterState.pendingUnmounts.value - id
-        unmountWatchers.remove(id)?.cancel()
+        OtgMasterState.driveWatchers.remove("unmount:$id")?.cancel()
         if (unmountBusyDialog.value == id) unmountBusyDialog.value = null
     }
 
@@ -2217,13 +2235,15 @@ class MainActivity : AppCompatActivity() {
 
     /** Ejects [key] at the first moment nothing needs it; new transfers just move that moment. */
     private fun watchPendingEject(key: String) {
-        if (ejectWatchers[key]?.isActive == true) return
-        ejectWatchers[key] = lifecycleScope.launch {
+        val wkey = "eject:$key"
+        if (OtgMasterState.driveWatchers[wkey]?.isActive == true) return
+        OtgMasterState.driveWatchers[wkey] = OtgMasterState.appScope.launch {
             while (true) {
                 delay(500)
                 val pending = OtgMasterState.pendingEjects.value[key] ?: return@launch
-                if (!deviceBusy(key)) {
-                    ejectNow(key, pending.notify)
+                val a = actor()
+                if (!a.deviceBusy(key)) {
+                    a.ejectNow(key, pending.notify)
                     return@launch
                 }
             }
@@ -2232,7 +2252,7 @@ class MainActivity : AppCompatActivity() {
 
     private fun dropPendingEject(key: String) {
         OtgMasterState.pendingEjects.value = OtgMasterState.pendingEjects.value - key
-        ejectWatchers.remove(key)?.cancel()
+        OtgMasterState.driveWatchers.remove("eject:$key")?.cancel()
         if (ejectBusyDialog.value == key) ejectBusyDialog.value = null
     }
 
@@ -2259,7 +2279,7 @@ class MainActivity : AppCompatActivity() {
         val title = OtgMasterState.pendingEjects.value[key]?.title
             ?: targets.firstNotNullOfOrNull { it.sourceDeviceDisplayName } ?: key
         OtgMasterState.pendingEjects.value = OtgMasterState.pendingEjects.value - key
-        ejectWatchers.remove(key)
+        OtgMasterState.driveWatchers.remove("eject:$key")
         if (ejectBusyDialog.value == key) ejectBusyDialog.value = null
         if (targets.isEmpty()) return
 
@@ -2275,7 +2295,7 @@ class MainActivity : AppCompatActivity() {
         deferredCandidates.remove(key)
         val raws = targets.mapNotNull { it.rawBlockDevice }
         openedDevices.remove(key)?.takeIf { o -> raws.none { it === o } }?.let { o ->
-            lifecycleScope.launch(Dispatchers.IO) { runCatching { o.close() } }
+            OtgMasterState.appScope.launch(Dispatchers.IO) { runCatching { o.close() } }
         }
         targets.forEach { unmountDrive(it) }
     }
@@ -2287,7 +2307,7 @@ class MainActivity : AppCompatActivity() {
         appendLog(getString(R.string.log_ejected, done.title))
         toastState.value = Pair(message, true)
         if (done.notify || !lifecycle.currentState.isAtLeast(androidx.lifecycle.Lifecycle.State.RESUMED)) {
-            MountedDriveService.driveEjected(this, done.title, message)
+            MountedDriveService.driveEjected(applicationContext, done.title, message)
         }
     }
 

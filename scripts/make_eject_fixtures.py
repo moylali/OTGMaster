@@ -33,6 +33,7 @@ CASES = {
     "unmount_idle": (VC, "unmount_idle", "Unmount with nothing in use: no dialog, and it unmounts straight away."),
     "unmount_busy_wait": (VC, "unmount_busy_wait", "Unmount with a file open: the transfer dialog stays up, Unmount happens when the file closes, the dialog closes by itself, no notification."),
     "unmount_busy_dismiss": (VC, "unmount_busy_dismiss", "Dismiss on Unmount's transfer dialog: the card says it is waiting, and a notification comes after the Unmount."),
+    "unmount_after_destroy": (VC, "unmount_after_destroy", "Dismiss on Unmount's transfer dialog, then Android destroys the app's screen: the Unmount still happens when the file closes, and its notification comes, without the screen coming back."),
     "unmount_busy_cancel": (VC, "unmount_busy_cancel", "Cancel unmount on the transfer dialog: the drive stays mounted after the file closes."),
     "unmount_card_cancel": (VC, "unmount_card_cancel", "Cancel unmount on the card, after Dismiss: the drive stays mounted after the file closes."),
     "unmount_during_copy": (VC, "unmount_during_copy", "Unmount while a copy writes to the partition: it waits, the copy completes, and the file reads back whole after a remount."),

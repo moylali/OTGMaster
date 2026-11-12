@@ -41,6 +41,7 @@
     <string name="unmount_cancel">Cancel unmount</string>
     <string name="unmount_pending">Unmounting when transfer finishes</string>
     <string name="unmount_done">Unmounted after the transfer finished.</string>
+    <string name="notification_unmounting">Unmounting %1$s</string>
     <string name="notification_unmounted_title">%1$s unmounted</string>
     <string name="log_unmount_waiting">Unmount of %1$s is waiting for a transfer to finish.</string>
     <string name="log_unmount_cancelled">Unmount of %1$s cancelled.</string>

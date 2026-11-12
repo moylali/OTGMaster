@@ -4065,6 +4065,49 @@ class E2EAutomatedTest {
                 }
                 assertTrue("no notification after a dismissed Unmount: ${bkTitles()}", posted)
             }
+            // Review of #141, PR-3: the pending Unmount ran in the activity's lifecycleScope, so
+            // Android destroying the activity (it keeps the process and the service) cancelled it
+            // and the volume stayed unlocked until the app was opened again.
+            "unmount_after_destroy" -> {
+                val drive = ejMount("to unmount")
+                val file = ejHoldFile(drive)
+                try {
+                    umTapUnmount()
+                    umAssertBusyDialog()
+                    assertTrue(clickByDesc("unmount_busy_dismiss"))
+                    assertTrue("Dismiss left the dialog up", device.wait(Until.gone(By.desc("unmount_busy_dismiss")), timeout))
+                    // Destroy the activity, as Android does to a stopped one under memory pressure.
+                    val instr = InstrumentationRegistry.getInstrumentation()
+                    var activity: android.app.Activity? = null
+                    instr.runOnMainSync {
+                        activity = androidx.test.runner.lifecycle.ActivityLifecycleMonitorRegistry.getInstance()
+                            .getActivitiesInStage(androidx.test.runner.lifecycle.Stage.RESUMED).firstOrNull()
+                        activity?.finish()
+                    }
+                    assertNotNull("no activity on screen to destroy", activity)
+                    val end = android.os.SystemClock.uptimeMillis() + 10_000L
+                    var destroyed = false
+                    while (!destroyed && android.os.SystemClock.uptimeMillis() < end) {
+                        android.os.SystemClock.sleep(200)
+                        instr.runOnMainSync { destroyed = activity!!.isDestroyed }
+                    }
+                    assertTrue("the activity was not destroyed", destroyed)
+                    assertTrue("it forgot the Unmount", OtgMasterState.pendingUnmounts.value.isNotEmpty())
+                    ejAssertStaysMounted()
+                } finally { file.close() }
+                umAwaitUnmounted()
+                val posted = (0 until 40).any {
+                    android.os.SystemClock.sleep(250)
+                    umNotified()
+                }
+                assertTrue("no notification after the Unmount: ${bkTitles()}", posted)
+                var resumed = 0
+                InstrumentationRegistry.getInstrumentation().runOnMainSync {
+                    resumed = androidx.test.runner.lifecycle.ActivityLifecycleMonitorRegistry.getInstance()
+                        .getActivitiesInStage(androidx.test.runner.lifecycle.Stage.RESUMED).size
+                }
+                assertEquals("the screen came back to do the Unmount", 0, resumed)
+            }
             "unmount_busy_cancel" -> {
                 val drive = ejMount("to unmount")
                 val file = ejHoldFile(drive)
