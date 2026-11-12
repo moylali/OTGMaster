@@ -12,6 +12,7 @@ dm-crypt and root; this is the same transform without either.
     python3 scripts/luks_payload.py encrypt LUKS.img PASSWORD PLAIN.img
     python3 scripts/luks_payload.py decrypt LUKS.img PASSWORD OUT.img
 """
+import json
 import re
 import subprocess
 import sys
@@ -33,8 +34,14 @@ def layout(image, password):
     if "Version:" in plain and re.search(r"Version:\s+2", plain):
         offset = int(re.search(r"offset:\s+(\d+) \[bytes\]", plain).group(1))
         sector = int(re.search(r"sector:\s+(\d+) \[bytes\]", plain).group(1))
-        iv = re.search(r"IV:\s+(\d+)", plain)
-        iv_start = int(iv.group(1)) if iv else 0
+        # luksDump does not print iv_tweak (cryptsetup 2.8), so it was taken as 0 even when
+        # the segment set one; read it from the JSON metadata instead.
+        meta = subprocess.run(["cryptsetup", "luksDump", "--dump-json-metadata", "--disable-locks", image],
+                              capture_output=True, text=True)
+        segments = json.loads(meta.stdout)["segments"]
+        if len(segments) != 1:
+            raise SystemExit("only one data segment is supported")
+        iv_start = int(next(iter(segments.values())).get("iv_tweak", "0"))
     else:
         offset = int(re.search(r"Payload offset:\s+(\d+)", plain).group(1)) * 512
         sector, iv_start = 512, 0

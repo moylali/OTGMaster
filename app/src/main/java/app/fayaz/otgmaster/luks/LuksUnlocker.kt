@@ -8,8 +8,19 @@ import java.nio.ByteBuffer
 import java.security.MessageDigest
 import javax.crypto.Mac
 import javax.crypto.spec.SecretKeySpec
+import app.fayaz.otgmaster.util.CheckedRange
+import app.fayaz.otgmaster.util.Secrets
 
 private const val TAG = "LuksUnlocker"
+
+/** cryptsetup's ceiling for Argon2 memory (4 GiB) and lanes; a header asking for more is refused. */
+private const val MAX_ARGON2_MEMORY_KIB = 4 * 1024 * 1024
+private const val MAX_ARGON2_LANES = 16
+
+/** Reads [length] bytes at [offset] bytes from the start of the partition at [partitionStartBlock]. */
+internal fun RawBlockDevice.readPartitionBytes(partitionStartBlock: Long, offset: Long, length: Int): ByteArray =
+    readBytes(CheckedRange.add(CheckedRange.multiply(partitionStartBlock, blockSize.toLong(), "partition start"),
+        offset, "read offset"), length)
 
 // Reads data from device at an absolute byte offset. Returns ceil(len/blockSize) * blockSize bytes.
 private fun RawBlockDevice.readBytes(byteOffset: Long, len: Int): ByteArray {
@@ -56,20 +67,27 @@ class LuksUnlocker {
         device: RawBlockDevice,
         startBlock: Long,
         blockCount: Long?,
-        password: ByteArray
+        password: ByteArray,
+        /** Memory the phone has free, for refusing an Argon2 keyslot that cannot fit; null skips the check. */
+        availableMemoryBytes: Long? = null,
     ): RawBlockDevice {
-        // Read enough data to cover both the LUKS1 binary header (512 bytes)
-        // and the LUKS2 binary header + JSON area (we read 512 sectors = 256 KiB,
-        // which is always enough for the JSON on standard-format volumes).
-        val maxSectors = minOf(512L, blockCount ?: device.blockCount - startBlock).toInt()
-        val headerData = device.readBlocks(startBlock, maxSectors)
-
-        val version = LuksParser.getVersion(headerData)
+        val partitionBlocks = blockCount ?: (device.blockCount - startBlock)
+        val partitionBytes = CheckedRange.multiply(partitionBlocks, device.blockSize.toLong(), "partition size")
+        val version = LuksParser.getVersion(device.readBlocks(startBlock, 1))
         Log.i(TAG, "LUKS version $version at block $startBlock")
 
         return when (version) {
-            1    -> unlockLuks1(device, startBlock, blockCount, headerData, password)
-            2    -> unlockLuks2(device, startBlock, blockCount, headerData, password)
+            1    -> {
+                // The LUKS1 binary header is 592 bytes; 512 sectors also hold its keyslot table.
+                val maxSectors = minOf(512L, partitionBlocks).toInt()
+                unlockLuks1(device, startBlock, blockCount, device.readBlocks(startBlock, maxSectors), password)
+            }
+            2    -> {
+                val meta = Luks2Metadata.read(partitionBytes) { off, len -> device.readPartitionBytes(startBlock, off, len) }
+                Log.i(TAG, "LUKS2 metadata: copy at ${meta.offset}, seqid ${meta.seqId}, header ${meta.hdrSize} B")
+                unlockLuks2(device, startBlock, partitionBytes,
+                    LuksParser.parseLuks2Json(meta.json, meta.hdrSize), password, availableMemoryBytes)
+            }
             else -> throw UnsupportedFormatException("Unknown LUKS version: $version")
         }
     }
@@ -154,58 +172,130 @@ class LuksUnlocker {
     private fun unlockLuks2(
         device: RawBlockDevice,
         startBlock: Long,
-        blockCount: Long?,
-        headerData: ByteArray,
-        password: ByteArray
+        partitionBytes: Long,
+        hdr: LuksHeader.Luks2,
+        password: ByteArray,
+        availableMemoryBytes: Long?,
     ): RawBlockDevice {
-        val hdr = LuksParser.parseLuks2(headerData)
-        Log.i(TAG, "LUKS2: cipher=${hdr.cipherName}-${hdr.cipherMode} sectorSize=${hdr.sectorSize} keyBytes=${hdr.keyBytes} payloadOff=${hdr.payloadOffsetSectors}")
-
-        verifyCipher(hdr.cipherName, hdr.cipherMode)
+        Log.i(TAG, "LUKS2: sectorSize=${hdr.sectorSize} segment=${hdr.segmentOffsetBytes}+${hdr.segmentSizeBytes ?: "dynamic"} " +
+            "keyslots=${hdr.keyslots.size} digests=${hdr.digests.size}")
 
         // cryptsetup has defaulted to 4096-byte sectors since 2.4 wherever the device
         // allows it, so a LUKS2 drive formatted on current Linux usually has them.
-        // Refusing them made such a drive impossible to open; they now go through
-        // LargeSectorXtsDevice.
         if (hdr.sectorSize !in setOf(512, 1024, 2048, 4096)) {
             throw UnsupportedFormatException("LUKS2 sector size ${hdr.sectorSize} is not supported.")
         }
-
-        if (hdr.keyslots.isEmpty()) throw UnsupportedFormatException("No LUKS2 keyslots found")
-
-        for (slot in hdr.keyslots) {
-            Log.i(TAG, "Trying LUKS2 keyslot ${slot.index} (${slot::class.simpleName})")
-            val masterKey = tryLuks2Keyslot(device, startBlock, hdr, slot, password) ?: continue
-
-            // Verify using PBKDF2 digest
-            val dig = hdr.digest
-            val derived = pbkdf2(pbkdf2AlgFor(dig.hash), masterKey, dig.salt, dig.iterations, masterKey.size)
-            if (!derived.copyOfRange(0, dig.digest.size).contentEquals(dig.digest)) {
-                Log.w(TAG, "Keyslot ${slot.index}: key derived but digest mismatch")
-                masterKey.fill(0)
-                continue
-            }
-
-            Log.i(TAG, "Keyslot ${slot.index}: digest verified, payload at sector ${hdr.payloadOffsetSectors}")
-            if (hdr.sectorSize != 512) {
-                val payloadBlocks = hdr.payloadOffsetSectors * 512L / device.blockSize
-                val total = blockCount ?: (device.blockCount - startBlock)
-                return LargeSectorXtsDevice(device, startBlock + payloadBlocks, total - payloadBlocks,
-                    masterKey, hdr.sectorSize, hdr.ivTweak)
-            }
-            return makeCryptoDevice(device, startBlock, blockCount, masterKey, hdr.payloadOffsetSectors)
+        // L07: the IV offset is applied on 512-byte sectors; on larger ones its units have not
+        // been verified against dm-crypt, so such a volume is refused rather than misread.
+        if (hdr.ivTweak != 0L && hdr.sectorSize != 512) {
+            throw UnsupportedFormatException("LUKS2 iv_tweak ${hdr.ivTweak} with ${hdr.sectorSize}-byte sectors is not supported.")
         }
 
+        // L04: the data segment must lie after the metadata and inside the partition, and the
+        // device exposes exactly the segment, not everything to the end of the partition.
+        val dataBytes = try {
+            val metaEnd = hdr.metadataEnd
+            if (hdr.segmentOffsetBytes < metaEnd) {
+                throw CheckedRange.OutOfRange("the data segment starts at ${hdr.segmentOffsetBytes}, inside the metadata (to $metaEnd)")
+            }
+            CheckedRange.requireAligned(hdr.segmentOffsetBytes, maxOf(512L, device.blockSize.toLong()), "LUKS2 segment offset")
+            val size = hdr.segmentSizeBytes ?: (partitionBytes - hdr.segmentOffsetBytes)
+            CheckedRange.requireWithin(hdr.segmentOffsetBytes, size, 0, partitionBytes, "LUKS2 data segment")
+            CheckedRange.requireAligned(size, hdr.sectorSize.toLong(), "LUKS2 segment size")
+            size
+        } catch (e: CheckedRange.OutOfRange) {
+            throw UnsupportedFormatException("The LUKS2 header describes a data area that does not fit: ${e.message}")
+        }
+
+        // L03: a key is accepted only through a digest bound to this data segment.
+        val segmentDigests = hdr.digests.filter { hdr.segmentId in it.segments }
+        if (segmentDigests.isEmpty()) {
+            throw UnsupportedFormatException("This LUKS2 volume has no key digest for its data segment; OTG Master cannot verify a key for it.")
+        }
+
+        val reasons = hdr.unusableSlots.toMutableList()
+        var tried = false
+        // L08: preferred slots (priority 2) before normal ones.
+        for (slot in hdr.keyslots.sortedWith(compareByDescending<Luks2Keyslot> { it.priority }.thenBy { it.index })) {
+            val id = slot.index.toString()
+            val digest = segmentDigests.firstOrNull { id in it.keyslots }
+            if (digest == null) { reasons += "keyslot $id: its key is not bound to the data segment"; continue }
+            val unusable = luks2SlotProblem(slot, hdr, partitionBytes, availableMemoryBytes)
+            if (unusable != null) { reasons += "keyslot $id: $unusable"; continue }
+
+            Log.i(TAG, "Trying LUKS2 keyslot $id (${slot::class.simpleName}, priority ${slot.priority})")
+            tried = true
+            val masterKey = tryLuks2Keyslot(device, startBlock, slot, password) ?: continue
+            if (!digestMatches(masterKey, digest)) {
+                Log.w(TAG, "Keyslot $id: key derived but digest mismatch")
+                Secrets.wipe(masterKey)
+                continue
+            }
+            Log.i(TAG, "Keyslot $id: digest verified")
+            val payloadBlocks = hdr.segmentOffsetBytes / device.blockSize
+            val decryptedBlocks = dataBytes / device.blockSize
+            if (hdr.sectorSize != 512) {
+                return LargeSectorXtsDevice(device, startBlock + payloadBlocks, decryptedBlocks,
+                    masterKey, hdr.sectorSize, hdr.ivTweak)
+            }
+            return makeCryptoDevice(device, startBlock, masterKey, payloadBlocks, decryptedBlocks, hdr.ivTweak)
+        }
+
+        // A password can only be wrong if some keyslot was able to test it.
+        if (!tried) {
+            throw UnsupportedFormatException("No keyslot of this LUKS2 volume can be used by OTG Master: " + reasons.joinToString("; "))
+        }
         throw WrongPasswordException()
+    }
+
+    /**
+     * Why [slot] cannot be tried here, or null if it can: a key size this app's AES-XTS does
+     * not take (L06), a key area outside the metadata or too small for its AF stripes (L04),
+     * or an Argon2 cost out of range or beyond the phone's free memory (L08). Each is an
+     * unsupported slot, never a wrong password.
+     */
+    private fun luks2SlotProblem(slot: Luks2Keyslot, hdr: LuksHeader.Luks2, partitionBytes: Long, availableMemoryBytes: Long?): String? {
+        if (slot.keySize != 64) return "a ${slot.keySize * 8}-bit AES-XTS volume key is not supported (only 512-bit)"
+        if (slot.areaKeySize != 64) return "a ${slot.areaKeySize * 8}-bit keyslot encryption key is not supported (only 512-bit)"
+        try {
+            val afBytes = CheckedRange.multiply(slot.afStripes.toLong(), slot.keySize.toLong(), "AF material")
+            if (afBytes > slot.areaSizeBytes) return "its key material ($afBytes B) does not fit its area (${slot.areaSizeBytes} B)"
+            val areaUpper = if (hdr.keyslotsSize != null) hdr.metadataEnd else minOf(hdr.segmentOffsetBytes, partitionBytes)
+            CheckedRange.requireWithin(slot.areaOffsetBytes, slot.areaSizeBytes, 2 * hdr.hdrSize, areaUpper, "keyslot area")
+            CheckedRange.requireAligned(slot.areaOffsetBytes, 512, "keyslot area offset")
+        } catch (e: CheckedRange.OutOfRange) {
+            return e.message
+        }
+        when (slot) {
+            is Luks2Keyslot.Pbkdf2 -> if (slot.iterations <= 0) return "${slot.iterations} PBKDF2 iterations"
+            is Luks2Keyslot.Argon2id -> {
+                if (slot.timeCost < 1 || slot.parallelism !in 1..MAX_ARGON2_LANES ||
+                    slot.memoryCostKiB !in 8..MAX_ARGON2_MEMORY_KIB) {
+                    return "Argon2 cost out of range (time ${slot.timeCost}, memory ${slot.memoryCostKiB} KiB, lanes ${slot.parallelism})"
+                }
+                if (availableMemoryBytes != null && slot.memoryCostKiB * 1024L > availableMemoryBytes) {
+                    return "it needs ${slot.memoryCostKiB / 1024} MiB to unlock and the phone has " +
+                        "${availableMemoryBytes / (1024 * 1024)} MiB free"
+                }
+            }
+        }
+        return null
+    }
+
+    /** Whether [masterKey] matches [digest]: PBKDF2 to the digest's own length, compared in constant time. */
+    private fun digestMatches(masterKey: ByteArray, digest: Luks2Digest): Boolean {
+        val derived = pbkdf2(LuksAlgorithms.hmac(digest.hash, "digest hash"), masterKey, digest.salt,
+            digest.iterations, digest.digest.size)
+        return try { MessageDigest.isEqual(derived, digest.digest) } finally { Secrets.wipe(derived) }
     }
 
     private fun tryLuks2Keyslot(
         device: RawBlockDevice,
         partitionStartBlock: Long,
-        hdr: LuksHeader.Luks2,
         slot: Luks2Keyslot,
         password: ByteArray
     ): ByteArray? {
+        // The keyslot area's own key, at the area's key size (L06), not the volume key's.
         val slotKey: ByteArray = when (slot) {
             is Luks2Keyslot.Argon2id -> {
                 // The vendored reference Argon2 (as VeraCrypt volumes use), not Argon2Kt: the
@@ -216,10 +306,10 @@ class LuksUnlocker {
                     // and never unlocked (review, 2026-11-09).
                     (if (slot.kdfType == "argon2i")
                         app.fayaz.otgmaster.veracrypt.VeraCryptNative.argon2i(password, slot.salt,
-                            slot.timeCost, slot.memoryCostKiB, slot.parallelism, slot.keySize)
+                            slot.timeCost, slot.memoryCostKiB, slot.parallelism, slot.areaKeySize)
                     else
                         app.fayaz.otgmaster.veracrypt.VeraCryptNative.argon2id(password, slot.salt,
-                            slot.timeCost, slot.memoryCostKiB, slot.parallelism, slot.keySize))
+                            slot.timeCost, slot.memoryCostKiB, slot.parallelism, slot.areaKeySize))
                         ?: throw UnsupportedFormatException("Argon2 could not run")
                 } catch (e: IllegalStateException) {
                     throw UnsupportedFormatException(
@@ -233,38 +323,34 @@ class LuksUnlocker {
                     )
                 }
             }
-            is Luks2Keyslot.Pbkdf2 -> {
-                pbkdf2(pbkdf2AlgFor(slot.hash), password, slot.salt, slot.iterations, slot.keySize)
+            is Luks2Keyslot.Pbkdf2 ->
+                pbkdf2(LuksAlgorithms.hmac(slot.hash, "keyslot PBKDF2 hash"), password, slot.salt, slot.iterations, slot.areaKeySize)
+        }
+
+        // Bounds were checked by luks2SlotProblem; the area is read whole sectors at a time.
+        val afBytes = slot.afStripes * slot.keySize
+        val kmSectors = (afBytes + 511) / 512
+        val kmData = device.readPartitionBytes(partitionStartBlock, slot.areaOffsetBytes, kmSectors * 512)
+        try {
+            val rc = Secrets.use(slotKey) { key ->
+                app.fayaz.otgmaster.veracrypt.VeraCryptNative.cryptSectorsInPlace(
+                    intArrayOf(SingleCipher.AES.nativeId), 0, key, 0L, kmData, 0, kmSectors * 512)
             }
+            if (rc != 0) {
+                Log.w(TAG, "Keyslot ${slot.index}: XTS decrypt failed (rc=$rc)")
+                return null
+            }
+            return afMerge(kmData.copyOfRange(0, afBytes), slot.afStripes, slot.keySize, slot.afHash)
+        } finally {
+            Secrets.wipe(kmData)
         }
-
-        // Key area offset is in bytes from partition start
-        val kmAbsoluteByteOffset = partitionStartBlock.toLong() * device.blockSize + slot.areaOffsetBytes
-        val kmSectors = (slot.afStripes * slot.keySize + 511) / 512
-        val kmData = device.readBytes(kmAbsoluteByteOffset, kmSectors * 512)
-
-        // XTS-decrypt using slotKey (area encryption is e.g. "aes-xts-plain64")
-        val rc = app.fayaz.otgmaster.veracrypt.VeraCryptNative.cryptSectorsInPlace(
-            intArrayOf(SingleCipher.AES.nativeId),
-            0,        // decrypt
-            slotKey,
-            0L,       // plain64: sector 0 at start of key material
-            kmData, 0, kmSectors * 512
-        )
-        slotKey.fill(0)
-        if (rc != 0) {
-            Log.w(TAG, "Keyslot ${slot.index}: XTS decrypt failed (rc=$rc)")
-            return null
-        }
-
-        val keyMaterial = kmData.copyOfRange(0, slot.afStripes * slot.keySize)
-        return afMerge(keyMaterial, slot.afStripes, slot.keySize, slot.afHash)
     }
 
     // -----------------------------------------------------------------------
     // Shared: build the decrypted block device
     // -----------------------------------------------------------------------
 
+    /** The LUKS1 data area: from [payloadOffsetSectors] (512-byte units) to the end of the partition. */
     private fun makeCryptoDevice(
         device: RawBlockDevice,
         partitionStartBlock: Long,
@@ -283,22 +369,32 @@ class LuksUnlocker {
             "LUKS payload offset $payloadOffsetBytes B is not a multiple of the " +
             "device block size ${device.blockSize} B"
         }
-        val payloadOffsetBlocks    = payloadOffsetBytes / device.blockSize
-        val volumeDataOffsetBlocks = partitionStartBlock + payloadOffsetBlocks
-        val totalPartitionBlocks   = blockCount ?: (device.blockCount - partitionStartBlock)
-        val decryptedBlocks        = totalPartitionBlocks - payloadOffsetBlocks
-
-        // LUKS plain64 IV: tweak sector = 0 for first payload sector, so tweakDataOffset = 0.
-        // This differs from VeraCrypt where tweakDataOffset = dataOffsetSectors (≈256).
-        return NativeDecryptedBlockDevice(
-            encryptedDevice    = device,
-            masterKey          = masterKey,
-            volumeDataOffset   = volumeDataOffsetBlocks,
-            decryptedBlockCount= decryptedBlocks,
-            cipherNativeIds    = intArrayOf(SingleCipher.AES.nativeId),
-            tweakDataOffset    = 0L
-        )
+        val payloadOffsetBlocks = payloadOffsetBytes / device.blockSize
+        val totalPartitionBlocks = blockCount ?: (device.blockCount - partitionStartBlock)
+        return makeCryptoDevice(device, partitionStartBlock, masterKey, payloadOffsetBlocks,
+            totalPartitionBlocks - payloadOffsetBlocks, ivTweak = 0L)
     }
+
+    /**
+     * A 512-byte-sector AES-XTS data area of [decryptedBlocks] device blocks starting
+     * [payloadOffsetBlocks] into the partition. plain64's IV is the sector number within the
+     * segment plus [ivTweak] (in 512-byte sectors), which the old code always took as 0 (L07).
+     */
+    private fun makeCryptoDevice(
+        device: RawBlockDevice,
+        partitionStartBlock: Long,
+        masterKey: ByteArray,
+        payloadOffsetBlocks: Long,
+        decryptedBlocks: Long,
+        ivTweak: Long,
+    ): RawBlockDevice = NativeDecryptedBlockDevice(
+        encryptedDevice    = device,
+        masterKey          = masterKey,
+        volumeDataOffset   = partitionStartBlock + payloadOffsetBlocks,
+        decryptedBlockCount= decryptedBlocks,
+        cipherNativeIds    = intArrayOf(SingleCipher.AES.nativeId),
+        tweakDataOffset    = ivTweak
+    )
 
     // -----------------------------------------------------------------------
     // AF-split merge
@@ -321,12 +417,7 @@ class LuksUnlocker {
     // Splits buf into SHA-output-size chunks, replacing each chunk j with
     // SHA(uint32_be(j) || chunk).
     private fun hashDiffuse(buf: ByteArray, hashSpec: String) {
-        val mdAlg = when (hashSpec.lowercase()) {
-            "sha1"   -> "SHA-1"
-            "sha256" -> "SHA-256"
-            "sha512" -> "SHA-512"
-            else     -> "SHA-256"
-        }
+        val mdAlg = LuksAlgorithms.digest(hashSpec, "AF hash")
         val md     = MessageDigest.getInstance(mdAlg)
         val hLen   = md.digestLength
         val result = ByteArray(buf.size)
@@ -404,18 +495,13 @@ class LuksUnlocker {
                 "Cipher '$cipherName' is not supported. Only AES (aes-xts-plain64) is supported."
             )
         }
-        if (!cipherMode.startsWith("xts-plain64", ignoreCase = true)) {
+        if (!cipherMode.equals("xts-plain64", ignoreCase = true)) {
             throw UnsupportedFormatException(
-                "Cipher mode '$cipherMode' is not supported. Only xts-plain64 is supported. " +
-                "Older volumes using aes-cbc-essiv:sha256 require reformatting."
+                "Cipher mode '$cipherMode' is not supported: OTG Master opens only aes-xts-plain64. " +
+                "The volume can still be opened with cryptsetup on a computer."
             )
         }
     }
 
-    private fun pbkdf2AlgFor(hashSpec: String): String = when (hashSpec.lowercase()) {
-        "sha1"   -> "HmacSHA1"
-        "sha256" -> "HmacSHA256"
-        "sha512" -> "HmacSHA512"
-        else     -> "HmacSHA256"
-    }
+    private fun pbkdf2AlgFor(hashSpec: String): String = LuksAlgorithms.hmac(hashSpec, "LUKS1 hash")
 }

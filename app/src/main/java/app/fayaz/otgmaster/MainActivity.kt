@@ -1584,7 +1584,8 @@ class MainActivity : AppCompatActivity() {
                         val passwordBytes = password.toByteArray(Charsets.UTF_8)
                         try {
                             app.fayaz.otgmaster.luks.LuksUnlocker().unlock(
-                                device, candidate.startBlock, candidate.blockCount, passwordBytes
+                                device, candidate.startBlock, candidate.blockCount, passwordBytes,
+                                availableMemoryBytes = availableMemoryBytes(),
                             )
                         } finally {
                             passwordBytes.fill(0)
@@ -1902,6 +1903,16 @@ class MainActivity : AppCompatActivity() {
      * safe to unplug belongs there, not after this function returns, because the teardown
      * itself runs later on another thread and can wait behind another partition's unlock.
      */
+    /**
+     * Memory the phone has free right now, for refusing an Argon2 keyslot that cannot fit
+     * before it starts: running out part way is a kill, not an exception the unlock can catch.
+     */
+    private fun availableMemoryBytes(): Long? = runCatching {
+        val info = android.app.ActivityManager.MemoryInfo()
+        (getSystemService(ACTIVITY_SERVICE) as android.app.ActivityManager).getMemoryInfo(info)
+        info.availMem
+    }.getOrNull()
+
     private fun unmountDrive(
         drive: MountedDrive, isManual: Boolean = false, disconnected: Boolean = false,
         onTornDown: (() -> Unit)? = null,
