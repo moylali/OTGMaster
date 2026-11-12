@@ -1,0 +1,5 @@
+• Fixed: apps with access to an outer volume could read its hidden one
+• Fixed: FAT32 could expose deleted data or truncate files over 4 GiB
+• Fixed: rare data loss in shared files, Format, backups and restores
+• Fixed: LUKS2 volumes made with Argon2i would not unlock
+• Fixed: APFS drives with more than one volume showed only the first

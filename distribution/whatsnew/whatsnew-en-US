@@ -1,5 +1,5 @@
-• Faster unlocks of VeraCrypt volumes and LUKS2 drives that use Argon2
-• Fixed: Unmount waits for a file copy or a backup to finish, as Eject does
-• Settings: Donate shows the Ko-fi button and links to more ways to help
-• New: a hint shows where the mounted drives are
-• Tapping the mounted-drives notification opens their list
+• Fixed: apps with access to an outer volume could read its hidden one
+• Fixed: FAT32 could expose deleted data or truncate files over 4 GiB
+• Fixed: rare data loss in shared files, Format, backups and restores
+• Fixed: LUKS2 volumes made with Argon2i would not unlock
+• Fixed: APFS drives with more than one volume showed only the first
