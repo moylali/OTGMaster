@@ -450,6 +450,54 @@ Rebase-merged. The E2E report in #141 names its head `15ad245`, which is `4591c2
 | `4ad628a` | `2d00a77` | #141 | test(e2e): look for the Don't show again tick without UiAutomator's idle wait |
 | `15ad245` | `4591c24` | #141 | fix(ui): Settings dialogs expose their test tags to UiAutomator |
 
+### Commit hashes after the merges of #145, #148 and #151
+
+Rebase-merged. #151's E2E reports name `01ef842` (full run) and `65c5a56` (the rerun on its head, `6c90486` on `main`), and the Pixel 7 Pro run below names `35b57d6`.
+
+| At the PR head | On `main` | PR | Commit |
+|---|---|---|---|
+| `c757705` | `c234521` | #145 | docs: v0.5.2 regression report; the 0.5.2 runs on the OnePlus 7, Pixel 7 Pro and Redmi 4 |
+| `e4bebe6` | `2ddc5d8` | #145 | docs: #147 in the v0.5.2 report; its Pixel 7 Pro check; hashes for #147 |
+| `0e33d27` | `468f96e` | #148 | chore: bump to 0.5.3 (52) after the v0.5.2 tag |
+| `ade7052` | `681fa32` | #151 | fix(cache): copy a cache hit under the lock, so an eviction cannot zero it |
+| `6ad94b9` | `367fd68` | #151 | fix(provider): resolve, truncate and register an open under the drive lock |
+| `51ab4e2` | `a459626` | #151 | fix(fat32): zero what a grow exposes, and refuse files past 4 GiB (V27, V28) |
+| `6e9d030` | `f901ac5` | #151 | fix(fat32): a looping cluster chain ends instead of exhausting memory (V29) |
+| `d2f0e31` | `585d85f` | #151 | fix(exfat): a failed metadata flush reports an error instead of success (E4) |
+| `0cfe692` | `006d1b0` | #151 | fix(provider): a file left open across Format or Encrypt cannot write to the new volume |
+| `08b2f4b` | `7d00990` | #151 | fix(veracrypt): a hidden volume gets its own drive id, apart from its outer volume |
+| `5056084` | `d9ab708` | #151 | fix(backup): keep rules never delete the last complete or the restoring snapshot |
+| `021fef0` | `322b085` | #151 | fix(restore): write to a hidden file first, never delete what is in the way, honour Cancel |
+| `aa491aa` | `86aeaf5` | #151 | fix(backup): a plain copy's manifest never replaces a copied file; Verify reports what was not copied |
+| `bbb1ef0` | `484331d` | #151 | fix(gpt): check the header's counts before they size a read, and skip entries off the drive |
+| `97c9b98` | `024bcad` | #151 | fix(luks): derive an Argon2i keyslot's key with Argon2i, not Argon2id |
+| `6fc707e` | `134540d` | #151 | testdata: a two-volume APFS container for the multi-volume fix |
+| `498307c` | `c2e8f56` | #151 | fix(apfs): every volume of an APFS container can be opened, not just the first |
+| `351a620` | `6f7d5e7` | #151 | changelog: 0.5.3 (52), the review's data-integrity fixes |
+| `d434418` | `38ac45a` | #151 | fix(luks): refuse LUKS2 layouts the app cannot open safely; check digests, bounds and both header copies |
+| `31d4f08` | `7ba1d7c` | #151 | fix(veracrypt): refuse headers the app cannot use; keyfiles fail closed; the PIM is not logged and is range-checked |
+| `9f96177` | `125a258` | #151 | feat(veracrypt): "Use backup header" opens a volume whose main header is damaged |
+| `7113b79` | `e408130` | #151 | fix(luks): wipe AF and digest material after use; docs: exact VeraCrypt and LUKS capabilities |
+| `50e1117` | `ccfdeaf` | #151 | changelog: 0.5.3, the backup header and the stricter VeraCrypt/LUKS2 checks |
+| `8e1be11` | `ce14c25` | #151 | fix(veracrypt): a mount request tries the hidden header of every partition still locked |
+| `abfb164` | `1af53cc` | #151 | fix(bench): the debug and benchmark receivers accept broadcasts from adb only |
+| `d606dbd` | `8ade268` | #151 | fix(usb): a pending Unmount or Eject, and an unmount's teardown, outlive the activity |
+| `4c82d73` | `6f2f984` | #151 | fix(usb): a waiting Unmount or Eject acts only after 5 s of continuous quiet |
+| `35b57d6` | `c00fe8e` | #151 | test(e2e): the Report issue cleanup fails closed, and Chrome is put back |
+| `01ef842` | `bfd1057` | #151 | test(ext4): the journal-replay test deletes its 128 MiB images |
+| `65c5a56` | `6c90486` | #151 | test(e2e): findScrolling takes only a node that is on screen |
+
+## 2026-11-11: 0.5.3 on the Pixel 7 Pro, D1 with bigwrite
+
+Benchmark build `35b57d6` (= `c00fe8e` on `main`; the later commits change tests only), every section including bigwrite (`px-053a`).
+
+| Partition | Finished | Write verify | bigwrite | Fixtures |
+|---|---|---|---|---|
+| D1FAT32 | 21:47 | ALL PASSED | 2.2 GB at 8.06 MB/s; read back 36.35 MB/s after remount; tree 240 ✓ | ALL 20995 MATCHED |
+| D1EXFAT | 21:58 | ALL PASSED | 2.2 GB at 9.57 MB/s; read back 40.92 MB/s after remount; tree 250 ✓ | ALL 20963 MATCHED |
+
+Laptop (`matrix/d1-after-px-053a.md`): 9 of 10 CLEAN, with every fixture, big.bin and tree verified on every writable partition. D1FAT32: `fsck.fat` reports only the dirty bit (boot sector offset 65, 01/00), Android's mount of the plain partition at plug-in; big.bin, the tree and all fixtures verified. The sequence's eject step found no Eject button (the Pixel's screen dump came back empty) and left the drive mounted; `eject_drive.sh` now collapses the shade and retries the dump.
+
 ### Commit hashes after the merge of #147
 
 Rebase-merged. The E2E report and the Pixel 7 Pro check in #147 name `efc5aed`.
