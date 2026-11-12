@@ -209,7 +209,8 @@ object Benchmark {
             if (handler == null) {
                 emit("*** no mount handler installed — is MainActivity running? ***")
             } else {
-                handler.mount(mount.password, mount.pim, mount.cipher, mount.hash, mount.readOnly)
+                handler.mount(mount.password, mount.pim, mount.cipher, mount.hash, mount.readOnly,
+                    hiddenHeaders = false)   // timed: no hidden pass behind it
                 // attemptUnlock is asynchronous and unlocks are serialised across
                 // partitions, so they appear one at a time. Waiting only for the
                 // list to become non-empty snapshotted it mid-sequence and ran the
@@ -2022,7 +2023,7 @@ object Benchmark {
             // this function had unmounted it, so the sections after this one had
             // nothing to run against, and the whole drive's remaining results were
             // lost to a timeout that only delayed one verdict.
-            runCatching { mountReq.mount(mount.password, mount.pim, mount.cipher, mount.hash, mount.readOnly) }
+            runCatching { mountReq.mount(mount.password, mount.pim, mount.cipher, mount.hash, mount.readOnly, hiddenHeaders = false) }
             why("the drive did not unmount within ${MOUNT_TIMEOUT_MS / 1000}s, " +
                 "so nothing was discarded")
             return false
@@ -2033,7 +2034,7 @@ object Benchmark {
         deadline = System.currentTimeMillis() + MOUNT_TIMEOUT_MS
         while (OtgMasterState.unmountsInFlight.get() > 0 && System.currentTimeMillis() < deadline) Thread.sleep(200)
 
-        mountReq.mount(mount.password, mount.pim, mount.cipher, mount.hash, mount.readOnly)
+        mountReq.mount(mount.password, mount.pim, mount.cipher, mount.hash, mount.readOnly, hiddenHeaders = false)
         deadline = System.currentTimeMillis() + MOUNT_TIMEOUT_MS
         while (tagOf() == null && System.currentTimeMillis() < deadline) Thread.sleep(500)
         // And every other partition back too, before the next section unmounts again.

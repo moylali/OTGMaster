@@ -36,7 +36,8 @@ class E2eMountReceiver : BroadcastReceiver() {
                 val handler = OtgMasterState.mountRequest
                 if (handler == null) { Log.w(TAG, "no mount handler — is MainActivity running?"); return }
                 handler.mount(password, pim, intent.getStringExtra("cipher") ?: "AES", intent.getStringExtra("hash") ?: "SHA-512",
-                    intent.getStringExtra("readonly")?.toBooleanStrictOrNull())
+                    intent.getStringExtra("readonly")?.toBooleanStrictOrNull(),
+                    hiddenHeaders = intent.getStringExtra("hidden")?.toBooleanStrictOrNull() ?: true)
                 Thread {
                     val deadline = System.currentTimeMillis() + 180_000
                     var last = -1
