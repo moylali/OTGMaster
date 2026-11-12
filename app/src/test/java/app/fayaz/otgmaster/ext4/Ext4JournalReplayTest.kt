@@ -2,6 +2,7 @@ package app.fayaz.otgmaster.ext4
 
 import app.fayaz.otgmaster.block.CachedBlockDevice
 import app.fayaz.otgmaster.block.RawBlockDevice
+import org.junit.After
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
 import org.junit.Assert.assertTrue
@@ -55,11 +56,18 @@ class Ext4JournalReplayTest {
 
     private fun toolMissing(tool: String) = run("sh", "-c", "command -v $tool").first != 0
 
+    // deleteOnExit removed only an empty folder, so every run left its 128 MiB images (and a
+    // reference copy) in /tmp: 2 GB after a day, which filled the RAM-backed /tmp the E2E
+    // emulators use.
+    @After
+    fun tearDown() {
+        if (::dir.isInitialized) dir.deleteRecursively()
+    }
+
     @Before
     fun setUp() {
         for (t in listOf("mkfs.ext4", "e2fsck", "debugfs", "dumpe2fs")) assumeTrue("$t not available", !toolMissing(t))
         dir = kotlin.io.path.createTempDirectory("ext4journal").toFile()
-        dir.deleteOnExit()
         img = File(dir, "vol.img")
         // 4 KiB blocks like the real drives (mkfs picks 1 KiB under 512 MiB), and
         // big enough for the blocks the cases log: 32768 blocks.
