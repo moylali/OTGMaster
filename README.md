@@ -42,9 +42,9 @@ The app cannot perform a kernel mount on non-rooted Android. Instead it:
 2. Reads raw sectors through a userspace USB Mass Storage adapter ([libaums](libaums/)).
 3. Probes MBR/GPT partitions and detects the encryption type (VeraCrypt, LUKS1, LUKS2, BitLocker or encrypted APFS) on each.
 4. Unlocks the volume header and exposes a decrypted block-device wrapper:
-   - **VeraCrypt**: AES or Serpent, SHA-512 header KDF; also Twofish, the cascades AES-Twofish, AES-Twofish-Serpent, Serpent-AES, Serpent-Twofish-AES and Twofish-Serpent, and the Argon2id header KDF
-   - **LUKS1**: PBKDF2-based KDF, AES-XTS bulk decryption
-   - **LUKS2**: Argon2id-based KDF, AES-XTS bulk decryption
+   - **VeraCrypt**: AES, Serpent or Twofish, or the cascades AES-Twofish, AES-Twofish-Serpent, Serpent-AES, Serpent-Twofish-AES and Twofish-Serpent, with the SHA-512 or Argon2id header KDF (SHA-256, Whirlpool and Streebog are not supported); a damaged main header can be read from its backup copy
+   - **LUKS1**: PBKDF2 with SHA-1, SHA-256 or SHA-512; aes-xts-plain64 with 512-bit keys
+   - **LUKS2**: PBKDF2, Argon2i or Argon2id keyslots; aes-xts-plain64 with 512-bit keys and 512- to 4096-byte sectors. A volume with another cipher or key size, dm-integrity, or an unfinished reencryption is refused with a message that says why
    - **BitLocker**: password or recovery key; XTS-AES and AES-CBC, with or without the Elephant diffuser
    - **APFS (Encrypted)**: the password goes to the filesystem reader, which unwraps the volume key itself
 5. Feeds the decrypted block device into a userspace filesystem reader (FAT32 via libaums, exFAT via a vendored native `libexfat`, ext4 via a pure-Kotlin driver, NTFS via a vendored `libntfs-3g`, and APFS, read-only, via a vendored `libfsapfs`).

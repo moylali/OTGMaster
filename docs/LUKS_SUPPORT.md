@@ -1,5 +1,12 @@
 # LUKS support: evaluation, design, and test-data preparation
 
+> **Historical design evaluation.** This records the reasoning when LUKS support was
+> designed. What the app supports and refuses today is in the README ("How it works") and
+> in `LuksHeader.kt` / `Luks2Metadata.kt`; the 2026-11-11 implementation review found
+> several safeguards described here had not been built, and they now are (0.5.3). This
+> document's claim that VeraCrypt's magic bytes alone validate a header is wrong: both
+> header CRCs are checked. Test-media preparation lives in `docs/TEST_DATA.md`.
+
 An assessment of `agy/luks_extension_proposal.md`, the gaps it leaves, and what is
 needed to verify an implementation on real hardware.
 
