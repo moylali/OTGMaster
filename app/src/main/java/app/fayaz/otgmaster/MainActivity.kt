@@ -1547,7 +1547,9 @@ class MainActivity : AppCompatActivity() {
         }
         val deviceDisplayName = _deviceCandidates.value.find { it.deviceName == deviceName }?.displayName ?: deviceName
 
-        appendLog(getString(R.string.log_unlock_attempt, deviceDisplayName, pim.toString(), cipher.displayName, hash.displayName))
+        // The PIM is a credential: the log says only whether one was given (V06).
+        appendLog(getString(R.string.log_unlock_attempt, deviceDisplayName,
+            if (pim == null || pim == 0) "default" else "custom", cipher.displayName, hash.displayName))
 
         if (!cipher.isSupported || !hash.isSupported) {
             val unsupportedName = if (!cipher.isSupported) cipher.displayName else hash.displayName
@@ -1776,7 +1778,10 @@ class MainActivity : AppCompatActivity() {
                     // Nor does a mistake in the hidden volume's fields say anything about the outer
                     // volume's saved password.
                     val protectionRefused = e is app.fayaz.otgmaster.veracrypt.HiddenVolumeCredentialsException
-                    if (fromCache && e !is java.io.IOException && !protectionRefused) {
+                    // A format the app refuses is not a wrong password either.
+                    val unsupported = e is app.fayaz.otgmaster.luks.LuksUnlocker.UnsupportedFormatException ||
+                        e is app.fayaz.otgmaster.veracrypt.VeraCryptUnlocker.UnsupportedAlgorithmException
+                    if (fromCache && e !is java.io.IOException && !protectionRefused && !unsupported) {
                         credentialStore.deletePartition(deviceName, candidate.startBlock)
                         sessionPlaintextCreds.remove(deviceName)
                         appendLog(getString(R.string.log_cached_credentials_invalid, deviceDisplayName))

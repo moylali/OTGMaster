@@ -26,11 +26,10 @@ object VeraCryptKeyfiles {
 
     /**
      * [password] with [keyfiles] mixed in, as a new array; [password] is wiped. With no
-     * keyfiles it is returned as it is. A keyfile that cannot be opened or read throws
-     * [IOException], unless [skipUnreadable] — the unlocker's long-standing behaviour,
-     * which then fails as a wrong password.
+     * keyfiles it is returned as it is. A keyfile that cannot be opened or read, or is
+     * empty, throws [IOException]: the unlock fails rather than going on without it.
      */
-    fun apply(password: ByteArray, keyfiles: List<() -> InputStream?>, skipUnreadable: Boolean = false): ByteArray {
+    fun apply(password: ByteArray, keyfiles: List<() -> InputStream?>): ByteArray {
         if (keyfiles.isEmpty()) return password
         val poolSize = if (password.size <= MAX_LEGACY_PASSWORD) LEGACY_POOL else POOL
         val pool = ByteArray(poolSize)
@@ -38,21 +37,18 @@ object VeraCryptKeyfiles {
         for ((n, open) in keyfiles.withIndex()) {
             try {
                 val stream = open() ?: throw IOException("keyfile ${n + 1} could not be opened")
-                stream.use { mixOne(it, pool, buffer) }
+                val read = stream.use { mixOne(it, pool, buffer) }
+                if (read == 0) throw IOException("keyfile ${n + 1} is empty")
             } catch (e: Exception) {
                 // SecurityException too: a keyfile whose read grant was revoked.
-                if (!skipUnreadable) {
-                    password.fill(0)
-                    throw e as? IOException ?: IOException("keyfile ${n + 1} could not be read: ${e.message}", e)
-                }
-                android.util.Log.w("VeraCryptKeyfiles", "keyfile ${n + 1} skipped: ${e.message}")
+                app.fayaz.otgmaster.util.Secrets.wipe(password, pool, buffer)
+                throw e as? IOException ?: IOException("keyfile ${n + 1} could not be read: ${e.message}", e)
             }
         }
         val mixed = ByteArray(maxOf(poolSize, password.size))
         password.copyInto(mixed)
         for (i in 0 until poolSize) mixed[i] = (mixed[i] + pool[i]).toByte()
-        password.fill(0)
-        pool.fill(0)
+        app.fayaz.otgmaster.util.Secrets.wipe(password, pool, buffer)
         return mixed
     }
 
@@ -70,7 +66,8 @@ object VeraCryptKeyfiles {
         }
     }
 
-    private fun mixOne(stream: InputStream, pool: ByteArray, buffer: ByteArray) {
+    /** Mixes up to 1 MiB of [stream] into [pool]; returns how many bytes it read. */
+    private fun mixOne(stream: InputStream, pool: ByteArray, buffer: ByteArray): Int {
         var crc = 0xFFFFFFFFL
         var writePos = 0
         var total = 0
@@ -87,5 +84,6 @@ object VeraCryptKeyfiles {
             }
             total += read
         }
+        return total
     }
 }
