@@ -2174,6 +2174,7 @@ class MainActivity : AppCompatActivity() {
         val key = "unmount:$id"
         if (OtgMasterState.driveWatchers[key]?.isActive == true) return
         OtgMasterState.driveWatchers[key] = OtgMasterState.appScope.launch {
+            val gate = app.fayaz.otgmaster.usb.IdleGate()
             while (true) {
                 delay(500)
                 val pending = OtgMasterState.pendingUnmounts.value[id] ?: return@launch
@@ -2183,7 +2184,7 @@ class MainActivity : AppCompatActivity() {
                     a.dropPendingUnmount(id)
                     return@launch
                 }
-                if (!a.drivesBusy(listOf(drive))) {
+                if (gate.ready(a.drivesBusy(listOf(drive)), android.os.SystemClock.elapsedRealtime())) {
                     OtgMasterState.driveWatchers.remove(key)
                     a.dropPendingUnmount(id)
                     // "Unmounted" means safe to unplug, so it waits for the teardown, as
@@ -2238,11 +2239,12 @@ class MainActivity : AppCompatActivity() {
         val wkey = "eject:$key"
         if (OtgMasterState.driveWatchers[wkey]?.isActive == true) return
         OtgMasterState.driveWatchers[wkey] = OtgMasterState.appScope.launch {
+            val gate = app.fayaz.otgmaster.usb.IdleGate()
             while (true) {
                 delay(500)
                 val pending = OtgMasterState.pendingEjects.value[key] ?: return@launch
                 val a = actor()
-                if (!a.deviceBusy(key)) {
+                if (gate.ready(a.deviceBusy(key), android.os.SystemClock.elapsedRealtime())) {
                     a.ejectNow(key, pending.notify)
                     return@launch
                 }
