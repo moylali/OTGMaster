@@ -487,6 +487,207 @@ Rebase-merged. #151's E2E reports name `01ef842` (full run) and `65c5a56` (the r
 | `01ef842` | `bfd1057` | #151 | test(ext4): the journal-replay test deletes its 128 MiB images |
 | `65c5a56` | `6c90486` | #151 | test(e2e): findScrolling takes only a node that is on screen |
 
+## 2026-11-12 to 11-16: the 0.5.3 release matrix on `20b582c`
+
+Benchmark build `0.5.3-bench (52) commit 20b582c` (release-optimised and minified, package `app.fayaz.otgmaster.bench`) on every row except the two `px-053a` D1 rows above (`35b57d6`) and the `tab-042ab` comparison (0.4.2, below). Sections: free, block, dir, path, seq, random, opens, write, unaligned, correct, bigwrite (2.2 GB file and a tree), fixtures; D5 p7 to p10 without bigwrite after the first attempts (see the report). One partition per run via `sequence_runs.sh` → `start_run.sh`; a sequence stops at the first failed section, so each failure below ends its sequence and the partition was rerun in a later one. Every drive was read back on the laptop after its runs (`read_matrix_drive.sh` + `verify_matrix_drive.py`, `hostcheck_d5.sh` for Drive 5). Report: [`test-reports/v0.5.3.md`](test-reports/v0.5.3.md). The owner waived the fourth device for this tag.
+
+Devices: Pixel 7 Pro (Android 17, SDK 37), OnePlus 7 (GM1901, LineageOS, Android 16, SDK 36), Galaxy Tab A9+ (SM-X210, Android 16, SDK 36). `Started` is the device's clock. Read-only partitions (APFS, ext2, ext3) skip the write sections by design.
+
+| Run | Device | Build | Partition | Started | Write verify | bigwrite | Fixtures |
+|---|---|---|---|---|---|---|---|
+| px-053a-d1fat32 | Pixel 7 Pro | `35b57d6` | D1FAT32 | 21:38 | ALL PASSED | 2.2 GB at 8.06 MB/s; read back 36.35 MB/s; tree 240 ✓ | ALL 20995 MATCHED |
+| px-053a-d1exfat | Pixel 7 Pro | `35b57d6` | D1EXFAT | 21:48 | ALL PASSED | 2.2 GB at 9.57 MB/s; read back 40.92 MB/s; tree 250 ✓ | ALL 20963 MATCHED |
+| px-053b-d1fat32 | Pixel 7 Pro | `20b582c` | D1FAT32 | 12:07 | ALL PASSED | 2.2 GB at 8.54 MB/s; read back 37.01 MB/s; tree 240 ✓ | ALL 20995 MATCHED |
+| px-053b-d1exfat | Pixel 7 Pro | `20b582c` | D1EXFAT | 12:18 | ALL PASSED | 2.2 GB at 8.91 MB/s; read back 41.72 MB/s; tree 250 ✓ | ALL 20963 MATCHED |
+| px-053b-d1ntfs | Pixel 7 Pro | `20b582c` | D1NTFS | 12:30 | ALL PASSED | 2.2 GB at 2.79 MB/s; read back 33.62 MB/s; tree 244 ✓ | ALL 21052 MATCHED |
+| px-053b-d1ext4 | Pixel 7 Pro | `20b582c` | D1EXT4 | 12:52 | ALL PASSED | 2.2 GB at 5.75 MB/s; read back 40.63 MB/s; tree 244 ✓ | ALL 20854 MATCHED |
+| px-053b-d1blexfat | Pixel 7 Pro | `20b582c` | D1BLEXFAT | 13:06 | ALL PASSED | 2.2 GB at 7.11 MB/s; read back 35.97 MB/s; tree 248 ✓ | ALL 20898 MATCHED |
+| px-053b-d1blntfs | Pixel 7 Pro | `20b582c` | D1BLNTFS | 13:19 | ALL PASSED | 2.2 GB at 2.68 MB/s; read back 29.06 MB/s; tree 246 ✓ | ALL 20905 MATCHED |
+| px-053b-d1apfsci | Pixel 7 Pro | `20b582c` | D1APFSCI | 13:43 | SKIPPED — read-only: OTG Master reads AP | 2.2 GB at ; read back ; SKIPPED — read-only: OTG Master reads APFS but cannot write  | ALL 22129 MATCHED |
+| px-053b-d1apfscs | Pixel 7 Pro | `20b582c` | D1APFSCS | 13:54 | SKIPPED — read-only: OTG Master reads AP | 2.2 GB at ; read back ; SKIPPED — read-only: OTG Master reads APFS but cannot write  | ALL 22024 MATCHED |
+| px-053b-d1apfseci | Pixel 7 Pro | `20b582c` | D1APFSECI | 14:03 | SKIPPED — read-only: OTG Master reads AP | 2.2 GB at ; read back ; SKIPPED — read-only: OTG Master reads APFS but cannot write  | ALL 21777 MATCHED |
+| px-053b-d1apfsecs | Pixel 7 Pro | `20b582c` | D1APFSECS | 14:13 | SKIPPED — read-only: OTG Master reads AP | 2.2 GB at ; read back ; SKIPPED — read-only: OTG Master reads APFS but cannot write  | ALL 21911 MATCHED |
+| px-053a-d4vcext2 | Pixel 7 Pro | `20b582c` | D4VCEXT2 | 18:11 | SKIPPED — read-only: it is ext2/ext3 (no | 2.2 GB at ; read back ; SKIPPED — read-only: it is ext2/ext3 (no extents), which thi | ALL 21948 MATCHED |
+| px-053a-d4vcext3 | Pixel 7 Pro | `20b582c` | D4VCEXT3 | 18:15 | SKIPPED — read-only: it is ext2/ext3 (no | 2.2 GB at ; read back ; SKIPPED — read-only: it is ext2/ext3 (no extents), which thi | ALL 21956 MATCHED |
+| px-053a-d4l1ext2 | Pixel 7 Pro | `20b582c` | D4L1EXT2 | 18:20 | SKIPPED — read-only: it is ext2/ext3 (no | 2.2 GB at ; read back ; SKIPPED — read-only: it is ext2/ext3 (no extents), which thi | ALL 21870 MATCHED |
+| px-053a-d4l1ext3 | Pixel 7 Pro | `20b582c` | D4L1EXT3 | 18:24 | SKIPPED — read-only: it is ext2/ext3 (no | 2.2 GB at ; read back ; SKIPPED — read-only: it is ext2/ext3 (no extents), which thi | ALL 21875 MATCHED |
+| px-053a-d4l2ext2 | Pixel 7 Pro | `20b582c` | D4L2EXT2 | 18:29 | SKIPPED — read-only: it is ext2/ext3 (no | 2.2 GB at ; read back ; SKIPPED — read-only: it is ext2/ext3 (no extents), which thi | ALL 21678 MATCHED |
+| px-053a-d4l2ext3 | Pixel 7 Pro | `20b582c` | D4L2EXT3 | 18:33 | SKIPPED — read-only: it is ext2/ext3 (no | 2.2 GB at ; read back ; SKIPPED — read-only: it is ext2/ext3 (no extents), which thi | ALL 21971 MATCHED |
+| px-053a-d4l4ext2 | Pixel 7 Pro | `20b582c` | D4L4EXT2 | 18:38 | SKIPPED — read-only: it is ext2/ext3 (no | 2.2 GB at ; read back ; SKIPPED — read-only: it is ext2/ext3 (no extents), which thi | ALL 21916 MATCHED |
+| px-053a-d4l4ext3 | Pixel 7 Pro | `20b582c` | D4L4EXT3 | 18:43 | SKIPPED — read-only: it is ext2/ext3 (no | 2.2 GB at ; read back ; SKIPPED — read-only: it is ext2/ext3 (no extents), which thi | ALL 21846 MATCHED |
+| px-053a-d4blfat32 | Pixel 7 Pro | `20b582c` | D4BLFAT32 | 18:47 | ALL PASSED | 2.2 GB at 6.70 MB/s; read back 29.54 MB/s; tree 249 ✓ | ALL 20918 MATCHED |
+| px-053a-d4blexfat | Pixel 7 Pro | `20b582c` | D4BLEXFAT | 19:00 | ALL PASSED | 2.2 GB at 7.39 MB/s; read back 30.30 MB/s; tree 252 ✓ | ALL 21073 MATCHED |
+| px-053a-d2blfat32 | Pixel 7 Pro | `20b582c` | D2BLFAT32 | 21:29 | ALL PASSED | 2.2 GB at 6.29 MB/s; read back 31.10 MB/s; tree 246 ✓ | ALL 20974 MATCHED |
+| px-053a-d2vcfat32 | Pixel 7 Pro | `20b582c` | D2VCFAT32 | 21:43 | ALL PASSED | 2.2 GB at 6.54 MB/s; read back 31.90 MB/s; tree 245 ✓ | ALL 20958 MATCHED |
+| px-053a-d2vcexfat | Pixel 7 Pro | `20b582c` | D2VCEXFAT | 21:56 | ALL PASSED | 2.2 GB at 7.16 MB/s; read back 31.59 MB/s; tree 248 ✓ | ALL 20974 MATCHED |
+| px-053a-d2vcntfs | Pixel 7 Pro | `20b582c` | D2VCNTFS | 22:10 | ALL PASSED | 2.2 GB at 2.84 MB/s; read back 30.10 MB/s; tree 244 ✓ | ALL 20919 MATCHED |
+| px-053a-d2vcext4 | Pixel 7 Pro | `20b582c` | D2VCEXT4 | 22:34 | ALL PASSED | 2.2 GB at 5.41 MB/s; read back 31.86 MB/s; tree 247 ✓ | ALL 21071 MATCHED |
+| px-053a-d2l1fat32 | Pixel 7 Pro | `20b582c` | D2L1FAT32 | 22:49 | ALL PASSED | 2.2 GB at 6.97 MB/s; read back 32.55 MB/s; tree 250 ✓ | ALL 20953 MATCHED |
+| px-053a-d2l1ext4 | Pixel 7 Pro | `20b582c` | D2L1EXT4 | 23:01 | ALL PASSED | 2.2 GB at 5.27 MB/s; read back 34.27 MB/s; tree 247 ✓ | ALL 21024 MATCHED |
+| px-053a-d2l2exfat | Pixel 7 Pro | `20b582c` | D2L2EXFAT | 23:16 | ALL PASSED | 2.2 GB at 7.26 MB/s; read back 30.64 MB/s; tree 248 ✓ | ALL 20942 MATCHED |
+| px-053a-d2l4ext4 | Pixel 7 Pro | `20b582c` | D2L4EXT4 | 23:31 | ALL PASSED | 2.2 GB at 5.23 MB/s; read back 29.07 MB/s; tree 247 ✓ | ALL 20888 MATCHED |
+| px-053a-d2l4ntfs | Pixel 7 Pro | `20b582c` | D2L4NTFS | 23:46 | ALL PASSED | 2.2 GB at 2.65 MB/s; read back 28.37 MB/s; tree 245 ✓ | ALL 20927 MATCHED |
+| px-053a-d3ext2 | Pixel 7 Pro | `20b582c` | D3EXT2 | 05:14 | SKIPPED — read-only: it is ext2/ext3 (no | 2.2 GB at ; read back ; SKIPPED — read-only: it is ext2/ext3 (no extents), which thi | ALL 21821 MATCHED |
+| px-053a-d3ext3 | Pixel 7 Pro | `20b582c` | D3EXT3 | 05:18 | SKIPPED — read-only: it is ext2/ext3 (no | 2.2 GB at ; read back ; SKIPPED — read-only: it is ext2/ext3 (no extents), which thi | ALL 21883 MATCHED |
+| px-053a-d3l1exfat | Pixel 7 Pro | `20b582c` | D3L1EXFAT | 05:22 | ALL PASSED | 2.2 GB at 7.20 MB/s; read back 31.27 MB/s; tree 250 ✓ | ALL 20929 MATCHED |
+| px-053a-d3l1ntfs | Pixel 7 Pro | `20b582c` | D3L1NTFS | 05:38 | ALL PASSED | 2.2 GB at 2.68 MB/s; read back 27.84 MB/s; tree 247 ✓ | ALL 20920 MATCHED |
+| px-053a-d3l2fat32 | Pixel 7 Pro | `20b582c` | D3L2FAT32 | 06:02 | ALL PASSED | 2.2 GB at 6.81 MB/s; read back 32.77 MB/s; tree 251 ✓ | ALL 20913 MATCHED |
+| px-053a-d3l2ntfs | Pixel 7 Pro | `20b582c` | D3L2NTFS | 06:16 | ALL PASSED | 2.2 GB at 2.56 MB/s; read back 26.41 MB/s; tree 247 ✓ | ALL 20925 MATCHED |
+| px-053a-d3l2ext4 | Pixel 7 Pro | `20b582c` | D3L2EXT4 | 06:42 | ALL PASSED | 2.2 GB at 5.10 MB/s; read back 31.12 MB/s; tree 250 ✓ | ALL 20939 MATCHED |
+| px-053a-d3l4fat32 | Pixel 7 Pro | `20b582c` | D3L4FAT32 | 06:58 | ALL PASSED | 2.2 GB at 4.63 MB/s; read back 31.66 MB/s; tree 250 ✓ | ALL 20972 MATCHED |
+| px-053a-d3l4exfat | Pixel 7 Pro | `20b582c` | D3L4EXFAT | 07:14 | ALL PASSED | 2.2 GB at 4.48 MB/s; read back 29.93 MB/s; tree 246 ✓ | ALL 20910 MATCHED |
+| px-053a-d3blntfs | Pixel 7 Pro | `20b582c` | D3BLNTFS | 07:34 | ALL PASSED | 2.2 GB at 2.71 MB/s; read back 27.74 MB/s; tree 245 ✓ | ALL 21023 MATCHED |
+| px-053b-vc_ats_argon_pim0 | Pixel 7 Pro | `20b582c` | VC_ATS_ARGON_PIM0 | 09:43 | ALL PASSED | 2.2 GB at 6.32 MB/s; read back 24.95 MB/s; tree 251 ✓ | ALL 20902 MATCHED |
+| px-053b-vc_sta_argon_pim1 | Pixel 7 Pro | `20b582c` | VC_STA_ARGON_PIM1 | 09:59 | ALL PASSED | 2.2 GB at 6.55 MB/s; read back 25.89 MB/s; tree 245 ✓ | ALL 20965 MATCHED |
+| px-053b-vc_two_sha512_pim0 | Pixel 7 Pro | `20b582c` | VC_TWO_SHA512_PIM0 | 10:13 | ALL PASSED | 2.2 GB at 2.83 MB/s; read back 25.93 MB/s; tree 251 ✓ | ALL 20962 MATCHED |
+| px-053b-vc_at_argon_pim1 | Pixel 7 Pro | `20b582c` | VC_AT_ARGON_PIM1 | 10:46 | ALL PASSED | 2.2 GB at 6.27 MB/s; read back 29.10 MB/s; tree 245 ✓ | ALL 20950 MATCHED |
+| px-053b-vc_sa_sha512_pim1 | Pixel 7 Pro | `20b582c` | VC_SA_SHA512_PIM1 | 11:02 | ALL PASSED | 2.2 GB at 4.86 MB/s; read back 29.12 MB/s; tree 251 ✓ | ALL 20027 MATCHED |
+| px-053b-vc_ts_argon_pim31 | Pixel 7 Pro | `20b582c` | VC_TS_ARGON_PIM31 | 11:17 | ALL PASSED | 2.2 GB at 7.58 MB/s; read back 27.69 MB/s; tree 245 ✓ | ALL 20984 MATCHED |
+| px-053b-fmt_exfat | Pixel 7 Pro | `20b582c` | FMT_EXFAT | 11:38 | ALL PASSED | **FAILED** java.io.IOException: exFAT write failed at offset 0 (0 of 2012930 bytes written): -28 | ALL 20027 MATCHED |
+| px-053c-fmt_exfat | Pixel 7 Pro | `20b582c` | FMT_EXFAT | 16:00 | **FAILED** exFAT write failed at offset 786432 (0 of 65536 bytes written): -28 (ENOSPC) | not reached | ALL 20027 MATCHED |
+| px-053d-fmt_exfat | Pixel 7 Pro | `20b582c` | FMT_EXFAT | 16:17 | ALL PASSED | not run | ALL 20027 MATCHED |
+| px-053d-fmt_fat32 | Pixel 7 Pro | `20b582c` | FMT_FAT32 | 16:22 | ALL PASSED | not run | ALL 20027 MATCHED |
+| px-053d-enc_to_exfat | Pixel 7 Pro | `20b582c` | ENC_TO_EXFAT | 16:27 | ALL PASSED | not run | ALL 20027 MATCHED |
+| px-053d-enc_to_fat32 | Pixel 7 Pro | `20b582c` | ENC_TO_FAT32 | 16:30 | ALL PASSED | not run | ALL 20027 MATCHED |
+| op-053b-d2blfat32 | OnePlus 7 | `20b582c` | D2BLFAT32 | 11:09 | ALL PASSED | 2.2 GB at 7.44 MB/s; read back 33.22 MB/s; tree 246 ✓ | ALL 20974 MATCHED |
+| op-053b-d2vcfat32 | OnePlus 7 | `20b582c` | D2VCFAT32 | 11:21 | ALL PASSED | 2.2 GB at 7.84 MB/s; read back 31.79 MB/s; tree 245 ✓ | ALL 20958 MATCHED |
+| op-053b-d2vcexfat | OnePlus 7 | `20b582c` | D2VCEXFAT | 11:33 | ALL PASSED | 2.2 GB at 8.30 MB/s; read back 32.89 MB/s; tree 248 ✓ | ALL 20974 MATCHED |
+| op-053b-d2vcntfs | OnePlus 7 | `20b582c` | D2VCNTFS | 11:47 | ALL PASSED | 2.2 GB at 3.12 MB/s; read back 34.20 MB/s; tree 244 ✓ | ALL 20919 MATCHED |
+| op-053b-d2vcext4 | OnePlus 7 | `20b582c` | D2VCEXT4 | 12:09 | ALL PASSED | 2.2 GB at 6.39 MB/s; read back 33.07 MB/s; tree 247 ✓ | ALL 21071 MATCHED |
+| op-053b-d2l1fat32 | OnePlus 7 | `20b582c` | D2L1FAT32 | 12:23 | ALL PASSED | 2.2 GB at 8.11 MB/s; read back 32.80 MB/s; tree 250 ✓ | ALL 20953 MATCHED |
+| op-053b-d2l1ext4 | OnePlus 7 | `20b582c` | D2L1EXT4 | 12:35 | ALL PASSED | 2.2 GB at 5.98 MB/s; read back 32.54 MB/s; tree 247 ✓ | ALL 21024 MATCHED |
+| op-053b-d2l2exfat | OnePlus 7 | `20b582c` | D2L2EXFAT | 12:49 | ALL PASSED | 2.2 GB at 8.32 MB/s; read back 32.02 MB/s; tree 248 ✓ | ALL 20942 MATCHED |
+| op-053b-d2l4ext4 | OnePlus 7 | `20b582c` | D2L4EXT4 | 13:03 | ALL PASSED | 2.2 GB at 6.05 MB/s; read back 31.28 MB/s; tree 247 ✓ | ALL 20888 MATCHED |
+| op-053b-d2l4ntfs | OnePlus 7 | `20b582c` | D2L4NTFS | 13:17 | ALL PASSED | 2.2 GB at 2.92 MB/s; read back 33.61 MB/s; tree 245 ✓ | ALL 20927 MATCHED |
+| op-053a-d3ext2 | OnePlus 7 | `20b582c` | D3EXT2 | 18:10 | SKIPPED — read-only: it is ext2/ext3 (no | 2.2 GB at ; read back ; SKIPPED — read-only: it is ext2/ext3 (no extents), which thi | ALL 21821 MATCHED |
+| op-053a-d3ext3 | OnePlus 7 | `20b582c` | D3EXT3 | 18:13 | SKIPPED — read-only: it is ext2/ext3 (no | 2.2 GB at ; read back ; SKIPPED — read-only: it is ext2/ext3 (no extents), which thi | ALL 21883 MATCHED |
+| op-053a-d3l1exfat | OnePlus 7 | `20b582c` | D3L1EXFAT | 18:17 | ALL PASSED | 2.2 GB at 7.85 MB/s; read back 33.10 MB/s; tree 250 ✓ | ALL 20929 MATCHED |
+| op-053a-d3l1ntfs | OnePlus 7 | `20b582c` | D3L1NTFS | 18:31 | ALL PASSED | 2.2 GB at 3.03 MB/s; read back 33.58 MB/s; tree 247 ✓ | ALL 20920 MATCHED |
+| op-053a-d3l2fat32 | OnePlus 7 | `20b582c` | D3L2FAT32 | 18:54 | ALL PASSED | 2.2 GB at 8.32 MB/s; read back 32.94 MB/s; tree 251 ✓ | ALL 20913 MATCHED |
+| op-053a-d3l2ntfs | OnePlus 7 | `20b582c` | D3L2NTFS | 19:06 | ALL PASSED | 2.2 GB at 2.97 MB/s; read back 32.65 MB/s; tree 247 ✓ | ALL 20925 MATCHED |
+| op-053a-d3l2ext4 | OnePlus 7 | `20b582c` | D3L2EXT4 | 19:30 | ALL PASSED | 2.2 GB at 5.66 MB/s; read back 31.66 MB/s; tree 250 ✓ | ALL 20939 MATCHED |
+| op-053a-d3l4fat32 | OnePlus 7 | `20b582c` | D3L4FAT32 | 19:45 | ALL PASSED | 2.2 GB at 5.54 MB/s; read back 31.92 MB/s; tree 250 ✓ | ALL 20972 MATCHED |
+| op-053a-d3l4exfat | OnePlus 7 | `20b582c` | D3L4EXFAT | 20:00 | ALL PASSED | 2.2 GB at 5.62 MB/s; read back 32.24 MB/s; tree 246 ✓ | ALL 20910 MATCHED |
+| op-053a-d3blntfs | OnePlus 7 | `20b582c` | D3BLNTFS | 20:17 | ALL PASSED | 2.2 GB at 3.07 MB/s; read back 34.34 MB/s; tree 245 ✓ | ALL 21023 MATCHED |
+| op-053a-d1fat32 | OnePlus 7 | `20b582c` | D1FAT32 | 21:57 | ALL PASSED | 2.2 GB at 9.51 MB/s; read back 45.91 MB/s; tree 240 ✓ | ALL 20995 MATCHED |
+| op-053a-d1exfat | OnePlus 7 | `20b582c` | D1EXFAT | 22:07 | ALL PASSED | 2.2 GB at 10.95 MB/s; read back 50.46 MB/s; tree 250 ✓ | ALL 20963 MATCHED |
+| op-053a-d1ntfs | OnePlus 7 | `20b582c` | D1NTFS | 22:17 | ALL PASSED | 2.2 GB at 2.97 MB/s; read back 45.60 MB/s; tree 244 ✓ | ALL 21052 MATCHED |
+| op-053a-d1ext4 | OnePlus 7 | `20b582c` | D1EXT4 | 22:37 | ALL PASSED | 2.2 GB at 6.78 MB/s; read back 48.50 MB/s; tree 244 ✓ | ALL 20854 MATCHED |
+| op-053a-d1blexfat | OnePlus 7 | `20b582c` | D1BLEXFAT | 22:49 | ALL PASSED | 2.2 GB at 8.19 MB/s; read back 35.15 MB/s; tree 248 ✓ | ALL 20898 MATCHED |
+| op-053a-d1blntfs | OnePlus 7 | `20b582c` | D1BLNTFS | 23:01 | ALL PASSED | 2.2 GB at 2.98 MB/s; read back 34.45 MB/s; tree 246 ✓ | ALL 20905 MATCHED |
+| op-053a-d1apfsci | OnePlus 7 | `20b582c` | D1APFSCI | 23:24 | SKIPPED — read-only: OTG Master reads AP | 2.2 GB at ; read back ; SKIPPED — read-only: OTG Master reads APFS but cannot write  | ALL 22129 MATCHED |
+| op-053a-d1apfscs | OnePlus 7 | `20b582c` | D1APFSCS | 23:30 | SKIPPED — read-only: OTG Master reads AP | 2.2 GB at ; read back ; SKIPPED — read-only: OTG Master reads APFS but cannot write  | ALL 22024 MATCHED |
+| op-053a-d1apfseci | OnePlus 7 | `20b582c` | D1APFSECI | 23:37 | SKIPPED — read-only: OTG Master reads AP | 2.2 GB at ; read back ; SKIPPED — read-only: OTG Master reads APFS but cannot write  | ALL 21777 MATCHED |
+| op-053a-d1apfsecs | OnePlus 7 | `20b582c` | D1APFSECS | 23:44 | SKIPPED — read-only: OTG Master reads AP | 2.2 GB at ; read back ; SKIPPED — read-only: OTG Master reads APFS but cannot write  | ALL 21911 MATCHED |
+| op-053a-d4vcext2 | OnePlus 7 | `20b582c` | D4VCEXT2 | 05:14 | SKIPPED — read-only: it is ext2/ext3 (no | 2.2 GB at ; read back ; SKIPPED — read-only: it is ext2/ext3 (no extents), which thi | ALL 21948 MATCHED |
+| op-053a-d4vcext3 | OnePlus 7 | `20b582c` | D4VCEXT3 | 05:19 | SKIPPED — read-only: it is ext2/ext3 (no | 2.2 GB at ; read back ; SKIPPED — read-only: it is ext2/ext3 (no extents), which thi | ALL 21956 MATCHED |
+| op-053a-d4l1ext2 | OnePlus 7 | `20b582c` | D4L1EXT2 | 05:23 | SKIPPED — read-only: it is ext2/ext3 (no | 2.2 GB at ; read back ; SKIPPED — read-only: it is ext2/ext3 (no extents), which thi | ALL 21870 MATCHED |
+| op-053a-d4l1ext3 | OnePlus 7 | `20b582c` | D4L1EXT3 | 05:28 | SKIPPED — read-only: it is ext2/ext3 (no | 2.2 GB at ; read back ; SKIPPED — read-only: it is ext2/ext3 (no extents), which thi | ALL 21875 MATCHED |
+| op-053a-d4l2ext2 | OnePlus 7 | `20b582c` | D4L2EXT2 | 05:33 | SKIPPED — read-only: it is ext2/ext3 (no | 2.2 GB at ; read back ; SKIPPED — read-only: it is ext2/ext3 (no extents), which thi | ALL 21678 MATCHED |
+| op-053a-d4l2ext3 | OnePlus 7 | `20b582c` | D4L2EXT3 | 05:37 | SKIPPED — read-only: it is ext2/ext3 (no | 2.2 GB at ; read back ; SKIPPED — read-only: it is ext2/ext3 (no extents), which thi | ALL 21971 MATCHED |
+| op-053a-d4l4ext2 | OnePlus 7 | `20b582c` | D4L4EXT2 | 05:42 | SKIPPED — read-only: it is ext2/ext3 (no | 2.2 GB at ; read back ; SKIPPED — read-only: it is ext2/ext3 (no extents), which thi | ALL 21916 MATCHED |
+| op-053a-d4l4ext3 | OnePlus 7 | `20b582c` | D4L4EXT3 | 05:46 | SKIPPED — read-only: it is ext2/ext3 (no | 2.2 GB at ; read back ; SKIPPED — read-only: it is ext2/ext3 (no extents), which thi | ALL 21846 MATCHED |
+| op-053a-d4blfat32 | OnePlus 7 | `20b582c` | D4BLFAT32 | 05:51 | ALL PASSED | 2.2 GB at 7.66 MB/s; read back 30.97 MB/s; tree 249 ✓ | ALL 20918 MATCHED |
+| op-053a-d4blexfat | OnePlus 7 | `20b582c` | D4BLEXFAT | 06:04 | ALL PASSED | 2.2 GB at 8.42 MB/s; read back 32.86 MB/s; tree 252 ✓ | ALL 21073 MATCHED |
+| op-053a-vc_ats_argon_pim0 | OnePlus 7 | `20b582c` | VC_ATS_ARGON_PIM0 | 07:39 | ALL PASSED | 2.2 GB at 7.29 MB/s; read back 19.94 MB/s; tree 251 ✓ | ALL 20902 MATCHED |
+| op-053a-vc_sta_argon_pim1 | OnePlus 7 | `20b582c` | VC_STA_ARGON_PIM1 | 07:54 | ALL PASSED | 2.2 GB at 6.41 MB/s; read back 23.22 MB/s; tree 245 ✓ | ALL 20965 MATCHED |
+| op-053a-vc_two_sha512_pim0 | OnePlus 7 | `20b582c` | VC_TWO_SHA512_PIM0 | 08:08 | ALL PASSED | 2.2 GB at 3.06 MB/s; read back 31.23 MB/s; tree 251 ✓ | ALL 20962 MATCHED |
+| op-053a-vc_at_argon_pim1 | OnePlus 7 | `20b582c` | VC_AT_ARGON_PIM1 | 08:40 | ALL PASSED | 2.2 GB at 6.89 MB/s; read back 28.16 MB/s; tree 245 ✓ | ALL 20950 MATCHED |
+| op-053a-vc_sa_sha512_pim1 | OnePlus 7 | `20b582c` | VC_SA_SHA512_PIM1 | 08:55 | ALL PASSED | 2.2 GB at 6.02 MB/s; read back 23.70 MB/s; tree 251 ✓ | ALL 20915 MATCHED |
+| op-053a-vc_ts_argon_pim31 | OnePlus 7 | `20b582c` | VC_TS_ARGON_PIM31 | 09:09 | ALL PASSED | 2.2 GB at 8.05 MB/s; read back 26.80 MB/s; tree 245 ✓ | ALL 20984 MATCHED |
+| op-053a-fmt_exfat | OnePlus 7 | `20b582c` | FMT_EXFAT | 09:31 | ALL PASSED | not run | ALL 20027 MATCHED |
+| op-053a-fmt_fat32 | OnePlus 7 | `20b582c` | FMT_FAT32 | 09:35 | ALL PASSED | not run | ALL 20027 MATCHED |
+| op-053a-enc_to_exfat | OnePlus 7 | `20b582c` | ENC_TO_EXFAT | 09:39 | ALL PASSED | not run | ALL 20027 MATCHED |
+| op-053a-enc_to_fat32 | OnePlus 7 | `20b582c` | ENC_TO_FAT32 | 09:42 | ALL PASSED | not run | ALL 20027 MATCHED |
+| tab-053a-d2blfat32 | Galaxy Tab A9+ | `20b582c` | D2BLFAT32 | 08:42 | ALL PASSED | **FAILED** java.io.IOException: could not write the last 1024 KiB again after a failed write; data written just before it may not be on the drive: IOException: M | FAILED java.io.IOException: could not write the last 1024 KiB again af |
+| tab-053b-d1fat32 | Galaxy Tab A9+ | `20b582c` | D1FAT32 | 09:58 | ALL PASSED | 2.2 GB at 5.79 MB/s; read back 18.60 MB/s; tree 240 ✓ | ALL 20995 MATCHED |
+| tab-053b-d1exfat | Galaxy Tab A9+ | `20b582c` | D1EXFAT | 10:14 | ALL PASSED | **FAILED** java.io.IOException: exFAT write failed at offset 964432446 (0 of 3145728 bytes written): -5 | ALL 20963 MATCHED |
+| tab-053c-vc_ats_argon_pim0 | Galaxy Tab A9+ | `20b582c` | VC_ATS_ARGON_PIM0 | 10:44 | ALL PASSED | 2.2 GB at 4.56 MB/s; read back 9.45 MB/s; tree 251 ✓ | ALL 20902 MATCHED |
+| tab-053c-vc_sta_argon_pim1 | Galaxy Tab A9+ | `20b582c` | VC_STA_ARGON_PIM1 | 11:09 | ALL PASSED | 2.2 GB at 4.40 MB/s; read back 9.45 MB/s; tree 245 ✓ | ALL 20965 MATCHED |
+| tab-053c-vc_two_sha512_pim0 | Galaxy Tab A9+ | `20b582c` | VC_TWO_SHA512_PIM0 | 11:33 | ALL PASSED | 2.2 GB at 2.22 MB/s; read back 15.24 MB/s; tree 251 ✓ | ALL 20962 MATCHED |
+| tab-053c-vc_at_argon_pim1 | Galaxy Tab A9+ | `20b582c` | VC_AT_ARGON_PIM1 | 12:18 | ALL PASSED | 2.2 GB at 4.43 MB/s; read back 10.23 MB/s; tree 245 ✓ | ALL 20950 MATCHED |
+| tab-053c-vc_sa_sha512_pim1 | Galaxy Tab A9+ | `20b582c` | VC_SA_SHA512_PIM1 | 12:44 | ALL PASSED | 2.2 GB at 3.95 MB/s; read back 9.24 MB/s; tree 251 ✓ | ALL 20915 MATCHED |
+| tab-053c-vc_ts_argon_pim31 | Galaxy Tab A9+ | `20b582c` | VC_TS_ARGON_PIM31 | 13:09 | ALL PASSED | 2.2 GB at 4.62 MB/s; read back 8.96 MB/s; tree 245 ✓ | ALL 20984 MATCHED |
+| tab-053c-fmt_exfat | Galaxy Tab A9+ | `20b582c` | FMT_EXFAT | 13:42 | ALL PASSED | **FAILED** java.io.IOException: exFAT write failed at offset 0 (0 of 2012930 bytes written): -28 | ALL 20027 MATCHED |
+| tab-053d-d3ext2 | Galaxy Tab A9+ | `20b582c` | D3EXT2 | 15:57 | SKIPPED — read-only: it is ext2/ext3 (no | 2.2 GB at ; read back ; SKIPPED — read-only: it is ext2/ext3 (no extents), which thi | ALL 21821 MATCHED |
+| tab-053d-d3ext3 | Galaxy Tab A9+ | `20b582c` | D3EXT3 | 16:03 | SKIPPED — read-only: it is ext2/ext3 (no | 2.2 GB at ; read back ; SKIPPED — read-only: it is ext2/ext3 (no extents), which thi | ALL 21883 MATCHED |
+| tab-053d-d3l1exfat | Galaxy Tab A9+ | `20b582c` | D3L1EXFAT | 16:09 | ALL PASSED | **FAILED** java.io.IOException: exFAT write failed at offset 725792967 (0 of 1052673 bytes written): -5 | ALL 20929 MATCHED |
+| tab-053e-d3l1exfat | Galaxy Tab A9+ | `20b582c` | D3L1EXFAT | 16:31 | ALL PASSED | 2.2 GB at 0.98 MB/s; read back 11.81 MB/s; tree 250 ✓ | ALL 20929 MATCHED |
+| tab-053e-d3l1ntfs | Galaxy Tab A9+ | `20b582c` | D3L1NTFS | 17:22 | ALL PASSED | 2.2 GB at 2.11 MB/s; read back 15.76 MB/s; tree 247 ✓ | ALL 20920 MATCHED |
+| tab-053e-d3l2fat32 | Galaxy Tab A9+ | `20b582c` | D3L2FAT32 | 17:55 | ALL PASSED | **FAILED** java.io.IOException: could not write the last 948 KiB again after a failed write; data written just before it may not be on the drive: IOException: MA | ALL 20913 MATCHED |
+| tab-053f-d2blfat32 | Galaxy Tab A9+ | `20b582c` | D2BLFAT32 | 19:04 | ALL PASSED | 2.2 GB at 5.84 MB/s; read back 13.02 MB/s; tree 246 ✓ | ALL 20974 MATCHED |
+| tab-053f-d2vcfat32 | Galaxy Tab A9+ | `20b582c` | D2VCFAT32 | 19:22 | ALL PASSED | 2.2 GB at 5.28 MB/s; read back 12.97 MB/s; tree 245 ✓ | ALL 20958 MATCHED |
+| tab-053f-d2vcexfat | Galaxy Tab A9+ | `20b582c` | D2VCEXFAT | 19:41 | ALL PASSED | 2.2 GB at 5.09 MB/s; read back 12.30 MB/s; tree 248 ✓ | ALL 20974 MATCHED |
+| tab-053f-d2vcntfs | Galaxy Tab A9+ | `20b582c` | D2VCNTFS | 20:03 | ALL PASSED | 2.2 GB at 2.16 MB/s; read back 15.56 MB/s; tree 244 ✓ | ALL 20919 MATCHED |
+| tab-053f-d2vcext4 | Galaxy Tab A9+ | `20b582c` | D2VCEXT4 | 20:36 | ALL PASSED | 2.2 GB at 4.28 MB/s; read back 11.90 MB/s; tree 247 ✓ | ALL 21071 MATCHED |
+| tab-053f-d2l1fat32 | Galaxy Tab A9+ | `20b582c` | D2L1FAT32 | 20:58 | ALL PASSED | 2.2 GB at 5.23 MB/s; read back 13.30 MB/s; tree 250 ✓ | ALL 20953 MATCHED |
+| tab-053f-d2l1ext4 | Galaxy Tab A9+ | `20b582c` | D2L1EXT4 | 21:17 | ALL PASSED | 2.2 GB at 4.02 MB/s; read back 11.96 MB/s; tree 247 ✓ | ALL 21024 MATCHED |
+| tab-053f-d2l2exfat | Galaxy Tab A9+ | `20b582c` | D2L2EXFAT | 21:40 | ALL PASSED | 2.2 GB at 5.05 MB/s; read back 12.07 MB/s; tree 248 ✓ | ALL 20942 MATCHED |
+| tab-053f-d2l4ext4 | Galaxy Tab A9+ | `20b582c` | D2L4EXT4 | 22:03 | ALL PASSED | 2.2 GB at 4.01 MB/s; read back 12.00 MB/s; tree 247 ✓ | ALL 20888 MATCHED |
+| tab-053f-d2l4ntfs | Galaxy Tab A9+ | `20b582c` | D2L4NTFS | 22:26 | ALL PASSED | 2.2 GB at 2.17 MB/s; read back 15.64 MB/s; tree 245 ✓ | ALL 20927 MATCHED |
+| tab-053g-d1exfat | Galaxy Tab A9+ | `20b582c` | D1EXFAT | 23:13 | ALL PASSED | 2.2 GB at 6.62 MB/s; read back 17.51 MB/s; tree 250 ✓ | ALL 20963 MATCHED |
+| tab-053g-d1ntfs | Galaxy Tab A9+ | `20b582c` | D1NTFS | 23:29 | ALL PASSED | 2.2 GB at 2.14 MB/s; read back 21.07 MB/s; tree 244 ✓ | ALL 21052 MATCHED |
+| tab-053g-d1ext4 | Galaxy Tab A9+ | `20b582c` | D1EXT4 | 23:59 | ALL PASSED | **FAILED** java.io.IOException: could not write the last 970 KiB again after a failed write; data written just before it may not be on the drive: IOException: MA | ALL 20854 MATCHED |
+| tab-053h-d3l2fat32 | Galaxy Tab A9+ | `20b582c` | D3L2FAT32 | 07:10 | ALL PASSED | big file skipped (space); tree 251 ✓ | ALL 20913 MATCHED |
+| tab-053h-d3l2ntfs | Galaxy Tab A9+ | `20b582c` | D3L2NTFS | 07:19 | ALL PASSED | **FAILED** java.io.IOException: NTFS write to /BENCH_BIG/big.bin at 744063834 (1052673 bytes) failed: I/O error (EIO) | ALL 20925 MATCHED |
+| tab-053i-d4l1ext2 | Galaxy Tab A9+ | `20b582c` | D4L1EXT2 | 08:38 | SKIPPED — read-only: it is ext2/ext3 (no | 2.2 GB at ; read back ; SKIPPED — read-only: it is ext2/ext3 (no extents), which thi | ALL 21870 MATCHED |
+| tab-053i-d4l1ext3 | Galaxy Tab A9+ | `20b582c` | D4L1EXT3 | 08:46 | SKIPPED — read-only: it is ext2/ext3 (no | 2.2 GB at ; read back ; SKIPPED — read-only: it is ext2/ext3 (no extents), which thi | ALL 21875 MATCHED |
+| tab-053i-d4l2ext2 | Galaxy Tab A9+ | `20b582c` | D4L2EXT2 | 08:55 | SKIPPED — read-only: it is ext2/ext3 (no | 2.2 GB at ; read back ; SKIPPED — read-only: it is ext2/ext3 (no extents), which thi | ALL 21678 MATCHED |
+| tab-053i-d4l2ext3 | Galaxy Tab A9+ | `20b582c` | D4L2EXT3 | 09:03 | SKIPPED — read-only: it is ext2/ext3 (no | 2.2 GB at ; read back ; SKIPPED — read-only: it is ext2/ext3 (no extents), which thi | ALL 21971 MATCHED |
+| tab-053i-d4l4ext2 | Galaxy Tab A9+ | `20b582c` | D4L4EXT2 | 09:11 | SKIPPED — read-only: it is ext2/ext3 (no | 2.2 GB at ; read back ; SKIPPED — read-only: it is ext2/ext3 (no extents), which thi | ALL 21916 MATCHED |
+| tab-053i-d4l4ext3 | Galaxy Tab A9+ | `20b582c` | D4L4EXT3 | 09:19 | SKIPPED — read-only: it is ext2/ext3 (no | 2.2 GB at ; read back ; SKIPPED — read-only: it is ext2/ext3 (no extents), which thi | ALL 21846 MATCHED |
+| tab-053i-d4vcext2 | Galaxy Tab A9+ | `20b582c` | D4VCEXT2 | 09:27 | SKIPPED — read-only: it is ext2/ext3 (no | 2.2 GB at ; read back ; SKIPPED — read-only: it is ext2/ext3 (no extents), which thi | ALL 21948 MATCHED |
+| tab-053i-d4vcext3 | Galaxy Tab A9+ | `20b582c` | D4VCEXT3 | 09:35 | SKIPPED — read-only: it is ext2/ext3 (no | 2.2 GB at ; read back ; SKIPPED — read-only: it is ext2/ext3 (no extents), which thi | ALL 21956 MATCHED |
+| tab-053i-d4blfat32 | Galaxy Tab A9+ | `20b582c` | D4BLFAT32 | 09:43 | ALL PASSED | 2.2 GB at 5.02 MB/s; read back 12.34 MB/s; tree 249 ✓ | ALL 20918 MATCHED |
+| tab-053i-d4blexfat | Galaxy Tab A9+ | `20b582c` | D4BLEXFAT | 10:04 | ALL PASSED | 2.2 GB at 4.84 MB/s; read back 11.90 MB/s; tree 252 ✓ | ALL 21073 MATCHED |
+| tab-053j-fmt_exfat | Galaxy Tab A9+ | `20b582c` | FMT_EXFAT | 10:48 | ALL PASSED | not run | ALL 20027 MATCHED |
+| tab-053j-fmt_fat32 | Galaxy Tab A9+ | `20b582c` | FMT_FAT32 | 10:53 | ALL PASSED | not run | ALL 20027 MATCHED |
+| tab-053j-enc_to_exfat | Galaxy Tab A9+ | `20b582c` | ENC_TO_EXFAT | 10:59 | ALL PASSED | not run | ALL 20027 MATCHED |
+| tab-053j-enc_to_fat32 | Galaxy Tab A9+ | `20b582c` | ENC_TO_FAT32 | 11:03 | ALL PASSED | not run | ALL 20027 MATCHED |
+| tab-053k-d1ext4 | Galaxy Tab A9+ | `20b582c` | D1EXT4 | 11:10 | ALL PASSED | 2.2 GB at 4.87 MB/s; read back 17.64 MB/s; tree 244 ✓ | ALL 20854 MATCHED |
+| tab-053k-d1blntfs | Galaxy Tab A9+ | `20b582c` | D1BLNTFS | 11:26 | ALL PASSED | 2.2 GB at 2.13 MB/s; read back 16.25 MB/s; tree 246 ✓ | ALL 20905 MATCHED |
+| tab-053k-d1blexfat | Galaxy Tab A9+ | `20b582c` | D1BLEXFAT | 11:58 | ALL PASSED | 2.2 GB at 5.00 MB/s; read back 12.11 MB/s; tree 248 ✓ | ALL 20898 MATCHED |
+| tab-053k-d1apfsci | Galaxy Tab A9+ | `20b582c` | D1APFSCI | 12:21 | SKIPPED — read-only: OTG Master reads AP | 2.2 GB at ; read back ; SKIPPED — read-only: OTG Master reads APFS but cannot write  | ALL 22129 MATCHED |
+| tab-053k-d1apfscs | Galaxy Tab A9+ | `20b582c` | D1APFSCS | 12:33 | SKIPPED — read-only: OTG Master reads AP | 2.2 GB at ; read back ; SKIPPED — read-only: OTG Master reads APFS but cannot write  | ALL 22024 MATCHED |
+| tab-053k-d1apfseci | Galaxy Tab A9+ | `20b582c` | D1APFSECI | 12:46 | SKIPPED — read-only: OTG Master reads AP | 2.2 GB at ; read back ; SKIPPED — read-only: OTG Master reads APFS but cannot write  | ALL 21777 MATCHED |
+| tab-053k-d1apfsecs | Galaxy Tab A9+ | `20b582c` | D1APFSECS | 13:00 | SKIPPED — read-only: OTG Master reads AP | 2.2 GB at ; read back ; SKIPPED — read-only: OTG Master reads APFS but cannot write  | ALL 21911 MATCHED |
+| tab-053l-d3-d3l2ntfs | Galaxy Tab A9+ | `20b582c` | D3L2NTFS | 13:56 | ALL PASSED | 2.2 GB at 2.31 MB/s; read back 15.63 MB/s; tree 247 ✓ | ALL 20925 MATCHED |
+| tab-053l-d3-d3l2ext4 | Galaxy Tab A9+ | `20b582c` | D3L2EXT4 | 14:28 | ALL PASSED | **FAILED** java.io.IOException: could not write the last 925 KiB again after a failed write; data written just before it may not be on the drive: IOException: MA | ALL 20939 MATCHED |
+| tab-053m-d3-d3l4exfat | Galaxy Tab A9+ | `20b582c` | D3L4EXFAT | 15:15 | ALL PASSED | 2.2 GB at 3.42 MB/s; read back 12.02 MB/s; tree 246 ✓ | ALL 20910 MATCHED |
+| tab-053m-d3-d3l4fat32 | Galaxy Tab A9+ | `20b582c` | D3L4FAT32 | 15:43 | ALL PASSED | 2.2 GB at 3.77 MB/s; read back 13.26 MB/s; tree 250 ✓ | ALL 20972 MATCHED |
+| tab-053m-d3-d3blntfs | Galaxy Tab A9+ | `20b582c` | D3BLNTFS | 16:06 | ALL PASSED | 2.2 GB at 2.04 MB/s; read back 15.95 MB/s; tree 245 ✓ | ALL 21023 MATCHED |
+| tab-053n-d3-d3l2ext4 | Galaxy Tab A9+ | `20b582c` | D3L2EXT4 | 18:14 | ALL PASSED | 2.2 GB at 3.88 MB/s; read back 11.86 MB/s; tree 250 ✓ | ALL 20939 MATCHED |
+| tab-042ab-d1fat32 | Galaxy Tab A9+ | `cae0e9e` | D1FAT32 | 20:30 | ALL PASSED | 2.2 GB at 6.31 MB/s; read back 17.10 MB/s; tree 240 ✓ | ALL 20995 MATCHED |
+| tab-042ab-d1exfat | Galaxy Tab A9+ | `cae0e9e` | D1EXFAT | 20:47 | ALL PASSED | 2.2 GB at 5.99 MB/s; read back 14.54 MB/s; tree 250 ✓ | ALL 20963 MATCHED |
+| tab-042ab-d1ntfs | Galaxy Tab A9+ | `cae0e9e` | D1NTFS | 21:06 | ALL PASSED | **FAILED** java.io.IOException: NTFS write to /BENCH_BIG/big.bin at 711786036 (777777 bytes) failed: I/O error (EIO) | ALL 21052 MATCHED |
+
+Failures, all kept above:
+
+- **Galaxy Tab A9+, seven USB failures in bigwrite** (`tab-053a` D2BLFAT32, `tab-053b` D1EXFAT, `tab-053d` D3L1EXFAT, `tab-053e` D3L2FAT32, `tab-053g` D1EXT4, `tab-053h` D3L2NTFS, `tab-053l` D3L2EXT4): libaums `MAX_RECOVERY_ATTEMPTS Exceeded`, then EIO (-5) or `could not write the last N KiB again`. Each partition passed in a later sequence. `tab-053a` D2BLFAT32's fixtures also failed: the drive stopped answering after the write. The Pixel and the OnePlus had none on the same build and sticks.
+- **D5 FMT_EXFAT (p7) with bigwrite**, `px-053b` and `tab-053c`: ENOSPC (-28) at offset 0. The 2 GiB exFAT partition with 32 KiB clusters has about 95 MB free after the fixtures. `px-053c` then failed its write section with ENOSPC on the same partition. p7 to p10 were rerun without bigwrite (`px-053d`, `tab-053j`, `op-053a`) and passed.
+
+**`tab-042ab`, 0.4.2 on the Tab (11-16).** To see whether 0.5.3 caused the Tab's failures, the 0.4.2 debug APK from the 0.5.0 matrix (`cae0e9e`, package `app.fayaz.otgmaster`, which passed bigwrite on 32 of 32 Tab partitions on 11-04) was installed beside the benchmark build, with the benchmark build disabled, and run on Drive 1 with the same hub and cable. D1FAT32 and D1EXFAT passed; D1NTFS's bigwrite failed with `MAX_RECOVERY_ATTEMPTS` and EIO at 711 MB, the same failure. `LibaumsRawBlockDevice` and libaums' SCSI and USB code are identical between `cae0e9e` and `20b582c`. The failures come from the Tab's USB link, not the release. Debug build, so its figures are not comparable with the benchmark rows.
+
+Laptop checks:
+
+| Drive | After | Result |
+|---|---|---|
+| D1 | `px-053a`, `op-053a` | 9 of 10 CLEAN; D1FAT32 dirty bit from Android's mount, everything verified |
+| D1 | `px-053b` | ALL CLEAN |
+| D1 | `tab-053b` | 9 of 10 CLEAN; D1EXFAT big.bin differs (partial, the USB failure), `fsck.exfat` clean |
+| D1 | Tab, all ten | ALL CLEAN |
+| D1 | `tab-042ab` | ALL CLEAN; D1NTFS big.bin 711,786,036 B as written |
+| D2/2 | `px-053a`, `op-053b` | ALL CLEAN |
+| D2/2 | `tab-053a` | 9 of 10 CLEAN; D2BLFAT32 FAILED after the USB failure; restored from its image and rerun |
+| D2/2 | `tab-053f` | ALL CLEAN |
+| D3 | `px-053a` | ALL CLEAN |
+| D3 | `op-053a` | 8 of 10 CLEAN; D3EXT2 and D3EXT3 metadata changed by Android's mount, restored |
+| D3 | Tab | 8 of 10 CLEAN; **D3L2EXT4 `e2fsck -fn` rc=4, Block bitmap differences -(879218--879407)** (190 blocks leaked by the interrupted write, every file intact; fix filed for 0.5.4); D3L2FAT32 stray `FSCK0000.REC` from a laptop `fsck.fat` repair |
+| D4 | `px-053a`, `op-053a`, `tab-053i` | ALL CLEAN |
+| D5 | each device | p1 to p10 fsck clean, every fixture matched |
+
+Unlock times (request to mounted, Drive 5) are in the report; all within 5% of 0.5.2 on the same phone.
+
 ## 2026-11-11: 0.5.3 on the Pixel 7 Pro, D1 with bigwrite
 
 Benchmark build `35b57d6` (= `c00fe8e` on `main`; the later commits change tests only), every section including bigwrite (`px-053a`).
