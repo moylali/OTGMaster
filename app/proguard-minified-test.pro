@@ -23,11 +23,57 @@
 -keep class androidx.tracing.** { *; }
 -keep class kotlin.** { *; }
 -keep class kotlinx.coroutines.** { *; }
--keep class app.fayaz.otgmaster.OtgMasterState {
-    public static final app.fayaz.otgmaster.OtgMasterState INSTANCE;
-    public final java.util.concurrent.CopyOnWriteArrayList getMountedDrives();
-    public final kotlin.jvm.functions.Function1 getDetachRequest();
-}
--keep class app.fayaz.otgmaster.MountedDrive {
-    public final java.lang.String getSourceDeviceName();
-}
+# (Those three members are no longer all: the test now reads ejectedDevices,
+# pendingEjects, isReadOnly and more, so both classes are kept whole, like the list below.)
+-keep class app.fayaz.otgmaster.OtgMasterState { *; }
+-keep class app.fayaz.otgmaster.MountedDrive { *; }
+
+# - Every other app class the instrumented test names (E2EAutomatedTest, listed from its
+#   compiled classes with javap, 2026-11-18). The runner reflects over the test class when it
+#   starts, so one missing class failed every case before it ran (ClassNotFoundException:
+#   app.fayaz.otgmaster.security.CredentialStore, on 0.5.3 as on 0.5.4). None of them is a
+#   native bridge, so the JNI rules are still tested under renaming. When the test starts
+#   using another app class, add it here.
+-keep class app.fayaz.otgmaster.backup.BackupActionReceiver { *; }
+-keep class app.fayaz.otgmaster.backup.BackupDelays { *; }
+-keep class app.fayaz.otgmaster.backup.BackupExecutor { *; }
+-keep class app.fayaz.otgmaster.backup.BackupExecutor$Op { *; }
+-keep class app.fayaz.otgmaster.backup.BackupExecutor$Op$Backup { *; }
+-keep class app.fayaz.otgmaster.backup.BackupExecutor$Op$Check { *; }
+-keep class app.fayaz.otgmaster.backup.BackupExecutor$Op$Recreate { *; }
+-keep class app.fayaz.otgmaster.backup.BackupExecutor$Op$Restore { *; }
+-keep class app.fayaz.otgmaster.backup.BackupExecutor$RunState { *; }
+-keep class app.fayaz.otgmaster.backup.BackupJob { *; }
+-keep class app.fayaz.otgmaster.backup.BackupMounts { *; }
+-keep class app.fayaz.otgmaster.backup.BackupNotifications { *; }
+-keep class app.fayaz.otgmaster.backup.BackupPrompts { *; }
+-keep class app.fayaz.otgmaster.backup.BackupPrompts$Due { *; }
+-keep class app.fayaz.otgmaster.backup.BackupScheduler { *; }
+-keep class app.fayaz.otgmaster.backup.BackupSecrets { *; }
+-keep class app.fayaz.otgmaster.backup.Endpoint { *; }
+-keep class app.fayaz.otgmaster.backup.Format { *; }
+-keep class app.fayaz.otgmaster.backup.JobStore { *; }
+-keep class app.fayaz.otgmaster.backup.JobStore$Companion { *; }
+-keep class app.fayaz.otgmaster.backup.JobType { *; }
+-keep class app.fayaz.otgmaster.backup.Retention { *; }
+-keep class app.fayaz.otgmaster.backup.RunRecord { *; }
+-keep class app.fayaz.otgmaster.backup.RunStats { *; }
+-keep class app.fayaz.otgmaster.backup.RunStatus { *; }
+-keep class app.fayaz.otgmaster.backup.Schedule { *; }
+-keep class app.fayaz.otgmaster.backup.SnapshotSummary { *; }
+-keep class app.fayaz.otgmaster.backup.VolumeInfo { *; }
+-keep class app.fayaz.otgmaster.extension.ExtensionContract { *; }
+-keep class app.fayaz.otgmaster.extension.ExtensionContract$DeviceKey { *; }
+-keep class app.fayaz.otgmaster.MainActivityKt { *; }
+-keep class app.fayaz.otgmaster.OtgMasterState$MountRequest { *; }
+-keep class app.fayaz.otgmaster.R { *; }
+-keep class app.fayaz.otgmaster.R$string { *; }
+-keep class app.fayaz.otgmaster.security.CredentialStore { *; }
+-keep class app.fayaz.otgmaster.security.LockedStore { *; }
+-keep class app.fayaz.otgmaster.security.LockedStore$Keys { *; }
+-keep class app.fayaz.otgmaster.security.LockedStore$Kv { *; }
+-keep class app.fayaz.otgmaster.veracrypt.HiddenVolumeProtection { *; }
+-keep class app.fayaz.otgmaster.veracrypt.VeraCryptCipher { *; }
+-keep class app.fayaz.otgmaster.veracrypt.VeraCryptCipher$Companion { *; }
+-keep class app.fayaz.otgmaster.veracrypt.VeraCryptHash { *; }
+-keep class app.fayaz.otgmaster.veracrypt.VeraCryptHash$Companion { *; }
