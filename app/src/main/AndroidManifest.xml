@@ -11,13 +11,6 @@
     <!-- Only so that notification shows in the shade on Android 13+; asked once, at the first mount. -->
     <uses-permission android:name="android.permission.POST_NOTIFICATIONS" />
 
-    <!-- Companion apps (Backup Master) that want mount events; see ExtensionContract. -->
-    <queries>
-        <intent>
-            <action android:name="app.fayaz.otgmaster.action.VOLUME_MOUNTED" />
-        </intent>
-    </queries>
-
     <application
         android:allowBackup="true"
         android:dataExtractionRules="@xml/data_extraction_rules"

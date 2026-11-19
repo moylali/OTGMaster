@@ -314,6 +314,7 @@ class E2EAutomatedTest {
             }
             assertTrue("flower.jpg not found in the root directory", flowerDocId != null)
             assertTrue("file with spaces.txt not found in the root directory", spaceFileDocId != null)
+            assertNoDriveDetailsFromProvider(context, rootIds)
 
         val providerUri = android.provider.DocumentsContract.buildDocumentUri("app.fayaz.otgmaster.documents", flowerDocId)
         val outFile = java.io.File("/sdcard/Download/flower.jpg")
@@ -5527,6 +5528,27 @@ class E2EAutomatedTest {
             while (i != -1 && c.moveToNext()) c.getString(i)?.let { ids += it }
         }
         return ids
+    }
+
+    /**
+     * The provider answers only the standard DocumentsContract columns (#165). Until 0.5.4
+     * it also answered otgmaster_* columns (USB vendor, product, serial, partition start)
+     * to any app with a grant on the drive, which let an app holding the outer volume
+     * compute the hidden volume's drive id. Asked for by name, they must come back empty.
+     */
+    private fun assertNoDriveDetailsFromProvider(context: Context, rootIds: List<String>) {
+        val asked = arrayOf(DocumentsContract.Document.COLUMN_DOCUMENT_ID,
+            "otgmaster_vendor_id", "otgmaster_product_id", "otgmaster_serial",
+            "otgmaster_partition_start", "otgmaster_drive_id", "otgmaster_container")
+        for (rootDocId in rootIds) {
+            context.contentResolver.query(DocumentsContract.buildDocumentUri(AUTHORITY, rootDocId), asked, null, null, null)?.use { c ->
+                assertTrue("no row for the root $rootDocId", c.moveToFirst())
+                for (name in asked.drop(1)) {
+                    val i = c.getColumnIndex(name)
+                    assertTrue("the provider returned $name for $rootDocId: ${c.getString(i)}", i == -1 || c.isNull(i))
+                }
+            }
+        }
     }
 
     private fun getRootDocId(context: Context): String? {

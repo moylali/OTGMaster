@@ -425,7 +425,7 @@ class VeraCryptDocumentProvider : DocumentsProvider() {
         val result = MatrixCursor(projection ?: DEFAULT_DOCUMENT_PROJECTION)
         val file = getFileForDocId(documentId)
         if (file != null) {
-            includeFile(result, documentId, file, projection)
+            includeFile(result, documentId, file)
             if (!file.isDirectory) extendReadGrant(documentId)
         }
         return result
@@ -450,7 +450,7 @@ class VeraCryptDocumentProvider : DocumentsProvider() {
         if (parent != null && parent.isDirectory) {
             for (child in parent.listFiles()) {
                 val childId = getDocIdForChild(parentDocumentId, child)
-                includeFile(result, childId, child, projection)
+                includeFile(result, childId, child)
             }
         }
         return result
@@ -639,18 +639,8 @@ class VeraCryptDocumentProvider : DocumentsProvider() {
         result: MatrixCursor,
         docId: String?,
         file: UsbFile,
-        projection: Array<out String>? = null,
     ) {
         val row = result.newRow()
-        // Companion-app columns (ExtensionContract). Only computed when asked for,
-        // which a caller can only do through a grant covering this drive.
-        if (projection != null && projection.any { it in ExtensionContract.VOLUME_COLUMNS }) {
-            parseDocId(docId)?.let { OtgMasterState.getDrive(it.driveId) }?.let { drive ->
-                val values = ExtensionContract.volumeValues(
-                    drive, wantFree = ExtensionContract.COLUMN_FREE_BYTES in projection)
-                for ((column, value) in values) row.add(column, value)
-            }
-        }
         row.add(DocumentsContract.Document.COLUMN_DOCUMENT_ID, docId)
         row.add(DocumentsContract.Document.COLUMN_DISPLAY_NAME, if (file.isRoot) "VeraCrypt Drive" else file.name)
         // libaums throws for several metadata accessors on directories and/or the root

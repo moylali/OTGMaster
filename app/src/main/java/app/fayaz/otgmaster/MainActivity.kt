@@ -1724,8 +1724,6 @@ class MainActivity : AppCompatActivity() {
                 contentResolver.notifyChange(
                     android.provider.DocumentsContract.buildRootsUri(app.fayaz.otgmaster.provider.VeraCryptDocumentProvider.AUTHORITY), null
                 )
-                app.fayaz.otgmaster.extension.ExtensionContract.notifyCompanions(
-                    applicationContext, app.fayaz.otgmaster.extension.ExtensionContract.ACTION_VOLUME_MOUNTED, mountedDrive)
 
                 withContext(Dispatchers.Main) {
                     onComplete()
@@ -1952,8 +1950,6 @@ class MainActivity : AppCompatActivity() {
         contentResolver.notifyChange(
             android.provider.DocumentsContract.buildRootsUri(app.fayaz.otgmaster.provider.VeraCryptDocumentProvider.AUTHORITY), null
         )
-        app.fayaz.otgmaster.extension.ExtensionContract.notifyCompanions(
-            applicationContext, app.fayaz.otgmaster.extension.ExtensionContract.ACTION_VOLUME_UNMOUNTED, drive)
         val tNotified = System.currentTimeMillis()
         updateMountedDrives()
         val tUpdated = System.currentTimeMillis()
@@ -2450,8 +2446,6 @@ class MainActivity : AppCompatActivity() {
             OtgMasterState.removeDrive(drive.id)
             contentResolver.notifyChange(
                 android.provider.DocumentsContract.buildRootsUri(app.fayaz.otgmaster.extension.ExtensionContract.AUTHORITY), null)
-            app.fayaz.otgmaster.extension.ExtensionContract.notifyCompanions(
-                applicationContext, app.fayaz.otgmaster.extension.ExtensionContract.ACTION_VOLUME_UNMOUNTED, drive)
             updateMountedDrives()
             removeDriveShortcut(drive.id)
         }
@@ -2518,8 +2512,6 @@ class MainActivity : AppCompatActivity() {
         withContext(Dispatchers.Main) {
             contentResolver.notifyChange(
                 android.provider.DocumentsContract.buildRootsUri(app.fayaz.otgmaster.extension.ExtensionContract.AUTHORITY), null)
-            app.fayaz.otgmaster.extension.ExtensionContract.notifyCompanions(
-                applicationContext, app.fayaz.otgmaster.extension.ExtensionContract.ACTION_VOLUME_MOUNTED, drive)
             newlyMountedDriveIds.value = newlyMountedDriveIds.value + drive.id
             updateMountedDrives()
             pushDriveShortcut(drive)
@@ -2763,8 +2755,6 @@ class MainActivity : AppCompatActivity() {
                 contentResolver.notifyChange(
                     android.provider.DocumentsContract.buildRootsUri(app.fayaz.otgmaster.provider.VeraCryptDocumentProvider.AUTHORITY), null
                 )
-                app.fayaz.otgmaster.extension.ExtensionContract.notifyCompanions(
-                    applicationContext, app.fayaz.otgmaster.extension.ExtensionContract.ACTION_VOLUME_MOUNTED, mountedDrive)
                 withContext(Dispatchers.Main) {
                     newlyMountedDriveIds.value = newlyMountedDriveIds.value + driveId
                     pendingToastMountNames.add(deviceDisplayName)
