@@ -141,6 +141,11 @@
     <string name="auto_mount_prompt_subtitle_multi">Auto mount %1$d drives</string>
     <string name="auto_mount_prompt_negative">Enter credentials manually</string>
     <string name="log_credentials_saved">Auto mount credentials saved for %1$s.</string>
+    <string name="log_credentials_need_screen_lock">The password for %1$s was not saved: saved passwords open only with the phone\'s screen lock, and this phone has none.</string>
+    <string name="log_credentials_none_saved">No saved password for this partition.</string>
+    <string name="log_credentials_lock_removed">Saved passwords were cleared: the phone\'s screen lock was removed, which makes them unreadable. Enter each password once more.</string>
+    <string name="log_credentials_need_lock">A saved password could not be opened because the fingerprint or PIN check was more than 30 seconds ago. Try again, or unlock with the password.</string>
+    <string name="log_credentials_moved">%1$d saved password(s) now open only with the phone\'s screen lock.</string>
     <string name="log_credentials_cleared_for">Auto mount credentials cleared for %1$s.</string>
     <string name="log_this_drive">this drive</string>
     <string name="no_space_on_drive">Not enough space on %1$s. Free some space on it, then try again.</string>

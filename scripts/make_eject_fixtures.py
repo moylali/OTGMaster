@@ -45,6 +45,7 @@ CASES = {
     "usb_mode_scan_warning": (VC, "usb_mode_scan_warning", "USB access, Wait for Android: Scan warns before taking a drive from Android."),
     "slider_hint": (VC, "slider_hint", "The first time the slider closes with a drive mounted, a hint points at the Drives icon; a tap dismisses it and it does not come back."),
     "notification_slider": (VC, "notification_slider", "A tap on the mounted-drives notification opens the app on the slider of mounted drives."),
+    "credentials_device_lock": (VC, "credentials_device_lock", "Saved passwords open only with the phone's lock: saved under a PIN with no prompt, unreadable 30 s after the last check, and auto mount unlocks after the PIN."),
     "report_issue": (PLAIN, "report_issue", "Report issue: the details and a random string reach a GitHub issue, which is then deleted."),
 }
 
