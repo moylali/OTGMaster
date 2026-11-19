@@ -1,6 +1,6 @@
-• Fixed: other apps could tell when a hidden VeraCrypt volume was unlocked
-• Fixed: apps given a folder on a drive could read its USB serial number
-• Fixed: an ext4 write cut off by a USB drop left free space marked used
+• New: edit the log before you send a report
+• Fixed: other apps could tell a hidden VeraCrypt volume was unlocked, or read a drive's USB serial
 • Fixed: a report's details reached the feedback server before you sent it
-• Fixed: a full drive now says "Not enough space", and a restore that will not fit stops before it starts
 • Fixed: a USB hiccup while writing could stop Encrypt or a copy partway
+• Fixed: an ext4 write cut off by a USB drop left free space marked used
+• Fixed: a full drive says "Not enough space"; a restore that won't fit stops first
