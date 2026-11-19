@@ -4538,6 +4538,35 @@ class E2EAutomatedTest {
                 assertNotNull("the hint went away", device.findObject(By.text(usbText(R.string.usb_hint_android))))
             }
             "report_issue" -> runReportIssue(args.getString("issue_marker", ""))
+            "credentials_device_lock" -> {
+                // #165: saved passwords open only within 30 s of the phone's lock, enforced by
+                // the keystore. Before 0.5.4 any code running as the app could read them.
+                val prefs = bkContext.getSharedPreferences("otgmaster_prefs", Context.MODE_PRIVATE)
+                val store = app.fayaz.otgmaster.security.CredentialStore(bkContext)
+                device.executeShellCommand("locksettings set-pin 1234")
+                try {
+                    prefs.edit().putBoolean("auto_mount", true).commit()
+                    relaunchApp()
+                    // Saving needs no prompt: the password typed on the form is kept.
+                    val key = ejMount("to save the password").sourceDeviceName.orEmpty()
+                    assertTrue("the password was not saved with a PIN set", store.hasAny(key))
+                    doUnmount()
+                    // More than 30 s since the phone's lock was last checked: the keystore refuses.
+                    android.os.SystemClock.sleep(32_000L)
+                    assertTrue("a saved password opened without the phone's lock", store.loadAll(key).isEmpty())
+                    // Auto mount asks for the lock, and the PIN opens the saved password.
+                    relaunchApp()
+                    android.os.SystemClock.sleep(5_000L)
+                    device.executeShellCommand("input text 1234")
+                    device.executeShellCommand("input keyevent 66")
+                    if (waitForMounted(90_000L) == null) captureScreen("credentials_device_lock_no_mount")
+                    assertTrue("auto mount did not mount after the PIN", OtgMasterState.mountedDrives.isNotEmpty())
+                } finally {
+                    prefs.edit().remove("auto_mount").commit()
+                    store.clearAll()
+                    device.executeShellCommand("locksettings clear --old 1234")
+                }
+            }
             "usb_mode_scan_warning" -> {
                 usbAwaitHint(R.string.usb_hint_android)
                 findScanButton()!!.click()
@@ -4738,6 +4767,8 @@ class E2EAutomatedTest {
             "no_auto_mount" -> {
                 val prefs = context.getSharedPreferences("otgmaster_prefs", Context.MODE_PRIVATE)
                 val store = app.fayaz.otgmaster.security.CredentialStore(context)
+                // Saved passwords open only with the phone's lock, so a phone without one saves none.
+                device.executeShellCommand("locksettings set-pin 1234")
                 try {
                     prefs.edit().putBoolean("auto_mount", true).commit()
                     relaunchApp()
@@ -4745,27 +4776,28 @@ class E2EAutomatedTest {
                     scanAndMount(password, pim, testCase, "as a normal volume")
                     val key = OtgMasterState.mountedDrives.first().sourceDeviceName.orEmpty()
                     assertTrue("no device key", key.isNotEmpty())
-                    assertNotNull("a normal mount was not remembered", store.load(key, 0L))
+                    assertTrue("a normal mount was not remembered", store.has(key, 0L))
                     doUnmount()
                     store.deletePartition(key, 0L)
                     relaunchApp()
 
                     // Saved at the last moment: with a saved password on it the form offers Quick unlock instead.
                     mountProtected(password, pim, testCase) {
-                        store.save(key, 0L, password, pim, emptyList(),
-                            app.fayaz.otgmaster.veracrypt.VeraCryptCipher.DEFAULT.name, app.fayaz.otgmaster.veracrypt.VeraCryptHash.DEFAULT.name)
+                        assertTrue("could not save with a PIN set", store.save(key, 0L, password, pim, emptyList(),
+                            app.fayaz.otgmaster.veracrypt.VeraCryptCipher.DEFAULT.name, app.fayaz.otgmaster.veracrypt.VeraCryptHash.DEFAULT.name))
                     }
                     assertOuterTag("OUTER")
-                    assertNull("a protected mount left a password saved", store.load(key, 0L))
+                    assertFalse("a protected mount left a password saved", store.has(key, 0L))
                     doUnmount()
 
                     scanAndMount(hiddenArg("hidden_password"), hiddenArg("hidden_pim"), testCase, "with the hidden volume's password")
                     assertOuterTag("HIDDEN")
-                    assertNull("the hidden volume's password was saved", store.load(key, 0L))
+                    assertFalse("the hidden volume's password was saved", store.has(key, 0L))
                     doUnmount()
                 } finally {
                     prefs.edit().remove("auto_mount").commit()
                     store.clearAll()
+                    device.executeShellCommand("locksettings clear --old 1234")
                 }
             }
             else -> fail("unknown hidden_flow $flow")

@@ -742,7 +742,7 @@ class MainActivity : AppCompatActivity() {
                         sessionCredentials = sessionPlaintextCreds,
                         hasCachedCreds = { deviceKey, startBlock ->
                             if (startBlock == null) credentialStore.hasAny(deviceKey)
-                            else credentialStore.load(deviceKey, startBlock) != null
+                            else credentialStore.has(deviceKey, startBlock)
                         },
                         isExcluded = { deviceKey -> deviceKey in excludedDeviceKeys.value },
                         readOnlyDefault = readOnlyDefault.value,
@@ -1743,11 +1743,12 @@ class MainActivity : AppCompatActivity() {
                             sessionPlaintextCreds.remove(deviceName)
                         }
                     } else if (autoMountEnabled.value) {
-                        credentialStore.save(deviceName, candidate.startBlock, password, pim?.toString() ?: "", keyfiles, cipher.name, hash.name, candidate.containerType)
+                        val saved = credentialStore.save(deviceName, candidate.startBlock, password, pim?.toString() ?: "", keyfiles, cipher.name, hash.name, candidate.containerType)
                         sessionPlaintextCreds[deviceName] = app.fayaz.otgmaster.security.CredentialStore.Credentials(
                             password, pim?.toString() ?: "", keyfiles, cipher.name, hash.name, candidate.startBlock, candidate.containerType
                         )
-                        appendLog(getString(R.string.log_credentials_saved, deviceDisplayName))
+                        // Saved passwords open only with the phone's lock, so a phone without one cannot keep them.
+                        appendLog(getString(if (saved) R.string.log_credentials_saved else R.string.log_credentials_need_screen_lock, deviceDisplayName))
                     }
                     newlyMountedDriveIds.value = newlyMountedDriveIds.value + driveId
                     pendingToastMountNames.add(deviceDisplayName)
@@ -3099,7 +3100,7 @@ class MainActivity : AppCompatActivity() {
             it.deviceName !in autoMountAttempted &&
             it.deviceName !in manuallyUnmountedDevices &&
             it.deviceName !in sessionPlaintextCreds &&
-            it.candidates.any { c -> credentialStore.load(it.deviceName, c.startBlock) != null } &&
+            it.candidates.any { c -> credentialStore.has(it.deviceName, c.startBlock) } &&
             it.deviceName !in excluded
         }
     }
@@ -3197,21 +3198,23 @@ class MainActivity : AppCompatActivity() {
         protect: app.fayaz.otgmaster.veracrypt.HiddenVolumeCredentials?,
         onComplete: () -> Unit,
     ) {
-        val creds = sessionPlaintextCreds[deviceName]?.takeIf { it.candidateStartBlock == candidate.startBlock }
-            ?: credentialStore.load(deviceName, candidate.startBlock)
-            ?: run {
-            appendLog("No credentials found for $deviceName partition ${candidate.startBlock}")
+        val session = sessionPlaintextCreds[deviceName]?.takeIf { it.candidateStartBlock == candidate.startBlock }
+        if (session == null && !credentialStore.has(deviceName, candidate.startBlock)) {
+            appendLog(getString(R.string.log_credentials_none_saved))
             onComplete()
             return
         }
-        val cipher = app.fayaz.otgmaster.veracrypt.VeraCryptCipher.entries
-            .find { it.name == creds.cipherName } ?: app.fayaz.otgmaster.veracrypt.VeraCryptCipher.DEFAULT
-        val hash = app.fayaz.otgmaster.veracrypt.VeraCryptHash.entries
-            .find { it.name == creds.hashName } ?: app.fayaz.otgmaster.veracrypt.VeraCryptHash.DEFAULT
 
         val executor = androidx.core.content.ContextCompat.getMainExecutor(this)
         val callback = object : androidx.biometric.BiometricPrompt.AuthenticationCallback() {
             override fun onAuthenticationSucceeded(result: androidx.biometric.BiometricPrompt.AuthenticationResult) {
+                // Read only now: the saved password opens within 30 s of this prompt, not before it.
+                val creds = session ?: credentialStore.load(deviceName, candidate.startBlock)
+                    ?: run { onComplete(); return }
+                val cipher = app.fayaz.otgmaster.veracrypt.VeraCryptCipher.entries
+                    .find { it.name == creds.cipherName } ?: app.fayaz.otgmaster.veracrypt.VeraCryptCipher.DEFAULT
+                val hash = app.fayaz.otgmaster.veracrypt.VeraCryptHash.entries
+                    .find { it.name == creds.hashName } ?: app.fayaz.otgmaster.veracrypt.VeraCryptHash.DEFAULT
                 attemptUnlock(deviceName, candidate, creds.password, creds.pim.toIntOrNull(),
                     creds.keyfileUris, cipher, hash, fromCache = true, protectHidden = protect, onComplete = onComplete)
             }

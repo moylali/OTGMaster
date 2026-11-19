@@ -1,0 +1,1 @@
+Saved passwords open only with the phone's lock: saved under a PIN with no prompt, unreadable 30 s after the last check, and auto mount unlocks after the PIN.
