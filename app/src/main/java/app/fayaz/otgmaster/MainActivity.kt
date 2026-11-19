@@ -794,7 +794,12 @@ class MainActivity : AppCompatActivity() {
                         onClearDeviceCreds = { deviceKey ->
                             credentialStore.deleteAll(deviceKey)
                             sessionPlaintextCreds.remove(deviceKey)
-                            appendLog(getString(R.string.log_credentials_cleared_for, deviceKey))
+                            // The drive's name, not its key: the key ends in the USB serial,
+                            // and this log goes into feedback reports, which promise not to
+                            // carry it (#165).
+                            val name = OtgMasterState.mountedDrives.firstOrNull { it.sourceDeviceName == deviceKey }
+                                ?.sourceDeviceDisplayName ?: getString(R.string.log_this_drive)
+                            appendLog(getString(R.string.log_credentials_cleared_for, name))
                         },
                         onSetExcluded = { deviceKey, excluded ->
                             credentialStore.setExcluded(deviceKey, excluded)
