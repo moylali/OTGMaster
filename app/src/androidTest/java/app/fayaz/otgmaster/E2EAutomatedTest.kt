@@ -5411,7 +5411,10 @@ class E2EAutomatedTest {
     private fun openSlider(tab: String = "mounted_tab_drives") {
         if (!sliderOpen()) {
             InstrumentationRegistry.getInstrumentation().uiAutomation.clearCache()
-            val icon = device.wait(Until.findObject(By.descStartsWith("Mounted:")), timeout)
+            // Not [timeout] (5 s): after a remount the app re-probes the drive before the top
+            // bar shows it, and on a busy emulator that took longer. "no drive icon on the top
+            // bar" failed that way in the 0.5.2, 0.5.3 and 0.5.4 runs, then passed on the retry.
+            val icon = device.wait(Until.findObject(By.descStartsWith("Mounted:")), 30_000L)
             if (icon == null) captureScreen("no_mounted_icon")
             assertNotNull("no drive icon on the top bar", icon)
             icon!!.click()
