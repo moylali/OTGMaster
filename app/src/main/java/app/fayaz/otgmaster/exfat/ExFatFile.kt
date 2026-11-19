@@ -155,6 +155,8 @@ class ExFatFile(
                 )
             }
             if (n < 0) {
+                app.fayaz.otgmaster.fs.NoSpace.fromErrno(n, "exFAT write of ${size - written} bytes at offset ${offset + written}: no space left on volume (ENOSPC)")
+                    ?.let { throw it }
                 throw IOException(
                     "exFAT write failed at offset ${offset + written} " +
                     "($written of $size bytes written): $n"

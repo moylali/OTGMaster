@@ -256,6 +256,24 @@ class BackupRunner(private val context: Context) {
                 .also { store.addRun(it); app.fayaz.otgmaster.OtgMasterState.log("Restore \"${job.name}\": $message") }
         return try {
             if (!VolumeInfo.isAvailable(context, target)) return RunOutcome.Failed("The restore target is not reachable.").also { record(RunStatus.UNAVAILABLE, it.message) }
+            // Space first: a restore that cannot fit is refused before the safety snapshot
+            // and before any file is written, not when the drive fills partway through.
+            run {
+                val repo = repository(job)
+                val snap = repo.snapshots().firstOrNull { it.id == snapshotId } ?: throw IllegalStateException("snapshot ${snapshotId.take(8)} is gone")
+                val r = ResticRestore(repo).also { it.isCancelled = control.isCancelled }
+                val node = r.find(snap, Paths.join(snapshotPath(job).trim('/'), subPath.trim('/')))
+                    ?: throw IllegalStateException("$subPath is not in that snapshot")
+                // Our drives allocate in their cluster size; elsewhere 4 KiB is the usual block.
+                val cluster = VolumeInfo.otgDriveId(target)?.let { app.fayaz.otgmaster.OtgMasterState.getDrive(it)?.fileSystem?.chunkSize } ?: 4096
+                val need = r.spaceNeeded(node, SafFileTree(context.contentResolver, target), targetPath.ifEmpty { node.name }, cluster)
+                val info = VolumeInfo.capture(context, target)
+                val space = Preflight.checkSpace(need, info[VolumeInfo.FREE]?.toLongOrNull(), info[VolumeInfo.CAPACITY]?.toLongOrNull())
+                if (space.verdict == Preflight.Verdict.INSUFFICIENT)
+                    return RunOutcome.Failed("Not enough space for the restore: it needs ${Format.bytes(need)}, and " +
+                        "${Format.bytes(space.freeBytes ?: 0)} is free on ${VolumeInfo.summary(info)}. Nothing was restored.")
+                        .also { record(RunStatus.FAILED, it.message) }
+            }
             if (intoSource && safetySnapshot && job.type == JobType.INCREMENTAL) {
                 // The snapshot to restore is checked before the safety snapshot and pinned
                 // through its keep rules: they used to run first, and with "keep last 1"

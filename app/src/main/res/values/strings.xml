@@ -140,6 +140,7 @@
     <string name="log_credentials_saved">Auto mount credentials saved for %1$s.</string>
     <string name="log_credentials_cleared_for">Auto mount credentials cleared for %1$s.</string>
     <string name="log_this_drive">this drive</string>
+    <string name="no_space_on_drive">Not enough space on %1$s. Free some space on it, then try again.</string>
     <string name="share_saved">Saved: %1$s</string>
     <string name="share_saved_multiple">Saved %1$d files</string>
     <string name="share_save_failed">Save failed: %1$s</string>
