@@ -1760,6 +1760,16 @@ object Benchmark {
         }
         val expected = sortedMapOf<String, Expect>()   // path under TREE_DIR -> recipe
         val rng = java.util.Random(label.hashCode().toLong())
+        // Room for the tree first: up to 300 files of up to 2 MiB, each rounded up to a
+        // cluster, 20 folders, and the appends. On D5 p7 to p10 (2 GiB exFAT, 32 KiB
+        // clusters, 20,000 fixtures) it hit ENOSPC partway and failed the section with
+        // "-28" (0.5.3: px-053b, px-053c, tab-053c). Skipped, it says so, like the big file.
+        val cluster = runCatching { drive.fileSystem.chunkSize }.getOrDefault(4096).coerceAtLeast(512).toLong()
+        val treeNeed = 300L * ((2L shl 20) + cluster) + 40L * cluster + 64L * 1024 * 1024
+        val treeFree = runCatching { drive.fileSystem.freeSpace }.getOrDefault(0L)
+        val treeSkipped = treeFree < treeNeed
+        if (treeSkipped) emit("bigwrite      : tree SKIPPED — ${treeFree / 1_000_000} MB free, needs ${treeNeed / 1_000_000} MB")
+        if (!treeSkipped) {
         val tree = root.createDirectory(TREE_DIR)
         val dirs = mutableListOf<String>()
         for (a in 0 until 5) {
@@ -1839,6 +1849,7 @@ object Benchmark {
         }
         emit("bigwrite      : $TREE_DIR ${expected.size} files after create/overwrite/append/" +
              "truncate/rename/move/delete (${ms(treeNs)})")
+        }
 
         // --- remount, then read everything back -----------------------------------
         var why: String? = null
@@ -1883,7 +1894,8 @@ object Benchmark {
                 if (c.isDirectory) walk(c, p) else if (p != "EXPECTED.txt") found += p
             }
         }
-        if (liveTree == null) { emit("bigwrite      : *** $TREE_DIR missing after remount ***"); treeBad++ }
+        if (treeSkipped) Unit
+        else if (liveTree == null) { emit("bigwrite      : *** $TREE_DIR missing after remount ***"); treeBad++ }
         else {
             walk(liveTree, "")
             for ((p, e) in expected) {
@@ -1903,7 +1915,8 @@ object Benchmark {
         emit("bigwrite      : " + when {
             bigOk == false || treeBad > 0 -> "*** FAILED — big file ${bigOk ?: "skipped"}, $treeBad tree problem(s) ***"
             else -> "ALL PASSED after remount (big file ${if (bigOk == null) "skipped" else "verified"}, " +
-                    "${expected.size} tree files verified); left on the volume for the host check"
+                    (if (treeSkipped) "tree skipped" else "${expected.size} tree files verified") +
+                    "); left on the volume for the host check"
         })
     }
 
