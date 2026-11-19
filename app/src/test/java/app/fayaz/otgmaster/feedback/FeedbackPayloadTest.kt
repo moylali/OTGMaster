@@ -49,7 +49,7 @@ class FeedbackPayloadTest {
         val c = FeedbackPayload.collectForTest((1..50).map { "line $it" })
         val url = FeedbackPayload.url(base, c)
         assertEquals("what the browser sends", base, url.substringBefore('#'))
-        assertTrue(decodePayload(url).getString("deviceLogs").contains("line 50"))
+        assertTrue(decodeLogs(url)!!.contains("line 50"))
     }
 
     @Test
@@ -58,7 +58,8 @@ class FeedbackPayloadTest {
         val json = decodePayload(url)
         assertEquals("Google Pixel 10 Pro XL (Android 17)", json.getString("deviceName"))
         assertEquals("0.3.11 (44)", json.getString("appVersion"))
-        assertEquals("line one\nline two", json.getString("deviceLogs"))
+        assertFalse("the log travels only in logs", json.has("deviceLogs"))
+        assertEquals("line one\nline two", decodeLogs(url))
         assertEquals(1, json.getInt("partitionCount"))
     }
 
@@ -74,7 +75,8 @@ class FeedbackPayloadTest {
         val param = fragmentParam(url, "payload")!!
         assertFalse("raw '+' would decode to a space", param.contains('+'))
         // And it still decodes, which is the point of encoding it.
-        assertTrue(decodePayload(url).getString("deviceLogs").contains("event 40"))
+        assertTrue(decodeLogs(url)!!.contains("event 40"))
+        assertFalse("raw '+' would decode to a space", fragmentParam(url, "logs")!!.contains('+'))
     }
 
     @Test
@@ -131,31 +133,27 @@ class FeedbackPayloadTest {
         assertFalse(text.contains("Pixel"))
     }
 
-    /**
-     * The URL has to stay within what proxies accept. A 50-line log of long lines is
-     * well past the budget, so this is the case that matters.
-     */
+    /** A log past the budget keeps its newest lines and says how many older ones it left out. */
     @Test
-    fun aLargeLogIsTrimmedAndTheUrlStaysWithinBudget() {
-        val big = (1..50).map { "line $it " + "x".repeat(300) }
+    fun aLargeLogIsTrimmedFromTheFront() {
+        val big = (1..300).map { "line $it " + "x".repeat(300) }
         val c = FeedbackPayload.collectForTest(big)
-        val url = FeedbackPayload.url("https://otgmaster-feedback.moylali.workers.dev/", c)
-        assertTrue("the payload was ${fragmentParam(url, "payload")!!.length} chars", fragmentParam(url, "payload")!!.length <= 8_000)
+        assertTrue("within the budget", c.logLines.sumOf { it.length + 1 } <= 40_000)
         assertTrue("older lines should be reported as dropped", c.logLinesDropped > 0)
         // The tail is what a report needs: it describes what just went wrong.
-        assertTrue("the newest line must be kept", c.logLines.last().startsWith("line 50"))
+        assertTrue("the newest line must be kept", c.logLines.last().startsWith("line 300"))
     }
 
     @Test
     fun `USB lines that scrolled out of the recent log are put back first`() {
         val usb = listOf("USB: write of 120 KiB at block 7 failed: ...", "USB: the drive answers; retrying the write at the same size")
-        val recent = (1..50).map { "line $it " + "x".repeat(40) }
+        val recent = (1..300).map { "line $it " + "x".repeat(200) }
         val c = FeedbackPayload.collectForTest(recent, usbEvents = usb)
         assertEquals(FeedbackPayload.EARLIER_USB_HEADER, c.logLines.first())
         assertEquals(usb, c.logLines.subList(1, 3))
         assertEquals(FeedbackPayload.RECENT_LOG_HEADER, c.logLines[3])
-        assertTrue("the newest line must still be kept", c.logLines.last().startsWith("line 50"))
-        assertTrue("within the budget", c.logLines.sumOf { it.length + 1 } <= 3_500)
+        assertTrue("the newest line must still be kept", c.logLines.last().startsWith("line 300"))
+        assertTrue("within the budget", c.logLines.sumOf { it.length + 1 } <= 40_000)
     }
 
     @Test
@@ -172,14 +170,12 @@ class FeedbackPayloadTest {
     }
 
     @Test
-    fun `the whole log goes in a separate base64 logs parameter, the short one stays in payload`() {
+    fun `the whole log goes in the logs parameter and not in payload`() {
         val big = (1..200).map { "line $it " + "x".repeat(120) + " ✓" }
         val c = FeedbackPayload.collectForTest(big)
         val url = FeedbackPayload.url("https://example.test/", c)
         assertEquals("all 200 lines in logs", big.joinToString("\n"), decodeLogs(url))
-        val inPayload = decodePayload(url).getString("deviceLogs")
-        assertTrue("payload keeps the newest lines for older forms", inPayload.endsWith(big.last()))
-        assertTrue("payload stays within its budget", inPayload.length <= 3_500)
+        assertFalse("the log is not repeated in payload", decodePayload(url).has("deviceLogs"))
         assertFalse("raw '+' would decode to a space", url.substringAfter('#').contains('+'))
     }
 

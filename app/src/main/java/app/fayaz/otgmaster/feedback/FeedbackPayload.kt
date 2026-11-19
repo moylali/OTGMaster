@@ -25,14 +25,14 @@ object FeedbackPayload {
         val usbMake: String,
         val usbSize: String,
         val partitions: List<Partition>,
-        val logLines: List<String>,
-        /** Log lines dropped to keep the URL within [MAX_URL_CHARS]. */
-        val logLinesDropped: Int,
         /**
-         * The whole log (up to [MAX_FULL_LOG_CHARS]), sent separately in the URL
-         * fragment as `logs`. [logLines] stays in `payload` for forms that predate it.
+         * The log (up to [MAX_LOG_CHARS]), sent in the URL fragment as `logs`, on its
+         * own. It is not in `payload`: the form has read `logs` since moylali/
+         * OTGMaster-Feedback ee2f6b8 (11-07).
          */
-        val fullLogLines: List<String> = logLines,
+        val logLines: List<String>,
+        /** Older log lines left out to stay within [MAX_LOG_CHARS]. */
+        val logLinesDropped: Int,
     )
 
     data class Partition(
@@ -96,9 +96,7 @@ object FeedbackPayload {
             )
         }
         val (kept, dropped) = trimLogs(logs, usbEvents)
-        val (full, _) = trimLogs(logs, usbEvents, MAX_FULL_LOG_CHARS, MAX_FULL_USB_CHARS)
         return Contents(
-            fullLogLines = full,
             deviceName = "${Build.MANUFACTURER} ${Build.MODEL} (Android ${Build.VERSION.RELEASE})",
             appVersion = "${BuildConfig.VERSION_NAME} (${BuildConfig.VERSION_CODE})",
             usbMake = first?.sourceDeviceDisplayName ?: "",
@@ -166,9 +164,7 @@ object FeedbackPayload {
      */
     internal fun collectForTest(logs: List<String>, usbEvents: List<String> = emptyList()): Contents {
         val (kept, dropped) = trimLogs(logs, usbEvents)
-        val (full, _) = trimLogs(logs, usbEvents, MAX_FULL_LOG_CHARS, MAX_FULL_USB_CHARS)
         return Contents(
-            fullLogLines = full,
             deviceName = "TestCo TestPhone (Android 99)",
             appVersion = "0.0.0 (0)",
             usbMake = "Test USB Drive",
@@ -182,7 +178,6 @@ object FeedbackPayload {
     fun toJson(c: Contents, sel: Selection = Selection()): String = JSONObject().apply {
         if (sel.device) put("deviceName", c.deviceName)
         if (sel.appVersion) put("appVersion", c.appVersion)
-        if (sel.logs && c.logLines.isNotEmpty()) put("deviceLogs", c.logLines.joinToString("\n"))
         if (sel.usb && c.usbMake.isNotBlank()) put("usbMake", c.usbMake)
         if (sel.usb && c.usbSize.isNotBlank()) put("usbSize", c.usbSize)
         if (sel.partitions && c.partitions.isNotEmpty()) {
@@ -226,9 +221,8 @@ object FeedbackPayload {
         val enc = java.util.Base64.getEncoder()
         val b64 = enc.encodeToString(toJson(c, sel).toByteArray(Charsets.UTF_8))
         val url = "$base#payload=${java.net.URLEncoder.encode(b64, "UTF-8")}"
-        // The short log stays in `payload` for a form that predates `logs`.
-        if (!sel.logs || c.fullLogLines.isEmpty()) return url
-        val logs = enc.encodeToString(c.fullLogLines.joinToString("\n").toByteArray(Charsets.UTF_8))
+        if (!sel.logs || c.logLines.isEmpty()) return url
+        val logs = enc.encodeToString(c.logLines.joinToString("\n").toByteArray(Charsets.UTF_8))
         return "$url&logs=${java.net.URLEncoder.encode(logs, "UTF-8")}"
     }
 
@@ -270,40 +264,25 @@ object FeedbackPayload {
         }
         if (sel.logs) {
             appendLine()
-            if (c.fullLogLines.isEmpty()) {
+            if (c.logLines.isEmpty()) {
                 appendLine("Log: empty")
             } else {
-                appendLine("Log: ${c.fullLogLines.size} line(s)")
-                c.fullLogLines.forEach { appendLine("  $it") }
+                appendLine("Log: ${c.logLines.size} line(s)")
+                c.logLines.forEach { appendLine("  $it") }
             }
         }
     }
 
-    /**
-     * Budget for the whole URL. Cloudflare and most intermediaries accept well beyond
-     * 8 KB, but a request line that long is rejected by enough proxies to be a poor
-     * bet, and base64 inflates by a third.
-     */
-    private const val MAX_URL_CHARS = 8_000
 
     /**
-     * Log budget in characters, before base64 and percent-encoding.
-     *
-     * 8000 URL chars, less roughly 1,000 for the base and the other fields once
-     * encoded, leaves about 7,000 of base64 — which is about 5,200 bytes of JSON.
-     * 3,500 for the log leaves comfortable room for the device, USB and partition
-     * fields and for percent-encoding expanding `+` and `/` threefold.
+     * The log, in the fragment: 200 lines at a generous 200 characters each, with room
+     * for the USB lines that scrolled out; well under GitHub's 65,536-character issue
+     * body, which is where the form puts it. A fragment is never sent to a server, so
+     * no proxy limit applies.
      */
-    private const val MAX_LOG_CHARS = 3_500
+    private const val MAX_LOG_CHARS = 40_000
     /** Of [MAX_LOG_CHARS], at most this much for USB lines older than the recent log. */
-    private const val MAX_USB_CHARS = 1_200
-    /**
-     * The whole log, in the fragment. 200 lines at a generous 200 characters each, with
-     * room for the USB lines that scrolled out; well under GitHub's 65,536-character
-     * issue body, which is where the form puts it.
-     */
-    private const val MAX_FULL_LOG_CHARS = 40_000
-    private const val MAX_FULL_USB_CHARS = 8_000
+    private const val MAX_USB_CHARS = 8_000
     internal const val EARLIER_USB_HEADER = "--- earlier USB events ---"
     internal const val RECENT_LOG_HEADER = "--- recent log ---"
 }
