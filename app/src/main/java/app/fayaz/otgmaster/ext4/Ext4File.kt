@@ -296,7 +296,64 @@ class Ext4File private constructor(
             }
             lb += n
         }
-        if (fresh.isNotEmpty()) mapFreshBlocks(fresh, goalBefore(firstLb))
+        // The allocator marks fresh blocks in the bitmap at once, but only sync()
+        // below writes the inode that maps them. A write that throws in between (a
+        // USB link that drops) left them marked used and owned by nothing: e2fsck's
+        // "Block bitmap differences". Seen on a Galaxy Tab A9+ in the 0.5.3 matrix,
+        // 190 leaked blocks on D3L2EXT4 after a failed big write. Keeping them in the
+        // inode instead would map blocks past i_size holding whatever was on the
+        // medium, so a write that grew the file is rolled back to the old end.
+        val lastBlockBefore = if (currentSize == 0L) -1L else (currentSize - 1) / bs
+        try {
+            if (fresh.isNotEmpty()) mapFreshBlocks(fresh, goalBefore(firstLb))
+            writeRuns(data, offset, fresh)
+        } catch (e: IOException) {
+            try {
+                rollBackFailedWrite(lastBlockBefore, fresh)
+            } catch (rollback: IOException) {
+                e.addSuppressed(rollback)  // the link is still down: fsck has to reclaim them
+            }
+            throw e
+        }
+
+        val endPos = offset + data.size
+        if (endPos > currentSize) {
+            currentSize = endPos
+            updateInodeSize(currentSize)
+        }
+        touchMtime()
+        dirty = true
+        // The bitmap and superblock were updated synchronously by the allocator,
+        // and the data blocks are already on the medium; only the inode still
+        // knows where those blocks belong.  Leaving it dirty in memory means a
+        // caller that never closes the file — or a drive pulled mid-write —
+        // leaves blocks marked allocated that no inode claims, which is exactly
+        // what e2fsck reports as a leak.  Metadata has to land with the data it
+        // describes, not at the caller's convenience.
+        //
+        // The volume's clean flag is another matter: it stays "not clean" until
+        // the file is flushed or closed, so a stream of writes sets it once (#36).
+        sync()
+    }
+
+    /**
+     * After a failed [write]: unmap and free what it allocated past the file's old
+     * last block [lastBlockBefore], then write the inode, so the bitmap and the inode
+     * agree again. The inode goes first and the blocks are freed after it, as in a
+     * shrink (#33). Blocks it allocated inside the old size (filling a hole) stay
+     * mapped, and the inode is written so that they are owned.
+     */
+    private fun rollBackFailedWrite(lastBlockBefore: Long, fresh: List<LongArray>) {
+        val grew = fresh.any { it[0] + it[1] - 1 > lastBlockBefore }
+        val toFree = if (grew) freeBlocksAbove(lastBlockBefore) else emptyList()
+        dirty = true
+        sync()
+        if (toFree.isNotEmpty()) fs.allocator.freeRuns(toFree)
+    }
+
+    /** The device writes of [write]: one contiguous physical run at a time, up to [MAX_RUN_BYTES]. */
+    private fun writeRuns(data: ByteArray, offset: Long, fresh: List<LongArray>) {
+        val bs = fs.blockSize
         fun isFresh(block: Long) = fresh.any { block >= it[0] && block < it[0] + it[1] }
 
         var written = 0
@@ -325,25 +382,6 @@ class Ext4File private constructor(
             written += n
             pos += n
         }
-
-        val endPos = offset + data.size
-        if (endPos > currentSize) {
-            currentSize = endPos
-            updateInodeSize(currentSize)
-        }
-        touchMtime()
-        dirty = true
-        // The bitmap and superblock were updated synchronously by the allocator,
-        // and the data blocks are already on the medium; only the inode still
-        // knows where those blocks belong.  Leaving it dirty in memory means a
-        // caller that never closes the file — or a drive pulled mid-write —
-        // leaves blocks marked allocated that no inode claims, which is exactly
-        // what e2fsck reports as a leak.  Metadata has to land with the data it
-        // describes, not at the caller's convenience.
-        //
-        // The volume's clean flag is another matter: it stays "not clean" until
-        // the file is flushed or closed, so a stream of writes sets it once (#36).
-        sync()
     }
 
     /**

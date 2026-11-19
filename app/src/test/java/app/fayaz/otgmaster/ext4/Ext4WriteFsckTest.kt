@@ -547,6 +547,91 @@ class Ext4WriteFsckTest {
         assertFsckClean("4 GiB+ write")
     }
 
+    /**
+     * Passes writes through, but throws once, like a USB glitch, on large write number
+     * [failOnBigWrite] (1-based), then recovers. Only writes over 64 KiB count, so the
+     * metadata writes around them do not move the failure: the data goes down in runs
+     * of up to 4 MiB and nothing else is that large.
+     */
+    private class FailingBlockDevice(
+        private val inner: RawBlockDevice,
+        var failOnBigWrite: Int = Int.MAX_VALUE,
+    ) : RawBlockDevice {
+        private var bigWrites = 0
+        override val blockSize get() = inner.blockSize
+        override val blockCount get() = inner.blockCount
+        override fun readBlocks(startBlock: Long, blockCount: Int) = inner.readBlocks(startBlock, blockCount)
+        override fun writeBlocks(startBlock: Long, data: ByteArray) {
+            if (data.size > 64 * 1024 && ++bigWrites == failOnBigWrite) throw java.io.IOException("simulated USB failure (EIO)")
+            inner.writeBlocks(startBlock, data)
+        }
+        override fun close() = inner.close()
+    }
+
+    /**
+     * A write that fails part-way — the USB link drops — must not leave blocks
+     * marked allocated that no inode claims.
+     *
+     * Found on a Galaxy Tab A9+ in the 0.5.3 matrix: the big write on D3L2EXT4 died
+     * with "could not write the last 925 KiB again after a failed write", the
+     * volume was left with 190 leaked blocks, and the later rerun passed on the
+     * device because hashes cannot see a bitmap leak. `e2fsck -fn` reported
+     * "Block bitmap differences: -(879218--879407)". allocateBlocks updates the
+     * bitmap at once, the inode is only written by flush() at the end, so an
+     * exception in between orphaned the blocks.
+     */
+    @Test
+    fun aWriteThatFailsPartWayLeavesNoLeakedBlocks() {
+        val data = ByteArray(8 * 1024 * 1024) { (it * 31).toByte() }
+        val raw = FileBlockDevice(img)
+        val dev = FailingBlockDevice(raw)
+        try {
+            val f = Ext4FileSystem.create(dev)
+            val file = f.rootDirectory.createFile("failing.bin")
+            dev.failOnBigWrite = 2   // the first 4 MiB run lands, the second fails
+            try {
+                file.write(0, ByteBuffer.wrap(data))
+                org.junit.Assert.fail("the injected failure did not fire")
+            } catch (e: java.io.IOException) {
+                assertTrue(e.message!!, e.message!!.contains("simulated"))
+            }
+            assertEquals("a failed write that grew the file is rolled back", 0L, file.length)
+        } finally {
+            raw.close()
+        }
+        assertFsckClean("a write that failed part-way")
+    }
+
+    /** The same failure on an append: the file keeps its old length and bytes, and nothing leaks. */
+    @Test
+    fun anAppendThatFailsPartWayKeepsTheOldContents() {
+        val head = ByteArray(1024 * 1024 + 100) { (it * 7).toByte() }
+        val tail = ByteArray(12 * 1024 * 1024) { (it * 31).toByte() }
+        val raw = FileBlockDevice(img)
+        val dev = FailingBlockDevice(raw)
+        try {
+            val f = Ext4FileSystem.create(dev)
+            val file = f.rootDirectory.createFile("append.bin")
+            file.write(0, ByteBuffer.wrap(head))
+            // The head was big write 1. The 12 MiB append goes down in 4 MiB runs, so
+            // big write 3 is its second run: part of it is on the medium when it fails.
+            dev.failOnBigWrite = 3
+            try {
+                file.write(head.size.toLong(), ByteBuffer.wrap(tail))
+                org.junit.Assert.fail("the injected failure did not fire")
+            } catch (e: java.io.IOException) {
+                assertTrue(e.message!!, e.message!!.contains("simulated"))
+            }
+            assertEquals("the append is rolled back to the old end", head.size.toLong(), file.length)
+            val back = ByteArray(head.size)
+            read(file, 0, back, back.size)
+            assertTrue("the old contents changed", back.contentEquals(head))
+        } finally {
+            raw.close()
+        }
+        assertFsckClean("an append that failed part-way")
+    }
+
     private fun read(file: UsbFile, offset: Long, into: ByteArray, len: Int) {
         file.read(offset, ByteBuffer.wrap(into, 0, len))
     }
