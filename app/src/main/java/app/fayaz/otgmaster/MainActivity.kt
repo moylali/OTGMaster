@@ -2737,7 +2737,12 @@ class MainActivity : AppCompatActivity() {
                 val byteDevice = me.jahnen.libaums.core.driver.ByteBlockDevice(
                     cachedDevice as me.jahnen.libaums.core.driver.BlockDeviceDriver
                 )
-                val fileSystem = FileSystemFactory.createFileSystem(dummyEntry, byteDevice)
+                // Read-only mode covers plain drives too (#165): they mount with no form, so
+                // the partition's own choice, else the setting, decides, as for auto mount.
+                val readOnly = isPartitionReadOnly(candidate.deviceName, plain.startBlock)
+                val fsDevice: me.jahnen.libaums.core.driver.BlockDeviceDriver =
+                    if (readOnly) app.fayaz.otgmaster.block.ReadOnlyBlockDeviceDriver(byteDevice) else byteDevice
+                val fileSystem = FileSystemFactory.createFileSystem(dummyEntry, fsDevice)
                 val driveId = app.fayaz.otgmaster.extension.ExtensionContract.stableDriveId(
                     candidate.deviceName, plain.startBlock, OtgMasterState.mountedDrives.map { it.id })
                 val mountedDrive = MountedDrive(
@@ -2751,6 +2756,7 @@ class MainActivity : AppCompatActivity() {
                     rawBlockDevice = rawDevice,
                     partitionLabel = plain.label,
                     filesystemName = plain.filesystemName,
+                    mountedReadOnly = readOnly,
                     partitionStartBlock = plain.startBlock,
                     partitionBlockCount = plain.blockCount,
                 )
@@ -4759,6 +4765,19 @@ fun SettingsDrawer(
                             color = MaterialTheme.colorScheme.onSurfaceVariant,
                             modifier = Modifier.padding(bottom = 8.dp)
                         )
+                        // Saved passwords need a key only a phone with a screen lock can hold.
+                        val ctx = androidx.compose.ui.platform.LocalContext.current
+                        val hasLock = remember {
+                            ctx.getSystemService(android.app.KeyguardManager::class.java)?.isDeviceSecure == true
+                        }
+                        if (!hasLock) {
+                            Text(
+                                stringResource(R.string.auto_mount_no_screen_lock),
+                                style = MaterialTheme.typography.bodySmall,
+                                color = MaterialTheme.colorScheme.error,
+                                modifier = Modifier.padding(bottom = 8.dp)
+                            )
+                        }
                         Row(
                             verticalAlignment = Alignment.CenterVertically,
                             modifier = Modifier.fillMaxWidth()

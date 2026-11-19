@@ -46,6 +46,7 @@ CASES = {
     "slider_hint": (VC, "slider_hint", "The first time the slider closes with a drive mounted, a hint points at the Drives icon; a tap dismisses it and it does not come back."),
     "notification_slider": (VC, "notification_slider", "A tap on the mounted-drives notification opens the app on the slider of mounted drives."),
     "credentials_device_lock": (VC, "credentials_device_lock", "Saved passwords open only with the phone's lock: saved under a PIN with no prompt, unreadable 30 s after the last check, and auto mount unlocks after the PIN."),
+    "plain_read_only_default": (PLAIN, "plain_read_only_default", "Read-only mode on: a plain drive mounts read-only by itself, and no file can be created on it."),
     "report_issue": (PLAIN, "report_issue", "Report issue: the details and a random string reach a GitHub issue, which is then deleted."),
 }
 
