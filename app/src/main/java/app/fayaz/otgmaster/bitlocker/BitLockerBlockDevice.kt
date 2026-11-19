@@ -48,6 +48,9 @@ class BitLockerBlockDevice internal constructor(
     } + listOf(header.volumeHeaderOffset until header.volumeHeaderOffset + header.volumeHeaderSize))
         .sortedBy { it.first }
 
+    /** [holes] in device blocks: what Format must keep the new filesystem off. */
+    override val reservedBlocks: List<LongRange> = holes.map { it.first / bs..it.last / bs }
+
     override val blockSize: Int get() = bs
     override val blockCount: Long get() = partitionBlocks
     override val blocks: Long get() = partitionBlocks

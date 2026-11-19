@@ -9,6 +9,13 @@ interface RawBlockDevice : Closeable {
     fun readBlocks(startBlock: Long, blockCount: Int): ByteArray
 
     fun writeBlocks(startBlock: Long, data: ByteArray)
+
+    /**
+     * Blocks a filesystem laid out on this device must never use, as inclusive ranges in
+     * order: BitLocker's own metadata, which sits inside the volume it encrypts. Format
+     * marks them bad. None on every other device.
+     */
+    val reservedBlocks: List<LongRange> get() = emptyList()
 }
 
 /**

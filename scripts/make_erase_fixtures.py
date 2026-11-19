@@ -17,6 +17,10 @@ testEraseOperations), without root:
   encrypt_plain_ntfs   plain NTFS -> VeraCrypt AES / SHA-512, PIM 1, ext4 inside, full.
   encrypt_luks2_ext4   plain FAT32 -> LUKS2 (AES-XTS, Argon2id), ext4 inside, full. The host
                        has cryptsetup unlock the keyslot and decrypts the data in Python.
+  format_bitlocker_ntfs  BitLocker XTS-AES-256 around NTFS, 64 MiB, with BitLocker's metadata
+                       inside the volume (as Windows puts it, scripts/make_bitlocker_image.py
+                       --metadata-at), Format to exFAT, full. The host decrypts it with
+                       cryptsetup's key and Python's AES.
   disconnect           the fat32 case's VeraCrypt AES/SHA-512 FAT32 volume (10 MB), for
                        E2EAutomatedTest.runDisconnectCase: not an erase case, but built the same
                        way as format_vc_exfat, so here too. Encrypted, because a plain card
@@ -34,6 +38,7 @@ rest — test.img, password.txt, and pim.txt for format_vc_exfat and disconnect.
 """
 import os
 import shutil
+import subprocess
 import sys
 import tempfile
 
@@ -44,6 +49,25 @@ sys.path.insert(0, HERE)
 from make_e2e_matrix import make_fs  # noqa: E402
 
 SLOT_BYTES = 64 << 20
+# BitLocker's three metadata areas and the moved first sectors, inside the 64 MiB volume:
+# past the NTFS's $MFTMirr and $LogFile at the middle, and checked free before they go in.
+BITLOCKER_AT = (44 << 20, 52 << 20, 60 << 20, (52 << 20) + 65536)
+BITLOCKER_PASSWORD = "password123"
+
+
+def make_bitlocker_ntfs(case_dir, work):
+    plain = os.path.join(work, "bl-plain.img")
+    make_fs("ntfs", plain, SLOT_BYTES, work)
+    for at, size in [(a, 65536) for a in BITLOCKER_AT[:3]] + [(BITLOCKER_AT[3], 8192)]:
+        p = subprocess.run(["ntfscluster", "-f", "-s", f"{at // 512}-{(at + size) // 512 - 1}", plain],
+                           capture_output=True, text=True)
+        if p.returncode != 0 or "Inode" in p.stdout:
+            raise SystemExit(f"the NTFS uses the sectors BitLocker's metadata would take at {at}:\n{p.stdout}{p.stderr}")
+    subprocess.run([sys.executable, os.path.join(HERE, "make_bitlocker_image.py"), plain,
+                    os.path.join(case_dir, "test.img"), "--password", BITLOCKER_PASSWORD, "--cipher", "xts256",
+                    "--metadata-at", ",".join(str(a) for a in BITLOCKER_AT), "--verify"], check=True)
+    with open(os.path.join(case_dir, "password.txt"), "w") as f:
+        f.write(BITLOCKER_PASSWORD + "\n")
 
 
 def main():
@@ -69,6 +93,8 @@ def main():
             img = os.path.join(td, case, "test.img")
             make_fs(fs, img, SLOT_BYTES, work)
             print(f"{case}: plain {fs}, {SLOT_BYTES >> 20} MiB")
+        make_bitlocker_ntfs(os.path.join(td, "format_bitlocker_ntfs"), work)
+        print("format_bitlocker_ntfs: BitLocker XTS-256 around NTFS, metadata inside")
 
 
 if __name__ == "__main__":

@@ -108,6 +108,11 @@ def decrypt(slot, case_dir, out):
     return container
 
 
+def container_of(case_dir):
+    tag_file = os.path.join(case_dir, "container.txt")
+    return open(tag_file).read().strip() if os.path.exists(tag_file) else "VERACRYPT"
+
+
 def fs_type(img):
     return run("blkid", "-p", "-o", "value", "-s", "TYPE", img).stdout.strip()
 
@@ -287,6 +292,15 @@ def erase_main(slot, case_dir):
             if label != label_want:
                 problems.append(f"label {label!r} after Format, was {label_want!r}")
             what.append(f"label {label!r} kept")
+        elif action == "format" and container_of(case_dir) == "BITLOCKER":
+            # cryptsetup must still release the key (the metadata is intact), and the data is
+            # decrypted with Python's AES, not the app's code.
+            fs_img = os.path.join(work, "plain.img")
+            decrypt(snapshot, case_dir, fs_img)
+            what.append("cryptsetup still opens it with the same password")
+            # The drive itself is ciphertext either way: the full overwrite shows in the plaintext.
+            if full and old_plaintext_left(fs_img):
+                problems.append("a full Format left the old flower.jpg's bytes inside the volume")
         elif action == "format":
             password = open(os.path.join(case_dir, "password.txt")).read().strip()
             pim = int(open(os.path.join(case_dir, "pim.txt")).read().strip())

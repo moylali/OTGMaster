@@ -415,10 +415,11 @@ fun FormatScreen(
     insideContainer: Boolean,
     onConfirm: (FormatRequest) -> Unit,
     onDismiss: () -> Unit,
+    options: List<DriveFormatter.Filesystem> = DriveFormatter.Filesystem.entries,
 ) {
     // ext2 and ext3 volumes are offered ext4, the only ext this app writes.
-    var fs by remember { mutableStateOf(current ?: if (drive.filesystem.startsWith("ext")) DriveFormatter.Filesystem.EXT4
-        else DriveFormatter.Filesystem.EXFAT) }
+    var fs by remember { mutableStateOf((current ?: if (drive.filesystem.startsWith("ext")) DriveFormatter.Filesystem.EXT4
+        else DriveFormatter.Filesystem.EXFAT).takeIf { it in options } ?: DriveFormatter.Filesystem.EXFAT) }
     var label by remember { mutableStateOf(suggestedLabel) }
     var quick by remember { mutableStateOf(false) }
     var confirming by remember { mutableStateOf(false) }
@@ -428,7 +429,7 @@ fun FormatScreen(
         DriveDetails(drive)
         Text(stringResource(if (insideContainer) R.string.format_keeps_container else R.string.format_keeps_plain),
             style = MaterialTheme.typography.bodyMedium)
-        Picker(stringResource(R.string.erase_filesystem), fs, DriveFormatter.Filesystem.entries, { it.displayName },
+        Picker(stringResource(R.string.erase_filesystem), fs, options, { it.displayName },
             "format_fs") { fs = it }
         LabelField(label, "format_label", labelLimit(fs)) { label = it }
         QuickOption(quick) { quick = it }

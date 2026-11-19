@@ -38,6 +38,7 @@ class CachedBlockDevice(
     override val blockSize: Int get() = delegate.blockSize
     override val blockCount: Long get() = delegate.blockCount
     override val blocks: Long get() = delegate.blockCount
+    override val reservedBlocks: List<LongRange> get() = delegate.reservedBlocks
 
     /** The uncached device, so callers can measure both paths. */
     val uncached: RawBlockDevice get() = delegate

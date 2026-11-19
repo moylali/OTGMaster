@@ -2407,8 +2407,6 @@ class MainActivity : AppCompatActivity() {
     private fun formatUnavailable(drive: MountedDrive): String? = when {
         drive.isReadOnly -> getString(R.string.action_unavailable_read_only)
         drive.isHiddenOrOuter -> getString(R.string.action_unavailable_hidden)
-        drive.sourceVolumeCandidate?.containerType == app.fayaz.otgmaster.veracrypt.ContainerType.BITLOCKER ->
-            getString(R.string.format_unavailable_fs, "BitLocker")
         drive.filesystemName !in setOf("FAT32", "exFAT", "ext2", "ext3", "ext4", "NTFS") ->
             getString(R.string.format_unavailable_fs, drive.filesystemName)
         drive.blockDevice == null -> getString(R.string.encrypt_unavailable_bounds)
@@ -3583,6 +3581,13 @@ fun OtgMasterApp(
                 drive = summary,
                 current = app.fayaz.otgmaster.format.DriveFormatter.Filesystem.entries
                     .firstOrNull { it.displayName.equals(target.filesystemName, ignoreCase = true) },
+                // Inside BitLocker the new filesystem goes around BitLocker's metadata, which
+                // FAT32, exFAT and NTFS mark bad; ext4 is not written to (and Windows cannot read it).
+                options = if (target.sourceVolumeCandidate?.containerType ==
+                    app.fayaz.otgmaster.veracrypt.ContainerType.BITLOCKER) {
+                    app.fayaz.otgmaster.format.DriveFormatter.Filesystem.entries
+                        .filter { it != app.fayaz.otgmaster.format.DriveFormatter.Filesystem.EXT4 }
+                } else app.fayaz.otgmaster.format.DriveFormatter.Filesystem.entries,
                 suggestedLabel = suggestedLabel,
                 insideContainer = !target.isPlain,
                 onConfirm = { req -> formatTarget = null; onFormat(target, req) },
