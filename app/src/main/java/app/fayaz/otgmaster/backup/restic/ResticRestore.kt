@@ -96,6 +96,47 @@ class ResticRestore(private val repo: ResticRepository) {
         }
     }
 
+    /**
+     * The space restoring [node] to [targetPath] in [target] needs, in bytes on a volume
+     * that allocates in [cluster]-byte units, measured before anything is written.
+     *
+     * A new file takes its size rounded up to whole clusters (NoSpace.neededOnVolume).
+     * A file that replaces one already there adds only the difference, but its new copy
+     * is written in full beside the old one before the old one goes, so the largest
+     * replaced file is added once on top. Each folder that does not exist yet takes a
+     * cluster. Restoring 20,000 small files onto 32 KiB clusters needs far more than
+     * their byte count, which is what a check by bytes alone missed.
+     */
+    fun spaceNeeded(node: ResticRepository.Node, target: FileTree, targetPath: String, cluster: Int): Long {
+        val c = cluster.coerceAtLeast(512).toLong()
+        fun onVolume(size: Long) = app.fayaz.otgmaster.fs.NoSpace.neededOnVolume(listOf(size), 0, cluster)
+        var total = 0L
+        var largestReplaced = 0L
+        fun walk(n: ResticRepository.Node, path: String) {
+            if (isCancelled()) throw CancelledException()
+            val existing = target.stat(path)
+            when (n.type) {
+                "dir" -> {
+                    if (existing == null) total += c
+                    for (child in repo.tree(n.subtree ?: return)) {
+                        Paths.requireSafeName(child.name)
+                        walk(child, Paths.join(path, child.name))
+                    }
+                }
+                "file" -> {
+                    val new = onVolume(n.size)
+                    if (existing == null || existing.isDirectory) total += new
+                    else {
+                        total += (new - onVolume(existing.size)).coerceAtLeast(0L)
+                        largestReplaced = maxOf(largestReplaced, new)
+                    }
+                }
+            }
+        }
+        walk(node, targetPath)
+        return total + largestReplaced
+    }
+
     /** A whole snapshot's top folder into [targetPath]. */
     fun restoreAll(snapshot: ResticRepository.Snapshot, target: FileTree, targetPath: String) {
         target.mkdirs(targetPath)

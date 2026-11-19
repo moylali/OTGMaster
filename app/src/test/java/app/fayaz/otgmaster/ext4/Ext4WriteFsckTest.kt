@@ -602,6 +602,30 @@ class Ext4WriteFsckTest {
         assertFsckClean("a write that failed part-way")
     }
 
+    /**
+     * A full volume says so as a NoSpaceException, which the provider turns into "Not
+     * enough space on <drive>". It was a plain IOException ("out of usable blocks"), so
+     * nothing could tell it from a USB failure. Growing a file past the free space fails
+     * in the allocator, before a byte is written, and leaves the volume clean.
+     */
+    @Test
+    fun aVolumeWithoutRoomSaysSo() {
+        val raw = FileBlockDevice(img)
+        try {
+            val f = Ext4FileSystem.create(raw)
+            val file = f.rootDirectory.createFile("too-big.bin")
+            try {
+                file.length = f.freeSpace + 64L * 1024 * 1024
+                org.junit.Assert.fail("a file larger than the free space was allocated")
+            } catch (e: app.fayaz.otgmaster.fs.NoSpaceException) {
+                assertTrue(e.message!!, e.message!!.contains("out of usable blocks"))
+            }
+        } finally {
+            raw.close()
+        }
+        assertFsckClean("a write the volume had no room for")
+    }
+
     /** The same failure on an append: the file keeps its old length and bytes, and nothing leaks. */
     @Test
     fun anAppendThatFailsPartWayKeepsTheOldContents() {

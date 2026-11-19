@@ -54,7 +54,9 @@ class NtfsFileSystem private constructor(
     /** Throws an IOException naming [what] and the errno of the last failed call. */
     internal fun error(what: String, rc: Int = -NtfsNative.lastErrno()): Nothing {
         val errno = -rc
-        throw IOException("$what: ${errnoName(errno)}")
+        val message = "$what: ${errnoName(errno)}"
+        app.fayaz.otgmaster.fs.NoSpace.fromErrno(rc, message)?.let { throw it }
+        throw IOException(message)
     }
 
     /**

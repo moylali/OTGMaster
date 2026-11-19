@@ -164,9 +164,34 @@ class VeraCryptDocumentProvider : DocumentsProvider() {
                 if (e !is FileNotFoundException) {
                     OtgMasterState.logFailure("provider-$op", "Files app: $op on a mounted drive failed", e)
                 }
+                if (app.fayaz.otgmaster.fs.NoSpace.isNoSpace(e)) reportNoSpace(docId?.substringBefore(':'))
                 throw e
             } finally {
                 lock.unlock()
+            }
+        }
+
+        @Volatile private var appContext: android.content.Context? = null
+        private val noSpaceReportedAt = java.util.concurrent.ConcurrentHashMap<String, Long>()
+
+        /**
+         * A save into [driveId] ran out of space: one plain line in the log and a toast,
+         * at most every 10 s per drive, since the app saving the file (the Files app, a
+         * gallery) shows only "couldn't copy". The technical reason is in the log line
+         * logFailure wrote just before.
+         */
+        private fun reportNoSpace(driveId: String?) {
+            val ctx = appContext ?: return
+            val key = driveId ?: ""
+            val now = android.os.SystemClock.elapsedRealtime()
+            val last = noSpaceReportedAt[key]
+            if (last != null && now - last < 10_000L) return
+            noSpaceReportedAt[key] = now
+            val name = driveId?.let { OtgMasterState.getDrive(it)?.name } ?: ctx.getString(app.fayaz.otgmaster.R.string.log_this_drive)
+            val text = ctx.getString(app.fayaz.otgmaster.R.string.no_space_on_drive, name)
+            OtgMasterState.log(text)
+            android.os.Handler(android.os.Looper.getMainLooper()).post {
+                android.widget.Toast.makeText(ctx, text, android.widget.Toast.LENGTH_LONG).show()
             }
         }
 
@@ -343,6 +368,7 @@ class VeraCryptDocumentProvider : DocumentsProvider() {
     }
 
     override fun onCreate(): Boolean {
+        appContext = context?.applicationContext
         return true
     }
 

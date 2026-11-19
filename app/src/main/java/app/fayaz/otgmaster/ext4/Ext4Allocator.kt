@@ -258,7 +258,7 @@ internal class Ext4Allocator(private val fs: Ext4FileSystem) {
         if (need > 0) {
             // Not enough space — roll back what we allocated.
             freeRuns(runs, updateSuperblock = false)
-            throw IOException(
+            throw app.fayaz.otgmaster.fs.NoSpaceException(
                 "Ext4: out of usable blocks. Need $count, got ${count - need}. " +
                 "Groups still flagged BLOCK_UNINIT are skipped because their " +
                 "on-disk bitmap is not initialised, so the volume's reported " +
@@ -365,7 +365,7 @@ internal class Ext4Allocator(private val fs: Ext4FileSystem) {
                 }
             }
         }
-        throw IOException("Ext4: no free inodes")
+        throw app.fayaz.otgmaster.fs.NoSpaceException("Ext4: no free inodes")
     }
 
     fun freeInode(inodeNum: Long, isDir: Boolean) {
