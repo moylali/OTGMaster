@@ -1,7 +1,8 @@
 • New: saved passwords open only with your fingerprint or screen lock
-• New: edit the log before you send a report
-• Fixed: other apps could detect a hidden VeraCrypt volume or read a drive's serial
-• Fixed: report details reached the server before you sent them
-• Fixed: a USB hiccup while writing could stop Encrypt or a copy
-• Fixed: a cut-off ext4 write left free space marked used
-• Fixed: a full drive says "Not enough space"; a restore that won't fit stops first
+• New: Read-only mode covers unencrypted drives
+• New: edit the log before sending a report
+• Fixed: other apps could detect a hidden volume or read a drive's serial
+• Fixed: reports reached the server before you sent them
+• Fixed: a USB hiccup could stop Encrypt or a copy
+• Fixed: a cut-off ext4 write left space marked used
+• Fixed: full drives say "Not enough space"; restores that won't fit stop first

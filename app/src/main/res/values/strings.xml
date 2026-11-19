@@ -134,7 +134,8 @@
     <string name="cd_copy_version">Copy version</string>
     <string name="cd_close_settings">Close settings</string>
     <string name="auto_mount_title">Auto mount</string>
-    <string name="auto_mount_description">When a known device is connected, OTG Master asks for your device lock, then mounts all recognized encrypted drives automatically. Credentials are encrypted with AES-256 in Android Keystore and cannot be extracted without your device lock. A hidden volume, or a volume mounted with hidden volume protection, is never mounted this way.</string>
+    <string name="auto_mount_no_screen_lock">This phone has no screen lock, so Auto mount cannot save passwords. Set a PIN, pattern or password in Android\'s settings first.</string>
+    <string name="auto_mount_description">When a known device is connected, OTG Master asks for your fingerprint or screen lock, then mounts all recognized encrypted drives automatically. This needs a screen lock (PIN, pattern or password) on the phone: saved passwords open only within 30 seconds of it, and the phone\'s security hardware enforces that. A hidden volume, or a volume mounted with hidden volume protection, is never mounted this way.</string>
     <string name="cd_clear_keyfiles">Clear keyfiles</string>
     <string name="auto_mount_prompt_title">Authenticate to mount</string>
     <string name="auto_mount_prompt_subtitle_single">Auto mount %1$s</string>
@@ -174,7 +175,7 @@
     <string name="backups_enable_text">Backups are disabled in Settings. Enable them to back up this drive?</string>
     <string name="backups_enable_confirm">Enable</string>
     <string name="backups_disable_description">Hides the backup reminder icon, the Backups tab, Manage backups and each drive\'s list of backups. Backups you have already scheduled keep running.</string>
-    <string name="read_only_mode_description">Mount encrypted partitions read-only by default</string>
+    <string name="read_only_mode_description">Mount every partition read-only by default, encrypted or not</string>
     <string name="auto_mount_clear_credentials">Clear all cached credentials</string>
     <string name="log_auto_mount_credentials_cleared">All Auto mount cached credentials cleared.</string>
 

@@ -1,0 +1,1 @@
+Read-only mode on: a plain drive mounts read-only by itself, and no file can be created on it.

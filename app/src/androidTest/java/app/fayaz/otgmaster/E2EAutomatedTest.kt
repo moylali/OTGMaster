@@ -4538,6 +4538,24 @@ class E2EAutomatedTest {
                 assertNotNull("the hint went away", device.findObject(By.text(usbText(R.string.usb_hint_android))))
             }
             "report_issue" -> runReportIssue(args.getString("issue_marker", ""))
+            "plain_read_only_default" -> {
+                // Read-only mode used to cover encrypted partitions only; a plain drive,
+                // which mounts with no form, was always writable (#165).
+                val prefs = bkContext.getSharedPreferences("otgmaster_prefs", Context.MODE_PRIVATE)
+                try {
+                    prefs.edit().putBoolean("read_only_default", true).commit()
+                    relaunchApp()
+                    val d = ejMount("with Read-only mode on")
+                    assertTrue("a plain drive mounted writable with Read-only mode on", d.isReadOnly)
+                    val made = runCatching {
+                        DocumentsContract.createDocument(bkContext.contentResolver,
+                            DocumentsContract.buildDocumentUri(AUTHORITY, "${d.id}:/"), "text/plain", "ro_probe.txt")
+                    }.getOrNull()
+                    assertNull("a file was created on a read-only plain drive", made)
+                } finally {
+                    prefs.edit().remove("read_only_default").commit()
+                }
+            }
             "credentials_device_lock" -> {
                 // #165: saved passwords open only within 30 s of the phone's lock, enforced by
                 // the keystore. Before 0.5.4 any code running as the app could read them.
