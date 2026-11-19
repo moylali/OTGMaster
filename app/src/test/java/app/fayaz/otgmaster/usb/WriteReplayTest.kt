@@ -29,6 +29,8 @@ class WriteReplayTest {
         var writeCount = 0
         /** The write (1-based) that fails after six resets, losing its unit. */
         var failWrite = -1
+        /** More writes (1-based) that fail the same way, such as the first write of a replay. */
+        var failWrites = emptySet<Int>()
         /** The write (1-based) that succeeds, but only after a reset that loses its unit. */
         var resetInsideWrite = -1
 
@@ -54,7 +56,7 @@ class WriteReplayTest {
 
         override fun write(deviceOffset: Long, buffer: ByteBuffer) {
             writeCount++
-            if (writeCount == failWrite) {
+            if (writeCount == failWrite || writeCount in failWrites) {
                 resets += 6
                 loseUnitOf(deviceOffset)
                 throw IOException("MAX_RECOVERY_ATTEMPTS Exceeded while trying to transfer command to device")
@@ -114,6 +116,34 @@ class WriteReplayTest {
         val all = writeSequence(dev, first, 8, seed = 71)
         assertArrayEquals(all, onDisk(drive, first, all.size))
         assertEquals(1L, dev.replays)
+    }
+
+    /**
+     * #153 and the Galaxy Tab A9+ in the 0.5.3 matrix: a write gave up, the drive answered
+     * again, and the replay of the last writes then failed too, on its first write. The
+     * replay had no recovery of its own, so the whole Encrypt (or bigwrite) stopped with
+     * "could not write the last 1024 KiB again after a failed write" and left the drive
+     * half written. A replay write that fails is now recovered like any other write.
+     */
+    @Test
+    fun `a replay write that fails is recovered, not the end of the operation`() {
+        val drive = LossyDrive().apply { failWrite = 5; failWrites = setOf(6) }   // write 6 is the replay's first
+        val dev = device(drive)
+        val first = 5_001L
+        val all = writeSequence(dev, first, 8, seed = 153)
+        assertArrayEquals("every byte the app wrote is on the drive", all, onDisk(drive, first, all.size))
+    }
+
+    /** The replay fails twice at the same size: it is written again in smaller transfers. */
+    @Test
+    fun `a replay that keeps failing steps the transfer size down`() {
+        val drive = LossyDrive().apply { failWrite = 5; failWrites = setOf(6, 7) }
+        val dev = device(drive)
+        val first = 6_001L
+        val all = writeSequence(dev, first, 8, seed = 254)
+        assertArrayEquals(all, onDisk(drive, first, all.size))
+        // The 64 KiB writes failed twice at that size: halved, to 32 KiB.
+        assertEquals("stepped down after the second failure at one size", 32 * 1024, dev.transferBytes)
     }
 
     @Test
