@@ -228,7 +228,19 @@ object FeedbackPayload {
 
     /** What the user reads before deciding. Mirrors the payload exactly. */
     /** What the user reads before deciding. Shows exactly what [sel] would send. */
-    fun summary(c: Contents, sel: Selection = Selection()): String = buildString {
+    /**
+     * [c] with its log replaced by what the user left in the editor, so the lines sent
+     * are exactly those. A log the user emptied sends no `logs` parameter at all.
+     */
+    fun withEditedLog(c: Contents, text: String): Contents =
+        c.copy(logLines = text.split('\n').map { it.trimEnd('\r') }.dropLastWhile { it.isBlank() })
+
+    /**
+     * What the user reads before deciding. With [logText] false the log is counted, not
+     * listed: the screen shows it in its own editor, and listing it twice would hide
+     * that the editor is what gets sent.
+     */
+    fun summary(c: Contents, sel: Selection = Selection(), logText: Boolean = true): String = buildString {
         if (sel.nothing) {
             appendLine("Nothing will be shared.")
             appendLine()
@@ -267,8 +279,8 @@ object FeedbackPayload {
             if (c.logLines.isEmpty()) {
                 appendLine("Log: empty")
             } else {
-                appendLine("Log: ${c.logLines.size} line(s)")
-                c.logLines.forEach { appendLine("  $it") }
+                appendLine("Log: ${c.logLines.size} line(s)" + if (logText) "" else ", as shown below")
+                if (logText) c.logLines.forEach { appendLine("  $it") }
             }
         }
     }

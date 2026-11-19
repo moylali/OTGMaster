@@ -179,6 +179,34 @@ class FeedbackPayloadTest {
         assertFalse("raw '+' would decode to a space", url.substringAfter('#').contains('+'))
     }
 
+    /** The user edits the log on the screen; the edited text is exactly what is sent. */
+    @Test
+    fun `an edited log is what goes in logs`() {
+        val c = FeedbackPayload.collectForTest(listOf(
+            "Backup \"Photos\": not read: /DCIM/Camera/IMG_2041.jpg: permission denied",
+            "USB: a 120 KiB read at block 0 took 9 ms",
+        ))
+        val edited = FeedbackPayload.withEditedLog(c, "Backup \"Photos\": not read: <removed>\nUSB: a 120 KiB read at block 0 took 9 ms\n\n")
+        val url = FeedbackPayload.url("https://example.test/", edited)
+        assertEquals("Backup \"Photos\": not read: <removed>\nUSB: a 120 KiB read at block 0 took 9 ms", decodeLogs(url))
+        assertFalse("the removed path is nowhere in the URL", URLDecoder.decode(url, "UTF-8").contains("IMG_2041"))
+    }
+
+    @Test
+    fun `a log the user emptied sends no logs parameter`() {
+        val c = FeedbackPayload.collectForTest(listOf("line one", "line two"))
+        val url = FeedbackPayload.url("https://example.test/", FeedbackPayload.withEditedLog(c, "  \n"))
+        assertEquals(null, decodeLogs(url))
+    }
+
+    @Test
+    fun `the review counts the log and leaves it to the editor`() {
+        val c = FeedbackPayload.collectForTest(listOf("line one", "line two"))
+        val text = FeedbackPayload.summary(c, logText = false)
+        assertTrue(text.contains("Log: 2 line(s), as shown below"))
+        assertFalse(text.contains("line one"))
+    }
+
     @Test
     fun `no logs parameter when logs are not selected`() {
         val url = FeedbackPayload.url("https://example.test/", contents(), FeedbackPayload.Selection(logs = false))

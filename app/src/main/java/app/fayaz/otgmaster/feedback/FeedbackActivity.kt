@@ -29,6 +29,8 @@ import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
+import androidx.compose.material3.OutlinedTextField
+import androidx.compose.material3.TextButton
 import androidx.compose.material3.Scaffold
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
@@ -42,6 +44,7 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.platform.LocalUriHandler
 import androidx.compose.ui.text.font.FontFamily
+import androidx.compose.ui.text.TextStyle
 import androidx.compose.ui.unit.dp
 import app.fayaz.otgmaster.OtgMasterState
 import app.fayaz.otgmaster.R
@@ -106,6 +109,12 @@ class FeedbackActivity : ComponentActivity() {
             )
         }
         var sel by remember { mutableStateOf(FeedbackPayload.Selection()) }
+        // The log is editable here, so a user can take out file or folder names (a
+        // backup's "not read:" lines carry them) before anything leaves the app. What is
+        // in the editor is what is sent: the summary, the count and the URL all use it.
+        val fullLog = remember { contents.logLines.joinToString("\n") }
+        var logText by remember { mutableStateOf(fullLog) }
+        val sent = remember(logText) { FeedbackPayload.withEditedLog(contents, logText) }
 
         Scaffold(
             topBar = {
@@ -157,7 +166,7 @@ class FeedbackActivity : ComponentActivity() {
                     sel = sel.copy(partitions = it)
                 }
                 IncludeRow(
-                    stringResource(R.string.feedback_include_logs, contents.logLines.size),
+                    stringResource(R.string.feedback_include_logs, sent.logLines.size),
                     sel.logs
                 ) { sel = sel.copy(logs = it) }
 
@@ -185,13 +194,38 @@ class FeedbackActivity : ComponentActivity() {
                     modifier = Modifier.fillMaxWidth()
                 ) {
                     Text(
-                        FeedbackPayload.summary(contents, sel),
+                        FeedbackPayload.summary(sent, sel, logText = false),
                         style = MaterialTheme.typography.bodySmall,
                         fontFamily = FontFamily.Monospace,
                         modifier = Modifier
                             .heightIn(min = 120.dp)
                             .padding(10.dp)
                     )
+                }
+
+                if (sel.logs && !sel.nothing) {
+                    Spacer(Modifier.height(12.dp))
+                    Text(stringResource(R.string.feedback_log_heading), style = MaterialTheme.typography.titleSmall)
+                    Text(
+                        stringResource(R.string.feedback_log_hint),
+                        style = MaterialTheme.typography.bodySmall,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                        modifier = Modifier.padding(vertical = 4.dp)
+                    )
+                    OutlinedTextField(
+                        value = logText,
+                        onValueChange = { logText = it },
+                        textStyle = MaterialTheme.typography.bodySmall.merge(TextStyle(fontFamily = FontFamily.Monospace)),
+                        minLines = 6,
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .heightIn(min = 160.dp, max = 360.dp)
+                    )
+                    if (logText != fullLog) {
+                        TextButton(onClick = { logText = fullLog }) {
+                            Text(stringResource(R.string.feedback_log_restore))
+                        }
+                    }
                 }
 
                 Text(
@@ -203,7 +237,7 @@ class FeedbackActivity : ComponentActivity() {
 
                 Button(
                     onClick = {
-                        uriHandler.openUri(FeedbackPayload.url(base, contents, sel))
+                        uriHandler.openUri(FeedbackPayload.url(base, sent, sel))
                         finish()
                     },
                     // Always enabled: sending nothing is a legitimate choice, and the
