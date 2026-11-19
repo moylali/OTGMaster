@@ -323,7 +323,7 @@ class LibaumsRawBlockDevice(
             if (recentWrites.isEmpty()) return
             repeat(MAX_REPLAY_ROUNDS) {
                 val before = resets()
-                for (w in recentWrites) driver.write(w.block, ByteBuffer.wrap(w.data))
+                for (w in recentWrites) replayOne(w)
                 replays++
                 report("USB: $why; wrote the last ${recentBytes / 1024} KiB again " +
                     "(${recentWrites.size} writes from block ${recentWrites.first().block}), " +
@@ -334,16 +334,53 @@ class LibaumsRawBlockDevice(
         }
     }
 
-    /** After [recover] said to retry: a reset has happened on the way, so replay first. */
+    /** A write of the replay that failed: where, and at what size, for [recover]. */
+    private class ReplayFailed(val block: Long, val blocks: Int, val failure: Exception) :
+        java.io.IOException(failure.message, failure)
+
+    /**
+     * Writes [w] again in transfers of at most [maxTransferBlocks], so a size [recover]
+     * stepped down to applies to the replay too. Caller holds [transferLock].
+     */
+    private fun replayOne(w: Written) {
+        val total = w.data.size / blockSize
+        var done = 0
+        while (done < total) {
+            val n = minOf(maxTransferBlocks, total - done)
+            try {
+                driver.write(w.block + done, ByteBuffer.wrap(w.data, done * blockSize, n * blockSize))
+            } catch (e: Exception) {
+                throw ReplayFailed(w.block + done, n, e)
+            }
+            done += n
+        }
+    }
+
+    /**
+     * After [recover] said to retry: a reset has happened on the way, so replay first.
+     *
+     * A replay write that fails is recovered like any other write: the drive is
+     * un-stuck if it needs it, retried once at the same size, then in smaller
+     * transfers. It used to end the operation at once. In #153 (Intenso cMobile,
+     * Galaxy A52s) an Encrypt stopped that way with "could not write the last 1024 KiB
+     * again after a failed write", leaving the drive half encrypted, and the Galaxy Tab
+     * A9+ stopped seven 0.5.3 matrix sequences the same way.
+     */
     private fun replayAfterRecovery(op: String, cause: Exception) {
-        try {
-            replayRecentWrites("recovered from a failed $op")
-        } catch (e: Exception) {
-            throw java.io.IOException(
-                "could not write the last ${recentBytes / 1024} KiB again after a failed $op; " +
-                    "data written just before it may not be on the drive: ${causeChain(e)}",
-                cause,
-            )
+        var attempts = 0
+        while (true) {
+            try {
+                replayRecentWrites("recovered from a failed $op")
+                return
+            } catch (e: Exception) {
+                val f = e as? ReplayFailed
+                if (f != null && ++attempts < MAX_REPLAY_ROUNDS && recover("write", f.blocks, f.block, f.failure)) continue
+                throw java.io.IOException(
+                    "could not write the last ${recentBytes / 1024} KiB again after a failed $op; " +
+                        "data written just before it may not be on the drive: ${causeChain(f?.failure ?: e)}",
+                    cause,
+                )
+            }
         }
     }
 

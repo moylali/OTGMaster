@@ -3,3 +3,4 @@
 • Fixed: an ext4 write cut off by a USB drop left free space marked used
 • Fixed: a report's details reached the feedback server before you sent it
 • Fixed: a full drive now says "Not enough space", and a restore that will not fit stops before it starts
+• Fixed: a USB hiccup while writing could stop Encrypt or a copy partway
