@@ -4545,6 +4545,11 @@ class E2EAutomatedTest {
                 try {
                     prefs.edit().putBoolean("read_only_default", true).commit()
                     relaunchApp()
+                    // The drive was opened, writable, when the case started; the setting applies
+                    // at the next mount. Eject, then Scan opens it again.
+                    ejMount("before Eject")
+                    ejTapEject()
+                    ejAwaitGone()
                     val d = ejMount("with Read-only mode on")
                     assertTrue("a plain drive mounted writable with Read-only mode on", d.isReadOnly)
                     val made = runCatching {
@@ -4562,6 +4567,9 @@ class E2EAutomatedTest {
                 val prefs = bkContext.getSharedPreferences("otgmaster_prefs", Context.MODE_PRIVATE)
                 val store = app.fayaz.otgmaster.security.CredentialStore(bkContext)
                 device.executeShellCommand("locksettings set-pin 1234")
+                // The screen stays on: with a PIN set, the lock screen would come up during the wait
+                // below, and unlocking it is a check of the phone's lock that opens the window.
+                device.executeShellCommand("svc power stayon true")
                 try {
                     prefs.edit().putBoolean("auto_mount", true).commit()
                     relaunchApp()
@@ -4572,9 +4580,12 @@ class E2EAutomatedTest {
                     // More than 30 s since the phone's lock was last checked: the keystore refuses.
                     android.os.SystemClock.sleep(32_000L)
                     assertTrue("a saved password opened without the phone's lock", store.loadAll(key).isEmpty())
-                    // Auto mount asks for the lock, and the PIN opens the saved password.
-                    relaunchApp()
-                    android.os.SystemClock.sleep(5_000L)
+                    // Auto mount asks for the lock, and the PIN opens the saved password. Not
+                    // relaunchApp(): the PIN screen comes up at once, over the app it waits for.
+                    bkContext.startActivity(mainActivityIntent().apply {
+                        addFlags(Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_CLEAR_TASK)
+                    })
+                    android.os.SystemClock.sleep(8_000L)
                     device.executeShellCommand("input text 1234")
                     device.executeShellCommand("input keyevent 66")
                     if (waitForMounted(90_000L) == null) captureScreen("credentials_device_lock_no_mount")
@@ -4583,6 +4594,7 @@ class E2EAutomatedTest {
                     prefs.edit().remove("auto_mount").commit()
                     store.clearAll()
                     device.executeShellCommand("locksettings clear --old 1234")
+                    device.executeShellCommand("svc power stayon false")
                 }
             }
             "usb_mode_scan_warning" -> {
