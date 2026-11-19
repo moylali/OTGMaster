@@ -8,7 +8,7 @@
 # ── JNI entry points ──────────────────────────────────────────────────────────
 # Every `external fun` is bound by its mangled Java name (Java_app_fayaz_…): the class
 # and the method keep their names. Covers VeraCryptNative, ExFatNative, NtfsNative,
-# ApfsNative, BitLockerNative, libaums' AndroidUsbCommunication and argon2kt.
+# ApfsNative, BitLockerNative and libaums' AndroidUsbCommunication.
 -keepclasseswithmembernames,includedescriptorclasses class * {
     native <methods>;
 }
@@ -25,10 +25,6 @@
 -keep class app.fayaz.otgmaster.exfat.ExFatNode { *; }
 -keep class app.fayaz.otgmaster.ntfs.NtfsNode { *; }
 -keep class app.fayaz.otgmaster.apfs.ApfsNode { *; }
-
-# ── argon2kt (LUKS2 Argon2): ships no consumer rules; its .so names
-#    com/lambdapioneer/argon2kt/ByteBufferTarget and throws Argon2Exception ──────
--keep class com.lambdapioneer.argon2kt.** { *; }
 
 # ── Standard Android keep rules (supplement proguard-android-optimize.txt) ────
 -keepclassmembers class * implements android.os.Parcelable {
