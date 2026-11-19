@@ -4,6 +4,7 @@
  */
 #include <jni.h>
 #include <string.h>
+#include "../jni_secret.h"
 
 extern "C" {
 #include "bitlocker_crypto.h"
@@ -32,12 +33,12 @@ Java_app_fayaz_otgmaster_bitlocker_BitLockerNative_ccmDecrypt(JNIEnv *env, jclas
     jsize keyLen = env->GetArrayLength(jKey), len = env->GetArrayLength(jData);
     if (env->GetArrayLength(jNonce) != 12 || env->GetArrayLength(jTag) != 16 ||
             (keyLen != 16 && keyLen != 32)) return nullptr;
-    jbyte *key = env->GetByteArrayElements(jKey, nullptr);
+    JniSecret key(env, jKey);
     jbyte *nonce = env->GetByteArrayElements(jNonce, nullptr);
     jbyte *tag = env->GetByteArrayElements(jTag, nullptr);
     jbyte *data = env->GetByteArrayElements(jData, nullptr);
     uint8_t *out = new uint8_t[len > 0 ? len : 1];
-    int rc = bitlk_ccm_decrypt((uint8_t *) key, keyLen, (uint8_t *) nonce, (uint8_t *) tag,
+    int rc = bitlk_ccm_decrypt(key.data(), keyLen, (uint8_t *) nonce, (uint8_t *) tag,
                                (uint8_t *) data, len, out);
     jbyteArray result = nullptr;
     if (rc == 0) {
@@ -46,7 +47,6 @@ Java_app_fayaz_otgmaster_bitlocker_BitLockerNative_ccmDecrypt(JNIEnv *env, jclas
     }
     mbedtls_platform_zeroize(out, len);
     delete[] out;
-    env->ReleaseByteArrayElements(jKey, key, JNI_ABORT);
     env->ReleaseByteArrayElements(jNonce, nonce, JNI_ABORT);
     env->ReleaseByteArrayElements(jTag, tag, JNI_ABORT);
     env->ReleaseByteArrayElements(jData, data, JNI_ABORT);
@@ -59,11 +59,11 @@ Java_app_fayaz_otgmaster_bitlocker_BitLockerNative_ccmEncrypt(JNIEnv *env, jclas
         jbyteArray jKey, jbyteArray jNonce, jbyteArray jData) {
     jsize keyLen = env->GetArrayLength(jKey), len = env->GetArrayLength(jData);
     if (env->GetArrayLength(jNonce) != 12 || (keyLen != 16 && keyLen != 32)) return nullptr;
-    jbyte *key = env->GetByteArrayElements(jKey, nullptr);
+    JniSecret key(env, jKey);
     jbyte *nonce = env->GetByteArrayElements(jNonce, nullptr);
     jbyte *data = env->GetByteArrayElements(jData, nullptr);
     uint8_t *out = new uint8_t[len + 16];
-    int rc = bitlk_ccm_encrypt((uint8_t *) key, keyLen, (uint8_t *) nonce, (uint8_t *) data, len,
+    int rc = bitlk_ccm_encrypt(key.data(), keyLen, (uint8_t *) nonce, (uint8_t *) data, len,
                                out, out + len);
     jbyteArray result = nullptr;
     if (rc == 0) {
@@ -72,7 +72,6 @@ Java_app_fayaz_otgmaster_bitlocker_BitLockerNative_ccmEncrypt(JNIEnv *env, jclas
     }
     mbedtls_platform_zeroize(out, len + 16);
     delete[] out;
-    env->ReleaseByteArrayElements(jKey, key, JNI_ABORT);
     env->ReleaseByteArrayElements(jNonce, nonce, JNI_ABORT);
     env->ReleaseByteArrayElements(jData, data, JNI_ABORT);
     return result;
@@ -82,9 +81,8 @@ extern "C" JNIEXPORT jlong JNICALL
 Java_app_fayaz_otgmaster_bitlocker_BitLockerNative_newContext(JNIEnv *env, jclass,
         jint mode, jbyteArray jKey, jint sectorSize) {
     jsize keyLen = env->GetArrayLength(jKey);
-    jbyte *key = env->GetByteArrayElements(jKey, nullptr);
-    struct bitlk_ctx *ctx = bitlk_ctx_new(mode, (uint8_t *) key, keyLen, (uint32_t) sectorSize);
-    env->ReleaseByteArrayElements(jKey, key, JNI_ABORT);
+    JniSecret key(env, jKey);  // wiped on return; the context keeps its own key schedule
+    struct bitlk_ctx *ctx = bitlk_ctx_new(mode, key.data(), keyLen, (uint32_t) sectorSize);
     return (jlong) ctx;
 }
 
