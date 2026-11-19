@@ -205,8 +205,6 @@ dependencies {
     implementation("androidx.security:security-crypto:1.1.0-alpha06")
 
     // Argon2id for LUKS2 key derivation. Apache 2.0 — compatible with GPL-3.0-or-later.
-    // https://github.com/lambdapioneer/argon2kt
-    implementation("com.lambdapioneer.argon2kt:argon2kt:1.6.0")
 
     // org.json ships in android.jar as a stub that throws under plain unit tests.
 

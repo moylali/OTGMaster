@@ -144,13 +144,12 @@ key derivation (VeraCrypt 1.26.24 and later). Called from
   VeraCrypt derives with one lane, but cryptsetup gives a LUKS2 key slot four.
   `ARGON2_NO_THREADS` was set until 0.5.0 moved LUKS2 here, and made those unlocks over
   twice as slow; `Argon2LanesTest` guards it.
-- **Why vendored rather than a dependency:** the app already depends on argon2kt for
-  LUKS2, but that is an Android library that cannot load on the host JVM, so nothing
-  that uses it can be tested against real volumes there: `LuksSectorSizeTest` says so
-  and uses PBKDF2 keyslots instead. Compiled into `veracrypt-native`, the same code runs
-  in the host tests, which open volumes VeraCrypt itself made with Argon2. It also keeps
-  the derived key in native memory, as the PBKDF2 path does. LUKS2 could move to it and
-  drop argon2kt; it has not.
+- **Why vendored rather than a dependency:** the Android binding the app used for
+  LUKS2 (argon2kt) cannot load on the host JVM, so nothing that used it could be
+  tested against real volumes there. Compiled into `veracrypt-native`, the same code
+  runs in the host tests, which open volumes VeraCrypt itself made with Argon2. It also
+  keeps the derived key in native memory, as the PBKDF2 path does. LUKS2 moved to it in
+  0.5.0 (`4282eb2`), and the unused argon2kt dependency was removed in 0.5.4.
 - **Licence:** CC0-1.0 or Apache-2.0, at the user's option (`LICENSE`); see the table in
   `README.md`.
 

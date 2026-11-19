@@ -20,8 +20,8 @@ import kotlin.random.Random
  * The payload is written and checked by scripts/luks_payload.py — cryptsetup's
  * key and layout with Python's AES — so the app's reads are checked against an
  * independent encryption, and its writes against an independent decryption.
- * PBKDF2 keyslots: Argon2id needs the Android argon2kt library, which the host
- * JVM does not have; the slot type does not affect the data path under test.
+ * PBKDF2 keyslots, the quickest to derive: the slot type does not affect the data
+ * path under test.
  */
 class LuksSectorSizeTest {
 

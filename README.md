@@ -135,7 +135,7 @@ and the reference figures in [docs/BENCHMARK_RESULTS.md](docs/BENCHMARK_RESULTS.
 GPL-3.0-or-later: see [LICENSE](LICENSE). The app and its source, and the binary that
 statically links every component below, are distributed under it. Each component's own
 licence permits this: `libexfat` and `libntfs-3g` are GPL-2.0-or-later, `libfsapfs` and its
-libyal libraries LGPL-3.0-or-later, the Apache-2.0 components (libaums, argon2kt,
+libyal libraries LGPL-3.0-or-later, the Apache-2.0 components (libaums,
 mbedTLS) are compatible with GPL-3.0, zstd's decoder is taken under BSD-3-Clause, and LibTomCrypt's Twofish and the
 Argon2 reference implementation are public domain or dual-licensed with a permissive option.
 
@@ -149,10 +149,9 @@ Argon2 reference implementation are public domain or dual-licensed with a permis
 | [libntfs-3g](https://github.com/tuxera/ntfs-3g) (`app/src/main/cpp/ntfs-3g/`) | GPL-2.0-or-later | NTFS filesystem driver; pinned in [VENDOR_FIXES.md](docs/VENDOR_FIXES.md) |
 | [libfsapfs](https://github.com/libyal/libfsapfs) and 16 libyal libraries (`app/src/main/cpp/libfsapfs/`) | LGPL-3.0-or-later | APFS reader, plain and natively encrypted; pinned in [VENDOR_FIXES.md](docs/VENDOR_FIXES.md). LGPL-3.0 code cannot be combined into a GPL-2.0-only binary, which is why the project moved to GPL-3.0-or-later |
 | Serpent from the Linux kernel (`app/src/main/cpp/serpent/serpent_generic.c`) | GPL-2.0-or-later | `crypto/serpent_generic.c` at v6.12, pinned in [VENDOR_FIXES.md](docs/VENDOR_FIXES.md); see [PROVENANCE.md](app/src/main/cpp/serpent/PROVENANCE.md) |
-| [argon2kt](https://github.com/lambdapioneer/argon2kt) (`com.lambdapioneer.argon2kt:argon2kt:1.6.0`) | Apache-2.0 | Argon2id KDF for LUKS2 key derivation; ships native `.so` in the APK |
 | [zstd](https://github.com/facebook/zstd) decoder (`app/src/main/cpp/zstd/`) | BSD-3-Clause OR GPL-2.0-only | Reads restic's compressed repositories; v1.5.7, pinned in [VENDOR_FIXES.md](docs/VENDOR_FIXES.md) |
 | [LibTomCrypt](https://github.com/libtom/libtomcrypt) Twofish (`app/src/main/cpp/libtomcrypt/`) | Public domain OR WTFPL | Twofish for VeraCrypt volumes and cascades; pinned in [VENDOR_FIXES.md](docs/VENDOR_FIXES.md) |
-| [Argon2 reference implementation](https://github.com/P-H-C/phc-winner-argon2) (`app/src/main/cpp/argon2/`) | CC0-1.0 OR Apache-2.0 | Argon2id KDF for VeraCrypt headers; pinned in [VENDOR_FIXES.md](docs/VENDOR_FIXES.md) |
+| [Argon2 reference implementation](https://github.com/P-H-C/phc-winner-argon2) (`app/src/main/cpp/argon2/`) | CC0-1.0 OR Apache-2.0 | Argon2 KDF for VeraCrypt headers and LUKS2 key slots; pinned in [VENDOR_FIXES.md](docs/VENDOR_FIXES.md) |
 
 ### Support
 
