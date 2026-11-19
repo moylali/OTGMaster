@@ -10,7 +10,7 @@ import org.json.JSONObject
 /**
  * Builds the payload the feedback form accepts, and the URL that carries it.
  *
- * The form (github.com/moylali/OTGMaster-Feedback) reads a `payload` query
+ * The form (github.com/moylali/OTGMaster-Feedback) reads a `payload` fragment
  * parameter, base64-decodes it as UTF-8 and parses it as JSON, pre-filling its
  * fields from these keys. Nothing is sent anywhere by this class — it only produces
  * a string for the user to review and a URL to hand to a browser, so submission
@@ -201,12 +201,19 @@ object FeedbackPayload {
     }.toString()
 
     /**
-     * The URL to open, with the payload base64-encoded in the `payload` parameter.
+     * The URL to open, with the payload base64-encoded in the `payload` parameter of
+     * the fragment, and the whole log in `logs` beside it.
+     *
+     * The fragment, not the query: a browser never sends the fragment to a server or
+     * a proxy, so nothing reaches the form's worker until the user submits, which is
+     * what the screen before it promises. In the query the payload was in the request
+     * that loads the page (#165). Forms from before 0.5.4 read only the query; the form
+     * reads the fragment first and the query after.
      *
      * Standard base64 rather than the URL-safe alphabet, because the form decodes with
      * `atob`, which rejects `-` and `_`. That makes percent-encoding mandatory: base64
-     * contains `+`, and a `+` in a query string decodes to a space — which would
-     * corrupt a large fraction of payloads, silently and only sometimes.
+     * contains `+`, and a `+` in a URLSearchParams value decodes to a space — which
+     * would corrupt a large fraction of payloads, silently and only sometimes.
      *
      * java.util.Base64 and java.net.URLEncoder rather than the android.* equivalents,
      * which are unimplemented stubs under plain unit tests. Both exist from API 26,
@@ -214,18 +221,15 @@ object FeedbackPayload {
      */
     fun url(base: String, c: Contents, sel: Selection = Selection()): String {
         // Nothing selected means a bare form: no parameter at all rather than an
-        // encoded empty object, so the link carries no data even in a browser history
-        // or a proxy log.
+        // encoded empty object, so the link carries no data even in a browser history.
         if (sel.nothing) return base
         val enc = java.util.Base64.getEncoder()
         val b64 = enc.encodeToString(toJson(c, sel).toByteArray(Charsets.UTF_8))
-        val url = "$base?payload=${java.net.URLEncoder.encode(b64, "UTF-8")}"
-        // The whole log as its own parameter, in the fragment: a browser never sends the
-        // fragment to a server or proxy, so the 8 KB that bounds `payload` does not apply.
-        // A form that predates it ignores it and still gets the short log in `payload`.
+        val url = "$base#payload=${java.net.URLEncoder.encode(b64, "UTF-8")}"
+        // The short log stays in `payload` for a form that predates `logs`.
         if (!sel.logs || c.fullLogLines.isEmpty()) return url
         val logs = enc.encodeToString(c.fullLogLines.joinToString("\n").toByteArray(Charsets.UTF_8))
-        return "$url#logs=${java.net.URLEncoder.encode(logs, "UTF-8")}"
+        return "$url&logs=${java.net.URLEncoder.encode(logs, "UTF-8")}"
     }
 
     /** What the user reads before deciding. Mirrors the payload exactly. */

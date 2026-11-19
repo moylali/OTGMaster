@@ -29,9 +29,27 @@ class FeedbackPayloadTest {
 
     /** The parameter must survive the trip the form will take it on. */
     private fun decodePayload(url: String): JSONObject {
-        val raw = url.substringAfter("payload=").substringBefore('#')
+        val raw = fragmentParam(url, "payload")!!
         val b64 = URLDecoder.decode(raw, "UTF-8")
         return JSONObject(String(java.util.Base64.getDecoder().decode(b64), Charsets.UTF_8))
+    }
+
+    /** A parameter of the URL's fragment, still percent-encoded, as URLSearchParams sees it. */
+    private fun fragmentParam(url: String, name: String): String? =
+        url.substringAfter('#', "").split('&').firstOrNull { it.startsWith("$name=") }?.removePrefix("$name=")
+
+    /**
+     * #165: the payload was in the query, so the worker that serves the form received
+     * the device, USB and log details when the page loaded, before the user chose to
+     * submit. The part of the URL a browser sends must carry no data at all.
+     */
+    @Test
+    fun theRequestThatLoadsTheFormCarriesNothing() {
+        val base = "https://otgmaster-feedback.moylali.workers.dev/"
+        val c = FeedbackPayload.collectForTest((1..50).map { "line $it" })
+        val url = FeedbackPayload.url(base, c)
+        assertEquals("what the browser sends", base, url.substringBefore('#'))
+        assertTrue(decodePayload(url).getString("deviceLogs").contains("line 50"))
     }
 
     @Test
@@ -53,7 +71,7 @@ class FeedbackPayloadTest {
         // A long random-ish log makes a '+' in the base64 overwhelmingly likely.
         val noisy = (1..40).map { "event $it: ÿþ mount ✓ $it" }
         val url = FeedbackPayload.url("https://example.test/", contents(logLines = noisy))
-        val param = url.substringAfter("payload=").substringBefore('#')
+        val param = fragmentParam(url, "payload")!!
         assertFalse("raw '+' would decode to a space", param.contains('+'))
         // And it still decodes, which is the point of encoding it.
         assertTrue(decodePayload(url).getString("deviceLogs").contains("event 40"))
@@ -122,8 +140,7 @@ class FeedbackPayloadTest {
         val big = (1..50).map { "line $it " + "x".repeat(300) }
         val c = FeedbackPayload.collectForTest(big)
         val url = FeedbackPayload.url("https://otgmaster-feedback.moylali.workers.dev/", c)
-        val query = url.substringBefore('#')
-        assertTrue("the part a server sees was ${query.length} chars", query.length <= 8_000)
+        assertTrue("the payload was ${fragmentParam(url, "payload")!!.length} chars", fragmentParam(url, "payload")!!.length <= 8_000)
         assertTrue("older lines should be reported as dropped", c.logLinesDropped > 0)
         // The tail is what a report needs: it describes what just went wrong.
         assertTrue("the newest line must be kept", c.logLines.last().startsWith("line 50"))
@@ -150,8 +167,7 @@ class FeedbackPayloadTest {
 
     /** The `logs` fragment parameter, decoded as the form does. */
     private fun decodeLogs(url: String): String? {
-        val raw = url.substringAfter('#', "").split('&').firstOrNull { it.startsWith("logs=") }?.removePrefix("logs=")
-            ?: return null
+        val raw = fragmentParam(url, "logs") ?: return null
         return String(java.util.Base64.getDecoder().decode(URLDecoder.decode(raw, "UTF-8")), Charsets.UTF_8)
     }
 
@@ -164,7 +180,6 @@ class FeedbackPayloadTest {
         val inPayload = decodePayload(url).getString("deviceLogs")
         assertTrue("payload keeps the newest lines for older forms", inPayload.endsWith(big.last()))
         assertTrue("payload stays within its budget", inPayload.length <= 3_500)
-        assertTrue("query part within proxy limits", url.substringBefore('#').length <= 8_000)
         assertFalse("raw '+' would decode to a space", url.substringAfter('#').contains('+'))
     }
 
