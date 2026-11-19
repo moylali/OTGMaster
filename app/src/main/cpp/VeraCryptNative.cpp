@@ -5,6 +5,7 @@
 #include "mbedtls/platform_util.h"
 #include "argon2.h"
 #include "vc_cascade.h"
+#include "jni_secret.h"
 
 #define TAG "VeraCryptNative"
 #define LOGE(...) __android_log_print(ANDROID_LOG_ERROR, TAG, __VA_ARGS__)
@@ -71,10 +72,11 @@ Java_app_fayaz_otgmaster_veracrypt_VeraCryptNative_cryptSectorsInPlace(
     }
 
     jsize keyLen = env->GetArrayLength(jMasterKey);
-    jbyte* masterKey = env->GetByteArrayElements(jMasterKey, NULL);
-    if (!masterKey) return -1;
-    VcCascade* cascade = vc_cascade_new(ids, n, (const uint8_t*) masterKey, (size_t) keyLen);
-    env->ReleaseByteArrayElements(jMasterKey, masterKey, JNI_ABORT);
+    VcCascade* cascade;
+    {
+        JniSecret masterKey(env, jMasterKey);  // wiped at the end of this block
+        cascade = vc_cascade_new(ids, n, masterKey.data(), (size_t) keyLen);
+    }
     if (!cascade) {
         LOGE("cryptSectorsInPlace: key setup failed (%d ciphers, %d key bytes)", n, (int) keyLen);
         return -1;
@@ -120,8 +122,9 @@ static jbyteArray cryptHeader(
     if (n == 0 || env->GetArrayLength(jEncHeader) < HEADER_ENCRYPTED_SIZE) return nullptr;
     const int keyBytes = 64 * n;
 
-    jsize pwdLen = env->GetArrayLength(jPassword);
-    jbyte* pwd = env->GetByteArrayElements(jPassword, NULL);
+    JniSecret password(env, jPassword);
+    const jsize pwdLen = password.size();
+    const uint8_t* pwd = password.data();
     jsize saltLen = env->GetArrayLength(jSalt);
     jbyte* salt = env->GetByteArrayElements(jSalt, NULL);
 
@@ -151,11 +154,7 @@ static jbyteArray cryptHeader(
         ret = -1;
     }
 
-    // Wipe the native copy of the password before releasing it. JNI_ABORT rather
-    // than 0: mode 0 would copy our zeroes back into the caller's array, destroying
-    // a password the caller may still need.
-    mbedtls_platform_zeroize(pwd, pwdLen);
-    env->ReleaseByteArrayElements(jPassword, pwd, JNI_ABORT);
+    // The native copy of the password is wiped when `password` goes out of scope.
     env->ReleaseByteArrayElements(jSalt, salt, JNI_ABORT);
 
     if (ret != 0) {
@@ -221,8 +220,9 @@ Java_app_fayaz_otgmaster_veracrypt_VeraCryptNative_argon2(
         JNIEnv *env, jobject thiz, jbyteArray jPassword, jbyteArray jSalt,
         jint timeCost, jint memoryKiB, jint lanes, jint outLen, jboolean dataIndependent) {
     if (outLen <= 0 || outLen > 1024) return nullptr;
-    jsize pwdLen = env->GetArrayLength(jPassword);
-    jbyte* pwd = env->GetByteArrayElements(jPassword, NULL);
+    JniSecret password(env, jPassword);
+    const jsize pwdLen = password.size();
+    const uint8_t* pwd = password.data();
     jsize saltLen = env->GetArrayLength(jSalt);
     jbyte* salt = env->GetByteArrayElements(jSalt, NULL);
     uint8_t out[1024];
@@ -233,8 +233,6 @@ Java_app_fayaz_otgmaster_veracrypt_VeraCryptNative_argon2(
                            pwd, (size_t) pwdLen, salt, (size_t) saltLen, out, (size_t) outLen)
         : argon2id_hash_raw((uint32_t) timeCost, (uint32_t) memoryKiB, (uint32_t) lanes,
                             pwd, (size_t) pwdLen, salt, (size_t) saltLen, out, (size_t) outLen);
-    mbedtls_platform_zeroize(pwd, pwdLen);
-    env->ReleaseByteArrayElements(jPassword, pwd, JNI_ABORT);
     env->ReleaseByteArrayElements(jSalt, salt, JNI_ABORT);
     if (ret != ARGON2_OK) {
         mbedtls_platform_zeroize(out, sizeof(out));
