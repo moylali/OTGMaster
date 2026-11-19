@@ -7,6 +7,9 @@ import android.os.Environment
 import android.os.StatFs
 import android.os.storage.StorageManager
 import android.provider.DocumentsContract
+import app.fayaz.otgmaster.OtgMasterState
+import app.fayaz.otgmaster.extension.ExtensionContract
+import app.fayaz.otgmaster.provider.VeraCryptDocumentProvider
 import java.io.File
 
 /**
@@ -23,8 +26,8 @@ object VolumeInfo {
     const val OTG_AUTHORITY = app.fayaz.otgmaster.extension.ExtensionContract.AUTHORITY
     const val EXTERNAL_STORAGE_AUTHORITY = "com.android.externalstorage.documents"
 
-    // Keys used in the recorded maps. OTG Master's columns keep their own names
-    // minus the "otgmaster_" prefix.
+    // Keys used in the recorded maps. The OTG keys are the names the provider's
+    // former otgmaster_* columns had, so maps recorded before 0.5.4 read the same.
     const val KIND = "kind"
     const val KIND_INTERNAL = "internal"
     const val KIND_OTG = "otg"
@@ -41,6 +44,7 @@ object VolumeInfo {
     const val REMOVABLE = "removable"
 
     const val OTG_DRIVE_ID = "drive_id"
+    const val OTG_DRIVE_NAME = "drive_name"
     const val OTG_DEVICE = "device_name"
     const val OTG_VENDOR = "vendor_id"
     const val OTG_PRODUCT = "product_id"
@@ -52,13 +56,6 @@ object VolumeInfo {
     const val OTG_FILESYSTEM = "filesystem"
     const val OTG_VOLUME_LABEL = "volume_label"
     const val OTG_READ_ONLY = "read_only"
-
-    private val OTG_COLUMNS = arrayOf(
-        "otgmaster_api_version", "otgmaster_drive_id", "otgmaster_drive_name", "otgmaster_device_name",
-        "otgmaster_vendor_id", "otgmaster_product_id", "otgmaster_serial", "otgmaster_partition_label",
-        "otgmaster_partition_start", "otgmaster_partition_blocks", "otgmaster_container", "otgmaster_filesystem",
-        "otgmaster_volume_label", "otgmaster_read_only", "otgmaster_capacity_bytes", "otgmaster_free_bytes",
-    )
 
     fun kindOf(uri: Uri): String = when (uri.authority) {
         OTG_AUTHORITY -> KIND_OTG
@@ -119,20 +116,36 @@ object VolumeInfo {
         return out
     }
 
+    /**
+     * Read in-process from the mounted drive, not through the provider: the provider
+     * answers only the standard DocumentsContract columns, so other apps with a grant
+     * on a drive cannot read its USB serial or partition layout (#165). Under the
+     * provider's drive lock, as the provider query was, because free space scans the
+     * allocation bitmap on exFAT.
+     */
     private fun captureOtg(context: Context, uri: Uri, withFreeSpace: Boolean, out: MutableMap<String, String>) {
-        val projection = if (withFreeSpace) OTG_COLUMNS else OTG_COLUMNS.filter { it != "otgmaster_free_bytes" }.toTypedArray()
-        // The granted folder itself: OTG Master answers the volume columns on any
-        // document of the drive, and the drive's root is outside a subfolder grant.
-        val root = runCatching { DocumentsContract.buildDocumentUriUsingTree(uri, DocumentsContract.getTreeDocumentId(uri)) }
-            .getOrNull() ?: return
+        val driveId = otgDriveId(uri) ?: return
         runCatching {
-            context.contentResolver.query(root, projection, null, null, null)?.use { c ->
-                if (!c.moveToFirst()) return
-                for (i in 0 until c.columnCount) {
-                    val name = c.getColumnName(i)
-                    if (!name.startsWith("otgmaster_") || c.isNull(i)) continue
-                    out[name.removePrefix("otgmaster_")] = c.getString(i)
-                }
+            VeraCryptDocumentProvider.onDrive("$driveId:/", "volume-info") {
+                val drive = OtgMasterState.getDrive(driveId) ?: return@onDrive
+                val key = ExtensionContract.parseDeviceKey(drive.sourceDeviceName)
+                val fs = drive.fileSystem
+                fun put(k: String, v: Any?) { if (v != null) out[k] = v.toString() }
+                put(OTG_DRIVE_ID, drive.id)
+                put(OTG_DRIVE_NAME, drive.name)
+                put(OTG_DEVICE, drive.sourceDeviceDisplayName)
+                put(OTG_VENDOR, key.vendorId)
+                put(OTG_PRODUCT, key.productId)
+                put(OTG_SERIAL, key.serial)
+                put(OTG_PARTITION, drive.partitionLabel)
+                put(OTG_PARTITION_START, drive.partitionStartBlock)
+                put(OTG_PARTITION_BLOCKS, drive.partitionBlockCount)
+                put(OTG_CONTAINER, if (drive.isPlain) "UNENCRYPTED" else drive.sourceVolumeCandidate?.containerType?.name)
+                put(OTG_FILESYSTEM, drive.filesystemName)
+                put(OTG_VOLUME_LABEL, runCatching { fs.volumeLabel }.getOrNull())
+                put(OTG_READ_ONLY, if (drive.isReadOnly) 1 else 0)
+                put(CAPACITY, runCatching { fs.capacity }.getOrNull())
+                if (withFreeSpace) put(FREE, runCatching { fs.freeSpace }.getOrNull())
             }
         }
         out[VOLUME] = listOfNotNull(out[OTG_DEVICE], out[OTG_PARTITION]?.takeIf { it.isNotBlank() }).joinToString(" · ")
