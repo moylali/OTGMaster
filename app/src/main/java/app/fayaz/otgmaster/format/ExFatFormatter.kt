@@ -21,6 +21,7 @@ object ExFatFormatter {
 
     private const val BOOT_REGION_SECTORS = 12
     private const val FIRST_CLUSTER = 2L
+    private const val BAD_CLUSTER = 0xFFFF_FFF7.toInt()
 
     data class Layout(
         val bytesPerSector: Int,
@@ -76,7 +77,10 @@ object ExFatFormatter {
     /**
      * Formats the first [totalSectors] sectors of [device]. [partitionOffset] is the
      * volume's first sector on its disk (0 inside an encrypted container); [label] is up
-     * to 11 UTF-16 characters.
+     * to 11 UTF-16 characters. [reserved] (sectors, as [RawBlockDevice.reservedBlocks])
+     * become bad clusters: 0xFFFFFFF7 in the FAT and set in the allocation bitmap, which is
+     * what drivers allocate from. One in the boot regions, the FAT or the bitmap, up-case
+     * and root clusters is refused before anything is written.
      */
     fun format(
         device: RawBlockDevice,
@@ -85,6 +89,7 @@ object ExFatFormatter {
         clusterBytes: Int? = null,
         partitionOffset: Long = 0,
         volumeSerial: Int = FormatIds.volumeSerial(),
+        reserved: List<LongRange> = emptyList(),
         progress: (Float) -> Unit = {},
     ): Layout {
         require(totalSectors <= device.blockCount) {
@@ -102,6 +107,9 @@ object ExFatFormatter {
         val upcaseCluster = bitmapCluster + bitmapClusters
         val rootCluster = upcaseCluster + upcaseClusters
         val usedClusters = bitmapClusters + upcaseClusters + 1
+        val holes = Reserved.within(reserved, totalSectors)
+        Reserved.requireNoneBefore(holes, l.clusterSector(FIRST_CLUSTER + usedClusters), "exFAT")
+        val bad = Reserved.clusters(holes, l.clusterHeapOffset, l.sectorsPerCluster, l.clusterCount)
 
         // Boot regions and the FAT start as zeros; the FAT is the bulk of the writing.
         ZeroWriter.zero(device, 0, l.clusterHeapOffset) { progress(0.9f * it) }
@@ -114,11 +122,20 @@ object ExFatFormatter {
                 fatBytes.putInt(if (c == first + count - 1) 0xFFFF_FFFF.toInt() else (c + 1).toInt())
             }
         }
-        device.writeBlocks(l.fatOffset, padToSectors(fatBytes.array(), bps))
+        val fatSectors = sortedMapOf(0L to padToSectors(fatBytes.array(), bps))
+        for (c in bad) {
+            val n = c * 4 / bps
+            val sector = fatSectors.entries.firstOrNull { n >= it.key && n < it.key + it.value.size / bps }
+            val (base, data) = sector?.let { it.key to it.value } ?: (n to ByteArray(bps).also { fatSectors[n] = it })
+            ByteBuffer.wrap(data).order(ByteOrder.LITTLE_ENDIAN).putInt((c * 4 - base * bps).toInt(), BAD_CLUSTER)
+        }
+        for ((n, data) in fatSectors) device.writeBlocks(l.fatOffset + n, data)
 
-        // Allocation bitmap: the used clusters' bits set, the rest of its clusters zero.
+        // Allocation bitmap: the used and bad clusters' bits set, the rest of its clusters zero.
         val bitmap = ByteArray((bitmapClusters * l.clusterBytes).toInt())
-        for (i in 0 until usedClusters) bitmap[(i / 8).toInt()] = (bitmap[(i / 8).toInt()].toInt() or (1 shl (i % 8).toInt())).toByte()
+        fun mark(i: Long) { bitmap[(i / 8).toInt()] = (bitmap[(i / 8).toInt()].toInt() or (1 shl (i % 8).toInt())).toByte() }
+        for (i in 0 until usedClusters) mark(i)
+        for (c in bad) mark(c - FIRST_CLUSTER)
         device.writeBlocks(l.clusterSector(bitmapCluster), bitmap)
 
         val upcaseArea = ByteArray((upcaseClusters * l.clusterBytes).toInt())
@@ -142,7 +159,7 @@ object ExFatFormatter {
 
         // Boot regions last: until they exist, nothing reads the half-written volume as exFAT.
         val region = bootRegion(l, rootCluster, partitionOffset, volumeSerial,
-            percentInUse = (usedClusters * 100 / l.clusterCount).toInt())
+            percentInUse = ((usedClusters + bad.size) * 100 / l.clusterCount).toInt())
         device.writeBlocks(BOOT_REGION_SECTORS.toLong(), region)
         device.writeBlocks(0, region)
         progress(1f)

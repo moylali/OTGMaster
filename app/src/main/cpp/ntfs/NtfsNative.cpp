@@ -49,7 +49,8 @@ extern "C" {
 #include "logging.h"
 /* ntfs-3g/ntfsprogs/mkntfs.c built as a library (docs/VENDOR_FIXES.md N1). */
 int otg_mkntfs(struct ntfs_device_operations *ops, void *priv, long long num_sectors,
-               long sector_size, long long part_start, const char *label, long cluster_size);
+               long sector_size, long long part_start, const char *label, long cluster_size,
+               const long long *bad_ranges, int bad_range_count);
 }
 
 #define LOG_TAG "ntfs-jni"
@@ -395,7 +396,7 @@ Java_app_fayaz_otgmaster_ntfs_NtfsNative_mount(JNIEnv *env, jobject, jobject blo
 extern "C" JNIEXPORT jint JNICALL
 Java_app_fayaz_otgmaster_ntfs_NtfsNative_format(JNIEnv *env, jclass, jobject blockDevice,
                                                 jlong sizeBytes, jint sectorSize, jlong partStart,
-                                                jstring label, jint clusterSize) {
+                                                jstring label, jint clusterSize, jlongArray badRanges) {
     ntfs_log_set_handler(log_to_logcat);
     ntfs_log_clear_levels(NTFS_LOG_LEVEL_INFO | NTFS_LOG_LEVEL_QUIET |
                           NTFS_LOG_LEVEL_VERBOSE | NTFS_LOG_LEVEL_PROGRESS);
@@ -413,8 +414,12 @@ Java_app_fayaz_otgmaster_ntfs_NtfsNative_format(JNIEnv *env, jclass, jobject blo
             "(Lapp/fayaz/otgmaster/block/RawBlockDevice;JI[B)I");
     h.size = sizeBytes;
     const char *name = label ? env->GetStringUTFChars(label, nullptr) : nullptr;
+    // Byte ranges (start, length, ...) mkntfs keeps every structure off: BitLocker's metadata.
+    jsize badLen = badRanges ? env->GetArrayLength(badRanges) : 0;
+    std::vector<long long> bad(badLen);
+    if (badLen) env->GetLongArrayRegion(badRanges, 0, badLen, reinterpret_cast<jlong *>(bad.data()));
     int rc = otg_mkntfs(&otg_dev_ops, &h, (long long) (sizeBytes / sectorSize), sectorSize,
-                        (long long) partStart, name, clusterSize);
+                        (long long) partStart, name, clusterSize, bad.data(), (int) (badLen / 2));
     if (name) env->ReleaseStringUTFChars(label, name);
     env->DeleteGlobalRef(h.blockDevice);
     env->DeleteGlobalRef(h.nativeClass);

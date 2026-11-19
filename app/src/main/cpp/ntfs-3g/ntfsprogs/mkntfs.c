@@ -211,6 +211,15 @@ static struct BITMAP_ALLOCATION *g_allocation	  = NULL;	/* Head of cluster alloc
 /* LOCAL PATCH (docs/VENDOR_FIXES.md N1): the device mkntfs writes through, set by otg_mkntfs(). */
 static struct ntfs_device_operations *otg_mkntfs_ops = NULL;
 static void *otg_mkntfs_private = NULL;
+/*
+ * LOCAL PATCH (docs/VENDOR_FIXES.md N3): byte ranges the caller reserves (BitLocker's
+ * metadata, inside the volume it encrypts), as start/length pairs in order, and the same
+ * as merged cluster runs once the cluster size is known.
+ */
+static const long long *otg_bad_ranges = NULL;
+static int otg_bad_range_count = 0;
+static LCN *otg_bad_runs = NULL;
+static int otg_bad_run_count = 0;
 #endif
 
 /**
@@ -394,6 +403,71 @@ static BOOL bitmap_allocate(LCN lcn, s64 length)
 	}
 	return (done);
 }
+
+#ifdef OTG_MKNTFS_LIBRARY
+/*
+ * LOCAL PATCH (docs/VENDOR_FIXES.md N3): turns the caller's byte ranges into merged
+ * cluster runs below nr_clusters and allocates them, before anything else is placed,
+ * so every later allocation goes around them. Upstream collects bad clusters only from
+ * a full format's write errors, and never marks them ("TODO: Mark bad blocks as such").
+ */
+static BOOL otg_reserve_bad(void)
+{
+	int i, n = 0;
+
+	free(otg_bad_runs);
+	otg_bad_runs = NULL;
+	otg_bad_run_count = 0;
+	if (!otg_bad_range_count)
+		return TRUE;
+	otg_bad_runs = ntfs_malloc(otg_bad_range_count * 2 * sizeof(LCN));
+	if (!otg_bad_runs)
+		return FALSE;
+	for (i = 0; i < otg_bad_range_count; i++) {
+		LCN first = otg_bad_ranges[2 * i] >> g_vol->cluster_size_bits;
+		LCN end = (otg_bad_ranges[2 * i] + otg_bad_ranges[2 * i + 1]
+				+ g_vol->cluster_size - 1) >> g_vol->cluster_size_bits;
+		if (end > g_vol->nr_clusters)
+			end = g_vol->nr_clusters;
+		if (first >= end)
+			continue;
+		if (n && otg_bad_runs[2 * n - 2] + otg_bad_runs[2 * n - 1] >= first) {
+			if (end > otg_bad_runs[2 * n - 2] + otg_bad_runs[2 * n - 1])
+				otg_bad_runs[2 * n - 1] = end - otg_bad_runs[2 * n - 2];
+		} else {
+			otg_bad_runs[2 * n] = first;
+			otg_bad_runs[2 * n + 1] = end - first;
+			n++;
+		}
+	}
+	otg_bad_run_count = n;
+	for (i = 0; i < n; i++)
+		if (!bitmap_allocate(otg_bad_runs[2 * i], otg_bad_runs[2 * i + 1]))
+			return FALSE;
+	return TRUE;
+}
+
+/*
+ * LOCAL PATCH (docs/VENDOR_FIXES.md N3): the first cluster at or after @lcn where @len
+ * clusters miss every reserved run. For the structures mkntfs puts at fixed places that
+ * NTFS lets lie anywhere ($MFT, its bitmap, $MFTMirr, $LogFile: the boot sector and the
+ * MFT record their positions).
+ */
+static LCN otg_skip_bad(LCN lcn, s64 len)
+{
+	int i;
+
+	for (i = 0; i < otg_bad_run_count; i++) {
+		LCN b = otg_bad_runs[2 * i];
+		LCN e = b + otg_bad_runs[2 * i + 1];
+		if (lcn < e && lcn + len > b)
+			lcn = e;	/* runs are in order: later ones are checked next */
+	}
+	return lcn;
+}
+#else
+#define otg_skip_bad(lcn, len) (lcn)
+#endif
 
 /*
  *		Mark a run of cluster as not allocated
@@ -1602,6 +1676,19 @@ static int insert_positioned_attr_in_mft_record(MFT_RECORD *m,
 				 == const_cpu_to_le32(FILE_LogFile)))
 			bw = ntfs_rlwrite(g_vol->dev, rl, val, val_len,
 					&inited_size, WRITE_LOGFILE);
+#ifdef OTG_MKNTFS_LIBRARY
+		/*
+		 * LOCAL PATCH (docs/VENDOR_FIXES.md N3): $Bad maps the bad clusters
+		 * themselves. Nothing is to be written there (they refuse writes, and
+		 * ntfs_rlwrite would read from a NULL value), and the stream is as long as
+		 * the volume, as Windows records it.
+		 */
+		else if (!val && otg_bad_run_count && (m->mft_record_number
+				 == const_cpu_to_le32(FILE_BadClus))) {
+			bw = val_len;
+			inited_size = val_len;
+		}
+#endif
 		else
 			bw = ntfs_rlwrite(g_vol->dev, rl, val, val_len,
 					&inited_size, WRITE_STANDARD);
@@ -3468,6 +3555,18 @@ static void mkntfs_cleanup(void)
 	}
 	/* LOCAL PATCH (docs/VENDOR_FIXES.md N2): a second run in one process walked the freed list. */
 	g_allocation = NULL;
+	/*
+	 * LOCAL PATCH (docs/VENDOR_FIXES.md N3): $MFT's cluster is "given by the user" when not
+	 * zero, so a second format in one process put $MFT where the first one's went, at the
+	 * first one's cluster size. The bad cluster count went stale with its freed list.
+	 */
+	g_mft_lcn = 0;
+	g_num_bad_blocks = 0;
+#ifdef OTG_MKNTFS_LIBRARY
+	free(otg_bad_runs);
+	otg_bad_runs = NULL;
+	otg_bad_run_count = 0;
+#endif
 	free(g_upcaseinfo);	g_upcaseinfo	= NULL;
 }
 
@@ -3913,6 +4012,11 @@ static BOOL mkntfs_initialize_bitmaps(void)
 	if (!bitmap_allocate(g_vol->nr_clusters,
 		    ((s64)g_lcn_bitmap_byte_size << 3) - g_vol->nr_clusters))
 		return (FALSE);
+#ifdef OTG_MKNTFS_LIBRARY
+	/* LOCAL PATCH (docs/VENDOR_FIXES.md N3): the caller's reserved clusters first. */
+	if (!otg_reserve_bad())
+		return (FALSE);
+#endif
 	/*
 	 * Mft size is 27 (NTFS 3.0+) mft records or one cluster, whichever is
 	 * bigger.
@@ -3941,6 +4045,7 @@ static BOOL mkntfs_initialize_bitmaps(void)
 	g_rl_mft_bmp[0].vcn = 0LL;
 	/* Mft bitmap is right after $Boot's data. */
 	i = (8192 + g_vol->cluster_size - 1) / g_vol->cluster_size;
+	i = otg_skip_bad(i, 1);	/* LOCAL PATCH (docs/VENDOR_FIXES.md N3) */
 	g_rl_mft_bmp[0].lcn = i;
 	/*
 	 * Size is always one cluster, even though valid data size and
@@ -3973,6 +4078,9 @@ static BOOL mkntfs_initialize_rl_mft(void)
 			g_mft_lcn = (16 * 1024 + g_vol->cluster_size - 1) /
 					g_vol->cluster_size;
 	}
+	/* LOCAL PATCH (docs/VENDOR_FIXES.md N3): around reserved clusters. */
+	g_mft_lcn = otg_skip_bad(g_mft_lcn,
+			(g_mft_size + g_vol->cluster_size - 1) / g_vol->cluster_size);
 	ntfs_log_debug("$MFT logical cluster number = 0x%llx\n", g_mft_lcn);
 	/* Determine MFT zone size. */
 	g_mft_zone_end = g_vol->nr_clusters;
@@ -4012,10 +4120,15 @@ static BOOL mkntfs_initialize_rl_mft(void)
 	g_rl_mft[1].lcn = -1LL;
 	g_rl_mft[1].length = 0LL;
 	/* Allocate clusters for mft. */
-	bitmap_allocate(g_mft_lcn,j);
+	/* LOCAL PATCH (docs/VENDOR_FIXES.md N3): upstream ignored a failure here. */
+	if (!bitmap_allocate(g_mft_lcn,j))
+		return FALSE;
 	/* Determine mftmirr_lcn (middle of volume). */
 	g_mftmirr_lcn = (opts.num_sectors * opts.sector_size >> 1)
 			/ g_vol->cluster_size;
+	/* LOCAL PATCH (docs/VENDOR_FIXES.md N3): around reserved clusters. */
+	g_mftmirr_lcn = otg_skip_bad(g_mftmirr_lcn,
+			(4 * g_vol->mft_record_size + g_vol->cluster_size - 1) / g_vol->cluster_size);
 	ntfs_log_debug("$MFTMirr logical cluster number = 0x%llx\n",
 			g_mftmirr_lcn);
 	/* Create runlist for mft mirror. */
@@ -4092,6 +4205,9 @@ static BOOL mkntfs_initialize_rl_logfile(void)
 					~(g_vol->cluster_size - 1);
 	}
 	j = g_logfile_size / g_vol->cluster_size;
+	/* LOCAL PATCH (docs/VENDOR_FIXES.md N3): around reserved clusters. */
+	g_logfile_lcn = otg_skip_bad(g_logfile_lcn, j);
+	g_rl_logfile[0].lcn = g_logfile_lcn;
 	while (g_rl_logfile[0].lcn + j >= g_vol->nr_clusters) {
 		/*
 		 * $Logfile would overflow volume. Need to make it smaller than
@@ -4171,6 +4287,45 @@ static BOOL mkntfs_initialize_rl_bad(void)
 	g_rl_bad[1].length = 0LL;
 
 	/* TODO: Mark bad blocks as such. */
+#ifdef OTG_MKNTFS_LIBRARY
+	/*
+	 * LOCAL PATCH (docs/VENDOR_FIXES.md N3): the reserved clusters, mapped onto
+	 * themselves, between sparse runs, as $Bad lists bad clusters. chkdsk and ntfs-3g
+	 * never hand them out again.
+	 */
+	if (otg_bad_run_count) {
+		int i, k = 0;
+		VCN v = 0;
+
+		free(g_rl_bad);
+		g_rl_bad = ntfs_malloc((2 * otg_bad_run_count + 2) * sizeof(runlist));
+		if (!g_rl_bad)
+			return FALSE;
+		for (i = 0; i < otg_bad_run_count; i++) {
+			LCN b = otg_bad_runs[2 * i];
+			if (b > v) {
+				g_rl_bad[k].vcn = v;
+				g_rl_bad[k].lcn = -1LL;
+				g_rl_bad[k].length = b - v;
+				k++;
+			}
+			g_rl_bad[k].vcn = b;
+			g_rl_bad[k].lcn = b;
+			g_rl_bad[k].length = otg_bad_runs[2 * i + 1];
+			k++;
+			v = b + otg_bad_runs[2 * i + 1];
+		}
+		if (v < g_vol->nr_clusters) {
+			g_rl_bad[k].vcn = v;
+			g_rl_bad[k].lcn = -1LL;
+			g_rl_bad[k].length = g_vol->nr_clusters - v;
+			k++;
+		}
+		g_rl_bad[k].vcn = g_vol->nr_clusters;
+		g_rl_bad[k].lcn = -1LL;
+		g_rl_bad[k].length = 0LL;
+	}
+#endif
 	return TRUE;
 }
 
@@ -5208,11 +5363,17 @@ done:
  * Formats @num_sectors sectors of @sector_size bytes through @ops/@priv, as
  * `mkntfs -F -Q -s sector_size -p part_start -H 255 -S 63 [-L label] [-c cluster]`
  * would on a block device of that size. Quick only: a full format is the caller
- * zeroing the volume first, with its own progress. Returns 0 on success.
+ * zeroing the volume first, with its own progress. @bad_ranges holds
+ * @bad_range_count byte ranges (start, length), in order, that are kept out of every
+ * structure and listed in $BadClus (N3). Returns 0 on success.
  */
 int otg_mkntfs(struct ntfs_device_operations *ops, void *priv, long long num_sectors,
-		long sector_size, long long part_start, const char *label, long cluster_size)
+		long sector_size, long long part_start, const char *label, long cluster_size,
+		const long long *bad_ranges, int bad_range_count)
 {
+	/* LOCAL PATCH (docs/VENDOR_FIXES.md N3): byte ranges no structure may use. */
+	otg_bad_ranges = bad_ranges;
+	otg_bad_range_count = bad_range_count;
 	mkntfs_init_options(&opts);
 	opts.dev_name = (char *)"otg";
 	opts.force = TRUE;

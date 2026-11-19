@@ -20,6 +20,7 @@ object Fat32Formatter {
     private const val MAX_CLUSTERS = 0x0FFF_FFF4L
     private const val RESERVED_SECTORS = 32
     private const val FAT_COUNT = 2
+    private const val BAD_CLUSTER = 0x0FFF_FFF7
 
     data class Layout(
         val bytesPerSector: Int,
@@ -93,7 +94,9 @@ object Fat32Formatter {
      * [hiddenSectors] is where the volume starts on its disk (the partition's first LBA),
      * which only boot code reads; 0 inside an encrypted container. [label] is up to 11
      * characters, upper-cased as FAT stores it. [clusterBytes] null means Microsoft's
-     * default for the size.
+     * default for the size. [reserved] (sectors, as [RawBlockDevice.reservedBlocks]) are
+     * marked bad in both FATs so nothing is ever stored there; one in the reserved area,
+     * the FATs or the root directory's cluster is refused before anything is written.
      */
     fun format(
         device: RawBlockDevice,
@@ -102,6 +105,7 @@ object Fat32Formatter {
         clusterBytes: Int? = null,
         hiddenSectors: Long = 0,
         volumeId: Int = FormatIds.volumeSerial(),
+        reserved: List<LongRange> = emptyList(),
         progress: (Float) -> Unit = {},
     ): Layout {
         require(totalSectors <= device.blockCount) {
@@ -110,12 +114,15 @@ object Fat32Formatter {
         val bps = device.blockSize
         val l = if (clusterBytes != null) layout(bps, totalSectors, clusterBytes) else layout(bps, totalSectors)
         val labelBytes = fatLabel(label)
+        val holes = Reserved.within(reserved, totalSectors)
+        Reserved.requireNoneBefore(holes, l.dataStartSector + l.sectorsPerCluster, "FAT32")
+        val bad = Reserved.clusters(holes, l.dataStartSector, l.sectorsPerCluster, l.clusterCount)
 
         // The reserved area and both FATs start as zeros; the FATs are the bulk of the writing.
         ZeroWriter.zero(device, 0, l.dataStartSector) { progress(0.95f * it) }
 
         val boot = bootSector(l, labelBytes, hiddenSectors, volumeId)
-        val fsInfo = fsInfoSector(l)
+        val fsInfo = fsInfoSector(l, bad.size)
         val third = ByteArray(bps).also { it[510] = 0x55; it[511] = 0xAA.toByte() }
         device.writeBlocks(0, boot + fsInfo + third)
         device.writeBlocks(6, boot + fsInfo + third)
@@ -124,7 +131,15 @@ object Fat32Formatter {
         // the root directory, a chain of one.
         val fatHead = ByteBuffer.allocate(bps).order(ByteOrder.LITTLE_ENDIAN)
             .putInt(0x0FFF_FFF8).putInt(0x0FFF_FFFF).putInt(0x0FFF_FFFF).array()
-        for (i in 0 until FAT_COUNT) device.writeBlocks(l.reservedSectors + i * l.fatSectors, fatHead)
+        // Bad clusters (BitLocker's metadata) are 0x0FFFFFF7, which every FAT driver skips.
+        val fatSectors = sortedMapOf(0L to fatHead)
+        for (c in bad) {
+            val sector = fatSectors.getOrPut(c * 4 / bps) { ByteArray(bps) }
+            ByteBuffer.wrap(sector).order(ByteOrder.LITTLE_ENDIAN).putInt((c * 4 % bps).toInt(), BAD_CLUSTER)
+        }
+        for (i in 0 until FAT_COUNT) for ((n, data) in fatSectors) {
+            device.writeBlocks(l.reservedSectors + i * l.fatSectors + n, data)
+        }
 
         val root = ByteArray(l.sectorsPerCluster * bps)
         if (labelBytes != null) volumeLabelEntry(labelBytes).copyInto(root, 0)
@@ -174,11 +189,11 @@ object Fat32Formatter {
         return out
     }
 
-    private fun fsInfoSector(l: Layout): ByteArray {
+    private fun fsInfoSector(l: Layout, badClusters: Int): ByteArray {
         val b = ByteBuffer.allocate(l.bytesPerSector).order(ByteOrder.LITTLE_ENDIAN)
         b.putInt(0, 0x4161_5252)
         b.putInt(484, 0x6141_7272)
-        b.putInt(488, (l.clusterCount - 1).toInt())                // all free but the root's
+        b.putInt(488, (l.clusterCount - 1 - badClusters).toInt())  // all free but the root's and the bad
         b.putInt(492, 3)                                           // next free cluster
         b.putInt(508, 0xAA55_0000.toInt())
         return b.array()

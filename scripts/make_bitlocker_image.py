@@ -19,6 +19,12 @@ Layout: the plain image keeps its offsets; BitLocker's three 64 KiB metadata
 areas and the relocated first 8 KiB sit in a tail after it, outside the
 filesystem, so nothing the filesystem writes can land on them. Windows puts them
 inside the filesystem as reserved files; readers do not care where they are.
+
+--metadata-at M1,M2,M3,H puts them inside instead, at those byte offsets (4 KiB
+aligned), as Windows does: the volume is then exactly the plain image's size, and
+whatever the plain image had there is lost (it reads as zeros). Format inside
+BitLocker is tested on such volumes, since there the new filesystem has to keep
+off them.
 """
 import argparse
 import hashlib
@@ -100,14 +106,21 @@ def crypt(encrypt, mode, key, sector, first_sector, data):
     return bytes(out)
 
 
-def build(plain_path, out_path, password, recovery, cipher):
+def build(plain_path, out_path, password, recovery, cipher, inside=None):
     algo, key_len = CIPHERS[cipher]
     sector = 512
     plain_size = os.path.getsize(plain_path)
     assert plain_size % 4096 == 0, "plain image must be a multiple of 4 KiB"
-    meta_offsets = [plain_size + i * META for i in range(3)]
-    header_offset = plain_size + 3 * META
-    total = header_offset + HEADER
+    if inside:
+        meta_offsets, header_offset = list(inside[:3]), inside[3]
+        total = plain_size
+        areas = sorted([(o, META) for o in meta_offsets] + [(header_offset, HEADER)])
+        for (o, n), (o2, _) in zip(areas, areas[1:] + [(total, 0)]):
+            assert o % 4096 == 0 and o >= HEADER and o + n <= o2, f"metadata at {o} overlaps or is misplaced"
+    else:
+        meta_offsets = [plain_size + i * META for i in range(3)]
+        header_offset = plain_size + 3 * META
+        total = header_offset + HEADER
 
     fvek = os.urandom(key_len)
     vmk = os.urandom(32)
@@ -154,14 +167,15 @@ def build(plain_path, out_path, password, recovery, cipher):
     with open(plain_path, "rb") as src, open(out_path, "wb") as out:
         out.truncate(total)
         first = src.read(HEADER)
-        out.seek(header_offset)
-        out.write(crypt(True, cipher, fvek, sector, header_offset // sector, first))
         pos = HEADER
         while pos < plain_size:
             chunk = src.read(min(1 << 20, plain_size - pos))
             out.seek(pos)
             out.write(crypt(True, cipher, fvek, sector, pos // sector, chunk))
             pos += len(chunk)
+        # After the data: with --metadata-at these land inside it, over what was there.
+        out.seek(header_offset)
+        out.write(crypt(True, cipher, fvek, sector, header_offset // sector, first))
         for off in meta_offsets:
             out.seek(off)
             out.write(area)
@@ -170,7 +184,7 @@ def build(plain_path, out_path, password, recovery, cipher):
     return fvek
 
 
-def verify(plain_path, out_path, password, recovery, fvek):
+def verify(plain_path, out_path, password, recovery, fvek, inside=None):
     here = os.path.dirname(os.path.abspath(__file__))
     dump = subprocess.run(["cryptsetup", "bitlkDump", out_path], capture_output=True, text=True)
     if dump.returncode != 0:
@@ -187,7 +201,11 @@ def verify(plain_path, out_path, password, recovery, fvek):
                            check=True, capture_output=True)
             size = os.path.getsize(plain_path)
             with open(plain_path, "rb") as a, open(plain_out, "rb") as b:
-                if hashlib.sha256(a.read()).digest() != hashlib.sha256(b.read(size)).digest():
+                want = bytearray(a.read())
+                if inside:   # BitLocker's own areas read as zeros
+                    for o, n in [(o, META) for o in inside[:3]] + [(inside[3], HEADER)]:
+                        want[o:o + n] = bytes(n)
+                if hashlib.sha256(want).digest() != hashlib.sha256(b.read(size)).digest():
                     raise SystemExit("cryptsetup's key and layout do not decrypt to the plain image")
                 if any(b.read()):
                     raise SystemExit("the metadata tail does not read as zeros")
@@ -205,13 +223,17 @@ def main():
     ap.add_argument("--recovery")
     ap.add_argument("--cipher", choices=sorted(CIPHERS), default="xts128")
     ap.add_argument("--verify", action="store_true")
+    ap.add_argument("--metadata-at", help="M1,M2,M3,H: byte offsets inside the volume, as Windows places them")
     a = ap.parse_args()
     if not a.password and not a.recovery:
         ap.error("give --password, --recovery or both")
-    fvek = build(a.plain, a.out, a.password, a.recovery, a.cipher)
+    inside = [int(x, 0) for x in a.metadata_at.split(",")] if a.metadata_at else None
+    if inside is not None and len(inside) != 4:
+        ap.error("--metadata-at takes four offsets")
+    fvek = build(a.plain, a.out, a.password, a.recovery, a.cipher, inside)
     print(f"{a.out}: BitLocker {a.cipher}, {os.path.getsize(a.out)} bytes")
     if a.verify:
-        verify(a.plain, a.out, a.password, a.recovery, fvek)
+        verify(a.plain, a.out, a.password, a.recovery, fvek, inside)
 
 
 if __name__ == "__main__":

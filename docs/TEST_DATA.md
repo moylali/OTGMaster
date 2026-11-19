@@ -260,6 +260,10 @@ How each piece is made, and what vouches for it:
   input. The generator keeps BitLocker's metadata in a tail after the NTFS (Windows
   keeps it inside, as reserved files); `ntfsfix` then looks for the backup boot sector
   in that zero tail, so cut a decrypted image to the NTFS size before running it.
+  `--metadata-at M1,M2,M3,H` puts them inside the volume instead, as Windows does,
+  over whatever the plain image held there; Format inside BitLocker is tested on such
+  volumes (`BitLockerFormatTest`, `format_bitlocker_ntfs`), since there the new
+  filesystem has to keep off them.
 
 Password `password123`; BitLocker recovery key
 `111111-222222-333333-444444-555555-666666-111111-222222` (each group a multiple of
@@ -277,6 +281,7 @@ spaces.txt`, …) so the test can see the old files go:
 | `format_plain_fat32` | plain FAT32, 64 MiB, label `OTGFAT32` | Format, full | `fsck.vfat`, label kept, files as above, no byte of the old flower.jpg left |
 | `encrypt_plain_fat32` | plain FAT32, 64 MiB | Encrypt: AES / SHA-512, PIM 1, exFAT inside, full | new header opened and decrypted in Python, `fsck.exfat`, files as above, no plaintext left |
 | `encrypt_plain_exfat` | plain exFAT, 64 MiB | Encrypt: Serpent-Twofish-AES / Argon2, PIM 1, FAT32 inside, full | no plaintext left, and the drive no longer reads as a filesystem |
+| `format_bitlocker_ntfs` | BitLocker XTS-AES-256 around NTFS, 64 MiB, metadata inside at 44, 52 and 60 MiB (checked free in the NTFS first) | Format to exFAT, full | cryptsetup still releases the key, decrypted in Python, `fsck.exfat`, files as above, no byte of the old flower.jpg left in the plaintext |
 
 ```sh
 python3 scripts/make_erase_fixtures.py      # writes test.img and password.txt (+ pim.txt for format_vc_exfat, disconnect)

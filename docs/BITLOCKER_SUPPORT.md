@@ -18,20 +18,18 @@ not document something, this list says which of those projects it rests on.
 | Protectors | Password, 48-digit recovery password, and clear key (a volume whose protection Windows suspended) | `BitLockerUnlocker` |
 | Layout | The relocated first sectors are read from where BitLocker moved them; the metadata areas and that relocation area read as zeros and refuse writes | `BitLockerBlockDevice` |
 | Filesystems inside | NTFS, exFAT and FAT32, read and write | `MainActivity.attemptUnlock` |
+| Format inside (0.5.4) | FAT32, exFAT or NTFS, laid out around the metadata areas and the moved first sectors, which become bad clusters: `0x0FFFFFF7` in both FATs, `0xFFFFFFF7` plus the allocation bitmap on exFAT, `$BadClus` on NTFS (mkntfs, VENDOR_FIXES N3, moving `$MFT`, `$MFTMirr` and `$LogFile` off them). Refused, before anything is written, where one lands in the filesystem's own structures (FAT32's FATs and root cluster, exFAT's bitmap, up-case table and root, NTFS's boot sector and its backup), and for ext4 | `DriveFormatter.reformat`, `BitLockerFormatTest` |
 | Refusals with a reason | A volume mid-way through encryption or decryption, one paused in Windows' encrypt-on-write conversion, one with no FVEK or volume header entry, unaligned metadata, an unknown cipher, version 1 | `parse` (`unsupportedReason`) |
 
 ## Gaps
 
 Ordered by what they would give a user, most first.
 
-1. **Format inside a BitLocker volume.** Refused today (`formatUnavailable`). The
-   new filesystem has to keep its structures off the metadata and relocation
-   areas: FAT32 and exFAT mark those clusters bad, NTFS lists them in `$BadClus`,
-   ext4 in its bad-blocks inode, and Format refuses where one lands in the
-   filesystem's own system area. How Windows marks them on FAT32 and exFAT is
-   not documented and has to be checked on a volume Windows made. Each formatter
-   needs a host test through `scripts/make_bitlocker_image.py` and
-   `scripts/bitlk_decrypt.py` with the filesystem's checker.
+1. **Format inside a BitLocker volume.** Done in 0.5.4 for FAT32, exFAT and NTFS
+   (above). Windows' own choice on FAT32 and exFAT, reserved files or bad
+   clusters, is still unchecked against a volume Windows made; bad clusters keep
+   every driver off them either way, and chkdsk keeps them. ext4 would need its
+   bad-blocks inode and is not offered: Windows cannot read it anyway.
 2. **External key (.BEK) protector.** Windows can protect a drive with a startup
    key or a recovery key saved as a `.BEK` file (`manage-bde -protectors -add
    -RecoveryKey`, or `-StartupKey` on a fixed drive). The app parses the protector
@@ -57,7 +55,5 @@ and TPM+PIN protectors (the key is sealed to that computer's TPM), auto-unlock
 
 ## Recommendation
 
-Gap 2 (`.BEK` files) is small and testable on the host. Gap 1 is the backlog item
-"Format for every encryption and filesystem type that is write-mounted"; it is
-larger, and its data risk is the same as any new write path. The others are
-not worth doing for a USB drive tool.
+Gap 2 (`.BEK` files) is small and testable on the host. Gap 1 is done. The others
+are not worth doing for a USB drive tool.

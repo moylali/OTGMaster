@@ -1,8 +1,9 @@
-• New: saved passwords open only with your fingerprint or screen lock
-• New: Read-only mode covers unencrypted drives
+• New: saved passwords need your fingerprint or screen lock
+• New: Format inside BitLocker
+• New: Read-only mode covers plain drives
 • New: edit the log before sending a report
-• Fixed: other apps could detect a hidden volume or read a drive's serial
+• Fixed: other apps could spot a hidden volume or a drive's serial
 • Fixed: reports reached the server before you sent them
 • Fixed: a USB hiccup could stop Encrypt or a copy
 • Fixed: a cut-off ext4 write left space marked used
-• Fixed: full drives say "Not enough space"; restores that won't fit stop first
+• Fixed: full drives say "Not enough space"; too-big restores stop first

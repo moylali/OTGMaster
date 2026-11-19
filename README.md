@@ -50,7 +50,7 @@ The app cannot perform a kernel mount on non-rooted Android. Instead it:
 5. Feeds the decrypted block device into a userspace filesystem reader (FAT32 via libaums, exFAT via a vendored native `libexfat`, ext4 via a pure-Kotlin driver, NTFS via a vendored `libntfs-3g`, and APFS, read-only, via a vendored `libfsapfs`).
 6. Shows files in the app and through a `DocumentsProvider`, so other apps (Files, Gallery, etc.) can browse the unlocked volume.
 7. Formats and encrypts from a mounted drive's actions (on the card when they fit, else under **More actions**), after the user types ERASE:
-   - **Format** writes an empty filesystem of the same size, with the label you give: FAT32, exFAT, ext4 or NTFS (ext4 and NTFS *from 0.5.0*), the current one by default. A volume inside an encrypted container stays in it, with the same password
+   - **Format** writes an empty filesystem of the same size, with the label you give: FAT32, exFAT, ext4 or NTFS (ext4 and NTFS *from 0.5.0*), the current one by default. A volume inside an encrypted container stays in it, with the same password. Inside BitLocker (*from 0.5.4*) it is FAT32, exFAT or NTFS, laid out around BitLocker's own data, which it marks as bad clusters
    - **Encrypt** erases the partition and creates a new VeraCrypt volume (any of the ciphers and cascades above, SHA-512 or Argon2id, optional PIM and keyfiles) or, *from 0.5.0*, a LUKS2 volume (AES-XTS, Argon2id) that Linux opens with its own tools. Either holds a new FAT32, exFAT, ext4 or NTFS filesystem
    - Both overwrite every sector by default; **Quick** writes only the filesystem structures, and the old data stays on the drive until overwritten
 8. *From 0.5.0*:

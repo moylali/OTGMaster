@@ -67,7 +67,12 @@ object DriveFormatter {
             // Sectors per cluster: a power of two, or 2^(256-n) above 128 (64 KiB+ clusters).
             val raw = boot[13].toInt() and 0xFF
             val spc = if (raw <= 128) raw else 1 shl (256 - raw)
-            return Existing(Filesystem.NTFS, device.blockCount, bps * spc, label, b.getInt(28).toLong() and 0xFFFF_FFFFL)
+            // Its own size: the boot sector's count, plus the backup boot sector after it.
+            // Usually the whole device; BitLocker volumes made by scripts/make_bitlocker_image.py
+            // keep their metadata in a tail after the NTFS, and that tail stays out of it.
+            val own = b.getLong(0x28) + 1
+            val sectors = if (own in 1..device.blockCount) own else device.blockCount
+            return Existing(Filesystem.NTFS, sectors, bps * spc, label, b.getInt(28).toLong() and 0xFFFF_FFFFL)
         }
         // ext2/3/4 (all become ext4): the volume fills the device it was mounted from.
         if (boot.size >= 1082 && app.fayaz.otgmaster.ext4.Ext4FileSystem.hasExtMagic(boot)) {
@@ -82,6 +87,9 @@ object DriveFormatter {
      * the cluster size too; a different one takes its own default for that size, since
      * exFAT's and FAT32's ranges differ. The caller has unmounted the old filesystem and
      * holds the device.
+     *
+     * The device's [RawBlockDevice.reservedBlocks] (BitLocker's metadata, inside the
+     * volume) become bad clusters, which ext4 is not written to do: it is refused there.
      */
     fun reformat(
         device: RawBlockDevice,
@@ -93,15 +101,19 @@ object DriveFormatter {
         require(existing.totalSectors <= device.blockCount) {
             "the volume claims ${existing.totalSectors} sectors on a device of ${device.blockCount}"
         }
+        val reserved = Reserved.within(device.reservedBlocks, existing.totalSectors)
+        require(reserved.isEmpty() || target != Filesystem.EXT4) {
+            "ext4 cannot be laid out around BitLocker's metadata; choose exFAT, FAT32 or NTFS"
+        }
         val cluster = existing.clusterBytes.takeIf { target == existing.filesystem }
         // The layout is checked before anything is written, so a volume the formatter
         // cannot lay out (FAT32 under 33 MiB, say) is refused intact rather than half erased.
-        checkLayout(target, device.blockSize, existing.totalSectors, cluster)
+        checkLayout(target, device.blockSize, existing.totalSectors, cluster, reserved)
         if (full) {
-            ZeroWriter.zero(device, 0, existing.totalSectors) { progress.update("Overwriting", it) }
+            ZeroWriter.zero(device, 0, existing.totalSectors, reserved) { progress.update("Overwriting", it) }
         }
         writeFilesystem(device, target, existing.totalSectors, existing.label,
-            cluster, existing.partitionOffset, progress, full)
+            cluster, existing.partitionOffset, progress, full, reserved)
     }
 
     /**
@@ -163,36 +175,44 @@ object DriveFormatter {
         return volume
     }
 
-    /** Throws, writing nothing, if [fs] cannot be laid out on [sectors] sectors of [sectorSize]. */
-    internal fun checkLayout(fs: Filesystem, sectorSize: Int, sectors: Long, cluster: Int?) {
+    /**
+     * Throws, writing nothing, if [fs] cannot be laid out on [sectors] sectors of
+     * [sectorSize], or not around [reserved] where the filesystem's own structures go.
+     */
+    internal fun checkLayout(fs: Filesystem, sectorSize: Int, sectors: Long, cluster: Int?,
+                             reserved: List<LongRange> = emptyList()) {
         when (fs) {
-            Filesystem.FAT32 -> if (cluster != null) Fat32Formatter.layout(sectorSize, sectors, cluster)
-                else Fat32Formatter.layout(sectorSize, sectors)
+            Filesystem.FAT32 -> {
+                val l = if (cluster != null) Fat32Formatter.layout(sectorSize, sectors, cluster)
+                    else Fat32Formatter.layout(sectorSize, sectors)
+                Reserved.requireNoneBefore(reserved, l.dataStartSector + l.sectorsPerCluster, "FAT32")
+            }
             Filesystem.EXFAT -> if (cluster != null) ExFatFormatter.layout(sectorSize, sectors, cluster)
                 else ExFatFormatter.layout(sectorSize, sectors)
             Filesystem.EXT4 -> {
                 require(Ext4Formatter.BLOCK_SIZE % sectorSize == 0) { "ext4 needs sectors of 4 KiB or less" }
                 Ext4Formatter.layout(sectors * sectorSize)
             }
-            Filesystem.NTFS -> NtfsFormatter.check(sectors * sectorSize)
+            Filesystem.NTFS -> NtfsFormatter.check(sectors * sectorSize, sectors, reserved)
         }
     }
 
     internal fun writeFilesystem(
         device: RawBlockDevice, filesystem: Filesystem, totalSectors: Long, label: String,
         clusterBytes: Int?, partitionOffset: Long, progress: Progress, full: Boolean,
+        reserved: List<LongRange> = emptyList(),
     ) {
         val phase = "Writing ${filesystem.displayName}"
         when (filesystem) {
             Filesystem.FAT32 -> Fat32Formatter.format(device, totalSectors, label, clusterBytes,
-                hiddenSectors = partitionOffset) { progress.update(phase, it) }
+                hiddenSectors = partitionOffset, reserved = reserved) { progress.update(phase, it) }
             Filesystem.EXFAT -> ExFatFormatter.format(device, totalSectors, label, clusterBytes,
-                partitionOffset = partitionOffset) { progress.update(phase, it) }
+                partitionOffset = partitionOffset, reserved = reserved) { progress.update(phase, it) }
             // A full format has already zeroed the volume; ext4 then marks every inode table zeroed.
             Filesystem.EXT4 -> Ext4Formatter.format(device, totalSectors, label, full) { progress.update(phase, it) }
             Filesystem.NTFS -> {
                 progress.update(phase, 0f)
-                NtfsFormatter.format(device, totalSectors, label, partitionOffset, clusterBytes)
+                NtfsFormatter.format(device, totalSectors, label, partitionOffset, clusterBytes, reserved)
                 progress.update(phase, 1f)
             }
         }
