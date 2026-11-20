@@ -181,6 +181,13 @@ android {
             // throws "not mocked" by default. Returning defaults lets the probe and
             // parser tests run on the JVM instead of needing an instrumented run.
             isReturnDefaultValues = true
+            // -PhostPreload=/path/libhardened_malloc.so runs the host tests, and with them the
+            // native code they load, under GrapheneOS's hardened allocator, which aborts on heap
+            // misuse that glibc's tolerates. Set here because Gradle does not pass the shell's
+            // LD_PRELOAD on to the test process.
+            providers.gradleProperty("hostPreload").orNull?.let { lib ->
+                all { it.environment("LD_PRELOAD", lib) }
+            }
         }
     }
 }

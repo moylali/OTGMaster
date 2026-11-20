@@ -58,35 +58,28 @@ object UsbAccess {
             .map { it.uuid ?: it.getDescription(context) }
             .toSet()
 
-    /**
-     * How long after the app takes a drive a volume Android loses still counts as taken from it.
-     * The loss follows within a second (the kernel drops the disk when the app claims the USB
-     * interface); the margin covers a slow vold.
-     */
-    const val TAKEOVER_WINDOW_MS = 15_000L
+    /** A removable volume as Android lists it: its key (uuid, or name), name and state. */
+    data class AndroidVolume(val key: String, val name: String, val state: String)
 
     /**
-     * Whether a removable volume reaching [state] [msSinceTakeover] after the app took a drive
-     * means the app cut Android off mid-use. vold reports "bad_removal" for a volume that
-     * vanished while mounted, and "unmountable" for one whose check failed because the disk went
-     * away. A volume Android had not started on goes to "removed", which is not reported.
+     * The names of the volumes Android is mounting or has mounted from USB, which the app's
+     * claim on the drive is about to cut off: mounted (read-write or read-only) or checking,
+     * and not one of [known], the volumes seen while no USB drive was attached (an SD card).
      */
-    fun cutOffByTakeover(state: String?, removable: Boolean, msSinceTakeover: Long?): Boolean =
-        removable && msSinceTakeover != null && msSinceTakeover in 0..TAKEOVER_WINDOW_MS &&
-            state in CUT_OFF_STATES
+    fun inUseByAndroid(volumes: List<AndroidVolume>, known: Set<String>): List<String> =
+        volumes.filter { it.state in IN_USE && it.key !in known }.map { it.name }
 
-    // Environment.MEDIA_BAD_REMOVAL and MEDIA_UNMOUNTABLE, spelt out so host tests can use them.
-    private val CUT_OFF_STATES = setOf("bad_removal", "unmountable")
+    // Environment.MEDIA_MOUNTED, MEDIA_MOUNTED_READ_ONLY and MEDIA_CHECKING, spelt out for host tests.
+    private val IN_USE = setOf("mounted", "mounted_ro", "checking")
 
-    /** The removable volumes Android is using that it was not before a USB drive came: their names. */
+    /** [inUseByAndroid] for the volumes Android lists now. */
     fun androidVolumeNames(context: Context, known: Set<String>): List<String> =
-        context.getSystemService(StorageManager::class.java).storageVolumes
-            .filter {
-                it.isRemovable && it.state in setOf(
-                    Environment.MEDIA_MOUNTED, Environment.MEDIA_MOUNTED_READ_ONLY, Environment.MEDIA_CHECKING,
-                ) && (it.uuid ?: it.getDescription(context)) !in known
-            }
-            .map { it.getDescription(context) }
+        inUseByAndroid(
+            context.getSystemService(StorageManager::class.java).storageVolumes
+                .filter { it.isRemovable }
+                .map { AndroidVolume(it.uuid ?: it.getDescription(context), it.getDescription(context), it.state) },
+            known,
+        )
 
     /** The message after an Eject: what Android will do next depends on what it can read. */
     fun androidCanRead(partitions: List<EjectedPartition>): Boolean =
