@@ -1,9 +1,10 @@
-• New: saved passwords need your fingerprint or screen lock
+• New: saved passwords need fingerprint or screen lock
 • New: Format inside BitLocker
 • New: Read-only mode covers plain drives
-• New: edit the log before sending a report
-• Fixed: other apps could spot a hidden volume or a drive's serial
+• New: edit the log before you send a report
+• New: says when it took a drive from Android
+• Fixed: other apps could spot a hidden volume or drive serial
 • Fixed: reports reached the server before you sent them
-• Fixed: a USB hiccup could stop Encrypt or a copy
-• Fixed: a cut-off ext4 write left space marked used
-• Fixed: full drives say "Not enough space"; too-big restores stop first
+• Fixed: a USB hiccup stopped Encrypt or a copy
+• Fixed: a cut-off ext4 write left space used up
+• Fixed: full drives say "Not enough space"

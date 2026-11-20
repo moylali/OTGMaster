@@ -172,6 +172,11 @@ class MainActivity : AppCompatActivity() {
     // thread, so no synchronization is needed.
     private var isProbingDevices = false
 
+    /** When this activity last took USB drives (elapsedRealtime), for [onAndroidVolumeLost]; 0 for never. */
+    @Volatile private var usbTakeoverAt = 0L
+    private val reportedCutOffs = java.util.Collections.synchronizedSet(mutableSetOf<String>())
+    private var androidVolumeCallback: Any? = null
+
     // For Compose state hoisting
     private val mountedDrivesState = mutableStateOf<List<MountedDrive>>(emptyList())
     private val logsState = mutableStateListOf<String>()
@@ -595,6 +600,7 @@ class MainActivity : AppCompatActivity() {
         usbDeviceProvider = RealUsbDeviceProvider(usbMgr, permissionIntent)
 
         registerUsbReceiver()
+        watchAndroidVolumes()
 
         // Let components without an activity reference write to the log pane.
         installedLogSink = { line -> runOnUiThread { appendLog(line) } }
@@ -941,6 +947,11 @@ class MainActivity : AppCompatActivity() {
         installedDetachRequest = null
         closeOpenedDevices()
         unregisterReceiver(usbReceiver)
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.R) {
+            (androidVolumeCallback as? android.os.storage.StorageManager.StorageVolumeCallback)?.let {
+                getSystemService(android.os.storage.StorageManager::class.java).unregisterStorageVolumeCallback(it)
+            }
+        }
         super.onDestroy()
     }
 
@@ -969,6 +980,38 @@ class MainActivity : AppCompatActivity() {
         }
         if (openedDevices.isNotEmpty()) {
             Log.i(TAG, "kept ${openedDevices.size} USB connection(s) open for mounted drives")
+        }
+    }
+
+    /**
+     * Hears Android lose a USB volume, to say so when taking a drive cut Android off mid-use.
+     * With USB access on Always the app takes a drive as it appears, and Android may have
+     * mounted a partition of it by then, or be checking one; the kernel then drops the disk
+     * under it, and a file Android was writing can be left incomplete. Before Android 11 there
+     * is no callback, and openAndProbeUsb looks at Android's volumes before taking the drive.
+     */
+    private fun watchAndroidVolumes() {
+        if (Build.VERSION.SDK_INT < Build.VERSION_CODES.R) return
+        val callback = object : android.os.storage.StorageManager.StorageVolumeCallback() {
+            override fun onStateChanged(volume: android.os.storage.StorageVolume) {
+                val since = usbTakeoverAt.takeIf { it != 0L }?.let { android.os.SystemClock.elapsedRealtime() - it }
+                if (!app.fayaz.otgmaster.usb.UsbAccess.cutOffByTakeover(volume.state, volume.isRemovable, since)) return
+                val name = volume.getDescription(this@MainActivity)
+                if (reportedCutOffs.add(volume.uuid ?: name)) reportTakenFromAndroid(name)
+            }
+        }
+        runCatching {
+            getSystemService(android.os.storage.StorageManager::class.java).registerStorageVolumeCallback(mainExecutor, callback)
+            androidVolumeCallback = callback
+        }.onFailure { OtgMasterState.logFailure("usb-takeover", "Could not watch Android's USB volumes", it) }
+    }
+
+    private fun reportTakenFromAndroid(volumeName: String) {
+        val message = getString(R.string.usb_taken_from_android, volumeName)
+        appendLog(message)
+        toastState.value = Pair(message, false)
+        if (!lifecycle.currentState.isAtLeast(androidx.lifecycle.Lifecycle.State.RESUMED)) {
+            android.widget.Toast.makeText(this, message, android.widget.Toast.LENGTH_LONG).show()
         }
     }
 
@@ -1382,6 +1425,13 @@ class MainActivity : AppCompatActivity() {
                     openedDevices.keys + pendingUnmounts.filterValues { it > 0 }.keys +
                     OtgMasterState.ejectedDevices
                 val opener = LibaumsRawBlockDeviceOpener(this@MainActivity)
+                // What Android is using now, where no callback will say it was lost (watchAndroidVolumes).
+                val androidHad = if (Build.VERSION.SDK_INT < Build.VERSION_CODES.R) runCatching {
+                    app.fayaz.otgmaster.usb.UsbAccess.androidVolumeNames(this@MainActivity,
+                        sharedPreferences.getStringSet(PREF_KNOWN_VOLUMES, emptySet()).orEmpty())
+                }.getOrDefault(emptyList()) else emptyList()
+                reportedCutOffs.clear()
+                usbTakeoverAt = android.os.SystemClock.elapsedRealtime()
                 val openedList = try {
                     opener.openAllAvailable(excludeKeys).also {
                         // Every device not opened says why, whether or not another one opened.
@@ -1411,6 +1461,7 @@ class MainActivity : AppCompatActivity() {
                     return@launch
                 }
 
+                if (androidHad.isNotEmpty()) withContext(Dispatchers.Main) { androidHad.forEach(::reportTakenFromAndroid) }
                 val baseIndex = _deviceCandidates.value.size
                 openedList.forEach {
                     android.util.Log.i("OTGMaster", "probe opened ${it.deviceKey} as ${objId(it.blockDevice)}")

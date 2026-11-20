@@ -52,4 +52,20 @@ class UsbAccessTest {
         assertFalse(UsbAccess.androidCanRead(listOf(EjectedPartition(true, "ext4"))))
         assertFalse(UsbAccess.androidCanRead(emptyList()))
     }
+
+    @Test fun `a volume lost while mounted or checking, just after a takeover, was cut off`() {
+        assertTrue(UsbAccess.cutOffByTakeover("bad_removal", true, 0))
+        assertTrue(UsbAccess.cutOffByTakeover("unmountable", true, 900))
+        assertTrue(UsbAccess.cutOffByTakeover("bad_removal", true, UsbAccess.TAKEOVER_WINDOW_MS))
+    }
+
+    @Test fun `a volume Android had not started on, or lost for another reason, is not reported`() {
+        assertFalse(UsbAccess.cutOffByTakeover("removed", true, 0))          // not mounted yet
+        assertFalse(UsbAccess.cutOffByTakeover("unmounted", true, 0))        // a step on the way
+        assertFalse(UsbAccess.cutOffByTakeover("bad_removal", true, null))   // the app took nothing
+        assertFalse(UsbAccess.cutOffByTakeover("bad_removal", true, UsbAccess.TAKEOVER_WINDOW_MS + 1))
+        assertFalse(UsbAccess.cutOffByTakeover("bad_removal", true, -1))     // before the takeover
+        assertFalse(UsbAccess.cutOffByTakeover("bad_removal", false, 0))     // internal storage
+        assertFalse(UsbAccess.cutOffByTakeover(null, true, 0))
+    }
 }

@@ -58,6 +58,36 @@ object UsbAccess {
             .map { it.uuid ?: it.getDescription(context) }
             .toSet()
 
+    /**
+     * How long after the app takes a drive a volume Android loses still counts as taken from it.
+     * The loss follows within a second (the kernel drops the disk when the app claims the USB
+     * interface); the margin covers a slow vold.
+     */
+    const val TAKEOVER_WINDOW_MS = 15_000L
+
+    /**
+     * Whether a removable volume reaching [state] [msSinceTakeover] after the app took a drive
+     * means the app cut Android off mid-use. vold reports "bad_removal" for a volume that
+     * vanished while mounted, and "unmountable" for one whose check failed because the disk went
+     * away. A volume Android had not started on goes to "removed", which is not reported.
+     */
+    fun cutOffByTakeover(state: String?, removable: Boolean, msSinceTakeover: Long?): Boolean =
+        removable && msSinceTakeover != null && msSinceTakeover in 0..TAKEOVER_WINDOW_MS &&
+            state in CUT_OFF_STATES
+
+    // Environment.MEDIA_BAD_REMOVAL and MEDIA_UNMOUNTABLE, spelt out so host tests can use them.
+    private val CUT_OFF_STATES = setOf("bad_removal", "unmountable")
+
+    /** The removable volumes Android is using that it was not before a USB drive came: their names. */
+    fun androidVolumeNames(context: Context, known: Set<String>): List<String> =
+        context.getSystemService(StorageManager::class.java).storageVolumes
+            .filter {
+                it.isRemovable && it.state in setOf(
+                    Environment.MEDIA_MOUNTED, Environment.MEDIA_MOUNTED_READ_ONLY, Environment.MEDIA_CHECKING,
+                ) && (it.uuid ?: it.getDescription(context)) !in known
+            }
+            .map { it.getDescription(context) }
+
     /** The message after an Eject: what Android will do next depends on what it can read. */
     fun androidCanRead(partitions: List<EjectedPartition>): Boolean =
         partitions.isNotEmpty() && partitions.all { it.plain && it.filesystem in ANDROID_FILESYSTEMS }
