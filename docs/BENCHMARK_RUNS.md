@@ -33,6 +33,28 @@ to a row here.
 
 ---
 
+## 2026-11-19: 0.5.4 on the Galaxy Tab A9+, Drive 1 with bigwrite
+
+Benchmark build `0.5.4-bench (53) commit 152c9d5` on the Galaxy Tab A9+ (SM-X210, Android 16, SDK 36). This is the first 0.5.4 drive run, made mainly to check the libaums write replay after a USB reset (`a14bf06`). On 0.5.3 this Tab had seven bigwrite runs fail on a USB error. Sections: free, block, dir, path, seq, random, opens, write, unaligned, correct, bigwrite, fixtures, one partition per run via `sequence_runs.sh` → `start_run.sh`. `Started` is the Tab's clock.
+
+The bigwrite tree was skipped on every writable partition for lack of space (each still held the 2.2 GB `big.bin` of an earlier run, which bigwrite leaves for the host check); the big file itself was written, remounted and verified. The app logged USB faults and recovered from each: FAT32 had 6 (two write faults, recovered by rewriting the last 909 KiB and 984 KiB), exFAT 3 (two write faults, 1022 KiB rewritten), NTFS 2 reads, BitLocker exFAT 2 reads, APFS CI 1 read at block 0. None failed a section.
+
+Host check: Drive 1 read back on the laptop afterwards (`read_matrix_drive.sh` + `verify_matrix_drive.py`, `matrix/d1-after-x.md`): **ALL CLEAN**, every partition's own checker clean (the encrypted APFS volumes are checked through their fixtures only), every fixture matched the host manifest, and `big.bin` on all six writable partitions matched the bigwrite keystream.
+
+| Run | Device | Build | Partition | Started | Write verify | bigwrite | Fixtures |
+|---|---|---|---|---|---|---|---|
+| tab-054a-d1fat32 | Galaxy Tab A9+ | `152c9d5` | D1FAT32 | 07:56 | ALL PASSED | 2.2 GB at 5.45 MB/s; read back 17.84 MB/s; tree skipped, 571 MB free, needs 697 MB | ALL 20995 MATCHED |
+| tab-054a-d1exfat | Galaxy Tab A9+ | `152c9d5` | D1EXFAT | 08:10 | ALL PASSED | 2.2 GB at 5.55 MB/s; read back 15.09 MB/s; tree skipped, 574 MB free, needs 696 MB | ALL 20963 MATCHED |
+| tab-054a-d1ntfs | Galaxy Tab A9+ | `152c9d5` | D1NTFS | 08:27 | ALL PASSED | 2.2 GB at 2.13 MB/s; read back 18.76 MB/s; tree skipped, 608 MB free, needs 697 MB | ALL 21052 MATCHED |
+| tab-054a-d1ext4 | Galaxy Tab A9+ | `152c9d5` | D1EXT4 | 08:51 | ALL PASSED | 2.2 GB at 4.16 MB/s; read back 16.98 MB/s; tree skipped, 468 MB free, needs 697 MB | ALL 20854 MATCHED |
+| tab-054a-d1blntfs | Galaxy Tab A9+ | `152c9d5` | D1BLNTFS | 09:09 | ALL PASSED | 2.2 GB at 2.10 MB/s; read back 15.45 MB/s; tree skipped, 608 MB free, needs 697 MB | ALL 20905 MATCHED |
+| tab-054a-d1blexfat | Galaxy Tab A9+ | `152c9d5` | D1BLEXFAT | 09:34 | ALL PASSED | 2.2 GB at 4.58 MB/s; read back 10.40 MB/s; tree skipped, 574 MB free, needs 696 MB | ALL 20898 MATCHED |
+| tab-054a-d1apfsci | Galaxy Tab A9+ | `152c9d5` | D1APFSCI | 09:56 | SKIPPED (read-only) | SKIPPED (read-only) | ALL 22129 MATCHED |
+| tab-054a-d1apfscs | Galaxy Tab A9+ | `152c9d5` | D1APFSCS | 10:08 | SKIPPED (read-only) | SKIPPED (read-only) | ALL 22024 MATCHED |
+| tab-054a-d1apfseci | Galaxy Tab A9+ | `152c9d5` | D1APFSECI | 10:21 | SKIPPED (read-only) | SKIPPED (read-only) | ALL 21777 MATCHED |
+| tab-054a-d1apfsecs | Galaxy Tab A9+ | `152c9d5` | D1APFSECS | 10:35 | SKIPPED (read-only) | SKIPPED (read-only) | ALL 21911 MATCHED |
+
+
 ## 2026-11-04 to 11-07: the 0.5.0 release matrix on `cae0e9e` (= `d0e5655`)
 
 Every report below says `build: 0.4.2 (49) commit cae0e9e`. That line was checked against the round's APK
