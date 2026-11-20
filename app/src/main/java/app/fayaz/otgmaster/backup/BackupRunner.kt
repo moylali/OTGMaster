@@ -355,7 +355,7 @@ class BackupRunner(private val context: Context) {
                             blobs++
                             if (!repo.hasBlob(id)) {
                                 damaged = true
-                                problems += "${n.name}: blob ${id.take(8)} missing from the index"
+                                problems += "${app.fayaz.otgmaster.feedback.PathMask.mark(n.name)}: blob ${id.take(8)} missing from the index"
                             } else if (readData) runCatching { repo.blob(id) }.onFailure {
                                 if (isDamage(it)) damaged = true
                                 problems += "${n.name}: ${it.message}"
@@ -440,7 +440,7 @@ class BackupRunner(private val context: Context) {
                 } catch (e: Exception) {
                     return refuse("Could not set the damaged backup aside, so nothing was changed: ${e.message}", RunStatus.FAILED)
                 }
-                app.fayaz.otgmaster.OtgMasterState.log("Backup \"${job.name}\": the damaged backup is kept in \"$kept\"")
+                app.fayaz.otgmaster.OtgMasterState.log("Backup \"${job.name}\": the damaged backup is kept in \"${app.fayaz.otgmaster.feedback.PathMask.mark(kept)}\"")
             }
             store.setSnapshots(job.id, emptyList())
         }

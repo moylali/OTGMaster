@@ -71,7 +71,7 @@ object FeedbackPayload {
      * Collects what the form asks for, and nothing else.
      *
      * Deliberately excluded: the volume label, the USB serial number, and any file or
-     * directory name. A label is often chosen by the user and a serial identifies the
+     * directory name (the log's are masked: [PathMask]). A label is often chosen by the user and a serial identifies the
      * physical drive, so neither belongs in a report described as anonymous. What
      * remains is make, capacity, filesystem and whether the volume is encrypted —
      * enough to reproduce a storage bug without identifying the drive or its owner.
@@ -95,7 +95,7 @@ object FeedbackPayload {
                 encryptionType = encType,
             )
         }
-        val (kept, dropped) = trimLogs(logs, usbEvents)
+        val (kept, dropped) = trimLogs(logs.map(PathMask::maskMarked), usbEvents.map(PathMask::maskMarked))
         return Contents(
             deviceName = "${Build.MANUFACTURER} ${Build.MODEL} (Android ${Build.VERSION.RELEASE})",
             appVersion = "${BuildConfig.VERSION_NAME} (${BuildConfig.VERSION_CODE})",
@@ -163,7 +163,7 @@ object FeedbackPayload {
      * an Android Build or a mounted drive.
      */
     internal fun collectForTest(logs: List<String>, usbEvents: List<String> = emptyList()): Contents {
-        val (kept, dropped) = trimLogs(logs, usbEvents)
+        val (kept, dropped) = trimLogs(logs.map(PathMask::maskMarked), usbEvents.map(PathMask::maskMarked))
         return Contents(
             deviceName = "TestCo TestPhone (Android 99)",
             appVersion = "0.0.0 (0)",

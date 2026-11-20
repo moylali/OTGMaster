@@ -167,7 +167,7 @@ class ResticWriter(
         val children = try {
             dir.children()
         } catch (e: java.io.IOException) {
-            errors += "${at.ifEmpty { "/" }}: ${e.message ?: e.javaClass.simpleName}"
+            errors += "${app.fayaz.otgmaster.feedback.PathMask.mark(at.ifEmpty { "/" })}: ${e.message ?: e.javaClass.simpleName}"
             emptyList()
         }
         val nodes = children.sortedWith { a, b -> compareBytes(a.name, b.name) }.mapNotNull { c ->
@@ -183,7 +183,7 @@ class ResticWriter(
             } catch (e: java.io.IOException) {
                 // One unreadable file must not lose the whole backup. Chunks of it already
                 // saved stay in the pack and cost nothing while no snapshot uses them.
-                errors += "$path: ${e.message ?: e.javaClass.simpleName}"
+                errors += "${app.fayaz.otgmaster.feedback.PathMask.mark(path)}: ${e.message ?: e.javaClass.simpleName}"
                 null
             }
         }

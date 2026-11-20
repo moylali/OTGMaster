@@ -4,7 +4,7 @@
 • New: edit the log before you send a report
 • New: says when it took a drive from Android
 • Fixed: other apps could spot a hidden volume or drive serial
-• Fixed: reports reached the server before you sent them
+• Fixed: reports left before Send and named your files
 • Fixed: a USB hiccup stopped Encrypt or a copy
 • Fixed: a cut-off ext4 write left space used up
 • Fixed: full drives say "Not enough space"
