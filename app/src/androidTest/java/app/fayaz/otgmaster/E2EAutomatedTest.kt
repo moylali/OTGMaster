@@ -48,6 +48,11 @@ class E2EAutomatedTest {
         private const val UNMOUNT_SETTLE_MS = 1_000L
         private const val EMULATOR_LAUNCHER = "com.google.android.apps.nexuslauncher"
         private const val BACKUP_REPO = "otg_backup_repo"
+        /** report_issue: a path a backup error names, its masked form, and a line the user adds. */
+        private const val REPORT_NAME = "Barcelona_family"
+        private const val REPORT_PATH = "Holidays/${REPORT_NAME}.jpg"
+        private const val REPORT_MASKED = "H***ays/B***jpg"
+        private const val REPORT_EDIT = "edited-in-review"
         /** As a case's password: it has keyfiles and no password. */
         private const val NO_PASSWORD = "none"
         private const val BK_PASSWORD = "otg-backup-run-2026"
@@ -255,7 +260,10 @@ class E2EAutomatedTest {
             android.os.SystemClock.sleep(500)
 
             keyfile.split(',').filter { it.isNotEmpty() }.forEach { name ->
-                val selectKeyfileBtn = device.wait(Until.findObject(By.textContains("Select keyfile")), timeout)
+                // A BitLocker volume takes a .BEK file through its own button.
+                val selectKeyfileBtn = if (name.endsWith(".BEK")) findScrolling(By.desc("bek_button"), "bek_button")
+                    else device.wait(Until.findObject(By.textContains("Select keyfile")), timeout)
+                if (name.endsWith(".BEK")) assertNotNull("no .BEK key file button on the BitLocker form", selectKeyfileBtn)
                 selectKeyfileBtn?.click()
                 pickKeyfileInFiles(name)
             }
@@ -3885,9 +3893,20 @@ class E2EAutomatedTest {
     private fun runReportIssue(marker: String) {
         assertTrue("the runner gave no issue_marker", marker.isNotEmpty())
         ejMount("to report")
+        // A backup error's line, naming a file: the report must carry it masked (#165).
+        // check_github_issue.py then looks for the masked form, and for no trace of the name.
+        OtgMasterState.log("Backup \"E2E\": not read: ${app.fayaz.otgmaster.feedback.PathMask.mark(REPORT_PATH)}: Permission denied")
         val report = findScrolling(By.text(usbText(R.string.feedback_report_issue)))
         assertNotNull("no Report issue button", report)
         report!!.click()
+        // The log can be edited before it is sent, and what is in the editor is what goes.
+        val editor = device.wait(Until.findObject(By.clazz("android.widget.EditText")), 10_000L)
+        if (editor == null) captureScreen("no_log_editor")
+        assertNotNull("no log editor on the review screen", editor)
+        val shown = editor!!.text.orEmpty()
+        assertTrue("the review screen shows the file's name: $shown", REPORT_NAME !in shown)
+        assertTrue("the review screen does not show the masked path", REPORT_MASKED in shown)
+        editor.text = "$shown\n$REPORT_EDIT"
         val open = findScrolling(By.text(usbText(R.string.feedback_open)), firstWaitMs = 10_000L)
         assertNotNull("no button to open the form", open)
         open!!.click()
@@ -3900,6 +3919,45 @@ class E2EAutomatedTest {
         if (done == null) captureScreen("report_issue_submit")
         assertNotNull("the form did not say the report was submitted", done)
         device.executeShellCommand("am force-stop com.android.chrome")
+    }
+
+    /**
+     * A write bigger than the drive: it fails, the log and a toast say "Not enough space"
+     * in words (7014aff), and the drive is left whole: a file written before still reads
+     * back, and the partial file deletes. The runner then runs the filesystem's checker on
+     * the image (verify_e2e_volume.py), which on ext4 also sees blocks a failed write left
+     * marked used with no owner (6d8cdfb).
+     */
+    private fun runNoSpace() {
+        val d = ejMount("to fill")
+        val cr = bkContext.contentResolver
+        val root = DocumentsContract.buildDocumentUri(AUTHORITY, "${d.id}:/")
+        val kept = DocumentsContract.createDocument(cr, root, "text/plain", "before_full.txt")
+        assertNotNull("could not create a small file", kept)
+        cr.openOutputStream(kept!!)!!.use { it.write("kept\n".toByteArray()) }
+
+        val big = DocumentsContract.createDocument(cr, root, "application/octet-stream", "nospace.bin")
+        assertNotNull("could not create the big file", big)
+        val chunk = ByteArray(1 shl 20) { (it * 31).toByte() }
+        var written = 0
+        val failure = runCatching {
+            cr.openOutputStream(big!!)!!.use { out -> repeat(128) { out.write(chunk); written++ } }
+        }.exceptionOrNull()
+        assertNotNull("128 MiB went into a 64 MiB drive without an error ($written MiB written)", failure)
+
+        val words = bkContext.getString(R.string.no_space_on_drive).substringBefore("%").trim()
+        val end = android.os.SystemClock.uptimeMillis() + 15_000L
+        while (OtgMasterState.recentLogs().none { words in it } && android.os.SystemClock.uptimeMillis() < end) {
+            android.os.SystemClock.sleep(200)
+        }
+        assertTrue("the log does not say \"$words\" after the write failed: ${OtgMasterState.recentLogs().takeLast(8)}",
+            OtgMasterState.recentLogs().any { words in it })
+
+        assertTrue("the partial file did not delete", DocumentsContract.deleteDocument(cr, big!!))
+        val back = cr.openInputStream(kept)!!.use { it.readBytes() }.toString(Charsets.UTF_8)
+        assertEquals("a file written before the drive filled changed", "kept\n", back)
+        ejTapEject()
+        ejAwaitGone()
     }
 
     /** An element of the web form by its HTML id, past any Chrome first-run screen. */
@@ -4538,6 +4596,7 @@ class E2EAutomatedTest {
                 assertNotNull("the hint went away", device.findObject(By.text(usbText(R.string.usb_hint_android))))
             }
             "report_issue" -> runReportIssue(args.getString("issue_marker", ""))
+            "no_space" -> runNoSpace()
             "plain_read_only_default" -> {
                 // Read-only mode used to cover encrypted partitions only; a plain drive,
                 // which mounts with no form, was always writable (#165).

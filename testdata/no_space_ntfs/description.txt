@@ -1,0 +1,1 @@
+A write bigger than a plain NTFS drive fails with "Not enough space" in the log; a file written before is intact, and the checker is clean.

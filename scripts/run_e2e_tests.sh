@@ -150,7 +150,7 @@ ensure_testdata() {
     # NTFS inside VeraCrypt and inside BitLocker, and ext4 inside VeraCrypt. Built
     # without root; a leftover expects_error.txt marks the old refusal-style cases
     # these replaced, from before ext4 (0.4.0) and NTFS (0.4.1) were supported.
-    for case_name in ext4 ntfs ntfs_write bitlocker_ntfs bitlocker_ntfs_write; do
+    for case_name in ext4 ntfs ntfs_write bitlocker_ntfs bitlocker_ntfs_write bitlocker_bek; do
         if [ ! -f "$TESTDATA_DIR/$case_name/test.img" ] || [ -f "$TESTDATA_DIR/$case_name/expects_error.txt" ]; then
             echo "Generating no-root fixtures (ext4, NTFS in VeraCrypt and BitLocker)..."
             bash scripts/generate_noroot_testdata.sh || { echo "No-root fixture generation failed!"; exit 1; }
@@ -363,7 +363,8 @@ for test_dir in "$TESTDATA_DIR"/*/; do
     fi
     IMG_FILE=$(find "$test_dir" -maxdepth 1 -name "*.img" | head -n 1)
     PASSWORD_FILE="$test_dir/password.txt"
-    KEYFILES=$(find "$test_dir" -maxdepth 1 -name "*.key" | sort)
+    # VeraCrypt keyfiles are *.key; a BitLocker key file keeps Windows' name, <GUID>.BEK.
+    KEYFILES=$(find "$test_dir" -maxdepth 1 \( -name "*.key" -o -name "*.BEK" \) | sort)
 
     if [ -z "$IMG_FILE" ] || [ ! -f "$PASSWORD_FILE" ]; then
         echo "Skipping $TEST_NAME: missing .img or password.txt"
@@ -488,7 +489,7 @@ for test_dir in "$TESTDATA_DIR"/*/; do
     # QEMU hotplug is no longer used; Android E2EAutomatedTest directly overwrites /dev/block/sda using dd.
 
     # Clear any leftover keyfile; push the current test's keyfile if needed
-    $CMD_ADB -s $SERIAL shell "rm -f /sdcard/Download/*.key"
+    $CMD_ADB -s $SERIAL shell "rm -f /sdcard/Download/*.key /sdcard/Download/*.BEK"
     for KEYFILE in $KEYFILES; do
         echo "Pushing keyfile to device: $(basename "$KEYFILE")"
         $CMD_ADB -s $SERIAL push "$KEYFILE" /sdcard/Download/
@@ -596,7 +597,7 @@ for test_dir in "$TESTDATA_DIR"/*/; do
         # with the kernel's driver and checks every file the case left behind. The
         # in-app checks above only read the writes back through the same code.
         HOST_CHECK=""
-        if [ $TEST_EXIT_CODE -eq 0 ] && { [ -f "$test_dir/write_test.txt" ] || [ -f "$test_dir/backup_flow.txt" ] || [ -f "$test_dir/erase.txt" ] || [ -f "$test_dir/journal.txt" ] || [ -f "$test_dir/backup.txt" ] || [ -f "$test_dir/hidden_check.txt" ]; }; then
+        if [ $TEST_EXIT_CODE -eq 0 ] && { [ -f "$test_dir/write_test.txt" ] || [ -f "$test_dir/backup_flow.txt" ] || [ -f "$test_dir/erase.txt" ] || [ -f "$test_dir/journal.txt" ] || [ -f "$test_dir/backup.txt" ] || [ -f "$test_dir/hidden_check.txt" ] || [ -f "$test_dir/no_space.txt" ]; }; then
             HOST_OUT=$(python3 scripts/verify_e2e_volume.py "$SLOT_FILE" "$test_dir" 2>&1)
             echo "$HOST_OUT"
             if echo "$HOST_OUT" | grep -q "^HOST CHECK OK"; then
@@ -616,7 +617,10 @@ for test_dir in "$TESTDATA_DIR"/*/; do
             $CMD_ADB -s $SERIAL shell am clear-debug-app >/dev/null 2>&1
             ISSUE_WAIT=120
             [ $TEST_EXIT_CODE -ne 0 ] && ISSUE_WAIT=30
-            HOST_OUT=$(python3 scripts/check_github_issue.py "$(cat "$test_dir/github_issue.txt")" "$ISSUE_MARKER" --wait $ISSUE_WAIT 2>&1)
+            LOG_CHECKS=()
+            [ -f "$test_dir/log_has.txt" ] && while IFS= read -r l; do [ -n "$l" ] && LOG_CHECKS+=(--log-has "$l"); done < "$test_dir/log_has.txt"
+            [ -f "$test_dir/log_lacks.txt" ] && while IFS= read -r l; do [ -n "$l" ] && LOG_CHECKS+=(--log-lacks "$l"); done < "$test_dir/log_lacks.txt"
+            HOST_OUT=$(python3 scripts/check_github_issue.py "$(cat "$test_dir/github_issue.txt")" "$ISSUE_MARKER" --wait $ISSUE_WAIT "${LOG_CHECKS[@]}" 2>&1)
             echo "$HOST_OUT"
             if echo "$HOST_OUT" | grep -q "^GITHUB ISSUE OK"; then
                 [ $TEST_EXIT_CODE -eq 0 ] && HOST_CHECK="checked on GitHub, issue deleted"

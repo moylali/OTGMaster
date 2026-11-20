@@ -227,7 +227,7 @@ here**, in §8–§12, so there is one copy to keep correct.
 
 ## 6a. NTFS in VeraCrypt and in BitLocker, ext4 in VeraCrypt (E2E, no root)
 
-`scripts/generate_noroot_testdata.sh` builds five E2E cases without sudo, unlike
+`scripts/generate_noroot_testdata.sh` builds six E2E cases without sudo, unlike
 `generate_testdata.sh`:
 
 | Case | Container | Checks |
@@ -237,6 +237,7 @@ here**, in §8–§12, so there is one copy to keep correct.
 | `ntfs_write` | VeraCrypt AES/SHA-512, PIM 1 | create/write/mkdir/delete, persisted over remounts |
 | `bitlocker_ntfs` | BitLocker AES-CBC-128 | BITLOCKER tag, mount, flower.jpg |
 | `bitlocker_ntfs_write` | BitLocker XTS-AES-128 | as `ntfs_write`; remount #2 uses the recovery key |
+| `bitlocker_bek` | BitLocker XTS-AES-128, a startup key as its only protector | the `.BEK` button, no password, mount, flower.jpg. The key file keeps Windows' name, `<GUID>.BEK`, and the runner pushes `*.BEK` like `*.key` |
 
 ```sh
 bash scripts/generate_noroot_testdata.sh
@@ -600,7 +601,16 @@ from `scripts/make_backup_run_fixtures.py`, which needs a backup repository on t
 The same script builds `testdata/report_issue`. Its `github_issue.txt` names the repository. The
 runner makes up a random string for each attempt, the test types it into the Report issue form in
 Chrome and submits, and `scripts/check_github_issue.py` asserts that GitHub's issue contains that
-string, then deletes the issue. The case needs internet on the emulator and `gh` logged in with
+string, then deletes the issue. Before reporting, the test logs a backup error naming
+`Holidays/Barcelona_family.jpg`, and on the review screen adds a line to the log; the issue's Logs
+must hold `log_has.txt` (the masked path and the added line) and no part of `log_lacks.txt` (the
+name).
+
+It also builds `testdata/no_space_{fat32,exfat,ext4,ntfs}`, from the 64 MiB plain fixtures: the
+test writes a small file, then 128 MiB into the drive, expects the write to fail and the log to say
+"Not enough space on", deletes the partial file and ejects. `no_space.txt` makes the runner check
+the image (`verify_e2e_volume.py`): the filesystem's checker clean, the small file whole, the
+partial file gone. On ext4 that is also the check for blocks a failed write left marked used. The case needs internet on the emulator and `gh` logged in with
 admin rights. `gh issue delete` removes only the GitHub issue: the row the form saved in Supabase
 stays.
 

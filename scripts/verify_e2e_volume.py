@@ -562,6 +562,52 @@ def hidden_main(slot, case_dir):
     print(f"HOST CHECK OK {name}: the hidden volume's header and data are unchanged, its checker clean")
 
 
+def no_space_main(slot, case_dir):
+    """After a write that ran out of space: the checker is clean, the file written before is
+    whole, and the partial file is gone (E2EAutomatedTest.runNoSpace)."""
+    name = os.path.basename(os.path.normpath(case_dir))
+    with tempfile.TemporaryDirectory() as work:
+        img = os.path.join(work, "plain.img")
+        with open(slot, "rb") as src, open(img, "wb") as dst:
+            while chunk := src.read(1 << 20):
+                dst.write(chunk)
+        fs = fs_type(img)
+        problems = check_structure(fs, img)
+        out = run("udisksctl", "loop-setup", "-r", "-f", img, "--no-user-interaction")
+        m = re.search(r"/dev/loop\d+", out.stdout)
+        if not m:
+            problems.append(f"udisksctl loop-setup failed: {out.stdout}{out.stderr}")
+        else:
+            dev = m.group(0)
+            try:
+                mo = run("udisksctl", "mount", "-b", dev, "-o", "ro", "--no-user-interaction")
+                mnt = re.search(r" at (.+?)\.?$", mo.stdout.strip())
+                if not mnt:
+                    problems.append(f"udisksctl mount failed: {mo.stdout}{mo.stderr}")
+                else:
+                    root = mnt.group(1)
+                    try:
+                        try:
+                            with open(os.path.join(root, "before_full.txt"), "rb") as f:
+                                if f.read() != b"kept\n":
+                                    problems.append("before_full.txt has the wrong content")
+                        except OSError as e:
+                            problems.append(f"before_full.txt: {e}")
+                        if os.path.exists(os.path.join(root, "nospace.bin")):
+                            problems.append("nospace.bin is still there after its deletion")
+                    finally:
+                        run("udisksctl", "unmount", "-b", dev, "--no-user-interaction")
+            finally:
+                run("udisksctl", "loop-delete", "-b", dev, "--no-user-interaction")
+    if problems:
+        print(f"HOST CHECK FAILED {name} (plain, {fs or 'unrecognised'}):")
+        for p in problems:
+            print(f"  - {p}")
+        sys.exit(1)
+    print(f"HOST CHECK OK {name} (plain, {fs}): checker clean after the failed write, "
+          "before_full.txt whole, nospace.bin gone")
+
+
 def main():
     if len(sys.argv) != 3:
         raise SystemExit(__doc__)
@@ -570,6 +616,8 @@ def main():
         return hidden_main(slot, case_dir)
     if os.path.exists(os.path.join(case_dir, "erase.txt")):
         return erase_main(slot, case_dir)
+    if os.path.exists(os.path.join(case_dir, "no_space.txt")):
+        return no_space_main(slot, case_dir)
     if os.path.exists(os.path.join(case_dir, "journal.txt")):
         return journal_main(slot, case_dir)
     if os.path.exists(os.path.join(case_dir, "backup_flow.txt")):
