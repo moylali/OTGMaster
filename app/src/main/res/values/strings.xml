@@ -56,6 +56,7 @@
     <string name="usb_hint_waiting">Waiting to see whether Android mounts this USB drive.</string>
     <string name="usb_hint_android">Android is using this USB drive. Tap Scan USB devices to open it here instead.</string>
     <string name="usb_scan_warning_title">Android is using a USB drive</string>
+    <string name="select_bek_file">Select .BEK key file (%1$d)</string>
     <string name="usb_taken_from_android">OTG Master took over %1$s while Android was using it. Android could not unmount it first, so a file Android was writing there may be incomplete.</string>
     <string name="usb_scan_warning_text">Eject it in Android first. If OTG Master takes it now, a file Android is writing can be damaged.</string>
     <string name="usb_scan_continue">Continue</string>

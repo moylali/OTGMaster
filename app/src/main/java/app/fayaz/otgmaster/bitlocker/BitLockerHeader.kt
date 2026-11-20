@@ -46,6 +46,8 @@ class BitLockerHeader private constructor(
         val sealed: SealedKey?,
         /** For a clear-key VMK (protection suspended), the key that unseals it. */
         val clearKey: ByteArray?,
+        /** The protector's GUID; a startup key's .BEK file carries the same one. */
+        val guid: ByteArray = ByteArray(16),
     )
 
     val mode: Int
@@ -233,7 +235,7 @@ class BitLockerHeader private constructor(
                 }
                 p += n
             }
-            return Vmk(protection, salt, sealed, clearKey)
+            return Vmk(protection, salt, sealed, clearKey, area.copyOfRange(pos + 8, pos + 24))
         }
 
         private fun sealed(area: ByteArray, from: Int, to: Int) =

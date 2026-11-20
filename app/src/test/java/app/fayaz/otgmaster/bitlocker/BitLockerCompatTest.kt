@@ -126,6 +126,57 @@ class BitLockerCompatTest {
     }
     @Test fun recoveryKeyBesideSmartCard() = check("bitlk-aes-xts-128-smart-card", conf["bitlk-aes-xts-128-smart-card"]!!["RP"]!!)
     @Test fun recoveryKeyBesideStartupKey() = check("bitlk-aes-xts-128-startup-key", conf["bitlk-aes-xts-128-startup-key"]!!["RP"]!!)
+    // Windows-made startup keys: the volume opens with its .BEK file and no password.
+    private fun bek(name: String): ByteArray {
+        val guid = conf[name]!!["SK_VMK_GUID"]!!.uppercase()
+        return File(images, "$guid.BEK").readBytes()
+    }
+
+    private fun checkWithKeyFile(name: String, keyFile: ByteArray) {
+        assumeTrue("host toolchain unavailable", ready)
+        val raw = FileDevice(File(images, "$name.img"))
+        val dev = BitLockerUnlocker().unlock(raw, 0, raw.blockCount, CharArray(0), listOf(keyFile))
+        try {
+            assertEquals("$name opened with its .BEK file", conf[name]!!["SHA256SUM"]!!, sha256OfVolume(dev))
+        } finally {
+            dev.close()
+        }
+    }
+
+    @Test fun startupKeyFile() = checkWithKeyFile("bitlk-aes-xts-128-startup-key", bek("bitlk-aes-xts-128-startup-key"))
+    @Test fun startupKeyFileWindows11() =
+        checkWithKeyFile("bitlk-aes-xts-128-startup-key-win11", bek("bitlk-aes-xts-128-startup-key-win11"))
+
+    @Test fun anotherVolumesKeyFileIsRefused() {
+        assumeTrue(ready)
+        val raw = FileDevice(File(images, "bitlk-aes-xts-128-startup-key.img"))
+        try {
+            BitLockerUnlocker().unlock(raw, 0, raw.blockCount, CharArray(0),
+                listOf(bek("bitlk-aes-xts-128-startup-key-win11"))).close()
+            fail("opened with another volume's key file")
+        } catch (_: BitLockerUnlocker.WrongKeyFileException) {
+        }
+    }
+
+    @Test fun aFileThatIsNotAKeyFileIsRefusedWithAReason() {
+        assumeTrue(ready)
+        val raw = FileDevice(File(images, "bitlk-aes-xts-128-startup-key.img"))
+        val notBek = "password123\n".toByteArray()
+        try {
+            BitLockerUnlocker().unlock(raw, 0, raw.blockCount, CharArray(0), listOf(notBek)).close()
+            fail("opened with a text file as its key")
+        } catch (e: BitLockerKeyFile.NotAKeyFileException) {
+            assertTrue(e.message!!, e.message!!.startsWith("Not a BitLocker .BEK key file"))
+        }
+        // A real .BEK file, cut short, is refused too, not read past its end.
+        val cut = bek("bitlk-aes-xts-128-startup-key").let { it.copyOf(it.size - 20) }
+        try {
+            BitLockerUnlocker().unlock(raw, 0, raw.blockCount, CharArray(0), listOf(cut)).close()
+            fail("opened with a truncated key file")
+        } catch (_: BitLockerKeyFile.NotAKeyFileException) {
+        }
+    }
+
     @Test fun suspendedProtectionOpensWithoutPassword() = check("bitlk-aes-xts-128-clearkey-only", "")
 
     @Test fun wrongPasswordIsRefused() {

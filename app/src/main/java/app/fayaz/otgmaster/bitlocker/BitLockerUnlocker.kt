@@ -7,8 +7,9 @@ import java.nio.ByteOrder
 import java.security.MessageDigest
 
 /**
- * Opens a BitLocker volume with a password or a 48-digit recovery password, or
- * with no secret at all when protection is suspended (a clear-key VMK).
+ * Opens a BitLocker volume with a password, a 48-digit recovery password or a
+ * startup/recovery key file (.BEK, [BitLockerKeyFile]), or with no secret at all
+ * when protection is suspended (a clear-key VMK).
  *
  * Every protector unseals the same VMK. Before the VMK is trusted to unseal the
  * FVEK it must also unseal the metadata's validation datum to the SHA-256 of the
@@ -18,13 +19,24 @@ import java.security.MessageDigest
 class BitLockerUnlocker {
 
     class WrongPasswordException : Exception("Wrong password or recovery key")
+    class WrongKeyFileException : Exception("The .BEK key file is not a key for this BitLocker volume")
     class UnsupportedVolumeException(message: String) : Exception(message)
 
     /**
      * @param password the password, or a recovery password in its usual
      *   000000-000000-… form, or empty to try a clear key.
+     * @param keyFiles the contents of .BEK files; each is tried on the startup-key
+     *   protector with its GUID. A file that is not a .BEK file is refused, saying why.
      */
-    fun unlock(device: RawBlockDevice, startBlock: Long, blockCount: Long?, password: CharArray): BitLockerBlockDevice {
+    fun unlock(
+        device: RawBlockDevice, startBlock: Long, blockCount: Long?, password: CharArray,
+        keyFiles: List<ByteArray> = emptyList(),
+    ): BitLockerBlockDevice {
+        val keys = try {
+            keyFiles.map { BitLockerKeyFile.parse(it) }
+        } catch (e: BitLockerKeyFile.NotAKeyFileException) {
+            password.fill('\u0000'); throw e
+        }
         val bs = device.blockSize
         val partBlocks = blockCount ?: (device.blockCount - startBlock)
         val read = { offset: Long, length: Int ->
@@ -38,14 +50,19 @@ class BitLockerUnlocker {
         android.util.Log.i(TAG, "BitLocker ${header.cipherName}, sector ${header.sectorSize}, " +
             "${if (header.togo) "To Go, " else ""}protectors: ${header.vmks.map { it.protection }}")
 
-        val fvek = openFvek(header, password) ?: run {
+        val fvek = try { openFvek(header, password, keys) } finally { keys.forEach { it.key.fill(0) } } ?: run {
             password.fill('\u0000')
-            val usable = header.vmks.map { it.protection }.filter {
+            val protections = header.vmks.map { it.protection }
+            val startupKey = BitLockerHeader.Protection.STARTUP_KEY in protections
+            val secret = protections.any {
                 it == BitLockerHeader.Protection.PASSWORD || it == BitLockerHeader.Protection.RECOVERY_PASSWORD
             }
-            if (usable.isEmpty()) throw UnsupportedVolumeException(
-                "This BitLocker volume has no password or recovery-key protector " +
+            if (!secret && !startupKey) throw UnsupportedVolumeException(
+                "This BitLocker volume has no password, recovery-key or key-file protector " +
                     "(it has: ${header.vmks.joinToString { it.protection.name }})")
+            if (keys.isNotEmpty() && password.isEmpty()) throw WrongKeyFileException()
+            if (!secret) throw UnsupportedVolumeException(
+                "This BitLocker volume opens with a .BEK key file only. Select the key file Windows saved for it.")
             throw WrongPasswordException()
         }
         password.fill('\u0000')
@@ -53,7 +70,7 @@ class BitLockerUnlocker {
     }
 
     /** The FVEK key bytes ready for [BitLockerNative.newContext], or null if nothing opened. */
-    internal fun openFvek(header: BitLockerHeader, password: CharArray): ByteArray? {
+    internal fun openFvek(header: BitLockerHeader, password: CharArray, keyFiles: List<BitLockerKeyFile> = emptyList()): ByteArray? {
         val recovery = parseRecoveryPassword(password)
         val passwordHash = if (password.isNotEmpty() && recovery == null) {
             val utf16 = String(password).toByteArray(Charsets.UTF_16LE)
@@ -74,6 +91,11 @@ class BitLockerUnlocker {
                     val sealed = vmk.sealed ?: continue
                     val stretched = recoveryHash?.let { BitLockerNative.stretchKey(it, salt) } ?: continue
                     unseal(stretched, sealed).also { stretched.fill(0) } ?: continue
+                }
+                BitLockerHeader.Protection.STARTUP_KEY -> {
+                    val sealed = vmk.sealed ?: continue
+                    val file = keyFiles.firstOrNull { it.guid.contentEquals(vmk.guid) } ?: continue
+                    unseal(file.key, sealed) ?: continue
                 }
                 BitLockerHeader.Protection.CLEAR_KEY -> {
                     val key = vmk.clearKey ?: continue

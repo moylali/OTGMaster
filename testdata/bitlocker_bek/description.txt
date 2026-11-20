@@ -1,0 +1,1 @@
+BitLocker XTS-AES-128 volume holding NTFS whose only protector is a startup key. Verifies the unlock form takes its .BEK key file with no password, mounts the NTFS and reads flower.jpg.

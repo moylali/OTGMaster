@@ -3,7 +3,7 @@ OTG Master lets you mount VeraCrypt, LUKS and BitLocker-encrypted USB drives, an
 Connect an encrypted volume via USB OTG, enter your password or use your fingerprint, and access your encrypted files through Android's built-in Files app. Unmount safely when done.
 
 FEATURES
-• Multiple Encryption Formats — mount VeraCrypt, LUKS1, LUKS2 and BitLocker volumes (BitLocker with its password or 48-digit recovery key)
+• Multiple Encryption Formats — mount VeraCrypt, LUKS1, LUKS2 and BitLocker volumes (BitLocker with its password, 48-digit recovery key or .BEK key file)
 • Broad File System Support — read and write files on FAT32, exFAT, NTFS and ext4 partitions
 • Mac Drives — read APFS drives, unencrypted or encrypted with a password, case-sensitive or not
 • Read-Only Mode — optionally mount partitions safely without risking accidental modifications

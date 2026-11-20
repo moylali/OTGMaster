@@ -15,7 +15,7 @@ not document something, this list says which of those projects it rests on.
 | Sector size | 512 and 4096 bytes | `parse` |
 | Metadata | The three FVE metadata copies, using the first whose signature, version and CRC are valid; entry bounds checked; the validation block decrypted under the VMK and its SHA-256 compared with the metadata before the FVEK is trusted | `parse`, `BitLockerUnlocker` |
 | Ciphers | AES-CBC 128 and 256, each with or without the Elephant diffuser (0x8000 to 0x8003), and XTS-AES 128 and 256 (0x8004, 0x8005) | `bitlocker_crypto.c` |
-| Protectors | Password, 48-digit recovery password, and clear key (a volume whose protection Windows suspended) | `BitLockerUnlocker` |
+| Protectors | Password, 48-digit recovery password, a startup or recovery key saved as a `.BEK` file (0.5.4; matched to its protector by GUID, parsed as cryptsetup does), and clear key (a volume whose protection Windows suspended) | `BitLockerUnlocker`, `BitLockerKeyFile` |
 | Layout | The relocated first sectors are read from where BitLocker moved them; the metadata areas and that relocation area read as zeros and refuse writes | `BitLockerBlockDevice` |
 | Filesystems inside | NTFS, exFAT and FAT32, read and write | `MainActivity.attemptUnlock` |
 | Format inside (0.5.4) | FAT32, exFAT or NTFS, laid out around the metadata areas and the moved first sectors, which become bad clusters: `0x0FFFFFF7` in both FATs, `0xFFFFFFF7` plus the allocation bitmap on exFAT, `$BadClus` on NTFS (mkntfs, VENDOR_FIXES N3, moving `$MFT`, `$MFTMirr` and `$LogFile` off them). Refused, before anything is written, where one lands in the filesystem's own structures (FAT32's FATs and root cluster, exFAT's bitmap, up-case table and root, NTFS's boot sector and its backup), and for ext4 | `DriveFormatter.reformat`, `BitLockerFormatTest` |
@@ -30,12 +30,13 @@ Ordered by what they would give a user, most first.
    clusters, is still unchecked against a volume Windows made; bad clusters keep
    every driver off them either way, and chkdsk keeps them. ext4 would need its
    bad-blocks inode and is not offered: Windows cannot read it anyway.
-2. **External key (.BEK) protector.** Windows can protect a drive with a startup
-   key or a recovery key saved as a `.BEK` file (`manage-bde -protectors -add
-   -RecoveryKey`, or `-StartupKey` on a fixed drive). The app parses the protector
-   (0x0200, `STARTUP_KEY`) but cannot use it. The key file holds the 32-byte key
-   that unseals the VMK directly, so the unlock form's keyfile picker could supply
-   it. A small change; cryptsetup reads `.BEK` files too, which gives a host check.
+2. **External key (.BEK) protector.** Done in 0.5.4. The BitLocker unlock form
+   takes a `.BEK` file, with or without a password; its 32-byte key unseals the
+   VMK of the protector with the same GUID. Tested on the two Windows-made
+   startup-key volumes in cryptsetup's image set (Windows 10 and 11,
+   `BitLockerCompatTest`), and end to end on a volume whose only protector is a
+   startup key (`bitlocker_bek`, built by `make_bitlocker_image.py --startup-key`
+   and checked with cryptsetup).
 3. **Changing a password or adding a recovery password.** Not possible in the app;
    a computer with Windows is needed. It would rewrite all three metadata copies
    with a new VMK entry and CRC, which is where most of the risk lies.
@@ -55,5 +56,4 @@ and TPM+PIN protectors (the key is sealed to that computer's TPM), auto-unlock
 
 ## Recommendation
 
-Gap 2 (`.BEK` files) is small and testable on the host. Gap 1 is done. The others
-are not worth doing for a USB drive tool.
+Gaps 1 and 2 are done. The others are not worth doing for a USB drive tool.

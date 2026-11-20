@@ -17,6 +17,7 @@ keystore.properties
 # Generated e2e test data (run generate_testdata.sh to create)
 testdata/**/*.img
 testdata/**/*.key
+testdata/**/*.BEK
 testdata/**/pim.txt
 testdata/**/expects_error.txt
 testdata/**/expected_fs.txt
