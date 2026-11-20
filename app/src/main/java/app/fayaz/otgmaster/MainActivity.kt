@@ -1657,7 +1657,17 @@ class MainActivity : AppCompatActivity() {
                     }
                     app.fayaz.otgmaster.veracrypt.ContainerType.BITLOCKER ->
                         app.fayaz.otgmaster.bitlocker.BitLockerUnlocker().unlock(
-                            device, candidate.startBlock, candidate.blockCount, password.toCharArray()
+                            device, candidate.startBlock, candidate.blockCount, password.toCharArray(),
+                            keyFiles = keyfiles.map { uri ->
+                                // A .BEK file is a few hundred bytes; the cap keeps a wrong pick from filling memory.
+                                (contentResolver.openInputStream(uri) ?: throw java.io.IOException("Cannot open the key file"))
+                                    .use { input ->
+                                        val buf = ByteArray(64 * 1024 + 1)
+                                        var n = 0
+                                        while (n < buf.size) { val r = input.read(buf, n, buf.size - n); if (r < 0) break; n += r }
+                                        buf.copyOf(n)
+                                    }
+                            },
                         )
                     // Nothing to decrypt at the block level: libfsapfs takes the
                     // password when the filesystem is mounted, below.
@@ -4524,6 +4534,30 @@ fun VeraCryptMountSection(
                 )
             }
             } // end if (!isLuks) for PIM + keyfiles
+
+            // BitLocker's startup or recovery key saved as a file: one .BEK, instead of
+            // or beside the password.
+            if (isBitLocker && !isPreFilled) {
+                Row(
+                    verticalAlignment = Alignment.CenterVertically,
+                    horizontalArrangement = Arrangement.spacedBy(8.dp)
+                ) {
+                    Button(
+                        onClick = { keyfileLauncher.launch(arrayOf("*/*")) },
+                        modifier = Modifier.weight(1f).semantics { contentDescription = "bek_button" }
+                    ) {
+                        Text(stringResource(R.string.select_bek_file, keyfiles.size))
+                    }
+                    if (keyfiles.isNotEmpty()) {
+                        IconButton(onClick = { keyfiles = emptyList() }) {
+                            Icon(
+                                imageVector = Icons.Default.Close,
+                                contentDescription = stringResource(R.string.cd_clear_keyfiles)
+                            )
+                        }
+                    }
+                }
+            }
 
             if (autoMountEnabled) {
                 Row(

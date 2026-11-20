@@ -92,6 +92,23 @@ def vmk_entry(protection, salt, wrapping_key, vmk):
     return entry(2, 8, payload)
 
 
+def startup_key_vmk_entry(guid, key, vmk):
+    """A startup-key (external key, .BEK) protector: the VMK sealed directly under the file's key."""
+    payload = guid + struct.pack("<QHH", filetime(), 0, 0x0200) + entry(0, 5, seal(key, key_datum(0x2000, vmk)))
+    return entry(2, 8, payload)
+
+
+def bek_file(guid, key, name):
+    """A .BEK file as Windows writes it: a 48-byte metadata header, then one external key
+    entry (type 6, value 9) holding its GUID, a time, the 32-byte key and the file's name."""
+    inner = (guid + struct.pack("<Q", filetime())
+             + entry(0, 1, struct.pack("<I", 0x2000) + key)
+             + entry(0, 2, name.encode("utf-16-le") + b"\0\0"))
+    body = entry(6, 9, inner)
+    size = 48 + len(body)
+    return struct.pack("<IIII", size, 1, 48, size) + guid + struct.pack("<IHHQ", 1, 0, 0, filetime()) + body
+
+
 def crypt(encrypt, mode, key, sector, first_sector, data):
     out = bytearray()
     for i in range(0, len(data), sector):
@@ -106,7 +123,7 @@ def crypt(encrypt, mode, key, sector, first_sector, data):
     return bytes(out)
 
 
-def build(plain_path, out_path, password, recovery, cipher, inside=None):
+def build(plain_path, out_path, password, recovery, cipher, inside=None, bek_path=None):
     algo, key_len = CIPHERS[cipher]
     sector = 512
     plain_size = os.path.getsize(plain_path)
@@ -133,6 +150,13 @@ def build(plain_path, out_path, password, recovery, cipher, inside=None):
     if recovery:
         salt = os.urandom(16)
         entries += vmk_entry(0x0800, salt, stretch(recovery_initial(recovery), salt), vmk)
+    if bek_path:
+        guid = uuid.uuid4().bytes_le
+        key = os.urandom(32)
+        entries += startup_key_vmk_entry(guid, key, vmk)
+        name = str(uuid.UUID(bytes_le=guid)).upper() + ".BEK"
+        with open(bek_path, "wb") as f:
+            f.write(bek_file(guid, key, name))
     entries += entry(3, 5, seal(vmk, key_datum(algo, fvek)))
     entries += entry(0x0F, 0x0F, struct.pack("<QQ", header_offset, HEADER))
     entries += entry(7, 2, "OTG Master test volume".encode("utf-16-le") + b"\0\0")
@@ -184,11 +208,17 @@ def build(plain_path, out_path, password, recovery, cipher, inside=None):
     return fvek
 
 
-def verify(plain_path, out_path, password, recovery, fvek, inside=None):
+def verify(plain_path, out_path, password, recovery, fvek, inside=None, bek_path=None):
     here = os.path.dirname(os.path.abspath(__file__))
     dump = subprocess.run(["cryptsetup", "bitlkDump", out_path], capture_output=True, text=True)
     if dump.returncode != 0:
         raise SystemExit(f"cryptsetup rejects the volume:\n{dump.stderr}")
+    if bek_path:
+        p = subprocess.run(["cryptsetup", "bitlkDump", "--dump-volume-key", "--batch-mode",
+                            "--key-file", bek_path, out_path], capture_output=True, text=True)
+        got = "".join(p.stdout.split("MK dump:")[1].split()) if "MK dump:" in p.stdout else ""
+        if got.lower()[: len(fvek) * 2] != fvek.hex():
+            raise SystemExit(f"cryptsetup did not release the volume key for {bek_path}:\n{p.stdout}{p.stderr}")
     for secret in filter(None, [password, recovery]):
         p = subprocess.run(["cryptsetup", "bitlkDump", "--dump-volume-key", "--batch-mode", out_path],
                            input=secret, capture_output=True, text=True)
@@ -223,17 +253,19 @@ def main():
     ap.add_argument("--recovery")
     ap.add_argument("--cipher", choices=sorted(CIPHERS), default="xts128")
     ap.add_argument("--verify", action="store_true")
+    ap.add_argument("--startup-key", metavar="FILE.BEK",
+                    help="also add a startup-key protector and write its key file here")
     ap.add_argument("--metadata-at", help="M1,M2,M3,H: byte offsets inside the volume, as Windows places them")
     a = ap.parse_args()
-    if not a.password and not a.recovery:
-        ap.error("give --password, --recovery or both")
+    if not a.password and not a.recovery and not a.startup_key:
+        ap.error("give --password, --recovery, --startup-key or several")
     inside = [int(x, 0) for x in a.metadata_at.split(",")] if a.metadata_at else None
     if inside is not None and len(inside) != 4:
         ap.error("--metadata-at takes four offsets")
-    fvek = build(a.plain, a.out, a.password, a.recovery, a.cipher, inside)
+    fvek = build(a.plain, a.out, a.password, a.recovery, a.cipher, inside, a.startup_key)
     print(f"{a.out}: BitLocker {a.cipher}, {os.path.getsize(a.out)} bytes")
     if a.verify:
-        verify(a.plain, a.out, a.password, a.recovery, fvek, inside)
+        verify(a.plain, a.out, a.password, a.recovery, fvek, inside, a.startup_key)
 
 
 if __name__ == "__main__":

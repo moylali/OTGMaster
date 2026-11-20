@@ -7,6 +7,7 @@
 #   testdata/ntfs_write            VeraCrypt AES/SHA-512 + NTFS, write and remount
 #   testdata/bitlocker_ntfs        BitLocker AES-CBC-128 + NTFS, mount and read
 #   testdata/bitlocker_ntfs_write  BitLocker XTS-AES-128 + NTFS, write and remount
+#   testdata/bitlocker_bek         BitLocker XTS-AES-128 + NTFS, opened with a .BEK key file only
 #
 # The NTFS is made by mkntfs and filled through a user-mode ntfs-3g FUSE mount.
 # VeraCrypt containers come from the veracrypt CLI with --filesystem=none and are
@@ -101,6 +102,26 @@ bitlocker_ntfs() {
     rm -f "$work/plain.img"
 }
 
+# A startup-key protector and nothing else: the volume opens only with its .BEK file.
+# The file keeps Windows' name for it, <protector GUID>.BEK.
+bitlocker_bek() {
+    local dir=$1 desc=$2
+    mkdir -p "$dir"
+    rm -f "$dir/test.img" "$dir"/*.txt "$dir"/*.BEK
+    truncate -s 16M "$work/plain.img"
+    mkntfs -F -q -f -L BLBEK "$work/plain.img" >/dev/null 2>&1
+    populate "$work/plain.img"
+    python3 scripts/make_bitlocker_image.py "$work/plain.img" "$dir/test.img" \
+        --startup-key "$work/startup.BEK" --cipher xts128 --verify
+    local guid
+    guid=$(python3 -c "import sys,uuid; print(str(uuid.UUID(bytes_le=open(sys.argv[1],'rb').read()[16:32])).upper())" "$work/startup.BEK")
+    mv "$work/startup.BEK" "$dir/$guid.BEK"
+    echo "none" > "$dir/password.txt"
+    echo "BITLOCKER" > "$dir/container.txt"
+    echo "$desc" > "$dir/description.txt"
+    rm -f "$work/plain.img"
+}
+
 veracrypt_ext4 testdata/ext4 \
     "AES-encrypted VeraCrypt volume formatted as ext4 (supported since 0.4.0; this case used to expect a refusal). Verifies the app unlocks it, mounts the ext4, and reads flower.jpg through the DocumentsProvider."
 veracrypt_ntfs testdata/ntfs \
@@ -111,4 +132,6 @@ bitlocker_ntfs testdata/bitlocker_ntfs cbc128 \
     "BitLocker AES-CBC-128 volume (Windows' default for removable drives) holding NTFS. Verifies the app recognises BitLocker, unlocks it with the password, mounts the NTFS and reads flower.jpg." false
 bitlocker_ntfs testdata/bitlocker_ntfs_write xts128 \
     "BitLocker XTS-AES-128 volume holding NTFS. Verifies create, write, nested directory, delete and their persistence across remounts through BitLocker." true
+bitlocker_bek testdata/bitlocker_bek \
+    "BitLocker XTS-AES-128 volume holding NTFS whose only protector is a startup key. Verifies the unlock form takes its .BEK key file with no password, mounts the NTFS and reads flower.jpg."
 echo "No-root fixtures ready."
