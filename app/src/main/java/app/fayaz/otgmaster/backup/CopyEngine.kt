@@ -109,7 +109,7 @@ object CopyEngine {
         fun walk(path: String) {
             if (progress.isCancelled()) throw CancelledException()
             val entries = try { source.list(path).sortedBy { it.name } } catch (e: Exception) {
-                errors += "${path.ifEmpty { "/" }}: ${e.message ?: e.javaClass.simpleName}"; return
+                errors += "${app.fayaz.otgmaster.feedback.PathMask.mark(path.ifEmpty { "/" })}: ${e.message ?: e.javaClass.simpleName}"; return
             }
             for (e in entries) {
                 val p = Paths.join(path, e.name)
@@ -147,7 +147,7 @@ object CopyEngine {
                 } catch (ce: CancelledException) {
                     throw ce
                 } catch (ex: Exception) {
-                    if (errors.size < MAX_ERRORS) errors += "$p: ${ex.message ?: ex.javaClass.simpleName}"
+                    if (errors.size < MAX_ERRORS) errors += "${app.fayaz.otgmaster.feedback.PathMask.mark(p)}: ${ex.message ?: ex.javaClass.simpleName}"
                 }
             }
         }
@@ -207,9 +207,9 @@ object CopyEngine {
             progress.update("verify", i.toLong(), 0, f.path)
             val actual = runCatching { sha256Of(target, Paths.join(copyDir, f.path)) }
             val failure = actual.exceptionOrNull()
-            if (failure is java.io.FileNotFoundException) problems += "${f.path}: $MISSING"
-            else if (failure != null) problems += "${f.path}: ${failure.message}"
-            else if (actual.getOrNull() != f.sha256) problems += "${f.path}: $DIFFERS"
+            if (failure is java.io.FileNotFoundException) problems += "${app.fayaz.otgmaster.feedback.PathMask.mark(f.path)}: $MISSING"
+            else if (failure != null) problems += "${app.fayaz.otgmaster.feedback.PathMask.mark(f.path)}: ${failure.message}"
+            else if (actual.getOrNull() != f.sha256) problems += "${app.fayaz.otgmaster.feedback.PathMask.mark(f.path)}: $DIFFERS"
         }
         return problems
     }

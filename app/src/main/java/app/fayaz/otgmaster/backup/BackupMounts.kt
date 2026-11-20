@@ -78,7 +78,7 @@ object BackupMounts {
         testDelay()
         val backend = FileTreeBackend(SafFileTree(context.contentResolver, folder))
         backend.exists("config") && backend.list("keys").isNotEmpty()
-    }.onFailure { OtgMasterState.logFailure("backup-browse", "Could not read ${VolumeInfo.displayPath(context, folder)}", it) }
+    }.onFailure { OtgMasterState.logFailure("backup-browse", "Could not read ${app.fayaz.otgmaster.feedback.PathMask.mark(VolumeInfo.displayPath(context, folder))}", it) }
         .getOrDefault(false)
 
     /**
@@ -121,7 +121,7 @@ object BackupMounts {
         val path = VolumeInfo.displayPath(context, folder)
         val repo = ResticRepository.open(FileTreeBackend(SafFileTree(context.contentResolver, folder)), password.toByteArray())
         if (repo == null) {
-            OtgMasterState.log("Backup at $path: the password does not open it")
+            OtgMasterState.log("Backup at ${app.fayaz.otgmaster.feedback.PathMask.mark(path)}: the password does not open it")
             return null
         }
         return add(context, id, path.trimEnd('/').substringAfterLast('/').ifEmpty { "Backup" }, repo, folder, key)
