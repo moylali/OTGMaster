@@ -1,0 +1,1 @@
+A write bigger than a plain FAT32 drive fails with "Not enough space" in the log; a file written before is intact, and the checker is clean.

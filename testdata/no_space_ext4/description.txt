@@ -1,0 +1,1 @@
+A write bigger than a plain ext4 drive fails with "Not enough space" in the log; a file written before is intact, and e2fsck finds no blocks the failed write left used.

@@ -47,11 +47,18 @@ CASES = {
     "notification_slider": (VC, "notification_slider", "A tap on the mounted-drives notification opens the app on the slider of mounted drives."),
     "credentials_device_lock": (VC, "credentials_device_lock", "Saved passwords open only with the phone's lock: saved under a PIN with no prompt, unreadable 30 s after the last check, and auto mount unlocks after the PIN."),
     "plain_read_only_default": (PLAIN, "plain_read_only_default", "Read-only mode on: a plain drive mounts read-only by itself, and no file can be created on it."),
-    "report_issue": (PLAIN, "report_issue", "Report issue: the details and a random string reach a GitHub issue, which is then deleted."),
+    "report_issue": (PLAIN, "report_issue", "Report issue: the details and a random string reach a GitHub issue, which is then deleted; a file name in the log arrives masked, and a line added in the review screen arrives too."),
+    "no_space_fat32": (PLAIN, "no_space", "A write bigger than a plain FAT32 drive fails with \"Not enough space\" in the log; a file written before is intact, and the checker is clean."),
+    "no_space_exfat": ("encrypt_plain_exfat", "no_space", "A write bigger than a plain exFAT drive fails with \"Not enough space\" in the log; a file written before is intact, and the checker is clean."),
+    "no_space_ext4": ("format_plain_ext4", "no_space", "A write bigger than a plain ext4 drive fails with \"Not enough space\" in the log; a file written before is intact, and e2fsck finds no blocks the failed write left used."),
+    "no_space_ntfs": ("format_plain_ntfs", "no_space", "A write bigger than a plain NTFS drive fails with \"Not enough space\" in the log; a file written before is intact, and the checker is clean."),
 }
 
 # Cases the runner checks on GitHub afterwards: the repository the issue should appear in.
 GITHUB_ISSUE = {"report_issue": "moylali/OTGMaster"}
+# What the issue's Logs section must hold, and must not (E2EAutomatedTest.REPORT_*).
+REPORT_LOG_HAS = ["H***ays/B***jpg", "edited-in-review"]
+REPORT_LOG_LACKS = ["Barcelona"]
 
 COPIED = ["test.img", "password.txt", "pim.txt", "cipher.txt", "hash.txt", "plain.txt", "container.txt", "recovery.txt", "boot.txt"]
 
@@ -74,6 +81,14 @@ def main():
         if name in GITHUB_ISSUE:
             with open(os.path.join(dst, "github_issue.txt"), "w") as out:
                 out.write(GITHUB_ISSUE[name] + "\n")
+            with open(os.path.join(dst, "log_has.txt"), "w") as out:
+                out.write("".join(s + "\n" for s in REPORT_LOG_HAS))
+            with open(os.path.join(dst, "log_lacks.txt"), "w") as out:
+                out.write("".join(s + "\n" for s in REPORT_LOG_LACKS))
+        if flow == "no_space":
+            # The runner's host check: the checker, before_full.txt, and no nospace.bin.
+            with open(os.path.join(dst, "no_space.txt"), "w") as out:
+                out.write("true\n")
         print(name, "from", base)
 
 

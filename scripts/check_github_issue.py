@@ -63,7 +63,7 @@ def matching(issues, marker, now):
     return found
 
 
-def problems_in(body, marker):
+def problems_in(body, marker, log_has=(), log_lacks=()):
     found = []
     section = re.search(r"### Description\r?\n(.*?)(?=\r?\n### |\Z)", body, re.DOTALL)
     if section is None:
@@ -76,6 +76,13 @@ def problems_in(body, marker):
         found.append("no device from the app")
     if "### Logs" not in body:
         found.append("no logs from the app")
+    logs = body.split("### Logs", 1)[1] if "### Logs" in body else ""
+    for s in log_has:
+        if s not in logs:
+            found.append(f"the Logs section does not hold {s!r}")
+    for s in log_lacks:
+        if s in body:
+            found.append(f"the issue holds {s!r}, which the report should not carry")
     return found
 
 
@@ -94,6 +101,8 @@ def main():
     parser.add_argument("repo")
     parser.add_argument("marker")
     parser.add_argument("--wait", type=int, default=120)
+    parser.add_argument("--log-has", action="append", default=[], help="text the Logs section must hold")
+    parser.add_argument("--log-lacks", action="append", default=[], help="text the issue must not hold")
     args = parser.parse_args()
     if not MARKER_RE.match(args.marker):
         print(f"GITHUB ISSUE FAILED: refusing marker {args.marker!r}: not otg-e2e- and 32 hex digits")
@@ -117,7 +126,7 @@ def main():
         print(f"GITHUB ISSUE FAILED: expected one issue, found {len(issues)} ({numbers}); "
               "none deleted - check them by hand")
         return 1
-    problems = [f"#{issues[0]['number']}: {p}" for p in problems_in(issues[0]["body"], args.marker)]
+    problems = [f"#{issues[0]['number']}: {p}" for p in problems_in(issues[0]["body"], args.marker, args.log_has, args.log_lacks)]
     error = delete(args.repo, issues[0]["number"])
     if error:
         problems.append(error)

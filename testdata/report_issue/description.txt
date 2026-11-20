@@ -1,1 +1,1 @@
-Report issue: the details and a random string reach a GitHub issue, which is then deleted.
+Report issue: the details and a random string reach a GitHub issue, which is then deleted; a file name in the log arrives masked, and a line added in the review screen arrives too.

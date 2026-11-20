@@ -63,6 +63,7 @@
 -keep class app.fayaz.otgmaster.backup.SnapshotSummary { *; }
 -keep class app.fayaz.otgmaster.backup.VolumeInfo { *; }
 -keep class app.fayaz.otgmaster.extension.ExtensionContract { *; }
+-keep class app.fayaz.otgmaster.feedback.PathMask { *; }
 -keep class app.fayaz.otgmaster.extension.ExtensionContract$DeviceKey { *; }
 -keep class app.fayaz.otgmaster.MainActivityKt { *; }
 -keep class app.fayaz.otgmaster.OtgMasterState$MountRequest { *; }

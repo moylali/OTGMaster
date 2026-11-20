@@ -119,7 +119,7 @@
     <string name="feedback_open_empty">Open the form without any details</string>
     <string name="feedback_excluded">Not included: your drive\'s volume label and its serial number. The log can name files or folders, so check it above before sending.</string>
     <string name="feedback_log_heading">App log</string>
-    <string name="feedback_log_hint">This is the log that will be sent. Delete or change anything you would rather not share.</string>
+    <string name="feedback_log_hint">This is the log that will be sent. File and folder names in it are already masked. Delete or change anything else you would rather not share.</string>
     <string name="feedback_log_restore">Restore the full log</string>
     <string name="feedback_no_browser">No browser available to open the form</string>
     <string name="donate_title">Donate</string>
