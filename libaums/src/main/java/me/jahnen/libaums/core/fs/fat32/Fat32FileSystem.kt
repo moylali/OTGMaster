@@ -70,8 +70,9 @@ private constructor(blockDevice: BlockDeviceDriver, first512Bytes: ByteBuffer) :
     override val occupiedSpace: Long
         get() = capacity - freeSpace
 
+    // LOCAL PATCH (docs/VENDOR_FIXES.md V30): FSInfo's count only when it holds one.
     override val freeSpace: Long
-        get() = fsInfoStructure.freeClusterCount * bootSector.bytesPerCluster
+        get() = fat.freeClusterCount() * bootSector.bytesPerCluster
 
     override val chunkSize: Int
         get() = bootSector.bytesPerCluster

@@ -139,6 +139,47 @@ internal constructor(private val blockDevice: BlockDeviceDriver, bootSector: Fat
     }
 
 
+    // LOCAL PATCH (docs/VENDOR_FIXES.md V30): the free cluster count when FSInfo does not
+    // hold a usable one. 0xFFFFFFFF there means "unknown, count it" (Microsoft's FAT spec;
+    // Android's vold formats cards that way), and upstream multiplied it out as -1, so the
+    // drive showed 0 B free and the backup and restore space checks refused it. Counted
+    // from FAT[0] on first use, then kept in step by [alloc] and [free]. It is never
+    // written back: FSInfo keeps the "unknown" it had, which is valid, rather than a
+    // number a racing allocation could have made wrong.
+    private var countedFree = -1L
+
+    /** Free clusters: FSInfo's count when it is in range, otherwise counted from the FAT. */
+    @Synchronized
+    @Throws(IOException::class)
+    internal fun freeClusterCount(): Long {
+        val hint = fsInfoStructure.freeClusterCount
+        if (hint in 0..(lastDataCluster - 1)) return hint
+        if (countedFree < 0) countedFree = countFreeClusters()
+        return countedFree
+    }
+
+    /** LOCAL PATCH (docs/VENDOR_FIXES.md V30): entries 2..[lastDataCluster] whose low 28 bits are 0. */
+    private fun countFreeClusters(): Long {
+        val chunk = maxOf(blockDevice.blockSize, 1024 * 1024 / blockDevice.blockSize * blockDevice.blockSize)
+        val buffer = ByteBuffer.allocate(chunk).order(ByteOrder.LITTLE_ENDIAN)
+        val endByte = (lastDataCluster + 1) * 4
+        var free = 0L
+        var pos = 0L
+        while (pos < endByte) {
+            buffer.clear()
+            blockDevice.read(fatOffset[0] + pos, buffer)
+            val upTo = minOf(chunk.toLong(), endByte - pos).toInt()
+            var i = if (pos == 0L) 8 else 0 // entries 0 and 1 are reserved
+            while (i + 4 <= upTo) {
+                if ((buffer.getInt(i) and 0x0FFFFFFF) == 0) free++
+                i += 4
+            }
+            pos += chunk
+        }
+        Log.i(TAG, "FSInfo has no free count; counted $free free clusters")
+        return free
+    }
+
     /**
      * This methods gets a chain by following the given start cluster to an end
      * mark.
@@ -264,6 +305,7 @@ internal constructor(private val blockDevice: BlockDeviceDriver, bootSector: Fat
      * @throws IOException
      * If reading or writing to the FAT fails.
      */
+    @Synchronized
     @Throws(IOException::class)
     internal fun alloc(chain: Array<Long>, numberOfClusters: Int): Array<Long> {
         var numberOfClusters = numberOfClusters
@@ -385,6 +427,7 @@ internal constructor(private val blockDevice: BlockDeviceDriver, bootSector: Fat
         fsInfoStructure.lastAllocatedClusterHint = currentCluster
         fsInfoStructure.decreaseClusterCount(originalNumberOfClusters.toLong())
         fsInfoStructure.write()
+        if (countedFree >= 0) countedFree -= originalNumberOfClusters // LOCAL PATCH (docs/VENDOR_FIXES.md V30)
 
         Log.i(TAG, "allocating clusters finished")
 
@@ -415,6 +458,7 @@ internal constructor(private val blockDevice: BlockDeviceDriver, bootSector: Fat
      * If more clusters are requested to be freed than currently
      * exist in the chain.
      */
+    @Synchronized
     @Throws(IOException::class)
     internal fun free(chain: Array<Long>, numberOfClusters: Int): Array<Long> {
         val offsetInChain = chain.size - numberOfClusters
@@ -497,6 +541,7 @@ internal constructor(private val blockDevice: BlockDeviceDriver, bootSector: Fat
         // increase the free cluster count by decreasing with a negative value
         fsInfoStructure.decreaseClusterCount((-numberOfClusters).toLong())
         fsInfoStructure.write()
+        if (countedFree >= 0) countedFree += numberOfClusters // LOCAL PATCH (docs/VENDOR_FIXES.md V30)
 
         val arr = Arrays.copyOfRange(chain, 0, offsetInChain)
 

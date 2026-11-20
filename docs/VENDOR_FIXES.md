@@ -358,6 +358,32 @@ Vendored fork of [magnusja/libaums](https://github.com/magnusja/libaums).
 | `FatFile` | V27: a grow zeroes the bytes it exposes between the old end and the new data (old last cluster's slack, reallocated clusters), so deleted data cannot be read back through a write past the end. `Fat32GrowTest` | see below |
 | `FatFile` | V28: a length or write past 0xFFFFFFFF bytes is refused with an IOException before anything is allocated, instead of the size wrapping modulo 4 GiB. `Fat32GrowTest` | see below |
 | `FAT` | V29: `getChain` stops at a cluster the chain has already named, so a looping chain ends instead of growing until the process runs out of memory. `Fat32CorruptChainTest` | see below |
+| `FAT`, `Fat32FileSystem` | V30: free space when FSInfo holds no usable free cluster count (0xFFFFFFFF, "unknown", or a count past the volume): counted from FAT[0] once, kept in step by `alloc` and `free`, never written back. Upstream showed -1 cluster (0 B free) or terabytes. `Fat32FreeSpaceTest`, all three fail on the old code | see below |
+
+## V30: a card Android formatted showed 0 B free
+
+FSInfo's free cluster count is a hint. Microsoft's FAT specification makes 0xFFFFFFFF
+mean "unknown, compute it", and a count larger than the volume's cluster count is to be
+ignored the same way. Upstream used the field as it stood: read as a signed int, so
+0xFFFFFFFF became -1 and `freeSpace` was minus one cluster. A scratch SD card formatted
+by Android's vold (`sm partition disk:8,96 public`, OnePlus 7, 2026-11-20) has exactly
+that, and the app showed it as "Used 29.1 GB, Free 0 B" straight after the format. The
+backup space check, and since 0.5.4 the restore check, compare against that figure, so
+both would have refused an empty card as full. The Files app treats a negative
+`COLUMN_AVAILABLE_BYTES` as "not reported" and was unaffected.
+
+`FAT.freeClusterCount()` returns the FSInfo count when it is between 0 and the number of
+data clusters; otherwise it counts the FAT[0] entries 2 to the last data cluster whose
+low 28 bits are zero, once, in 1 MiB reads, and then adjusts that count in `alloc` and
+`free`. The count stays in memory. FSInfo keeps its "unknown", which is valid and which
+`fsck.fat` accepts, because `queryRoots` reads free space outside the provider's
+per-drive lock and a count that raced an allocation must not reach the disk. `alloc`,
+`free` and the count are `@Synchronized` on the FAT for the same reason.
+
+`Fat32FreeSpaceTest`: with the count set to 0xFFFFFFFF the old code gave -4,096 bytes,
+with 0x7FFFFFFF 8,796,093,018,112 bytes, for a volume with 133,627,904 free; a 10-cluster
+write and its delete move the counted figure by exactly 10 clusters, FSInfo still holds
+0xFFFFFFFF afterwards, and `fsck.vfat -n` is clean.
 
 ## V29: a looping FAT chain exhausted memory
 
