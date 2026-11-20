@@ -53,19 +53,21 @@ class UsbAccessTest {
         assertFalse(UsbAccess.androidCanRead(emptyList()))
     }
 
-    @Test fun `a volume lost while mounted or checking, just after a takeover, was cut off`() {
-        assertTrue(UsbAccess.cutOffByTakeover("bad_removal", true, 0))
-        assertTrue(UsbAccess.cutOffByTakeover("unmountable", true, 900))
-        assertTrue(UsbAccess.cutOffByTakeover("bad_removal", true, UsbAccess.TAKEOVER_WINDOW_MS))
+    @Test fun `volumes Android is using are the ones a claim cuts off`() {
+        val v = listOf(
+            UsbAccess.AndroidVolume("D978-9D29", "PNY FAT32", "mounted"),
+            UsbAccess.AndroidVolume("FBFE-AEF7", "PNY exFAT", "checking"),
+            UsbAccess.AndroidVolume("64770BA6", "PNY NTFS", "mounted_ro"),
+            UsbAccess.AndroidVolume("A1B2-C3D4", "PNY", "unmountable"),   // nothing to cut off
+            UsbAccess.AndroidVolume("0000-0001", "PNY", "unmounted"),
+            UsbAccess.AndroidVolume("SDCARD", "SD card", "mounted"),       // there before the drive
+        )
+        assertEquals(listOf("PNY FAT32", "PNY exFAT", "PNY NTFS"), UsbAccess.inUseByAndroid(v, setOf("SDCARD")))
     }
 
-    @Test fun `a volume Android had not started on, or lost for another reason, is not reported`() {
-        assertFalse(UsbAccess.cutOffByTakeover("removed", true, 0))          // not mounted yet
-        assertFalse(UsbAccess.cutOffByTakeover("unmounted", true, 0))        // a step on the way
-        assertFalse(UsbAccess.cutOffByTakeover("bad_removal", true, null))   // the app took nothing
-        assertFalse(UsbAccess.cutOffByTakeover("bad_removal", true, UsbAccess.TAKEOVER_WINDOW_MS + 1))
-        assertFalse(UsbAccess.cutOffByTakeover("bad_removal", true, -1))     // before the takeover
-        assertFalse(UsbAccess.cutOffByTakeover("bad_removal", false, 0))     // internal storage
-        assertFalse(UsbAccess.cutOffByTakeover(null, true, 0))
+    @Test fun `nothing is reported when Android had not started on the drive`() {
+        assertEquals(emptyList<String>(), UsbAccess.inUseByAndroid(emptyList(), emptySet()))
+        assertEquals(emptyList<String>(), UsbAccess.inUseByAndroid(
+            listOf(UsbAccess.AndroidVolume("SDCARD", "SD card", "mounted")), setOf("SDCARD")))
     }
 }
