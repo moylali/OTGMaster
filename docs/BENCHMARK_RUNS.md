@@ -33,6 +33,58 @@ to a row here.
 
 ---
 
+## Commit hashes after the merges of #161, #162 and #175
+
+All three were rebase-merged, so `main` has new hashes. The 0.5.4 sections below (11-19 and 11-20) and `docs/VENDOR_FIXES.md` name the PR's commits. Look the PR hash up here to find it on `main`. The 0.5.4 PR head `b719a1b` is `777f5ad` on `main`.
+
+### #175: the 0.5.4 backlog
+
+| At the PR head | On `main` | Commit |
+|---|---|---|
+| `a8c012c` | `67b3c12` | fix(privacy): expose drives to other apps only through the standard DocumentsProvider columns |
+| `6d8cdfb` | `3167aa6` | fix(ext4): a write that fails part-way no longer leaves blocks marked used with no owner |
+| `48b2c88` | `79c4f65` | fix(crypto): wipe the native copies of master keys and passwords |
+| `ffc3a41` | `33ad618` | fix(log): name the drive, not its device key, when its credentials are cleared |
+| `29145bf` | `ca8138e` | fix(feedback): carry the report in the URL fragment, so nothing reaches the server before Submit |
+| `f20715a` | `0990634` | chore(deps): remove the unused Argon2Kt dependency |
+| `7014aff` | `82b5f9a` | fix(space): a full drive says "Not enough space"; a restore that will not fit is refused before it starts |
+| `d3799c9` | `a0a092e` | fix(feedback): send the log only as the logs parameter, not inside the payload too |
+| `a14bf06` | `a3d86f6` | fix(usb): a failed write in the replay after a reset is recovered, not fatal |
+| `90bce9a` | `f654ea6` | feat(feedback): the log can be edited on the review screen before it is sent |
+| `dcea6f5` | `e2e25a1` | feat(security): saved drive passwords open only within 30 s of the phone's lock |
+| `69ac6d7` | `eb0602b` | feat(settings): Read-only mode covers plain drives; Auto mount says it needs a screen lock |
+| `b7195fe` | `358b715` | fix(bench): bigwrite skips its file tree when the partition cannot hold it |
+| `74990db` | `5da8eac` | docs: BitLocker support audit, with the gaps ranked |
+| `5c904ec` | `5c5e1bb` | docs(site): a Guides page: VeraCrypt, LUKS and BitLocker drives, and backups with restic |
+| `17e2208` | `fd16d40` | test(e2e): wait up to 30 s for the top bar's drive icon, not 5 |
+| `b93f4a7` | `2a928e8` | test(e2e): the two new cases remount and keep the screen on, as they need to |
+| `152c9d5` | `162399b` | build(minified): keep the app classes the instrumented test names, so the minified E2E runs again |
+| `48a5413` | `efd963e` | feat(format): Format inside BitLocker, around BitLocker's own metadata |
+| `a6e3f0b` | `0d35ab9` | feat(usb): say when taking a drive cut Android off mid-use |
+| `c7505e7` | `1b30325` | docs: record 0.5.4 on the Galaxy Tab A9+, Drive 1 with bigwrite |
+| `6fd71ec` | `f347f7e` | fix(feedback): file and folder names in the report's log are masked (#165) |
+| `455c972` | `2585658` | feat(bitlocker): unlock with a .BEK key file (startup or recovery key saved to a file) |
+| `59a0c02` | `b8ca06b` | test(e2e): no-space on four filesystems, and masked paths and the edited log in a real report |
+| `d480411` | `93e2fc4` | fix(usb): the takeover notice now fires: list Android's volumes before the claim |
+| `3d2344d` | `3655ede` | fix(fat32): a card whose FSInfo has no free count showed 0 B free (V30) |
+| `1089581` | `6607e3c` | docs: record 0.5.4 on the OnePlus 7 (Drive 3, an SD card reader) and the Tab (Drive 5/1) |
+| `b719a1b` | `777f5ad` | store: retake phone, 7" and 10" screenshots for 0.5.4 |
+
+### #161: the 0.5.3 regression report, matrix runs and store screenshots
+
+| At the PR head | On `main` | Commit |
+|---|---|---|
+| `b5c821e` | `60de649` | store: retake phone, 7" and 10" screenshots for 0.5.3 |
+| `d83b431` | `cb222b6` | docs: v0.5.3 regression report and the 0.5.3 release matrix runs |
+
+### #162: the 0.5.4 version bump
+
+| At the PR head | On `main` | Commit |
+|---|---|---|
+| `996b031` | `765d4fe` | chore: bump to 0.5.4 (53) after the v0.5.3 tag |
+
+---
+
 ## 2026-11-20: 0.5.4 on the Galaxy Tab A9+, Drive 5/1: no-space, backups and Eject
 
 Benchmark build `0.5.4-bench (53) commit 3d2344d` on the Galaxy Tab A9+ (SM-X210, Android 16, SDK 36), with D5/1's four plain partitions mounted (p7 FMT_EXFAT, p8 FMT_FAT32, p9 ENC2EXFAT, p10 ENC2FAT32). These are checks, not benchmark sections, run through the debug `BackupTestReceiver` and the Files app. They cover the no-space handling of `7014aff`, the backup volume details now read in-process after the companion API was removed (`a8c012c`, #165), and the Eject (#113).
