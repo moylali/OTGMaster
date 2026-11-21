@@ -385,6 +385,12 @@ with 0x7FFFFFFF 8,796,093,018,112 bytes, for a volume with 133,627,904 free; a 1
 write and its delete move the counted figure by exactly 10 clusters, FSInfo still holds
 0xFFFFFFFF afterwards, and `fsck.vfat -n` is clean.
 
+On hardware (OnePlus 7, the same card, 2026-11-20): the card showed its true free space,
+and a 64 MB backup, check and restore on it matched by SHA-256. On the laptop afterwards,
+`fsck.fat` printed "Free cluster summary uninitialized (should be 947665)", which is
+informational, and 947,665 is the figure the app counted. Its exit 1 came from the dirty
+bit Android's own mount leaves (docs/BENCHMARK_RUNS.md, 2026-11-20).
+
 ## V29: a looping FAT chain exhausted memory
 
 From the 2026-11-09 review (finding 12). V8 made `getChain` stop at a cluster outside

@@ -33,6 +33,65 @@ to a row here.
 
 ---
 
+## 2026-11-20: 0.5.4 on the Galaxy Tab A9+, Drive 5/1: no-space, backups and Eject
+
+Benchmark build `0.5.4-bench (53) commit 3d2344d` on the Galaxy Tab A9+ (SM-X210, Android 16, SDK 36), with D5/1's four plain partitions mounted (p7 FMT_EXFAT, p8 FMT_FAT32, p9 ENC2EXFAT, p10 ENC2FAT32). These are checks, not benchmark sections, run through the debug `BackupTestReceiver` and the Files app. They cover the no-space handling of `7014aff`, the backup volume details now read in-process after the companion API was removed (`a8c012c`, #165), and the Eject (#113).
+
+| Check | Result |
+|---|---|
+| Files app browses p7 and p8 through the provider | listed |
+| Backup p8 `BENCH/edge` → p7 (`nospace-test2`), then check, then restore | 22 files, 3.7 MB added; repository OK, 22 data blobs read and verified; restored 22 files (67.2 MB) |
+| Second restore into p7, 11.0 MB free | refused before writing: "it needs 67.2 MB, and 11.0 MB is free … Nothing was restored."; no target folder created |
+| Backup p8 `BENCH/large` → p7 | refused before writing: "needs 1.2 GB, 78.8 MB free"; no repository folder created |
+| Files app copy of a 30 MB file into p7 (11.0 MB free) | refused by DocumentsUI's own space check, from the free space the provider reports, without opening or creating a document; the app's "Not enough space" toast is not reached on this path (the provider path is covered by the no-space E2E, `59a0c02`) |
+| Provider queried from `adb shell content query` | SecurityException, as for any app without a grant |
+| Eject | the app unmounted all four; Android had them mounted 4 to 6 s later; then `sm unmount` on each before unplugging |
+
+The test folders were deleted through the Files app afterwards (with the earlier `restic-test` folders on p8), and p7 returned to 90.9 MB free. Two old behaviours were noted for the backlog: a backup whose source folder does not exist fails as "Source drive is not mounted", and the provider sends no change notification, so an open Files window still lists deleted folders until it is reopened.
+
+Host check: `verify_volume.sh` on p7 to p10 on the laptop afterwards: **all four CLEAN** (`fsck.exfat` and `fsck.fat`, dirty bit not set on either FAT32). p8's free clusters (163,277 × 4 KiB = 637.8 MiB) match the 637.8 MB the app showed. D5/1 has no `volume_baseline` snapshot, so no comparison was made. p1 to p6 were not mounted.
+
+## 2026-11-20: 0.5.4 on the OnePlus 7, an SD card reader: free space (V30) and Eject
+
+Benchmark build `0.5.4-bench (53)` on the OnePlus 7 (GM1901, Android 16, SDK 36): `d480411` for the first look, `3d2344d` from the V30 fix on. The reader is a Realtek USB3.0 CRW-SD (`0bda`, serial 201506301013) with a 29.1 GB scratch microSD card that Android formatted as FAT32. The reader opened on the first try, and the takeover notice (`d480411`) fired when the app took the card from Android.
+
+Straight after Android's format the app showed the card as "Used 29.1 GB, Free 0 B". Android's formatter leaves FSInfo's free cluster count at 0xFFFFFFFF ("unknown"), and libaums read it as a signed -1 and multiplied it by the cluster size. The backup and restore space checks would have refused the card as full. V30 (`3d2344d`, docs/VENDOR_FIXES.md) counts free clusters from the FAT when FSInfo holds no valid count. `Fat32FreeSpaceTest` fails all three cases on the old code and passes on the new. On the device the card then showed its true free space.
+
+| Check | Build | Result |
+|---|---|---|
+| Free space after Android's format | `d480411` | 0 B (the bug) |
+| Free space | `3d2344d` | correct; logcat "FSInfo has no free count; counted N free clusters" |
+| Read through the provider | `3d2344d` | 34.8 MB/s |
+| Files app copy of 64 MB into the card | `3d2344d` | 19 s |
+| Backup 64.0 MB on the card, check, restore | `3d2344d` | 1 file, 64.0 MB added; 2 snapshots, 39 data blobs verified; restored 64.0 MB; SHA-256 of the restored file matches the original |
+| Eject (#113) | `3d2344d` | Android remounted the card 3.3 s after the app let go, and the Files app showed the app's writes |
+
+Host check: `verify_volume.sh /dev/sdd1` on the laptop: **NOT CLEAN (exit 1)**, and both findings come from Android. (1) The dirty bit is set: byte 0x41 is 01, while the backup boot sector has 00. The Linux kernel sets that byte when it mounts the card, and the app never writes it. The card was in Android's hands at plug-in and after the Eject. Same pattern as the vold dirty bit on D5/1 p8 and p9. (2) "Free cluster summary uninitialized (should be 947665)": Android's format left the count unset, and V30 deliberately does not write it back. The FAT's own count (954,085 minus 6,420 is 947,665) is what the app reported. With the same unset count on its own, `fsck.vfat -n` passes in `Fat32FreeSpaceTest`, so the exit code comes from the dirty bit. fsck found nothing else: 280 files, no chain or directory errors. The owner chose to leave the card as it is.
+
+## 2026-11-19: 0.5.4 on the OnePlus 7, Drive 3 with bigwrite
+
+Benchmark build `0.5.4-bench (53) commit a6e3f0b` on the OnePlus 7 (GM1901, Android 16, SDK 36), `KEEP_AWAKE=1`. Sections: free, block, dir, path, seq, random, opens, write, unaligned, correct, bigwrite, fixtures, one partition per run via `sequence_runs.sh`. `Started` is the phone's clock. No USB faults were logged. The sequence could not find an Eject button at the end and left the drive mounted.
+
+| Run | Device | Build | Partition | Started | Write verify | bigwrite | Fixtures |
+|---|---|---|---|---|---|---|---|
+| op7-054a-d3l2ext4 | OnePlus 7 | `a6e3f0b` | D3L2EXT4 | 19:08 | ALL PASSED | 2.2 GB at 5.48 MB/s; read back 16.08 MB/s; tree skipped, 450 MB free, needs 697 MB | ALL 20939 MATCHED |
+| op7-054a-d3l1exfat | OnePlus 7 | `a6e3f0b` | D3L1EXFAT | 19:26 | ALL PASSED | 2.2 GB at 0.98 MB/s; read back 15.77 MB/s; tree skipped, 572 MB free, needs 696 MB | ALL 20929 MATCHED |
+| op7-054a-d3l1ntfs | OnePlus 7 | `a6e3f0b` | D3L1NTFS | 20:44 | ALL PASSED | 2.2 GB at 2.81 MB/s; read back 19.51 MB/s; tree skipped, 606 MB free, needs 697 MB | ALL 20920 MATCHED |
+| op7-054a-d3l2fat32 | OnePlus 7 | `a6e3f0b` | D3L2FAT32 | 21:05 | ALL PASSED | big file skipped, 1236 MB free, needs 2200 MB; 251 tree files verified after remount | ALL 20913 MATCHED |
+| op7-054a-d3l2ntfs | OnePlus 7 | `a6e3f0b` | D3L2NTFS | 21:14 | ALL PASSED | 2.2 GB at 2.74 MB/s; read back 18.74 MB/s; tree skipped, 592 MB free, needs 697 MB | ALL 20925 MATCHED |
+| op7-054a-d3l4fat32 | OnePlus 7 | `a6e3f0b` | D3L4FAT32 | 21:36 | ALL PASSED | 2.2 GB at 4.83 MB/s; read back 17.19 MB/s; tree skipped, 554 MB free, needs 697 MB | ALL 20972 MATCHED |
+| op7-054a-d3l4exfat | OnePlus 7 | `a6e3f0b` | D3L4EXFAT | 21:53 | ALL PASSED | 2.2 GB at 4.74 MB/s; read back 15.99 MB/s; tree skipped, 557 MB free, needs 696 MB | ALL 20910 MATCHED |
+| op7-054a-d3blntfs | OnePlus 7 | `a6e3f0b` | D3BLNTFS | 22:14 | ALL PASSED | 2.2 GB at 2.73 MB/s; read back 20.29 MB/s; tree skipped, 608 MB free, needs 697 MB | ALL 21023 MATCHED |
+| op7-054a-d3ext2 | OnePlus 7 | `a6e3f0b` | D3EXT2 | 22:36 | SKIPPED (read-only) | SKIPPED (read-only) | ALL 21821 MATCHED |
+| op7-054a-d3ext3 | OnePlus 7 | `a6e3f0b` | D3EXT3 | 22:42 | SKIPPED (read-only) | SKIPPED (read-only) | ALL 21883 MATCHED |
+
+Host check, first read-back (`matrix/d3-after-x.md`): **4 of 10 NOT CLEAN**, and every fixture matched on all ten.
+- `D3L2EXT4`: `e2fsck` rc=4, block bitmap differences `-(879218--879407)`: 190 blocks marked used with no owner. The OnePlus run's bigwrite verified, and its build already has `6d8cdfb` (the fix for this leak). The blocks are left from the 0.5.3 Tab run, whose big write failed part-way, and D3 was not restored in between.
+- `D3L2FAT32`: an unexplained `FSCK0000.REC`, left by an earlier host `fsck.fat` repair of this image, not by the app.
+- `D3EXT2`, `D3EXT3`: 1 MiB changed on partitions the app never writes. OxygenOS's vold mounts ext2/ext3 read-write when Android gets the drive back, and that changes superblock fields.
+
+Those four were restored from their builds (`write_matrix_drive.sh --only`), D3 was read back again, and the second verify (`matrix/d3-after-054x2.md`) reports **Drive 3: ALL CLEAN**. Every checker was clean, every fixture matched, and `big.bin` on the six partitions that kept one matched the bigwrite keystream.
+
 ## 2026-11-19: 0.5.4 on the Galaxy Tab A9+, Drive 1 with bigwrite
 
 Benchmark build `0.5.4-bench (53) commit 152c9d5` on the Galaxy Tab A9+ (SM-X210, Android 16, SDK 36). This is the first 0.5.4 drive run, made mainly to check the libaums write replay after a USB reset (`a14bf06`). On 0.5.3 this Tab had seven bigwrite runs fail on a USB error. Sections: free, block, dir, path, seq, random, opens, write, unaligned, correct, bigwrite, fixtures, one partition per run via `sequence_runs.sh` → `start_run.sh`. `Started` is the Tab's clock.
