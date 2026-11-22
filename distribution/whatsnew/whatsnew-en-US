@@ -1,11 +1,11 @@
 • New: saved passwords need a screen lock
 • New: BitLocker Format and .BEK key files
 • New: read-only mode for plain drives
-• New: edit a report's log before sending
-• New: says when it took a drive from Android
+• New: edit a report's log
+• New: tells you when it takes a drive
 • Fixed: apps could spot hidden volumes, serials
 • Fixed: reports left early and named files
-• Fixed: a USB hiccup stopped a copy or Encrypt
-• Fixed: a cut-off ext4 write leaked space
+• Fixed: USB hiccups stopped copies, lost data
+• Fixed: an ext4 space leak
 • Fixed: full drives say "Not enough space"
 • Fixed: FAT32 cards showed 0 B free
