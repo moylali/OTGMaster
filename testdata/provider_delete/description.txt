@@ -1,0 +1,1 @@
+Provider deleteDocument: a file and a folder with a file in it are deleted, and neither is listed or answers afterwards.

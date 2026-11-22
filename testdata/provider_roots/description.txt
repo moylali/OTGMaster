@@ -1,0 +1,1 @@
+Provider queryRoots: one root per mounted drive, with its title, create and isChild flags, and free space within the volume.

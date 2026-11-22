@@ -1,0 +1,1 @@
+Provider openDocument for reading: flower.jpg reads byte for byte as testdata/flower.jpg.

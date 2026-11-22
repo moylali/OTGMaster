@@ -1,0 +1,1 @@
+Provider queryDocument while the exFAT volume's lock is held: a file listed before answers within 6 s, and an unseen one is refused within 16 s, under Android's 20 s limit.

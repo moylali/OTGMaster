@@ -1,0 +1,1 @@
+Provider renameDocument: the new name is listed with the same content, and the old name and id are gone.

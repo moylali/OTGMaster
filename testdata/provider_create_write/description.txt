@@ -1,0 +1,1 @@
+Provider createDocument and openDocument for writing: a file, a folder and a file in it are created, written and read back, and an overwrite truncates.
