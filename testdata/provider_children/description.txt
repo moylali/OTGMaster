@@ -1,0 +1,1 @@
+Provider queryChildDocuments: the root lists flower.jpg with its type, size, and write and delete flags.

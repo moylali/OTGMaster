@@ -1,0 +1,1 @@
+Provider queryChildDocuments while the exFAT volume's lock is held: a loading listing within 6 s, a change notification once the lock is free, then the full listing.

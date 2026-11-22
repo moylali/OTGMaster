@@ -1,0 +1,1 @@
+Provider queryDocument: the root is a folder, flower.jpg's row matches its listing, and a missing file gets no row.

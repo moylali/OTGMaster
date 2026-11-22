@@ -1,0 +1,1 @@
+Provider queryRoots while the exFAT volume's lock is held: answered within 3 s, with the last free space read (ANR of 11-22).

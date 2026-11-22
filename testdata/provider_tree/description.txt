@@ -1,0 +1,1 @@
+Provider isChildDocument and findDocumentPath through a folder grant: a file inside reads, one outside is refused, and the path runs folder to file.

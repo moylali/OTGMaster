@@ -1,0 +1,1 @@
+Two partitions mounted: a read waiting on one partition's lock does not hold up a read on the other.
