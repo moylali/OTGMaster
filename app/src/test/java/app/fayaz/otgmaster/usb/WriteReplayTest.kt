@@ -172,6 +172,53 @@ class WriteReplayTest {
         assertEquals(1L, dev.replays)
     }
 
+    /**
+     * D2L2EXFAT, Galaxy Tab A9+, 2026-11-21: a read at block 77,717,945 needed a reset, and
+     * the replay wrote the last 904 KiB again from block 77,716,137, the oldest write still
+     * in the window. Block 77,716,136 then held the wrong bytes: it begins the 4 KiB unit
+     * that oldest write starts in, and belonged to the write before, which had already left
+     * the window, so nothing wrote it again. The drive had been rewriting that unit.
+     */
+    @Test
+    fun `a reset does not lose the start of the unit the oldest replayed write begins in`() {
+        val drive = LossyDrive()
+        val dev = device(drive)
+        val first = 1_001L
+        // 20 writes of 64 KiB: the 1 MiB window holds the last 16, the oldest at block 1513.
+        val all = writeSequence(dev, first, 20, seed = 2111)
+        val oldest = first + 4 * 128
+        drive.lostOnReadReset = oldest      // its unit, 1512..1519, includes write 4's last block
+        drive.resetOnNextRead = true
+        dev.readBlocks(90_000L, 8)
+        assertEquals(1L, dev.replays)
+        assertArrayEquals("every byte the app wrote is on the drive", all, onDisk(drive, first, all.size))
+    }
+
+    /** The same when the window holds the end of one large write, sent in 120 KiB chunks. */
+    @Test
+    fun `a reset after one large write does not lose the start of its oldest chunk's unit`() {
+        val drive = LossyDrive()
+        val dev = device(drive)
+        val big = ByteArray(3 * LibaumsRawBlockDevice.REPLAY_BYTES / 2 + 512).also { Random(77).nextBytes(it) }
+        dev.writeBlocks(20_001L, big)
+        // The chunks the window still holds: the newest ones that fit in REPLAY_BYTES.
+        val chunk = dev.transferBytes / 512
+        val total = big.size / 512
+        val starts = (0 until total step chunk).map { 20_001L + it }
+        var kept = 0
+        var oldest = starts.last()
+        for (st in starts.reversed()) {
+            val n = minOf(chunk, (20_001L + total - st).toInt())
+            if ((kept + n) * 512 > LibaumsRawBlockDevice.REPLAY_BYTES) break
+            kept += n; oldest = st
+        }
+        assertEquals("the oldest kept chunk starts inside a unit", 1L, oldest % 8)
+        drive.lostOnReadReset = oldest
+        drive.resetOnNextRead = true
+        dev.readBlocks(90_000L, 8)
+        assertArrayEquals(big, onDisk(drive, 20_001L, big.size))
+    }
+
     @Test
     fun `a write larger than the window keeps its tail for replay`() {
         val drive = LossyDrive().apply { failWrite = 2 }

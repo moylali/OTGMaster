@@ -282,36 +282,97 @@ class LibaumsRawBlockDevice(
      * Writes are idempotent, so after any reset the safe answer is to write this window
      * again, oldest first: the drive ends in the state the app believes it is in.
      */
-    private class Written(val block: Long, val data: ByteArray)
+    // [length] bytes of [data], from its start, written at [block].
+    private class Written(val block: Long, val data: ByteArray, val length: Int = data.size)
     private val recentWrites = ArrayDeque<Written>()
     private var recentBytes = 0
     @Volatile private var portResets = 0L
 
     private fun resets(): Long = bulkResets() + portResets
 
+    /**
+     * The blocks just before the window's oldest write, back to the start of its
+     * [REPLAY_ALIGN_BYTES] unit, from writes that have left the window. Replayed first.
+     *
+     * A write that starts inside a flash unit makes the drive rewrite the whole unit, the
+     * blocks before the write included. A reset then can lose them, and the window alone
+     * never had them. On D2L2EXFAT (Galaxy Tab A9+, 2026-11-21) a read needed a reset, the
+     * replay wrote the window again from block 77,716,137, and block 77,716,136 (written
+     * by the write that had just left the window) read back wrong: one sector of big.bin,
+     * invisible to fsck. Not counted in [recentBytes].
+     */
+    private var unitHead: Written? = null
+
     /** Caller holds [transferLock]. Copies: the caller's array may be reused. */
     private fun rememberWrite(block: Long, src: ByteArray, offset: Int, length: Int) {
+        // What leaves the window, oldest first, as (block, array, offset, length).
+        val leaving = ArrayList<Leaving>(2)
+        unitHead?.let { leaving.add(Leaving(it.block, it.data, 0, it.length)) }
+        var start = block; var off = offset; var len = length
         if (length > REPLAY_BYTES) {
-            recentWrites.clear(); recentBytes = 0
             // Only the tail can be lost to a reset that comes after this write.
             val keep = REPLAY_BYTES - REPLAY_BYTES % blockSize
-            rememberWrite(block + (length - keep) / blockSize, src, offset + length - keep, keep)
-            return
+            for (w in recentWrites) leaving.add(Leaving(w.block, w.data, 0, w.data.size))
+            recentWrites.clear(); recentBytes = 0
+            leaving.add(Leaving(block, src, offset, length - keep))
+            start = block + (length - keep) / blockSize; off = offset + length - keep; len = keep
         }
         // The array of a write leaving the window is reused when it is the same size, which
         // it nearly always is (whole chunks): a 2.2 GB copy otherwise allocates ~18,000
         // 120 KiB arrays, each zeroed and collected for nothing.
         var reuse: ByteArray? = null
-        while (recentWrites.isNotEmpty() && recentBytes + length > REPLAY_BYTES) {
+        while (recentWrites.isNotEmpty() && recentBytes + len > REPLAY_BYTES) {
             val old = recentWrites.removeFirst()
             recentBytes -= old.data.size
-            if (reuse == null && old.data.size == length) reuse = old.data
+            leaving.add(Leaving(old.block, old.data, 0, old.data.size))
         }
-        val copy = reuse ?: ByteArray(length)
-        System.arraycopy(src, offset, copy, 0, length)
-        recentWrites.addLast(Written(block, copy))
-        recentBytes += length
+        if (leaving.size > (if (unitHead != null) 1 else 0)) {
+            unitHead = headOfUnit(recentWrites.firstOrNull()?.block ?: start, leaving)
+            // Only now, after the head is copied out of them, can a leaving array be reused.
+            reuse = leaving.firstOrNull {
+                it.array !== src && it.offset == 0 && it.length == len && it.array.size == len && it.array !in headBuffers
+            }?.array
+        }
+        val copy = reuse ?: ByteArray(len)
+        System.arraycopy(src, off, copy, 0, len)
+        recentWrites.addLast(Written(start, copy))
+        recentBytes += len
     }
+
+    private class Leaving(val block: Long, val array: ByteArray, val offset: Int, val length: Int)
+
+    /**
+     * The blocks from the start of [first]'s unit up to [first], taken from [leaving]
+     * (oldest first, so a later write of a block wins), or null if none is there. Only the
+     * run that reaches [first] is kept: a block no write left behind cannot be restored.
+     */
+    private fun headOfUnit(first: Long, leaving: List<Leaving>): Written? {
+        val unitBlocks = (REPLAY_ALIGN_BYTES / blockSize).coerceAtLeast(1)
+        val unitStart = first - Math.floorMod(first, unitBlocks.toLong())
+        val n = (first - unitStart).toInt()
+        if (n == 0) return null
+        val have = BooleanArray(n)
+        for (l in leaving) {
+            val a = maxOf(l.block, unitStart); val b = minOf(l.block + l.length / blockSize, first)
+            for (i in (a - unitStart).toInt() until (b - unitStart).toInt()) have[i] = true
+        }
+        var from = n
+        while (from > 0 && have[from - 1]) from--
+        if (from == n) return null
+        // The buffer the current head is not in, since that head is one of the sources.
+        val buf = if (unitHead?.data === headBuffers[0]) headBuffers[1] else headBuffers[0]
+        val headStart = unitStart + from
+        for (l in leaving) {
+            val a = maxOf(l.block, headStart); val b = minOf(l.block + l.length / blockSize, first)
+            if (a >= b) continue
+            System.arraycopy(l.array, l.offset + ((a - l.block) * blockSize).toInt(),
+                buf, ((a - headStart) * blockSize).toInt(), ((b - a) * blockSize).toInt())
+        }
+        return Written(headStart, buf, (n - from) * blockSize)
+    }
+
+    /** Two, so a new head can be built from the old one; reused, as the window's arrays are. */
+    private val headBuffers = arrayOf(ByteArray(REPLAY_ALIGN_BYTES), ByteArray(REPLAY_ALIGN_BYTES))
 
     /**
      * Writes [recentWrites] again, oldest first. Throws if the drive will not take
@@ -323,10 +384,13 @@ class LibaumsRawBlockDevice(
             if (recentWrites.isEmpty()) return
             repeat(MAX_REPLAY_ROUNDS) {
                 val before = resets()
+                val head = unitHead
+                if (head != null) replayOne(head)
                 for (w in recentWrites) replayOne(w)
                 replays++
-                report("USB: $why; wrote the last ${recentBytes / 1024} KiB again " +
-                    "(${recentWrites.size} writes from block ${recentWrites.first().block}), " +
+                val bytes = recentBytes + (head?.length ?: 0)
+                report("USB: $why; wrote the last ${bytes / 1024} KiB again " +
+                    "(${recentWrites.size} writes from block ${head?.block ?: recentWrites.first().block}), " +
                     "in case the reset lost them")
                 if (resets() == before) return
             }
@@ -343,7 +407,7 @@ class LibaumsRawBlockDevice(
      * stepped down to applies to the replay too. Caller holds [transferLock].
      */
     private fun replayOne(w: Written) {
-        val total = w.data.size / blockSize
+        val total = w.length / blockSize
         var done = 0
         while (done < total) {
             val n = minOf(maxTransferBlocks, total - done)
@@ -582,6 +646,11 @@ class LibaumsRawBlockDevice(
         private const val SETTLE_BEFORE_RETRY_MS = 1_000L
         /** See [recentWrites]: several 120 KiB commands, well past one flash page or erase unit. */
         const val REPLAY_BYTES = 1 shl 20
+        /**
+         * See [unitHead]. Two losses so far took one 4 KiB unit each; 64 KiB also covers
+         * the 16 KiB and 32 KiB pages of larger flash, for at most 64 KiB more per replay.
+         */
+        const val REPLAY_ALIGN_BYTES = 64 * 1024
         /** See [replayRecentWrites]. */
         private const val MAX_REPLAY_ROUNDS = 3
         /** See [causeChain]. libaums nests two deep; the rest is room to spare. */
