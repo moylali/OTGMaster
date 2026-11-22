@@ -21,6 +21,9 @@ class VeraCryptDocumentProvider : DocumentsProvider() {
     companion object {
         const val AUTHORITY = ExtensionContract.AUTHORITY
 
+        /** Free space for the roots, read without blocking the binder thread; see [RootFreeSpace]. */
+        internal val rootFreeSpace = RootFreeSpace()
+
         /**
          * Every (package, document URI) [extendReadGrant] granted, to revoke exactly those.
          * Also kept in [GRANTS_PREFS]: grants made with grantUriPermission outlive this
@@ -423,7 +426,9 @@ class VeraCryptDocumentProvider : DocumentsProvider() {
     override fun queryRoots(projection: Array<out String>?): Cursor {
         val result = MatrixCursor(projection ?: DEFAULT_ROOT_PROJECTION)
 
-        for (drive in OtgMasterState.mountedDrives) {
+        val drives = OtgMasterState.mountedDrives.toList()
+        rootFreeSpace.retainOnly(drives.map { it.id })
+        for (drive in drives) {
             val row = result.newRow()
             row.add(DocumentsContract.Root.COLUMN_ROOT_ID, rootIdForDrive(drive.id))
             row.add(DocumentsContract.Root.COLUMN_SUMMARY, "Unlocked Volume")
@@ -436,7 +441,9 @@ class VeraCryptDocumentProvider : DocumentsProvider() {
             row.add(DocumentsContract.Root.COLUMN_TITLE, drive.name)
             row.add(DocumentsContract.Root.COLUMN_DOCUMENT_ID, rootDocIdForDrive(drive.id))
             row.add(DocumentsContract.Root.COLUMN_MIME_TYPES, "*/*")
-            row.add(DocumentsContract.Root.COLUMN_AVAILABLE_BYTES, drive.fileSystem.freeSpace)
+            // Never read under the volume's lock here: a long write holds it for minutes.
+            row.add(DocumentsContract.Root.COLUMN_AVAILABLE_BYTES,
+                rootFreeSpace.availableBytes(drive.id) { drive.fileSystem.freeSpace })
             // Use the standard launcher icon
             row.add(DocumentsContract.Root.COLUMN_ICON, app.fayaz.otgmaster.R.mipmap.ic_launcher)
         }
