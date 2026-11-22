@@ -2016,7 +2016,7 @@ class MainActivity : AppCompatActivity() {
             // Wait for any in-flight ProxyFileDescriptor onRelease() callbacks to finish
             // before unmounting — prevents a use-after-free if the OS is still flushing a
             // file write when exfat_unmount frees the ef pointer.
-            app.fayaz.otgmaster.provider.VeraCryptDocumentProvider.drainCallbacks()
+            app.fayaz.otgmaster.provider.VeraCryptDocumentProvider.drainCallbacks(drive.id)
             // Unmounting flushes filesystem metadata, so it writes to the same shared
             // USB device as every other partition.  Remounting empties the whole mount
             // list at once, and four concurrent single-block writes killed the
@@ -2491,7 +2491,7 @@ class MainActivity : AppCompatActivity() {
             removeDriveShortcut(drive.id)
         }
         // As in unmountDrive: let in-flight file callbacks finish before the filesystem goes.
-        app.fayaz.otgmaster.provider.VeraCryptDocumentProvider.drainCallbacks()
+        app.fayaz.otgmaster.provider.VeraCryptDocumentProvider.drainCallbacks(drive.id)
         deviceMutex.withLock {
             when (val fs = drive.fileSystem) {
                 is app.fayaz.otgmaster.exfat.ExFatFileSystem -> fs.unmount()

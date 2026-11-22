@@ -24,6 +24,44 @@ class VeraCryptDocumentProvider : DocumentsProvider() {
         /** Free space for the roots, read without blocking the binder thread; see [RootFreeSpace]. */
         internal val rootFreeSpace = RootFreeSpace()
 
+        /** See [queryDocument] and [queryChildDocuments]. */
+        private const val QUERY_WAIT_MS = 3_000L
+        private const val QUERY_WAIT_MAX_MS = 12_000L
+        /** A listing read after its query gave up is kept this long for the client's next ask. */
+        private const val LATE_LISTING_MS = 60_000L
+        private val documentQueries = BoundedCalls<List<Map<String, Any?>>>()
+        private val childQueries = BoundedCalls<List<Map<String, Any?>>>()
+        private val lateListings = java.util.concurrent.ConcurrentHashMap<String, Pair<Long, List<Map<String, Any?>>>>()
+        /** The last row read for each document, answered while its drive is busy. */
+        private val knownRows = KnownRows(4096)
+
+        /** A small LRU map, synchronised; plain Kotlin so the JVM tests can load this class. */
+        private class KnownRows(private val max: Int) {
+            private val map = object : LinkedHashMap<String, Map<String, Any?>>(256, 0.75f, true) {
+                override fun removeEldestEntry(eldest: MutableMap.MutableEntry<String, Map<String, Any?>>?) = size > max
+            }
+            @Synchronized fun get(key: String) = map[key]
+            @Synchronized fun put(key: String, row: Map<String, Any?>) { map[key] = row }
+            @Synchronized fun removeAll(pred: (String) -> Boolean) { map.keys.removeAll(pred) }
+        }
+
+        /**
+         * The cache key for [docId]: the document on the filesystem mounted now, so a row
+         * read before an unmount, Format or Encrypt is never answered for what replaced it.
+         */
+        private fun queryKey(docId: String?): String? {
+            val drive = driveIdOf(docId)?.let { OtgMasterState.getDrive(it) } ?: return null
+            return "${System.identityHashCode(drive.fileSystem)}|$docId"
+        }
+
+        /** Forgets cached rows for [docId] and everything under it; after a change to it. */
+        private fun forgetRows(docId: String?) {
+            val key = queryKey(docId) ?: return
+            val under = key.trimEnd('/') + "/"
+            knownRows.removeAll { it == key || it.startsWith(under) }
+            lateListings.keys.removeAll { it == key || it.startsWith(under) }
+        }
+
         /**
          * Every (package, document URI) [extendReadGrant] granted, to revoke exactly those.
          * Also kept in [GRANTS_PREFS]: grants made with grantUriPermission outlive this
@@ -137,7 +175,7 @@ class VeraCryptDocumentProvider : DocumentsProvider() {
          *
          * libaums has no locking of its own: its FAT cache, cluster chains and
          * directory entries are plain mutable state. DocumentsProvider methods run on
-         * binder threads while file I/O runs on proxyHandler, so a listing and a read
+         * binder threads while file I/O runs on the drive's proxy thread, so a listing and a read
          * genuinely overlap — and f58d556 showed those structures can disagree even
          * single-threaded. exFAT is already safe (ExFatFileSystem holds a
          * filesystem-wide ReentrantLock); this gives FAT32 the same guarantee at the
@@ -152,11 +190,13 @@ class VeraCryptDocumentProvider : DocumentsProvider() {
         private val driveLocks =
             java.util.concurrent.ConcurrentHashMap<String, java.util.concurrent.locks.ReentrantLock>()
 
+        /** The lock of [docId]'s drive; [onDrive] takes it. The E2E cases hold it to make a drive busy. */
+        internal fun lockFor(docId: String?): java.util.concurrent.locks.ReentrantLock =
+            driveLocks.computeIfAbsent(docId?.substringBefore(':') ?: "") { java.util.concurrent.locks.ReentrantLock() }
+
         /** Runs [body] with the filesystem of [docId]'s drive exclusively held. */
         fun <T> onDrive(docId: String?, op: String = "request", body: () -> T): T {
-            val lock = driveLocks.computeIfAbsent(docId?.substringBefore(':') ?: "") {
-                java.util.concurrent.locks.ReentrantLock()
-            }
+            val lock = lockFor(docId)
             lock.lock()
             try {
                 return body()
@@ -198,16 +238,25 @@ class VeraCryptDocumentProvider : DocumentsProvider() {
             }
         }
 
-        private val proxyHandler: android.os.Handler by lazy {
-            val thread = android.os.HandlerThread("ProxyFileDescriptorThread")
-            thread.start()
-            android.os.Handler(thread.looper)
-        }
+        /**
+         * One thread per drive serving its open files' reads and writes. There used to be
+         * one for every drive: a read waiting on a busy drive (a long write or delete holds
+         * its lock) then stalled every open file on every other drive too, and an app reading
+         * on its own main thread was reported "not responding" for it.
+         */
+        private val proxyHandlers = java.util.concurrent.ConcurrentHashMap<String, android.os.Handler>()
+
+        private fun proxyHandlerFor(documentId: String?): android.os.Handler =
+            proxyHandlers.computeIfAbsent(driveIdOf(documentId) ?: "") { id ->
+                val thread = android.os.HandlerThread("ProxyFileDescriptorThread-$id")
+                thread.start()
+                android.os.Handler(thread.looper)
+            }
 
         /**
          * Reads from a mounted backup. A backup's files live in a repository on another
          * drive, so its onRead opens and reads that drive's files through this provider.
-         * Those proxy descriptors are served by [proxyHandler], so this read has to wait on
+         * Those proxy descriptors are served by [proxyHandlerFor], so this read has to wait on
          * another thread: Android refuses to open one from its own handler's thread, and if it
          * did not, the read would wait on itself.
          */
@@ -219,7 +268,7 @@ class VeraCryptDocumentProvider : DocumentsProvider() {
 
         private fun readHandlerFor(documentId: String?): android.os.Handler {
             val drive = OtgMasterState.mountedDrives.firstOrNull { it.id == documentId?.substringBefore(':') }
-            return if (drive?.fileSystem is app.fayaz.otgmaster.backup.restic.ResticFileSystem) backupProxyHandler else proxyHandler
+            return if (drive?.fileSystem is app.fayaz.otgmaster.backup.restic.ResticFileSystem) backupProxyHandler else proxyHandlerFor(documentId)
         }
 
         /** Documents open for writing, each with how many handles have it open. */
@@ -358,14 +407,15 @@ class VeraCryptDocumentProvider : DocumentsProvider() {
         fun retire(fs: FileSystem) { synchronized(retired) { retired.add(fs) } }
 
         /**
-         * Blocks until all previously-queued proxyHandler messages have run, then returns.
-         * Call this on a background thread before unmounting a filesystem to ensure any
-         * in-flight onRelease() callbacks (which call file.close()) finish before the
-         * native exfat_unmount frees the ef pointer.
+         * Blocks until the file callbacks already queued for [driveId] (every drive's, when
+         * null) have run, then returns. Call this on a background thread before unmounting a
+         * filesystem to ensure any in-flight onRelease() callbacks (which call file.close())
+         * finish before the native exfat_unmount frees the ef pointer.
          */
-        fun drainCallbacks(timeoutSeconds: Long = 5) {
-            val latch = java.util.concurrent.CountDownLatch(1)
-            proxyHandler.post { latch.countDown() }
+        fun drainCallbacks(driveId: String? = null, timeoutSeconds: Long = 5) {
+            val handlers = if (driveId != null) listOfNotNull(proxyHandlers[driveId]) else proxyHandlers.values.toList()
+            val latch = java.util.concurrent.CountDownLatch(handlers.size)
+            handlers.forEach { h -> if (!h.post { latch.countDown() }) latch.countDown() }
             latch.await(timeoutSeconds, java.util.concurrent.TimeUnit.SECONDS)
         }
     }
@@ -377,6 +427,7 @@ class VeraCryptDocumentProvider : DocumentsProvider() {
 
     override fun createDocument(documentId: String?, mimeType: String?, displayName: String?): String =
         onDrive(documentId, "create") { createDocumentImpl(documentId, mimeType, displayName) }
+            .also { forgetRows(documentId) }
 
     private fun createDocumentImpl(
         documentId: String?,
@@ -402,6 +453,15 @@ class VeraCryptDocumentProvider : DocumentsProvider() {
                 throw java.io.IOException("Cannot delete: a file there is still open for writing")
             deleteDocumentImpl(documentId)
         }
+        forgetRows(documentId)
+        forgetRows(parentDocId(documentId))
+    }
+
+    /** The folder [docId] is in; null for a root. */
+    private fun parentDocId(docId: String?): String? {
+        val p = parseDocId(docId) ?: return null
+        if (p.path == "/") return null
+        return p.driveId + ":" + p.path.substringBeforeLast('/').ifEmpty { "/" }
     }
 
     private fun deleteDocumentImpl(documentId: String?) {
@@ -411,6 +471,7 @@ class VeraCryptDocumentProvider : DocumentsProvider() {
 
     override fun renameDocument(documentId: String?, displayName: String?): String =
         onDrive(documentId, "rename") { renameDocumentImpl(documentId, displayName) }
+            .also { forgetRows(documentId); forgetRows(parentDocId(documentId)) }
 
     private fun renameDocumentImpl(documentId: String?, displayName: String?): String {
         val file = getFileForDocId(documentId) ?: throw FileNotFoundException("File not found")
@@ -451,42 +512,84 @@ class VeraCryptDocumentProvider : DocumentsProvider() {
         return result
     }
 
-    override fun queryDocument(documentId: String?, projection: Array<out String>?): Cursor =
-        onDrive(documentId) { queryDocumentImpl(documentId, projection) }
-
-    private fun queryDocumentImpl(documentId: String?, projection: Array<out String>?): Cursor {
-        val result = MatrixCursor(projection ?: DEFAULT_DOCUMENT_PROJECTION)
-        val file = getFileForDocId(documentId)
-        if (file != null) {
-            includeFile(result, documentId, file)
-            if (!file.isDirectory) extendReadGrant(documentId)
+    /**
+     * The document's row, read on a worker and waited for at most [QUERY_WAIT_MS]; see
+     * [BoundedCalls]. While the drive is busy the last row read for it is the answer, and
+     * with none, the read is waited for up to [QUERY_WAIT_MAX_MS] before the query fails.
+     * The read grant is made here, on the binder thread: it needs the caller's identity.
+     */
+    override fun queryDocument(documentId: String?, projection: Array<out String>?): Cursor {
+        val key = queryKey(documentId) ?: return MatrixCursor(projection ?: DEFAULT_DOCUMENT_PROJECTION)
+        val notify = DocumentsContract.buildDocumentUri(registeredAuthority(), documentId)
+        val out = documentQueries.call(key, QUERY_WAIT_MS, onLate = { r ->
+            r.getOrNull()?.let { rows -> rows.firstOrNull()?.let { knownRows.put(key, it) } }
+            context?.contentResolver?.notifyChange(notify, null)
+        }) { onDrive(documentId, "query") { documentRows(documentId) } }
+        val rows = when (out) {
+            is BoundedCalls.Done -> out.value
+            BoundedCalls.Late -> knownRows.get(key)?.let { listOf(it) }
+                ?: (documentQueries.awaitOutstanding(key, QUERY_WAIT_MAX_MS - QUERY_WAIT_MS) as? BoundedCalls.Done)?.value
+                ?: throw busy(documentId)
         }
-        return result
+        rows.firstOrNull()?.let { knownRows.put(key, it) }
+        if (rows.firstOrNull()?.get(DocumentsContract.Document.COLUMN_MIME_TYPE) != DocumentsContract.Document.MIME_TYPE_DIR &&
+            rows.isNotEmpty()) extendReadGrant(documentId)
+        return cursorOf(projection ?: DEFAULT_DOCUMENT_PROJECTION, rows).apply {
+            context?.contentResolver?.let { setNotificationUri(it, notify) }
+        }
     }
 
+    private fun documentRows(documentId: String?): List<Map<String, Any?>> {
+        val file = getFileForDocId(documentId) ?: return emptyList()
+        return listOf(fileRow(documentId, file))
+    }
+
+    /**
+     * The folder's listing, read on a worker and waited for at most [QUERY_WAIT_MS]. While the
+     * drive is busy the answer is an empty listing marked as loading (EXTRA_LOADING), with a
+     * notification URI: when the read finishes, that URI is notified, the Files app asks again
+     * and gets the listing kept for it in [lateListings].
+     */
     override fun queryChildDocuments(
         parentDocumentId: String?,
         projection: Array<out String>?,
         sortOrder: String?
-    ): Cursor = onDrive(parentDocumentId) {
-        queryChildDocumentsImpl(parentDocumentId, projection, sortOrder)
+    ): Cursor {
+        val cols = projection ?: DEFAULT_DOCUMENT_PROJECTION
+        val key = queryKey(parentDocumentId) ?: return MatrixCursor(cols)
+        val notify = DocumentsContract.buildChildDocumentsUri(registeredAuthority(), parentDocumentId)
+        val resolver = context?.contentResolver
+        lateListings.remove(key)?.takeIf { android.os.SystemClock.elapsedRealtime() - it.first < LATE_LISTING_MS }?.let {
+            return cursorOf(cols, it.second).apply { resolver?.let { r -> setNotificationUri(r, notify) } }
+        }
+        val out = childQueries.call(key, QUERY_WAIT_MS, onLate = { r ->
+            r.getOrNull()?.let { lateListings[key] = android.os.SystemClock.elapsedRealtime() to it }
+            resolver?.notifyChange(notify, null)
+        }) { onDrive(parentDocumentId, "list") { childRows(parentDocumentId) } }
+        return when (out) {
+            is BoundedCalls.Done -> cursorOf(cols, out.value)
+            BoundedCalls.Late -> cursorOf(cols, emptyList()).apply {
+                extras = android.os.Bundle().apply { putBoolean(DocumentsContract.EXTRA_LOADING, true) }
+            }
+        }.apply { resolver?.let { setNotificationUri(it, notify) } }
     }
 
-    private fun queryChildDocumentsImpl(
-        parentDocumentId: String?,
-        projection: Array<out String>?,
-        sortOrder: String?
-    ): Cursor {
-        val result = MatrixCursor(projection ?: DEFAULT_DOCUMENT_PROJECTION)
+    private fun childRows(parentDocumentId: String?): List<Map<String, Any?>> {
         val parent = getFileForDocId(parentDocumentId)
-
-        if (parent != null && parent.isDirectory) {
-            for (child in parent.listFiles()) {
-                val childId = getDocIdForChild(parentDocumentId, child)
-                includeFile(result, childId, child)
-            }
+        if (parent == null || !parent.isDirectory) return emptyList()
+        return parent.listFiles().map { child ->
+            val childId = getDocIdForChild(parentDocumentId, child)
+            fileRow(childId, child).also { row -> queryKey(childId)?.let { knownRows.put(it, row) } }
         }
-        return result
+    }
+
+    /** The authority this provider is registered under: the applicationId's, so the bench build's too. */
+    private fun registeredAuthority(): String = (context?.packageName ?: "app.fayaz.otgmaster") + ".documents"
+
+    private fun busy(documentId: String?): FileNotFoundException {
+        val name = parseDocId(documentId)?.driveId?.let { OtgMasterState.getDrive(it)?.name }
+        OtgMasterState.log("Files app: ${name ?: "a drive"} was busy for ${QUERY_WAIT_MAX_MS / 1000} s with a long operation, so a file could not be shown yet")
+        return FileNotFoundException("The drive is busy with a long operation; try again when it finishes")
     }
 
     /**
@@ -571,7 +674,7 @@ class VeraCryptDocumentProvider : DocumentsProvider() {
 
             val pfdMode = ParcelFileDescriptor.parseMode(mode ?: "r")
             try {
-                return storageManager.openProxyFileDescriptor(pfdMode, callback, proxyHandler)
+                return storageManager.openProxyFileDescriptor(pfdMode, callback, proxyHandlerFor(documentId))
             } catch (e: Exception) {
                 // No descriptor, so no onRelease will ever come for this one.
                 documentId?.let { writerClosed(it) }
@@ -627,8 +730,9 @@ class VeraCryptDocumentProvider : DocumentsProvider() {
         return currentFile
     }
 
+    // String work only: it used to wait on the drive's lock, behind any long write.
     override fun isChildDocument(parentDocumentId: String?, documentId: String?): Boolean =
-        onDrive(documentId) { isChildDocumentImpl(parentDocumentId, documentId) }
+        isChildDocumentImpl(parentDocumentId, documentId)
 
     private fun isChildDocumentImpl(parentDocumentId: String?, documentId: String?): Boolean {
         val parent = parseDocId(parentDocumentId) ?: return false
@@ -668,12 +772,19 @@ class VeraCryptDocumentProvider : DocumentsProvider() {
         return DocumentsContract.Path(rootIdForDrive(child.driveId), chain)
     }
 
-    private fun includeFile(
-        result: MatrixCursor,
-        docId: String?,
-        file: UsbFile,
-    ) {
-        val row = result.newRow()
+    /** Puts [rows] (column to value) into a cursor of [columns]; columns a row lacks stay null. */
+    private fun cursorOf(columns: Array<out String>, rows: List<Map<String, Any?>>): MatrixCursor {
+        val result = MatrixCursor(columns)
+        for (r in rows) {
+            val row = result.newRow()
+            for ((col, value) in r) row.add(col, value)
+        }
+        return result
+    }
+
+    private fun fileRow(docId: String?, file: UsbFile): Map<String, Any?> {
+        val row = LinkedHashMap<String, Any?>()
+        fun MutableMap<String, Any?>.add(col: String, value: Any?) { put(col, value) }
         row.add(DocumentsContract.Document.COLUMN_DOCUMENT_ID, docId)
         row.add(DocumentsContract.Document.COLUMN_DISPLAY_NAME, if (file.isRoot) "VeraCrypt Drive" else file.name)
         // libaums throws for several metadata accessors on directories and/or the root
@@ -699,6 +810,7 @@ class VeraCryptDocumentProvider : DocumentsProvider() {
         row.add(DocumentsContract.Document.COLUMN_MIME_TYPE, mimeType)
         row.add(DocumentsContract.Document.COLUMN_LAST_MODIFIED, runCatching { file.lastModified() }.getOrDefault(0L))
         row.add(DocumentsContract.Document.COLUMN_FLAGS, flags)
+        return row
     }
 
     private data class ParsedDocId(val driveId: String, val path: String)
