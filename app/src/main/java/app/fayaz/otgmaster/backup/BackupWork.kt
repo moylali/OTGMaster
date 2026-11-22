@@ -536,8 +536,17 @@ object BackupNotifications {
 
 /** "Proceed" and "Not now" on the low-space question; Start now and Not now on a due backup; a chosen delay running out. */
 class BackupActionReceiver : BroadcastReceiver() {
+    // Off the main thread: these read and write the job store, a file. goAsync keeps the
+    // process alive for it; Android allows a receiver 10 s before it reports an ANR.
     override fun onReceive(context: Context, intent: Intent) {
         val jobId = intent.getStringExtra(BackupNotifications.EXTRA_JOB_ID) ?: return
+        val pending = goAsync()
+        Thread({
+            try { handle(context.applicationContext, intent, jobId) } finally { pending.finish() }
+        }, "BackupAction").start()
+    }
+
+    private fun handle(context: Context, intent: Intent, jobId: String) {
         BackupNotifications.cancelQuestion(context, jobId)
         when (intent.action) {
             ACTION_PROCEED -> BackupExecutor.start(context, jobId, BackupExecutor.Op.Backup("confirmed", overrideLowSpace = true))

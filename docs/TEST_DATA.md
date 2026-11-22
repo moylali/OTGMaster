@@ -598,6 +598,18 @@ notification opens the app on the slider. Each case copies the image and credent
 `eject_flow.txt`, so build those cases first. `eject_not_offered` and `eject_backup_running` come
 from `scripts/make_backup_run_fixtures.py`, which needs a backup repository on the drive.
 
+The same script builds `testdata/provider_*`, one case per DocumentsProvider API, called through
+the ContentResolver as the Files app calls them: `provider_roots`, `provider_children`,
+`provider_document`, `provider_open_read` (flower.jpg against `testdata/flower.jpg`),
+`provider_create_write`, `provider_rename`, `provider_delete` and `provider_tree`
+(`isChildDocument` and `findDocumentPath` through a tree URI). The three `provider_busy_*` cases and
+`provider_proxy_isolation` hold a drive's real lock from a test thread, the way a long write
+or delete does, and check that the query still answers in bounded time: within 3 s for the roots,
+a loading listing and then a change notification for a folder, the last row read or a refusal
+within 16 s for a document, and a read on another partition that is not held up. Android reports
+an app "not responding" when a call into its provider takes 20 s. On the provider code before
+these bounds, all four fail with the query never returning.
+
 The same script builds `testdata/report_issue`. Its `github_issue.txt` names the repository. The
 runner makes up a random string for each attempt, the test types it into the Report issue form in
 Chrome and submits, and `scripts/check_github_issue.py` asserts that GitHub's issue contains that

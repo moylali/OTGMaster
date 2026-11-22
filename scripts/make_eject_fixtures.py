@@ -52,7 +52,23 @@ CASES = {
     "no_space_exfat": ("encrypt_plain_exfat", "no_space", "A write bigger than a plain exFAT drive fails with \"Not enough space\" in the log; a file written before is intact, and the checker is clean."),
     "no_space_ext4": ("format_plain_ext4", "no_space", "A write bigger than a plain ext4 drive fails with \"Not enough space\" in the log; a file written before is intact, and e2fsck finds no blocks the failed write left used."),
     "no_space_ntfs": ("format_plain_ntfs", "no_space", "A write bigger than a plain NTFS drive fails with \"Not enough space\" in the log; a file written before is intact, and the checker is clean."),
+    # DocumentsProvider, one API per case (E2EAutomatedTest.runProviderFlow).
+    "provider_roots": (VC, "provider_roots", "Provider queryRoots: one root per mounted drive, with its title, create and isChild flags, and free space within the volume."),
+    "provider_children": (VC, "provider_children", "Provider queryChildDocuments: the root lists flower.jpg with its type, size, and write and delete flags."),
+    "provider_document": (VC, "provider_document", "Provider queryDocument: the root is a folder, flower.jpg's row matches its listing, and a missing file gets no row."),
+    "provider_open_read": (VC, "provider_open_read", "Provider openDocument for reading: flower.jpg reads byte for byte as testdata/flower.jpg."),
+    "provider_create_write": (VC, "provider_create_write", "Provider createDocument and openDocument for writing: a file, a folder and a file in it are created, written and read back, and an overwrite truncates."),
+    "provider_rename": (VC, "provider_rename", "Provider renameDocument: the new name is listed with the same content, and the old name and id are gone."),
+    "provider_delete": (VC, "provider_delete", "Provider deleteDocument: a file and a folder with a file in it are deleted, and neither is listed or answers afterwards."),
+    "provider_tree": (VC, "provider_tree", "Provider isChildDocument and findDocumentPath through a folder grant: a file inside reads, one outside is refused, and the path runs folder to file."),
+    "provider_busy_roots": ("exfat", "provider_busy_roots", "Provider queryRoots while the exFAT volume's lock is held: answered within 3 s, with the last free space read (ANR of 11-22)."),
+    "provider_busy_children": ("exfat", "provider_busy_children", "Provider queryChildDocuments while the exFAT volume's lock is held: a loading listing within 6 s, a change notification once the lock is free, then the full listing."),
+    "provider_busy_document": ("exfat", "provider_busy_document", "Provider queryDocument while the exFAT volume's lock is held: a file listed before answers within 6 s, and an unseen one is refused within 16 s, under Android's 20 s limit."),
+    "provider_proxy_isolation": ("partitioned_mbr", "provider_proxy_isolation", "Two partitions mounted: a read waiting on one partition's lock does not hold up a read on the other."),
 }
+
+# Cases that compare a file read through the provider with testdata/flower.jpg.
+VERIFY_FLOWER = {"provider_open_read"}
 
 # Cases the runner checks on GitHub afterwards: the repository the issue should appear in.
 GITHUB_ISSUE = {"report_issue": "moylali/OTGMaster"}
@@ -78,6 +94,8 @@ def main():
             out.write(what + "\n")
         with open(os.path.join(dst, "timeout.txt"), "w") as out:
             out.write("600\n")
+        if name in VERIFY_FLOWER:
+            open(os.path.join(dst, "verify_flower.txt"), "w").close()
         if name in GITHUB_ISSUE:
             with open(os.path.join(dst, "github_issue.txt"), "w") as out:
                 out.write(GITHUB_ISSUE[name] + "\n")

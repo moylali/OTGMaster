@@ -4372,6 +4372,7 @@ class E2EAutomatedTest {
     }
 
     private fun runEjectFlow(flow: String) {
+        if (flow.startsWith("provider_")) return runProviderFlow(flow)
         if (flow.startsWith("unmount_")) return runUnmountFlow(flow)
         if (flow == "slider_hint" || flow == "notification_slider") return runSliderFlow(flow)
         val args = InstrumentationRegistry.getArguments()
@@ -5724,5 +5725,304 @@ class E2EAutomatedTest {
 
         assertTrue("Drive should not have been mounted for unsupported filesystem",
             OtgMasterState.mountedDrives.isEmpty())
+    }
+
+    // ---------------------------------------------------------------------------------
+    // DocumentsProvider, one API per case (scripts/make_eject_fixtures.py, provider_*).
+    // Each case calls the API the way the Files app does, through the ContentResolver, and
+    // the busy_* cases hold the drive's real lock from a test thread, the way a long write
+    // or delete does, to check the query still answers in bounded time (the Files app
+    // reports the app "not responding" after 20 s, and closing that kills it mid-write).
+    // ---------------------------------------------------------------------------------
+
+    private fun runProviderFlow(flow: String) {
+        val ctx = bkContext
+        val drive = ejMount("for the provider")
+        val root = getRootDocId(ctx)
+        assertNotNull("no root for the mounted drive", root)
+        when (flow) {
+            "provider_roots" -> pvRoots(ctx, drive)
+            "provider_children" -> pvChildren(ctx, root!!)
+            "provider_document" -> pvDocument(ctx, root!!)
+            "provider_open_read" -> pvOpenRead(ctx)
+            "provider_create_write" -> pvCreateWrite(ctx, root!!)
+            "provider_rename" -> pvRename(ctx, root!!)
+            "provider_delete" -> pvDelete(ctx, root!!)
+            "provider_tree" -> pvTree(ctx, root!!)
+            "provider_busy_roots" -> pvBusyRoots(ctx, drive)
+            "provider_busy_children" -> pvBusyChildren(ctx, drive, root!!)
+            "provider_busy_document" -> pvBusyDocument(ctx, drive, root!!)
+            "provider_proxy_isolation" -> pvProxyIsolation(ctx)
+            else -> fail("unknown provider flow $flow")
+        }
+        doUnmount()
+    }
+
+    private fun pvRows(ctx: Context, uri: android.net.Uri): List<Map<String, String?>> {
+        val rows = mutableListOf<Map<String, String?>>()
+        ctx.contentResolver.query(uri, null, null, null, null)?.use { c ->
+            while (c.moveToNext()) rows += c.columnNames.associateWith { c.getString(c.getColumnIndex(it)) }
+        }
+        return rows
+    }
+
+    private fun pvChild(ctx: Context, parent: String, name: String): Map<String, String?>? =
+        pvRows(ctx, DocumentsContract.buildChildDocumentsUri(AUTHORITY, parent))
+            .firstOrNull { it[DocumentsContract.Document.COLUMN_DISPLAY_NAME] == name }
+
+    private fun pvDocUri(id: String) = DocumentsContract.buildDocumentUri(AUTHORITY, id)
+
+    private fun pvWrite(ctx: Context, id: String, text: String) {
+        ctx.contentResolver.openOutputStream(pvDocUri(id), "wt")!!.use { it.write(text.toByteArray()) }
+    }
+
+    private fun pvRead(ctx: Context, id: String): String =
+        ctx.contentResolver.openInputStream(pvDocUri(id))!!.use { it.readBytes().toString(Charsets.UTF_8) }
+
+    /** Runs [body] on a thread and returns how long it took, failing past [maxMs]. */
+    private fun <T> pvTimed(what: String, maxMs: Long, body: () -> T): Pair<T, Long> {
+        var value: Result<T>? = null
+        val t0 = android.os.SystemClock.elapsedRealtime()
+        val t = Thread { value = runCatching(body) }
+        t.start()
+        t.join(maxMs + 30_000)
+        val ms = android.os.SystemClock.elapsedRealtime() - t0
+        assertFalse("$what never returned", t.isAlive)
+        assertTrue("$what took $ms ms, over $maxMs ms", ms <= maxMs)
+        return value!!.getOrThrow() to ms
+    }
+
+    /** Holds [lock] on a thread until the returned latch is counted down (at most 60 s). */
+    private fun pvHold(what: String, lock: java.util.concurrent.locks.Lock): java.util.concurrent.CountDownLatch {
+        val held = java.util.concurrent.CountDownLatch(1)
+        val release = java.util.concurrent.CountDownLatch(1)
+        Thread({
+            lock.lock()
+            try { held.countDown(); release.await(60, java.util.concurrent.TimeUnit.SECONDS) } finally { lock.unlock() }
+        }, "E2E-hold-$what").start()
+        assertTrue("could not take the $what lock", held.await(10, java.util.concurrent.TimeUnit.SECONDS))
+        return release
+    }
+
+    private fun pvExfatLock(drive: MountedDrive): java.util.concurrent.locks.Lock {
+        val fs = drive.fileSystem as? app.fayaz.otgmaster.exfat.ExFatFileSystem
+        assertNotNull("this case needs an exFAT volume, got ${drive.filesystemName}", fs)
+        return fs!!.lock
+    }
+
+    private fun pvRoots(ctx: Context, drive: MountedDrive) {
+        val rows = pvRows(ctx, DocumentsContract.buildRootsUri(AUTHORITY))
+        assertEquals("one root per mounted drive", OtgMasterState.mountedDrives.size, rows.size)
+        val r = rows.first()
+        assertNotNull("the root has no document id", r[DocumentsContract.Root.COLUMN_DOCUMENT_ID])
+        assertEquals(drive.name, r[DocumentsContract.Root.COLUMN_TITLE])
+        val flags = r[DocumentsContract.Root.COLUMN_FLAGS]!!.toInt()
+        assertTrue("a writable drive must offer create", flags and DocumentsContract.Root.FLAG_SUPPORTS_CREATE != 0)
+        assertTrue("isChild must be offered", flags and DocumentsContract.Root.FLAG_SUPPORTS_IS_CHILD != 0)
+        val free = r[DocumentsContract.Root.COLUMN_AVAILABLE_BYTES]?.toLong()
+        assertNotNull("no free space on an idle drive", free)
+        assertTrue("free space $free is not within the volume (${drive.fileSystem.capacity})", free!! in 1..drive.fileSystem.capacity)
+    }
+
+    private fun pvChildren(ctx: Context, root: String) {
+        val flower = pvChild(ctx, root, "flower.jpg")
+        assertNotNull("flower.jpg missing from the root listing", flower)
+        assertEquals("image/jpeg", flower!![DocumentsContract.Document.COLUMN_MIME_TYPE])
+        assertTrue("flower.jpg has no size", flower[DocumentsContract.Document.COLUMN_SIZE]!!.toLong() > 0)
+        val flags = flower[DocumentsContract.Document.COLUMN_FLAGS]!!.toInt()
+        assertTrue("a file on a writable drive must offer write", flags and DocumentsContract.Document.FLAG_SUPPORTS_WRITE != 0)
+        assertTrue("and delete", flags and DocumentsContract.Document.FLAG_SUPPORTS_DELETE != 0)
+    }
+
+    private fun pvDocument(ctx: Context, root: String) {
+        val rootRow = pvRows(ctx, pvDocUri(root)).single()
+        assertEquals(DocumentsContract.Document.MIME_TYPE_DIR, rootRow[DocumentsContract.Document.COLUMN_MIME_TYPE])
+        val listed = pvChild(ctx, root, "flower.jpg")!!
+        val id = listed[DocumentsContract.Document.COLUMN_DOCUMENT_ID]!!
+        val row = pvRows(ctx, pvDocUri(id)).single()
+        for (col in listOf(DocumentsContract.Document.COLUMN_DISPLAY_NAME, DocumentsContract.Document.COLUMN_SIZE,
+                DocumentsContract.Document.COLUMN_MIME_TYPE, DocumentsContract.Document.COLUMN_FLAGS))
+            assertEquals("queryDocument and the listing disagree on $col", listed[col], row[col])
+        assertTrue("a missing document must not be answered",
+            pvRows(ctx, pvDocUri("${root.substringBefore(':')}:/no_such_file.bin")).isEmpty())
+    }
+
+    private fun pvOpenRead(ctx: Context) {
+        val id = listRoot(ctx).firstOrNull { it.endsWith("/flower.jpg") }
+        assertNotNull("flower.jpg missing", id)
+        val want = InstrumentationRegistry.getArguments().getString("flower_sha256", "")
+        assertTrue("the case has no flower_sha256", want.isNotEmpty())
+        assertEquals("flower.jpg read through openDocument differs from testdata/flower.jpg", want, sha256(ctx, id!!))
+    }
+
+    private fun pvCreateWrite(ctx: Context, root: String) {
+        val file = DocumentsContract.createDocument(ctx.contentResolver, pvDocUri(root), "text/plain", "pv_new.txt")
+        assertNotNull("createDocument(file) returned null", file)
+        pvWrite(ctx, DocumentsContract.getDocumentId(file), "provider create+write")
+        val dir = DocumentsContract.createDocument(ctx.contentResolver, pvDocUri(root), DocumentsContract.Document.MIME_TYPE_DIR, "pv_dir")
+        assertNotNull("createDocument(dir) returned null", dir)
+        val dirId = DocumentsContract.getDocumentId(dir)
+        val nested = DocumentsContract.createDocument(ctx.contentResolver, pvDocUri(dirId), "text/plain", "inner.txt")
+        assertNotNull("createDocument in a new folder returned null", nested)
+        pvWrite(ctx, DocumentsContract.getDocumentId(nested), "nested")
+        assertEquals("provider create+write", pvRead(ctx, DocumentsContract.getDocumentId(file)))
+        assertEquals("nested", pvRead(ctx, DocumentsContract.getDocumentId(nested)))
+        assertNotNull("the new folder is not listed", pvChild(ctx, root, "pv_dir"))
+        assertNotNull("the nested file is not listed", pvChild(ctx, dirId, "inner.txt"))
+        // Overwrite ("wt") truncates: the old, longer content must not survive past the new end.
+        pvWrite(ctx, DocumentsContract.getDocumentId(file), "short")
+        assertEquals("short", pvRead(ctx, DocumentsContract.getDocumentId(file)))
+    }
+
+    private fun pvRename(ctx: Context, root: String) {
+        val file = DocumentsContract.createDocument(ctx.contentResolver, pvDocUri(root), "text/plain", "pv_before.txt")!!
+        pvWrite(ctx, DocumentsContract.getDocumentId(file), "renamed content")
+        val renamed = DocumentsContract.renameDocument(ctx.contentResolver, file, "pv_after.txt")
+        assertNotNull("renameDocument returned null", renamed)
+        assertNull("the old name is still listed", pvChild(ctx, root, "pv_before.txt"))
+        val row = pvChild(ctx, root, "pv_after.txt")
+        assertNotNull("the new name is not listed", row)
+        assertEquals("renamed content", pvRead(ctx, row!![DocumentsContract.Document.COLUMN_DOCUMENT_ID]!!))
+        assertTrue("the old id still answers", pvRows(ctx, file).isEmpty())
+    }
+
+    private fun pvDelete(ctx: Context, root: String) {
+        val file = DocumentsContract.createDocument(ctx.contentResolver, pvDocUri(root), "text/plain", "pv_gone.txt")!!
+        pvWrite(ctx, DocumentsContract.getDocumentId(file), "to delete")
+        assertTrue("deleteDocument said no", DocumentsContract.deleteDocument(ctx.contentResolver, file))
+        assertNull("the deleted file is still listed", pvChild(ctx, root, "pv_gone.txt"))
+        assertTrue("the deleted file still answers", pvRows(ctx, file).isEmpty())
+        // A folder with a file in it goes too.
+        val dir = DocumentsContract.createDocument(ctx.contentResolver, pvDocUri(root), DocumentsContract.Document.MIME_TYPE_DIR, "pv_gone_dir")!!
+        DocumentsContract.createDocument(ctx.contentResolver, dir, "text/plain", "x.txt")!!
+        assertTrue("deleteDocument(folder) said no", DocumentsContract.deleteDocument(ctx.contentResolver, dir))
+        assertNull("the deleted folder is still listed", pvChild(ctx, root, "pv_gone_dir"))
+    }
+
+    /** isChildDocument and findDocumentPath, through a tree URI as an app with a folder grant uses them. */
+    private fun pvTree(ctx: Context, root: String) {
+        val dir = DocumentsContract.createDocument(ctx.contentResolver, pvDocUri(root), DocumentsContract.Document.MIME_TYPE_DIR, "pv_tree")!!
+        val dirId = DocumentsContract.getDocumentId(dir)
+        val inner = DocumentsContract.createDocument(ctx.contentResolver, dir, "text/plain", "leaf.txt")!!
+        val innerId = DocumentsContract.getDocumentId(inner)
+        val tree = DocumentsContract.buildTreeDocumentUri(AUTHORITY, dirId)
+        // A child, reached through the tree: the provider's isChildDocument says yes.
+        val viaTree = DocumentsContract.buildDocumentUriUsingTree(tree, innerId)
+        assertEquals("leaf.txt", pvRows(ctx, viaTree).single()[DocumentsContract.Document.COLUMN_DISPLAY_NAME])
+        // Outside the tree: refused.
+        val flower = listRoot(ctx).first { it.endsWith("/flower.jpg") }
+        try {
+            pvRows(ctx, DocumentsContract.buildDocumentUriUsingTree(tree, flower))
+            fail("a document outside the tree was answered")
+        } catch (_: SecurityException) {
+        }
+        val path = DocumentsContract.findDocumentPath(ctx.contentResolver, viaTree)
+        assertNotNull("findDocumentPath returned null", path)
+        assertEquals(listOf(dirId, innerId), path!!.path)
+    }
+
+    /** queryRoots while the volume's lock is held: answers within the bound, with the last free space. */
+    private fun pvBusyRoots(ctx: Context, drive: MountedDrive) {
+        val before = pvRows(ctx, DocumentsContract.buildRootsUri(AUTHORITY)).single()[DocumentsContract.Root.COLUMN_AVAILABLE_BYTES]
+        assertNotNull(before)
+        val release = pvHold("exFAT", pvExfatLock(drive))
+        try {
+            val (rows, ms) = pvTimed("queryRoots on a busy drive", 3_000) { pvRows(ctx, DocumentsContract.buildRootsUri(AUTHORITY)) }
+            Log.i("E2E", "busy queryRoots answered in $ms ms")
+            assertEquals("the busy drive left the drive list", 1, rows.size)
+            assertEquals("not the last free space read", before, rows.single()[DocumentsContract.Root.COLUMN_AVAILABLE_BYTES])
+        } finally {
+            release.countDown()
+        }
+    }
+
+    /**
+     * queryChildDocuments while the volume's lock is held: a loading listing within the bound,
+     * then a change notification once the lock is free, and the full listing on the next ask.
+     */
+    private fun pvBusyChildren(ctx: Context, drive: MountedDrive, root: String) {
+        val uri = DocumentsContract.buildChildDocumentsUri(AUTHORITY, root)
+        val changed = java.util.concurrent.CountDownLatch(1)
+        val observer = object : android.database.ContentObserver(android.os.Handler(android.os.Looper.getMainLooper())) {
+            override fun onChange(selfChange: Boolean) { changed.countDown() }
+        }
+        val release = pvHold("exFAT", pvExfatLock(drive))
+        try {
+            val (loading, ms) = pvTimed("queryChildDocuments on a busy drive", 6_000) {
+                ctx.contentResolver.query(uri, null, null, null, null)!!.use { c ->
+                    ctx.contentResolver.registerContentObserver(c.notificationUri ?: uri, false, observer)
+                    c.extras.getBoolean(DocumentsContract.EXTRA_LOADING) to c.count
+                }
+            }
+            Log.i("E2E", "busy listing answered in $ms ms: loading=${loading.first}, ${loading.second} rows")
+            assertTrue("a busy listing is not marked as loading", loading.first)
+        } finally {
+            release.countDown()
+        }
+        try {
+            assertTrue("no change notification after the drive was free", changed.await(15, java.util.concurrent.TimeUnit.SECONDS))
+        } finally {
+            ctx.contentResolver.unregisterContentObserver(observer)
+        }
+        assertNotNull("the listing after the notification lacks flower.jpg", pvChild(ctx, root, "flower.jpg"))
+    }
+
+    /** queryDocument while the volume's lock is held: a document listed before answers from what was read. */
+    private fun pvBusyDocument(ctx: Context, drive: MountedDrive, root: String) {
+        val listed = pvChild(ctx, root, "flower.jpg")!!
+        val id = listed[DocumentsContract.Document.COLUMN_DOCUMENT_ID]!!
+        val release = pvHold("exFAT", pvExfatLock(drive))
+        try {
+            val (row, ms) = pvTimed("queryDocument on a busy drive", 6_000) { pvRows(ctx, pvDocUri(id)).single() }
+            Log.i("E2E", "busy queryDocument answered in $ms ms")
+            assertEquals(listed[DocumentsContract.Document.COLUMN_SIZE], row[DocumentsContract.Document.COLUMN_SIZE])
+            // One never seen: refused before Android's 20 s limit, not left hanging.
+            val (failed, ms2) = pvTimed("queryDocument of an unseen file on a busy drive", 16_000) {
+                runCatching { pvRows(ctx, pvDocUri("${root.substringBefore(':')}:/never_listed.bin")) }
+            }
+            Log.i("E2E", "busy queryDocument of an unseen file answered in $ms2 ms: $failed")
+            assertTrue("an unseen file on a busy drive was answered: $failed", failed.isFailure || failed.getOrNull().isNullOrEmpty())
+        } finally {
+            release.countDown()
+        }
+    }
+
+    /**
+     * A read waiting on one drive does not hold up a read on another. Both partitions of
+     * partitioned_mbr are mounted; the first's lock is held while a read of its flower.jpg
+     * waits on it, and the second's flower.jpg must still read in time.
+     */
+    private fun pvProxyIsolation(ctx: Context) {
+        val deadline = android.os.SystemClock.uptimeMillis() + 60_000
+        while (OtgMasterState.mountedDrives.size < 2 && android.os.SystemClock.uptimeMillis() < deadline) android.os.SystemClock.sleep(500)
+        assertEquals("this case needs two mounted partitions", 2, OtgMasterState.mountedDrives.size)
+        val roots = allRootDocIds(ctx)
+        assertEquals(2, roots.size)
+        // A file on each partition to read: the plain one may hold none, so one is written.
+        val files = roots.map { r ->
+            val f = DocumentsContract.createDocument(ctx.contentResolver, pvDocUri(r), "application/octet-stream", "pv_iso.bin")
+            assertNotNull("could not create a file on $r", f)
+            ctx.contentResolver.openOutputStream(f!!, "wt")!!.use { it.write(ByteArray(64 * 1024) { i -> i.toByte() }) }
+            DocumentsContract.getDocumentId(f)
+        }
+        assertTrue("each partition needs a file: $files", files.all { it != null })
+        val (busyFile, freeFile) = files[0]!! to files[1]!!
+        // Opened before the lock is taken: the open itself waits on the drive's lock.
+        val busyFd = ctx.contentResolver.openFileDescriptor(pvDocUri(busyFile), "r")!!
+        val release = pvHold("drive", app.fayaz.otgmaster.provider.VeraCryptDocumentProvider.lockFor(busyFile))
+        val stuck = Thread { runCatching { java.io.FileInputStream(busyFd.fileDescriptor).use { it.read(ByteArray(4096)) } } }
+        try {
+            stuck.start()
+            android.os.SystemClock.sleep(1_000)   // its callback is now waiting on the held lock
+            val (n, ms) = pvTimed("a read on the other partition", 5_000) {
+                ctx.contentResolver.openInputStream(pvDocUri(freeFile))!!.use { it.readBytes().size }
+            }
+            Log.i("E2E", "read on the free partition: $n bytes in $ms ms while the other waited")
+            assertTrue(n > 0)
+        } finally {
+            release.countDown()
+            stuck.join(10_000)
+            busyFd.close()
+        }
     }
 }
