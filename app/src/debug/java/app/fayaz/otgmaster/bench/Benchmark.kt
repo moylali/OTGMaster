@@ -422,7 +422,10 @@ object Benchmark {
             writeSection("correct", "correctness   ") { benchCorrectness(live(), ::emit, mount) }
             // Opt-in: a 2.2 GB file and a churned tree, left for the host check.
             phase("big writes")
-            writeSection("bigwrite", "bigwrite      ") { benchBigWrite(live(), ::emit, mount) }
+            writeSection("bigwrite", "bigwrite      ") {
+                val probe = RootsProbe.start(context)
+                try { benchBigWrite(live(), ::emit, mount) } finally { emit(probe.stop()) }
+            }
             phase("SAF path")
             if (only.contains("saf")) runCatching { benchSaf(context, ::emit) }
                 .onFailure { Log.w(TAG, "section failed", it); emit("saf           : FAILED ${it}") }
