@@ -33,6 +33,227 @@ to a row here.
 
 ---
 
+## 2026-11-23 to 11-24: 0.5.4 on the Pixel 7 Pro, all five drives
+
+Benchmark build `0.5.4-bench (53) commit b5c79aa` on the Pixel 7 Pro (Android 17, SDK 37), on AC from the second drive on. Sections: free, block, dir, path, seq, random, opens, write, unaligned, correct, bigwrite, fixtures, one partition per run via `sequence_runs.sh`, which leaves bigwrite out on D5/1's FMT and ENC_TO partitions. `Started` is the phone's clock. No USB resets were logged. Every sequence ended with the Eject, and then unmounted whatever Android mounted once the app let go.
+
+"Drive list during bigwrite" is the `roots query` line from `ccfa3c7`: how many times the app's own drive list was queried through the ContentResolver while bigwrite ran, the slowest answer, and how many took over a second.
+
+Host check, each drive read back on the laptop after its run (`read_matrix_drive.sh` + `verify_matrix_drive.py`, or `verify_d5.sh` for D5/1):
+- D1 (`matrix/d1-after-px-054a.md`): **9 of 10 CLEAN.** D1FAT32 FAILED on its checker alone. The only difference between its primary and backup boot sectors is byte 0x41, the FAT32 dirty flag (01 against 00). All 20,995 fixtures matched and `big.bin` matched the bigwrite keystream. Android mounted this plain partition after the Eject and set the flag. The owner accepted it, since no data was wrong.
+- D2/2 (`matrix/d2copy-after-px-054b.md`): **ALL CLEAN.**
+- D3 (`matrix/d3-after-px-054c.md`): **8 of 10 CLEAN.** D3EXT2 and D3EXT3 show 1 MiB changed against the build image. That is the superblock the OnePlus 7's Android mount wrote on 11-22 (next section). Both superblocks still read last mount 11-22 22:14:00 and mount count 1, so nothing on the Pixel mounted or wrote them. `e2fsck` clean, every fixture matched.
+- D4 (`matrix/d4-after-px-054e.md`): **ALL CLEAN.** The eight read-only ext2 and ext3 partitions are unchanged byte for byte.
+- D5/1 (`matrix/px-054d-d5-1-verify.txt`): **ALL CLEAN.** Every checker clean, every manifest file matched (p1 to p6 against `matrix/vcx`, p7 to p10 against `matrix/vcx-EF449`). The FAT32 dirty flag the OnePlus left on p8 and p9 was not there this time.
+
+| Run | Device | Build | Partition | Started | Write verify | bigwrite | Drive list during bigwrite | Fixtures |
+|---|---|---|---|---|---|---|---|---|
+| px-054a-d1fat32 | Pixel 7 Pro | `b5c79aa` | D1FAT32 | 19:51 | ALL PASSED | 2.2 GB at 5.76 MB/s; tree skipped, 571 MB free, needs 697 MB; read back 14.37 MB/s | 494, slowest 570 ms, 0 over 1 s | ALL 20995 MATCHED |
+| px-054a-d1exfat | Pixel 7 Pro | `b5c79aa` | D1EXFAT | 20:08 | ALL PASSED | 2.2 GB at 5.39 MB/s; tree skipped, 574 MB free, needs 696 MB; read back 12.07 MB/s | 476, slowest 549 ms, 0 over 1 s | ALL 20963 MATCHED |
+| px-054a-d1ntfs | Pixel 7 Pro | `b5c79aa` | D1NTFS | 20:26 | ALL PASSED | 2.2 GB at 2.20 MB/s; tree skipped, 608 MB free, needs 697 MB; read back 14.69 MB/s | 818, slowest 587 ms, 0 over 1 s | ALL 21052 MATCHED |
+| px-054a-d1ext4 | Pixel 7 Pro | `b5c79aa` | D1EXT4 | 20:50 | ALL PASSED | 2.2 GB at 4.07 MB/s; tree skipped, 468 MB free, needs 697 MB; read back 11.91 MB/s | 588, slowest 581 ms, 0 over 1 s | ALL 20854 MATCHED |
+| px-054a-d1blntfs | Pixel 7 Pro | `b5c79aa` | D1BLNTFS | 21:11 | ALL PASSED | 2.2 GB at 2.08 MB/s; tree skipped, 608 MB free, needs 697 MB; read back 11.18 MB/s | 908, slowest 594 ms, 0 over 1 s | ALL 20905 MATCHED |
+| px-054a-d1blexfat | Pixel 7 Pro | `b5c79aa` | D1BLEXFAT | 21:38 | ALL PASSED | 2.2 GB at 4.09 MB/s; tree skipped, 574 MB free, needs 696 MB; read back 9.60 MB/s | 612, slowest 550 ms, 0 over 1 s | ALL 20898 MATCHED |
+| px-054a-d1apfsci | Pixel 7 Pro | `b5c79aa` | D1APFSCI | 22:01 | SKIPPED (read-only) | SKIPPED (read-only) | no bigwrite | ALL 22129 MATCHED |
+| px-054a-d1apfscs | Pixel 7 Pro | `b5c79aa` | D1APFSCS | 22:15 | SKIPPED (read-only) | SKIPPED (read-only) | no bigwrite | ALL 22024 MATCHED |
+| px-054a-d1apfseci | Pixel 7 Pro | `b5c79aa` | D1APFSECI | 22:29 | SKIPPED (read-only) | SKIPPED (read-only) | no bigwrite | ALL 21777 MATCHED |
+| px-054a-d1apfsecs | Pixel 7 Pro | `b5c79aa` | D1APFSECS | 22:43 | SKIPPED (read-only) | SKIPPED (read-only) | no bigwrite | ALL 21911 MATCHED |
+| px-054b-d2vcfat32 | Pixel 7 Pro | `b5c79aa` | D2VCFAT32 | 15:58 | ALL PASSED | 2.2 GB at 7.38 MB/s; tree skipped, 571 MB free, needs 697 MB; read back 34.23 MB/s | 350, slowest 565 ms, 0 over 1 s | ALL 20958 MATCHED |
+| px-054b-d2vcexfat | Pixel 7 Pro | `b5c79aa` | D2VCEXFAT | 16:09 | ALL PASSED | 2.2 GB at 8.01 MB/s; tree skipped, 574 MB free, needs 696 MB; read back 34.45 MB/s | 288, slowest 544 ms, 0 over 1 s | ALL 20974 MATCHED |
+| px-054b-d2vcntfs | Pixel 7 Pro | `b5c79aa` | D2VCNTFS | 16:21 | ALL PASSED | 2.2 GB at 2.92 MB/s; tree skipped, 608 MB free, needs 697 MB; read back 27.71 MB/s | 610, slowest 582 ms, 0 over 1 s | ALL 20919 MATCHED |
+| px-054b-d2vcext4 | Pixel 7 Pro | `b5c79aa` | D2VCEXT4 | 16:39 | ALL PASSED | 2.2 GB at 5.50 MB/s; tree skipped, 467 MB free, needs 697 MB; read back 35.06 MB/s | 387, slowest 587 ms, 0 over 1 s | ALL 21071 MATCHED |
+| px-054b-d2l1fat32 | Pixel 7 Pro | `b5c79aa` | D2L1FAT32 | 16:52 | ALL PASSED | 2.2 GB at 7.79 MB/s; tree skipped, 569 MB free, needs 697 MB; read back 34.62 MB/s | 335, slowest 568 ms, 0 over 1 s | ALL 20953 MATCHED |
+| px-054b-d2l1ext4 | Pixel 7 Pro | `b5c79aa` | D2L1EXT4 | 17:03 | ALL PASSED | 2.2 GB at 5.49 MB/s; tree skipped, 465 MB free, needs 697 MB; read back 35.13 MB/s | 393, slowest 568 ms, 0 over 1 s | ALL 21024 MATCHED |
+| px-054b-d2l2exfat | Pixel 7 Pro | `b5c79aa` | D2L2EXFAT | 17:16 | ALL PASSED | 2.2 GB at 8.05 MB/s; tree skipped, 557 MB free, needs 696 MB; read back 33.79 MB/s | 287, slowest 542 ms, 0 over 1 s | ALL 20942 MATCHED |
+| px-054b-d2l4ext4 | Pixel 7 Pro | `b5c79aa` | D2L4EXT4 | 17:28 | ALL PASSED | 2.2 GB at 5.35 MB/s; tree skipped, 451 MB free, needs 697 MB; read back 34.07 MB/s | 404, slowest 567 ms, 0 over 1 s | ALL 20888 MATCHED |
+| px-054b-d2l4ntfs | Pixel 7 Pro | `b5c79aa` | D2L4NTFS | 17:41 | ALL PASSED | 2.2 GB at 2.82 MB/s; tree skipped, 592 MB free, needs 697 MB; read back 25.53 MB/s | 637, slowest 581 ms, 0 over 1 s | ALL 20927 MATCHED |
+| px-054b-d2blfat32 | Pixel 7 Pro | `b5c79aa` | D2BLFAT32 | 18:01 | ALL PASSED | 2.2 GB at 6.59 MB/s; tree skipped, 571 MB free, needs 697 MB; read back 34.85 MB/s | 381, slowest 565 ms, 0 over 1 s | ALL 20974 MATCHED |
+| px-054c-d3l1exfat | Pixel 7 Pro | `b5c79aa` | D3L1EXFAT | 18:41 | ALL PASSED | big file skipped, 572 MB free, needs 2200 MB; tree skipped, 572 MB free, needs 696 MB | 17, slowest 12 ms, 0 over 1 s | ALL 20929 MATCHED |
+| px-054c-d3l1ntfs | Pixel 7 Pro | `b5c79aa` | D3L1NTFS | 18:47 | ALL PASSED | 2.2 GB at 2.92 MB/s; tree skipped, 606 MB free, needs 697 MB; read back 27.04 MB/s | 614, slowest 568 ms, 0 over 1 s | ALL 20920 MATCHED |
+| px-054c-d3l2fat32 | Pixel 7 Pro | `b5c79aa` | D3L2FAT32 | 19:06 | ALL PASSED | 2.2 GB at 6.79 MB/s; tree skipped, 554 MB free, needs 697 MB; read back 32.73 MB/s | 378, slowest 566 ms, 0 over 1 s | ALL 20913 MATCHED |
+| px-054c-d3l2ntfs | Pixel 7 Pro | `b5c79aa` | D3L2NTFS | 19:18 | ALL PASSED | 2.2 GB at 2.94 MB/s; tree skipped, 592 MB free, needs 697 MB; read back 26.38 MB/s | 619, slowest 574 ms, 0 over 1 s | ALL 20925 MATCHED |
+| px-054c-d3l2ext4 | Pixel 7 Pro | `b5c79aa` | D3L2EXT4 | 19:37 | ALL PASSED | 2.2 GB at 5.07 MB/s; tree skipped, 451 MB free, needs 697 MB; read back 33.27 MB/s | 421, slowest 567 ms, 0 over 1 s | ALL 20939 MATCHED |
+| px-054c-d3l4fat32 | Pixel 7 Pro | `b5c79aa` | D3L4FAT32 | 19:50 | ALL PASSED | 2.2 GB at 4.87 MB/s; tree skipped, 554 MB free, needs 697 MB; read back 34.28 MB/s | 501, slowest 562 ms, 0 over 1 s | ALL 20972 MATCHED |
+| px-054c-d3l4exfat | Pixel 7 Pro | `b5c79aa` | D3L4EXFAT | 20:05 | ALL PASSED | 2.2 GB at 4.72 MB/s; tree skipped, 557 MB free, needs 696 MB; read back 33.69 MB/s | 434, slowest 542 ms, 0 over 1 s | ALL 20910 MATCHED |
+| px-054c-d3ext2 | Pixel 7 Pro | `b5c79aa` | D3EXT2 | 20:20 | SKIPPED (read-only) | SKIPPED (read-only) | no bigwrite | ALL 21821 MATCHED |
+| px-054c-d3ext3 | Pixel 7 Pro | `b5c79aa` | D3EXT3 | 20:25 | SKIPPED (read-only) | SKIPPED (read-only) | no bigwrite | ALL 21883 MATCHED |
+| px-054c-d3blntfs | Pixel 7 Pro | `b5c79aa` | D3BLNTFS | 20:29 | ALL PASSED | 2.2 GB at 2.88 MB/s; tree skipped, 608 MB free, needs 697 MB; read back 28.97 MB/s | 620, slowest 567 ms, 0 over 1 s | ALL 21023 MATCHED |
+| px-054d-vc_ats_argon_pim0 | Pixel 7 Pro | `b5c79aa` | VC_ATS_ARGON_PIM0 | 22:06 | ALL PASSED | 2.2 GB at 5.16 MB/s; read back 27.32 MB/s; 251 tree files verified after remount | 573, slowest 512 ms, 0 over 1 s | ALL 20902 MATCHED |
+| px-054d-vc_sta_argon_pim1 | Pixel 7 Pro | `b5c79aa` | VC_STA_ARGON_PIM1 | 22:21 | ALL PASSED | 2.2 GB at 6.70 MB/s; read back 27.27 MB/s; 245 tree files verified after remount | 405, slowest 513 ms, 0 over 1 s | ALL 20965 MATCHED |
+| px-054d-vc_two_sha512_pim0 | Pixel 7 Pro | `b5c79aa` | VC_TWO_SHA512_PIM0 | 22:35 | ALL PASSED | 2.2 GB at 2.82 MB/s; read back 27.78 MB/s; 251 tree files verified after remount | 1241, slowest 513 ms, 0 over 1 s | ALL 20962 MATCHED |
+| px-054d-vc_at_argon_pim1 | Pixel 7 Pro | `b5c79aa` | VC_AT_ARGON_PIM1 | 23:08 | ALL PASSED | 2.2 GB at 6.55 MB/s; read back 32.27 MB/s; 245 tree files verified after remount | 394, slowest 512 ms, 0 over 1 s | ALL 20950 MATCHED |
+| px-054d-vc_sa_sha512_pim1 | Pixel 7 Pro | `b5c79aa` | VC_SA_SHA512_PIM1 | 23:23 | ALL PASSED | 2.2 GB at 5.75 MB/s; read back 29.83 MB/s; 251 tree files verified after remount | 514, slowest 511 ms, 0 over 1 s | ALL 20027 MATCHED |
+| px-054d-vc_ts_argon_pim31 | Pixel 7 Pro | `b5c79aa` | VC_TS_ARGON_PIM31 | 23:36 | ALL PASSED | 2.2 GB at 7.80 MB/s; read back 30.82 MB/s; 245 tree files verified after remount | 457, slowest 511 ms, 0 over 1 s | ALL 20984 MATCHED |
+| px-054d-fmt_exfat | Pixel 7 Pro | `b5c79aa` | FMT_EXFAT | 23:57 | ALL PASSED | not run (FMT/ENC_TO partition) | no bigwrite | ALL 20027 MATCHED |
+| px-054d-fmt_fat32 | Pixel 7 Pro | `b5c79aa` | FMT_FAT32 | 00:02 | ALL PASSED | not run (FMT/ENC_TO partition) | no bigwrite | ALL 20027 MATCHED |
+| px-054d-enc_to_exfat | Pixel 7 Pro | `b5c79aa` | ENC_TO_EXFAT | 00:07 | ALL PASSED | not run (FMT/ENC_TO partition) | no bigwrite | ALL 20027 MATCHED |
+| px-054d-enc_to_fat32 | Pixel 7 Pro | `b5c79aa` | ENC_TO_FAT32 | 00:10 | ALL PASSED | not run (FMT/ENC_TO partition) | no bigwrite | ALL 20027 MATCHED |
+| px-054e-d4l1ext2 | Pixel 7 Pro | `b5c79aa` | D4L1EXT2 | 07:22 | SKIPPED (read-only) | SKIPPED (read-only) | no bigwrite | ALL 21870 MATCHED |
+| px-054e-d4l1ext3 | Pixel 7 Pro | `b5c79aa` | D4L1EXT3 | 07:27 | SKIPPED (read-only) | SKIPPED (read-only) | no bigwrite | ALL 21875 MATCHED |
+| px-054e-d4l2ext2 | Pixel 7 Pro | `b5c79aa` | D4L2EXT2 | 07:31 | SKIPPED (read-only) | SKIPPED (read-only) | no bigwrite | ALL 21678 MATCHED |
+| px-054e-d4l2ext3 | Pixel 7 Pro | `b5c79aa` | D4L2EXT3 | 07:36 | SKIPPED (read-only) | SKIPPED (read-only) | no bigwrite | ALL 21971 MATCHED |
+| px-054e-d4l4ext2 | Pixel 7 Pro | `b5c79aa` | D4L4EXT2 | 07:41 | SKIPPED (read-only) | SKIPPED (read-only) | no bigwrite | ALL 21916 MATCHED |
+| px-054e-d4l4ext3 | Pixel 7 Pro | `b5c79aa` | D4L4EXT3 | 07:46 | SKIPPED (read-only) | SKIPPED (read-only) | no bigwrite | ALL 21846 MATCHED |
+| px-054e-d4vcext2 | Pixel 7 Pro | `b5c79aa` | D4VCEXT2 | 07:50 | SKIPPED (read-only) | SKIPPED (read-only) | no bigwrite | ALL 21948 MATCHED |
+| px-054e-d4vcext3 | Pixel 7 Pro | `b5c79aa` | D4VCEXT3 | 07:55 | SKIPPED (read-only) | SKIPPED (read-only) | no bigwrite | ALL 21956 MATCHED |
+| px-054e-d4blfat32 | Pixel 7 Pro | `b5c79aa` | D4BLFAT32 | 08:00 | ALL PASSED | 2.2 GB at 6.85 MB/s; tree skipped, 571 MB free, needs 697 MB; read back 33.21 MB/s | 381, slowest 537 ms, 0 over 1 s | ALL 20918 MATCHED |
+| px-054e-d4blexfat | Pixel 7 Pro | `b5c79aa` | D4BLEXFAT | 08:11 | ALL PASSED | 2.2 GB at 8.03 MB/s; tree skipped, 574 MB free, needs 696 MB; read back 34.55 MB/s | 289, slowest 514 ms, 0 over 1 s | ALL 21073 MATCHED |
+
+## 2026-11-22: 0.5.4 on the OnePlus 7, all five drives
+
+Benchmark build `0.5.4-bench (53)` on the OnePlus 7 (GM1901, Android 16, SDK 36), `KEEP_AWAKE=1`. Sections as above, one partition per run via `sequence_runs.sh`. `Started` is the phone's clock. No USB resets were logged. Three builds ran:
+- D5/1's first three partitions ran on `b65821c` (op7-054b). The other seven ran on `475972e`, the drive-list ANR fix, installed between partitions once the app was idle (op7-054c).
+- D1FAT32 ran on a build labelled `959ac22-dirty` (op7-054d). The uncommitted change was the `testdata/provider_*` E2E case files, committed next as `b5c79aa`, which changes nothing else. So the APK's app code was `b5c79aa`'s.
+- Everything else ran on `b5c79aa`.
+
+The Auto mount fingerprint prompt covered the Eject button twice, and the sequence left the drive mounted. `eject_drive.sh` now dismisses the prompt with Back, and the later ejects worked.
+
+Host check after each drive:
+- D5/1 (`matrix/op7-054c-d5-1-verify.txt`, then `matrix/op7-054c-d5-1-verify-p7-10.txt`): **every manifest file matched on all ten partitions.** The first pass checked p7 to p10 against the stale `matrix/vcx` manifests and reported mismatches that belonged to the manifests; the second used `matrix/vcx-EF449`, and 20,027 of 20,027 matched on each. p1 to p7 and p10 checked clean. p8 and p9 (both FAT32) gave `fsck.fat` rc=1 for the dirty flag and nothing else. Android mounted the four plain partitions after the Eject (public:8,103 to 8,106), which is what sets that flag. The owner accepted it.
+- D1 (`matrix/d1-after-op7-054e.md`): **ALL CLEAN.**
+- D4 (`matrix/d4-after-op7-054f.md`): **ALL CLEAN.**
+- D2/2 (`matrix/d2copy-after-op7-054g.md`): **ALL CLEAN.**
+- D3 (`matrix/d3-after-op7-054h.md`): **8 of 10 CLEAN.** D3EXT2 and D3EXT3 FAILED with 1 MiB changed (chunk 0) on partitions the app never writes. Their superblocks read last mount 11-22 22:14:00, last write 22:14:06 and 22:14:07, mount count 1 and no last-mounted path. Android's vold (LineageOS 23.2) mounted them when the app released the drive at the 22:14 Eject (public:8,104 and 8,105 are p8 and p9), the same thing seen on 11-19. `e2fsck` clean, every fixture matched. The owner accepted it. The two partitions were not restored, so later D3 runs show the same 1 MiB.
+
+| Run | Device | Build | Partition | Started | Write verify | bigwrite | Drive list during bigwrite | Fixtures |
+|---|---|---|---|---|---|---|---|---|
+| op7-054b-vc_ats_argon_pim0 | OnePlus 7 | `b65821c` | VC_ATS_ARGON_PIM0 | 07:45 | ALL PASSED | 2.2 GB at 5.16 MB/s; read back 13.38 MB/s; 251 tree files verified after remount | not in this build | ALL 20902 MATCHED |
+| op7-054b-vc_sta_argon_pim1 | OnePlus 7 | `b65821c` | VC_STA_ARGON_PIM1 | 08:04 | ALL PASSED | 2.2 GB at 5.28 MB/s; read back 12.25 MB/s; 245 tree files verified after remount | not in this build | ALL 20965 MATCHED |
+| op7-054b-vc_two_sha512_pim0 | OnePlus 7 | `b65821c` | VC_TWO_SHA512_PIM0 | 08:24 | ALL PASSED | 2.2 GB at 2.92 MB/s; read back 19.99 MB/s; 251 tree files verified after remount | not in this build | ALL 20962 MATCHED |
+| op7-054c-vc_at_argon_pim1 | OnePlus 7 | `475972e` | VC_AT_ARGON_PIM1 | 09:20 | ALL PASSED | 2.2 GB at 5.81 MB/s; read back 14.17 MB/s; 245 tree files verified after remount | not in this build | ALL 20950 MATCHED |
+| op7-054c-vc_sa_sha512_pim1 | OnePlus 7 | `475972e` | VC_SA_SHA512_PIM1 | 09:40 | ALL PASSED | 2.2 GB at 5.11 MB/s; read back 13.86 MB/s; 251 tree files verified after remount | not in this build | ALL 20027 MATCHED |
+| op7-054c-vc_ts_argon_pim31 | OnePlus 7 | `475972e` | VC_TS_ARGON_PIM31 | 09:58 | ALL PASSED | 2.2 GB at 6.32 MB/s; read back 13.42 MB/s; 245 tree files verified after remount | not in this build | ALL 20984 MATCHED |
+| op7-054c-fmt_exfat | OnePlus 7 | `475972e` | FMT_EXFAT | 10:24 | ALL PASSED | not run (FMT/ENC_TO partition) | no bigwrite | ALL 20027 MATCHED |
+| op7-054c-fmt_fat32 | OnePlus 7 | `475972e` | FMT_FAT32 | 10:30 | ALL PASSED | not run (FMT/ENC_TO partition) | no bigwrite | ALL 20027 MATCHED |
+| op7-054c-enc_to_exfat | OnePlus 7 | `475972e` | ENC_TO_EXFAT | 10:35 | ALL PASSED | not run (FMT/ENC_TO partition) | no bigwrite | ALL 20027 MATCHED |
+| op7-054c-enc_to_fat32 | OnePlus 7 | `475972e` | ENC_TO_FAT32 | 10:40 | ALL PASSED | not run (FMT/ENC_TO partition) | no bigwrite | ALL 20027 MATCHED |
+| op7-054d-d1fat32 | OnePlus 7 | `959ac22-dirty` | D1FAT32 | 11:26 | ALL PASSED | 2.2 GB at 8.51 MB/s; tree skipped, 571 MB free, needs 697 MB; read back 22.74 MB/s | 341, slowest 518 ms, 0 over 1 s | ALL 20995 MATCHED |
+| op7-054e-d1exfat | OnePlus 7 | `b5c79aa` | D1EXFAT | 11:40 | ALL PASSED | 2.2 GB at 9.88 MB/s; tree skipped, 574 MB free, needs 696 MB; read back 20.72 MB/s | 282, slowest 514 ms, 0 over 1 s | ALL 20963 MATCHED |
+| op7-054e-d1ntfs | OnePlus 7 | `b5c79aa` | D1NTFS | 11:52 | ALL PASSED | 2.2 GB at 3.05 MB/s; tree skipped, 608 MB free, needs 697 MB; read back 26.44 MB/s | 589, slowest 524 ms, 0 over 1 s | ALL 21052 MATCHED |
+| op7-054e-d1ext4 | OnePlus 7 | `b5c79aa` | D1EXT4 | 12:09 | ALL PASSED | 2.2 GB at 6.27 MB/s; tree skipped, 468 MB free, needs 697 MB; read back 20.74 MB/s | 371, slowest 519 ms, 0 over 1 s | ALL 20854 MATCHED |
+| op7-054e-d1blntfs | OnePlus 7 | `b5c79aa` | D1BLNTFS | 12:22 | ALL PASSED | 2.2 GB at 2.92 MB/s; tree skipped, 608 MB free, needs 697 MB; read back 20.49 MB/s | 614, slowest 1019 ms, 24 over 1 s | ALL 20905 MATCHED |
+| op7-054e-d1blexfat | OnePlus 7 | `b5c79aa` | D1BLEXFAT | 12:41 | ALL PASSED | 2.2 GB at 7.34 MB/s; tree skipped, 574 MB free, needs 696 MB; read back 16.04 MB/s | 377, slowest 515 ms, 0 over 1 s | ALL 20898 MATCHED |
+| op7-054e-d1apfsci | OnePlus 7 | `b5c79aa` | D1APFSCI | 12:56 | SKIPPED (read-only) | SKIPPED (read-only) | no bigwrite | ALL 22129 MATCHED |
+| op7-054e-d1apfscs | OnePlus 7 | `b5c79aa` | D1APFSCS | 13:05 | SKIPPED (read-only) | SKIPPED (read-only) | no bigwrite | ALL 22024 MATCHED |
+| op7-054e-d1apfseci | OnePlus 7 | `b5c79aa` | D1APFSECI | 13:15 | SKIPPED (read-only) | SKIPPED (read-only) | no bigwrite | ALL 21777 MATCHED |
+| op7-054e-d1apfsecs | OnePlus 7 | `b5c79aa` | D1APFSECS | 13:26 | SKIPPED (read-only) | SKIPPED (read-only) | no bigwrite | ALL 21911 MATCHED |
+| op7-054e-d1fat32 | OnePlus 7 | `b5c79aa` | D1FAT32 | 13:37 | ALL PASSED | 2.2 GB at 8.90 MB/s; tree skipped, 571 MB free, needs 697 MB; read back 22.50 MB/s | 331, slowest 519 ms, 0 over 1 s | ALL 20995 MATCHED |
+| op7-054f-d4l1ext2 | OnePlus 7 | `b5c79aa` | D4L1EXT2 | 14:22 | SKIPPED (read-only) | SKIPPED (read-only) | no bigwrite | ALL 21870 MATCHED |
+| op7-054f-d4l1ext3 | OnePlus 7 | `b5c79aa` | D4L1EXT3 | 14:28 | SKIPPED (read-only) | SKIPPED (read-only) | no bigwrite | ALL 21875 MATCHED |
+| op7-054f-d4l2ext2 | OnePlus 7 | `b5c79aa` | D4L2EXT2 | 14:35 | SKIPPED (read-only) | SKIPPED (read-only) | no bigwrite | ALL 21678 MATCHED |
+| op7-054f-d4l2ext3 | OnePlus 7 | `b5c79aa` | D4L2EXT3 | 14:42 | SKIPPED (read-only) | SKIPPED (read-only) | no bigwrite | ALL 21971 MATCHED |
+| op7-054f-d4l4ext2 | OnePlus 7 | `b5c79aa` | D4L4EXT2 | 14:48 | SKIPPED (read-only) | SKIPPED (read-only) | no bigwrite | ALL 21916 MATCHED |
+| op7-054f-d4l4ext3 | OnePlus 7 | `b5c79aa` | D4L4EXT3 | 14:55 | SKIPPED (read-only) | SKIPPED (read-only) | no bigwrite | ALL 21846 MATCHED |
+| op7-054f-d4vcext2 | OnePlus 7 | `b5c79aa` | D4VCEXT2 | 15:02 | SKIPPED (read-only) | SKIPPED (read-only) | no bigwrite | ALL 21948 MATCHED |
+| op7-054f-d4vcext3 | OnePlus 7 | `b5c79aa` | D4VCEXT3 | 15:08 | SKIPPED (read-only) | SKIPPED (read-only) | no bigwrite | ALL 21956 MATCHED |
+| op7-054f-d4blfat32 | OnePlus 7 | `b5c79aa` | D4BLFAT32 | 15:15 | ALL PASSED | 2.2 GB at 6.65 MB/s; tree skipped, 571 MB free, needs 697 MB; read back 16.92 MB/s | 466, slowest 513 ms, 0 over 1 s | ALL 20918 MATCHED |
+| op7-054f-d4blexfat | OnePlus 7 | `b5c79aa` | D4BLEXFAT | 15:31 | ALL PASSED | 2.2 GB at 7.16 MB/s; tree skipped, 574 MB free, needs 696 MB; read back 16.89 MB/s | 402, slowest 511 ms, 0 over 1 s | ALL 21073 MATCHED |
+| op7-054g-d2vcfat32 | OnePlus 7 | `b5c79aa` | D2VCFAT32 | 16:41 | ALL PASSED | 2.2 GB at 7.59 MB/s; tree skipped, 571 MB free, needs 697 MB; read back 17.64 MB/s | 406, slowest 517 ms, 0 over 1 s | ALL 20958 MATCHED |
+| op7-054g-d2vcexfat | OnePlus 7 | `b5c79aa` | D2VCEXFAT | 16:55 | ALL PASSED | 2.2 GB at 7.19 MB/s; tree skipped, 574 MB free, needs 696 MB; read back 16.06 MB/s | 390, slowest 514 ms, 0 over 1 s | ALL 20974 MATCHED |
+| op7-054g-d2vcntfs | OnePlus 7 | `b5c79aa` | D2VCNTFS | 17:11 | ALL PASSED | 2.2 GB at 3.02 MB/s; tree skipped, 608 MB free, needs 697 MB; read back 19.26 MB/s | 625, slowest 1016 ms, 19 over 1 s | ALL 20919 MATCHED |
+| op7-054g-d2vcext4 | OnePlus 7 | `b5c79aa` | D2VCEXT4 | 17:31 | ALL PASSED | 2.2 GB at 5.86 MB/s; tree skipped, 467 MB free, needs 697 MB; read back 16.24 MB/s | 445, slowest 522 ms, 0 over 1 s | ALL 21071 MATCHED |
+| op7-054g-d2l1fat32 | OnePlus 7 | `b5c79aa` | D2L1FAT32 | 17:47 | ALL PASSED | 2.2 GB at 7.52 MB/s; tree skipped, 569 MB free, needs 697 MB; read back 17.78 MB/s | 412, slowest 519 ms, 0 over 1 s | ALL 20953 MATCHED |
+| op7-054g-d2l1ext4 | OnePlus 7 | `b5c79aa` | D2L1EXT4 | 18:00 | ALL PASSED | 2.2 GB at 5.86 MB/s; tree skipped, 465 MB free, needs 697 MB; read back 16.21 MB/s | 448, slowest 527 ms, 0 over 1 s | ALL 21024 MATCHED |
+| op7-054g-d2l2exfat | OnePlus 7 | `b5c79aa` | D2L2EXFAT | 18:16 | ALL PASSED | 2.2 GB at 7.33 MB/s; tree skipped, 557 MB free, needs 696 MB; read back 16.01 MB/s | 388, slowest 517 ms, 0 over 1 s | ALL 20942 MATCHED |
+| op7-054g-d2l4ext4 | OnePlus 7 | `b5c79aa` | D2L4EXT4 | 18:32 | ALL PASSED | 2.2 GB at 5.60 MB/s; tree skipped, 451 MB free, needs 697 MB; read back 16.16 MB/s | 458, slowest 526 ms, 0 over 1 s | ALL 20888 MATCHED |
+| op7-054g-d2l4ntfs | OnePlus 7 | `b5c79aa` | D2L4NTFS | 18:48 | ALL PASSED | 2.2 GB at 2.95 MB/s; tree skipped, 592 MB free, needs 697 MB; read back 19.11 MB/s | 651, slowest 519 ms, 0 over 1 s | ALL 20927 MATCHED |
+| op7-054g-d2blfat32 | OnePlus 7 | `b5c79aa` | D2BLFAT32 | 19:08 | ALL PASSED | 2.2 GB at 6.95 MB/s; tree skipped, 571 MB free, needs 697 MB; read back 19.02 MB/s | 427, slowest 517 ms, 0 over 1 s | ALL 20974 MATCHED |
+| op7-054h-d3l1exfat | OnePlus 7 | `b5c79aa` | D3L1EXFAT | 19:45 | ALL PASSED | big file skipped, 572 MB free, needs 2200 MB; tree skipped, 572 MB free, needs 696 MB | 22, slowest 12 ms, 0 over 1 s | ALL 20929 MATCHED |
+| op7-054h-d3l1ntfs | OnePlus 7 | `b5c79aa` | D3L1NTFS | 19:54 | ALL PASSED | 2.2 GB at 3.00 MB/s; tree skipped, 606 MB free, needs 697 MB; read back 19.26 MB/s | 649, slowest 521 ms, 0 over 1 s | ALL 20920 MATCHED |
+| op7-054h-d3l2fat32 | OnePlus 7 | `b5c79aa` | D3L2FAT32 | 20:14 | ALL PASSED | 2.2 GB at 6.72 MB/s; tree skipped, 554 MB free, needs 697 MB; read back 17.37 MB/s | 450, slowest 521 ms, 0 over 1 s | ALL 20913 MATCHED |
+| op7-054h-d3l2ntfs | OnePlus 7 | `b5c79aa` | D3L2NTFS | 20:29 | ALL PASSED | 2.2 GB at 2.97 MB/s; tree skipped, 592 MB free, needs 697 MB; read back 18.81 MB/s | 651, slowest 525 ms, 0 over 1 s | ALL 20925 MATCHED |
+| op7-054h-d3l2ext4 | OnePlus 7 | `b5c79aa` | D3L2EXT4 | 20:49 | ALL PASSED | 2.2 GB at 5.38 MB/s; tree skipped, 451 MB free, needs 697 MB; read back 16.24 MB/s | 471, slowest 523 ms, 0 over 1 s | ALL 20939 MATCHED |
+| op7-054h-d3l4fat32 | OnePlus 7 | `b5c79aa` | D3L4FAT32 | 21:06 | ALL PASSED | 2.2 GB at 4.98 MB/s; tree skipped, 554 MB free, needs 697 MB; read back 18.27 MB/s | 556, slowest 519 ms, 0 over 1 s | ALL 20972 MATCHED |
+| op7-054h-d3l4exfat | OnePlus 7 | `b5c79aa` | D3L4EXFAT | 21:23 | ALL PASSED | 2.2 GB at 4.80 MB/s; tree skipped, 557 MB free, needs 696 MB; read back 16.16 MB/s | 503, slowest 514 ms, 0 over 1 s | ALL 20910 MATCHED |
+| op7-054h-d3ext2 | OnePlus 7 | `b5c79aa` | D3EXT2 | 21:43 | SKIPPED (read-only) | SKIPPED (read-only) | no bigwrite | ALL 21821 MATCHED |
+| op7-054h-d3ext3 | OnePlus 7 | `b5c79aa` | D3EXT3 | 21:48 | SKIPPED (read-only) | SKIPPED (read-only) | no bigwrite | ALL 21883 MATCHED |
+| op7-054h-d3blntfs | OnePlus 7 | `b5c79aa` | D3BLNTFS | 21:54 | ALL PASSED | 2.2 GB at 2.88 MB/s; tree skipped, 608 MB free, needs 697 MB; read back 20.39 MB/s | 658, slowest 527 ms, 0 over 1 s | ALL 21023 MATCHED |
+
+## 2026-11-21 to 11-23: 0.5.4 on the Galaxy Tab A9+, all five drives
+
+Benchmark build `0.5.4-bench (53)` on the Galaxy Tab A9+ (SM-X210, Android 16, SDK 36). Sections as above, one partition per run via `sequence_runs.sh`. `Started` is the Tab's clock. Builds: `b65821c` for D1 and D2/2's first seven partitions (tab-054b), `ccfa3c7` for D2/2's last four (tab-054c), and `b5c79aa` for D3, D5/1 and D4 (tab-054c, tab-054d, tab-054e). The app logged USB resets and recovered from each: 21 in tab-054b, 12 in tab-054c, 1 in tab-054d, none in tab-054e.
+
+**D2L2EXFAT on `b65821c` FAILED bigwrite.** `big.bin` read back after the remount differed at byte 1,443,520,512. A read at 23:17 needed a USB reset, and the replay wrote the last 904 KiB again from block 77,716,137. The laptop read-back found exactly one wrong 512-byte sector, device sector 77,716,136, the one just before the replay window and in the same 4 KiB unit. exFAT's fsck was clean and all 20,942 fixtures matched, so only the keystream check could see it. `068d7c7` fixed it, and D2L2EXFAT has passed since on `ccfa3c7` here and on `b5c79aa` on the OnePlus 7 and the Pixel 7 Pro.
+
+Two runs produced no result and have no row: D2L4EXT4 on 11-21 at 23:28, which did not finish, and D3L1EXFAT on 11-22 at 07:36, killed by the second ANR while it deleted the old `big.bin`. The Tab's sequences logged "no sign of the eject after 60 s" each time. Before each unplug the app held no drive and Android had nothing mounted.
+
+Host check after each drive:
+- D1 (`matrix/d1-after-tab-054b.md`): **ALL CLEAN.**
+- D2/2 after the `b65821c` runs (`matrix/d2copy-after-tab-054b.md`): **1 of 10 NOT CLEAN**, D2L2EXFAT's `big.bin` DIFFERS as above. Checker clean, fixtures matched.
+- D2/2 after the `ccfa3c7` runs (`matrix/d2copy-after-tab-054c.md`): **ALL CLEAN.** D2L2EXFAT's `big.bin` was written again and matched.
+- D3 (`matrix/d3-after-tab-054c.md`): **ALL CLEAN.**
+- D5/1 (`matrix/tab-054d-d5-1-verify.txt`): **ALL CLEAN.**
+- D4 (`matrix/d4-after-tab-054e.md`): **ALL CLEAN.**
+
+| Run | Device | Build | Partition | Started | Write verify | bigwrite | Drive list during bigwrite | Fixtures |
+|---|---|---|---|---|---|---|---|---|
+| tab-054b-d1fat32 | Galaxy Tab A9+ | `b65821c` | D1FAT32 | 17:25 | ALL PASSED | 2.2 GB at 6.86 MB/s; tree skipped, 571 MB free, needs 697 MB; read back 20.17 MB/s | not in this build | ALL 20995 MATCHED |
+| tab-054b-d1exfat | Galaxy Tab A9+ | `b65821c` | D1EXFAT | 17:38 | ALL PASSED | 2.2 GB at 6.18 MB/s; tree skipped, 574 MB free, needs 696 MB; read back 17.63 MB/s | not in this build | ALL 20963 MATCHED |
+| tab-054b-d1ntfs | Galaxy Tab A9+ | `b65821c` | D1NTFS | 17:53 | ALL PASSED | 2.2 GB at 2.23 MB/s; tree skipped, 608 MB free, needs 697 MB; read back 20.87 MB/s | not in this build | ALL 21052 MATCHED |
+| tab-054b-d1ext4 | Galaxy Tab A9+ | `b65821c` | D1EXT4 | 18:16 | ALL PASSED | 2.2 GB at 4.30 MB/s; tree skipped, 468 MB free, needs 697 MB; read back 17.42 MB/s | not in this build | ALL 20854 MATCHED |
+| tab-054b-d1blntfs | Galaxy Tab A9+ | `b65821c` | D1BLNTFS | 18:33 | ALL PASSED | 2.2 GB at 2.15 MB/s; tree skipped, 608 MB free, needs 697 MB; read back 14.21 MB/s | not in this build | ALL 20905 MATCHED |
+| tab-054b-d1blexfat | Galaxy Tab A9+ | `b65821c` | D1BLEXFAT | 18:59 | ALL PASSED | 2.2 GB at 4.54 MB/s; tree skipped, 574 MB free, needs 696 MB; read back 10.59 MB/s | not in this build | ALL 20898 MATCHED |
+| tab-054b-d1apfsci | Galaxy Tab A9+ | `b65821c` | D1APFSCI | 19:19 | SKIPPED (read-only) | SKIPPED (read-only) | no bigwrite | ALL 22129 MATCHED |
+| tab-054b-d1apfscs | Galaxy Tab A9+ | `b65821c` | D1APFSCS | 19:31 | SKIPPED (read-only) | SKIPPED (read-only) | no bigwrite | ALL 22024 MATCHED |
+| tab-054b-d1apfseci | Galaxy Tab A9+ | `b65821c` | D1APFSECI | 19:44 | SKIPPED (read-only) | SKIPPED (read-only) | no bigwrite | ALL 21777 MATCHED |
+| tab-054b-d1apfsecs | Galaxy Tab A9+ | `b65821c` | D1APFSECS | 19:58 | SKIPPED (read-only) | SKIPPED (read-only) | no bigwrite | ALL 21911 MATCHED |
+| tab-054b-d2vcfat32 | Galaxy Tab A9+ | `b65821c` | D2VCFAT32 | 21:00 | ALL PASSED | 2.2 GB at 5.04 MB/s; tree skipped, 571 MB free, needs 697 MB; read back 12.38 MB/s | not in this build | ALL 20958 MATCHED |
+| tab-054b-d2vcexfat | Galaxy Tab A9+ | `b65821c` | D2VCEXFAT | 21:19 | ALL PASSED | 2.2 GB at 4.69 MB/s; tree skipped, 574 MB free, needs 696 MB; read back 10.78 MB/s | not in this build | ALL 20974 MATCHED |
+| tab-054b-d2vcntfs | Galaxy Tab A9+ | `b65821c` | D2VCNTFS | 21:40 | ALL PASSED | 2.2 GB at 2.15 MB/s; tree skipped, 608 MB free, needs 697 MB; read back 14.08 MB/s | not in this build | ALL 20919 MATCHED |
+| tab-054b-d2vcext4 | Galaxy Tab A9+ | `b65821c` | D2VCEXT4 | 22:07 | ALL PASSED | 2.2 GB at 4.17 MB/s; tree skipped, 467 MB free, needs 697 MB; read back 11.83 MB/s | not in this build | ALL 21071 MATCHED |
+| tab-054b-d2l1fat32 | Galaxy Tab A9+ | `b65821c` | D2L1FAT32 | 22:28 | ALL PASSED | 2.2 GB at 5.14 MB/s; tree skipped, 569 MB free, needs 697 MB; read back 12.26 MB/s | not in this build | ALL 20953 MATCHED |
+| tab-054b-d2l1ext4 | Galaxy Tab A9+ | `b65821c` | D2L1EXT4 | 22:47 | ALL PASSED | 2.2 GB at 3.78 MB/s; tree skipped, 465 MB free, needs 697 MB; read back 10.78 MB/s | not in this build | ALL 21024 MATCHED |
+| tab-054b-d2l2exfat | Galaxy Tab A9+ | `b65821c` | D2L2EXFAT | 23:09 | ALL PASSED | 2.2 GB at 4.78 MB/s; tree skipped, 558 MB free, needs 696 MB; read back **DIFFERS at byte 1443520512**; **FAILED** | not in this build | ALL 20942 MATCHED |
+| tab-054c-d2l2exfat | Galaxy Tab A9+ | `ccfa3c7` | D2L2EXFAT | 10:11 | ALL PASSED | 2.2 GB at 4.71 MB/s; tree skipped, 557 MB free, needs 696 MB; read back 10.57 MB/s | 561, slowest 522 ms, 0 over 1 s | ALL 20942 MATCHED |
+| tab-054c-d2l4ext4 | Galaxy Tab A9+ | `ccfa3c7` | D2L4EXT4 | 10:32 | ALL PASSED | 2.2 GB at 3.20 MB/s; tree skipped, 451 MB free, needs 697 MB; read back 9.67 MB/s | 772, slowest 540 ms, 0 over 1 s | ALL 20888 MATCHED |
+| tab-054c-d2l4ntfs | Galaxy Tab A9+ | `ccfa3c7` | D2L4NTFS | 10:57 | ALL PASSED | 2.2 GB at 2.25 MB/s; tree skipped, 592 MB free, needs 697 MB; read back 14.66 MB/s | 839, slowest 536 ms, 0 over 1 s | ALL 20927 MATCHED |
+| tab-054c-d2blfat32 | Galaxy Tab A9+ | `ccfa3c7` | D2BLFAT32 | 11:23 | ALL PASSED | 2.2 GB at 4.95 MB/s; tree skipped, 571 MB free, needs 697 MB; read back 14.62 MB/s | 575, slowest 523 ms, 0 over 1 s | ALL 20974 MATCHED |
+| tab-054c-d3l1exfat | Galaxy Tab A9+ | `b5c79aa` | D3L1EXFAT | 14:17 | ALL PASSED | big file skipped, 572 MB free, needs 2200 MB; tree skipped, 572 MB free, needs 696 MB | 22, slowest 24 ms, 0 over 1 s | ALL 20929 MATCHED |
+| tab-054c-d3l1ntfs | Galaxy Tab A9+ | `b5c79aa` | D3L1NTFS | 14:27 | ALL PASSED | 2.2 GB at 2.27 MB/s; tree skipped, 606 MB free, needs 697 MB; read back 14.77 MB/s | 832, slowest 539 ms, 0 over 1 s | ALL 20920 MATCHED |
+| tab-054c-d3l2fat32 | Galaxy Tab A9+ | `b5c79aa` | D3L2FAT32 | 14:52 | ALL PASSED | 2.2 GB at 4.93 MB/s; tree skipped, 554 MB free, needs 697 MB; read back 11.63 MB/s | 606, slowest 529 ms, 0 over 1 s | ALL 20913 MATCHED |
+| tab-054c-d3l2ntfs | Galaxy Tab A9+ | `b5c79aa` | D3L2NTFS | 15:11 | ALL PASSED | 2.2 GB at 2.25 MB/s; tree skipped, 592 MB free, needs 697 MB; read back 14.70 MB/s | 837, slowest 537 ms, 0 over 1 s | ALL 20925 MATCHED |
+| tab-054c-d3l2ext4 | Galaxy Tab A9+ | `b5c79aa` | D3L2EXT4 | 15:37 | ALL PASSED | 2.2 GB at 4.04 MB/s; tree skipped, 451 MB free, needs 697 MB; read back 11.86 MB/s | 617, slowest 526 ms, 0 over 1 s | ALL 20939 MATCHED |
+| tab-054c-d3l4fat32 | Galaxy Tab A9+ | `b5c79aa` | D3L4FAT32 | 15:58 | ALL PASSED | 2.2 GB at 3.61 MB/s; tree skipped, 554 MB free, needs 697 MB; read back 13.17 MB/s | 753, slowest 525 ms, 0 over 1 s | ALL 20972 MATCHED |
+| tab-054c-d3l4exfat | Galaxy Tab A9+ | `b5c79aa` | D3L4EXFAT | 16:20 | ALL PASSED | 2.2 GB at 3.32 MB/s; tree skipped, 557 MB free, needs 696 MB; read back 10.75 MB/s | 708, slowest 538 ms, 0 over 1 s | ALL 20910 MATCHED |
+| tab-054c-d3ext2 | Galaxy Tab A9+ | `b5c79aa` | D3EXT2 | 16:45 | SKIPPED (read-only) | SKIPPED (read-only) | no bigwrite | ALL 21821 MATCHED |
+| tab-054c-d3ext3 | Galaxy Tab A9+ | `b5c79aa` | D3EXT3 | 16:51 | SKIPPED (read-only) | SKIPPED (read-only) | no bigwrite | ALL 21883 MATCHED |
+| tab-054c-d3blntfs | Galaxy Tab A9+ | `b5c79aa` | D3BLNTFS | 16:57 | ALL PASSED | 2.2 GB at 2.06 MB/s; tree skipped, 608 MB free, needs 697 MB; read back 14.03 MB/s | 903, slowest 535 ms, 0 over 1 s | ALL 21023 MATCHED |
+| tab-054d-vc_ats_argon_pim0 | Galaxy Tab A9+ | `b5c79aa` | VC_ATS_ARGON_PIM0 | 18:11 | ALL PASSED | 2.2 GB at 4.06 MB/s; read back 9.49 MB/s; 251 tree files verified after remount | 870, slowest 509 ms, 0 over 1 s | ALL 20902 MATCHED |
+| tab-054d-vc_sta_argon_pim1 | Galaxy Tab A9+ | `b5c79aa` | VC_STA_ARGON_PIM1 | 18:36 | ALL PASSED | 2.2 GB at 4.36 MB/s; read back 9.40 MB/s; 245 tree files verified after remount | 700, slowest 509 ms, 0 over 1 s | ALL 20965 MATCHED |
+| tab-054d-vc_two_sha512_pim0 | Galaxy Tab A9+ | `b5c79aa` | VC_TWO_SHA512_PIM0 | 19:00 | ALL PASSED | 2.2 GB at 2.27 MB/s; read back 15.18 MB/s; 251 tree files verified after remount | 1570, slowest 519 ms, 0 over 1 s | ALL 20962 MATCHED |
+| tab-054d-vc_at_argon_pim1 | Galaxy Tab A9+ | `b5c79aa` | VC_AT_ARGON_PIM1 | 19:43 | ALL PASSED | 2.2 GB at 4.55 MB/s; read back 10.60 MB/s; 245 tree files verified after remount | 651, slowest 509 ms, 0 over 1 s | ALL 20950 MATCHED |
+| tab-054d-vc_sa_sha512_pim1 | Galaxy Tab A9+ | `b5c79aa` | VC_SA_SHA512_PIM1 | 20:08 | ALL PASSED | 2.2 GB at 4.34 MB/s; read back 9.41 MB/s; 251 tree files verified after remount | 843, slowest 506 ms, 0 over 1 s | ALL 20027 MATCHED |
+| tab-054d-vc_ts_argon_pim31 | Galaxy Tab A9+ | `b5c79aa` | VC_TS_ARGON_PIM31 | 20:30 | ALL PASSED | 2.2 GB at 4.43 MB/s; read back 8.91 MB/s; 245 tree files verified after remount | 818, slowest 507 ms, 0 over 1 s | ALL 20984 MATCHED |
+| tab-054d-fmt_exfat | Galaxy Tab A9+ | `b5c79aa` | FMT_EXFAT | 21:05 | ALL PASSED | not run (FMT/ENC_TO partition) | no bigwrite | ALL 20027 MATCHED |
+| tab-054d-fmt_fat32 | Galaxy Tab A9+ | `b5c79aa` | FMT_FAT32 | 21:11 | ALL PASSED | not run (FMT/ENC_TO partition) | no bigwrite | ALL 20027 MATCHED |
+| tab-054d-enc_to_exfat | Galaxy Tab A9+ | `b5c79aa` | ENC_TO_EXFAT | 21:17 | ALL PASSED | not run (FMT/ENC_TO partition) | no bigwrite | ALL 20027 MATCHED |
+| tab-054d-enc_to_fat32 | Galaxy Tab A9+ | `b5c79aa` | ENC_TO_FAT32 | 21:22 | ALL PASSED | not run (FMT/ENC_TO partition) | no bigwrite | ALL 20027 MATCHED |
+| tab-054e-d4l1ext2 | Galaxy Tab A9+ | `b5c79aa` | D4L1EXT2 | 22:03 | SKIPPED (read-only) | SKIPPED (read-only) | no bigwrite | ALL 21870 MATCHED |
+| tab-054e-d4l1ext3 | Galaxy Tab A9+ | `b5c79aa` | D4L1EXT3 | 22:11 | SKIPPED (read-only) | SKIPPED (read-only) | no bigwrite | ALL 21875 MATCHED |
+| tab-054e-d4l2ext2 | Galaxy Tab A9+ | `b5c79aa` | D4L2EXT2 | 22:19 | SKIPPED (read-only) | SKIPPED (read-only) | no bigwrite | ALL 21678 MATCHED |
+| tab-054e-d4l2ext3 | Galaxy Tab A9+ | `b5c79aa` | D4L2EXT3 | 22:27 | SKIPPED (read-only) | SKIPPED (read-only) | no bigwrite | ALL 21971 MATCHED |
+| tab-054e-d4l4ext2 | Galaxy Tab A9+ | `b5c79aa` | D4L4EXT2 | 22:35 | SKIPPED (read-only) | SKIPPED (read-only) | no bigwrite | ALL 21916 MATCHED |
+| tab-054e-d4l4ext3 | Galaxy Tab A9+ | `b5c79aa` | D4L4EXT3 | 22:44 | SKIPPED (read-only) | SKIPPED (read-only) | no bigwrite | ALL 21846 MATCHED |
+| tab-054e-d4vcext2 | Galaxy Tab A9+ | `b5c79aa` | D4VCEXT2 | 22:52 | SKIPPED (read-only) | SKIPPED (read-only) | no bigwrite | ALL 21948 MATCHED |
+| tab-054e-d4vcext3 | Galaxy Tab A9+ | `b5c79aa` | D4VCEXT3 | 23:00 | SKIPPED (read-only) | SKIPPED (read-only) | no bigwrite | ALL 21956 MATCHED |
+| tab-054e-d4blfat32 | Galaxy Tab A9+ | `b5c79aa` | D4BLFAT32 | 23:08 | ALL PASSED | 2.2 GB at 5.15 MB/s; tree skipped, 571 MB free, needs 697 MB; read back 13.03 MB/s | 579, slowest 520 ms, 0 over 1 s | ALL 20918 MATCHED |
+| tab-054e-d4blexfat | Galaxy Tab A9+ | `b5c79aa` | D4BLEXFAT | 23:26 | ALL PASSED | 2.2 GB at 5.08 MB/s; tree skipped, 574 MB free, needs 696 MB; read back 13.26 MB/s | 507, slowest 512 ms, 0 over 1 s | ALL 21073 MATCHED |
+
+## 2026-11-22: the drive-list ANR on the Galaxy Tab A9+, before and after `475972e`
+
+bigwrite only, on D2/2. Two ANRs on `b65821c` came from the provider's drive list (`queryRoots`) waiting on a volume's lock during a long write or delete; `475972e` has the details. The four `b65821c` runs tried to reproduce it, and that build has no drive-list probe. `b362621` is a control that is not to be merged (branch `anr-control`): `ccfa3c7` with `queryRoots` reading free space directly again. On the same partition, the control's slowest drive-list query took 13,472 ms and three took over a second. With the fix (`ccfa3c7`) the slowest took 532 ms and none took over a second. The app logged 6 USB resets in tab-anr-old and 3 in tab-anr-ctl, and recovered from each.
+
+Host check: D2/2 was read back after the `ccfa3c7` D2/2 runs that followed these (`matrix/d2copy-after-tab-054c.md`, **ALL CLEAN**). Those runs wrote `big.bin` again on all three partitions used here, so that check covers the drive's structure, not these runs' `big.bin`.
+
+| Run | Device | Build | Partition | Started | Write verify | bigwrite | Drive list during bigwrite | Fixtures |
+|---|---|---|---|---|---|---|---|---|
+| tab-anr-old-d2l2exfat | Galaxy Tab A9+ | `b65821c` | D2L2EXFAT | 08:20 | not run | 2.2 GB at 4.75 MB/s; tree skipped, 558 MB free, needs 696 MB; read back 8.56 MB/s | not in this build | not run |
+| tab-anr-old2-d2l2exfat | Galaxy Tab A9+ | `b65821c` | D2L2EXFAT | 08:34 | not run | 2.2 GB at 3.78 MB/s; tree skipped, 558 MB free, needs 696 MB; read back 7.91 MB/s | not in this build | not run |
+| tab-anr-old3-d2l4ntfs | Galaxy Tab A9+ | `b65821c` | D2L4NTFS | 08:50 | not run | 2.2 GB at 1.86 MB/s; tree skipped, 592 MB free, needs 697 MB; read back 9.23 MB/s | not in this build | not run |
+| tab-anr-old4-d2blfat32 | Galaxy Tab A9+ | `b65821c` | D2BLFAT32 | 09:17 | not run | 2.2 GB at 3.54 MB/s; tree skipped, 571 MB free, needs 697 MB; read back 8.26 MB/s | not in this build | not run |
+| tab-anr-ctl-d2blfat32 | Galaxy Tab A9+ | `b362621` | D2BLFAT32 | 09:37 | not run | 2.2 GB at 3.94 MB/s; tree skipped, 571 MB free, needs 697 MB; read back 8.18 MB/s | 784, slowest 13472 ms, 3 over 1 s | not run |
+| tab-anr-fix-d2blfat32 | Galaxy Tab A9+ | `ccfa3c7` | D2BLFAT32 | 09:55 | not run | 2.2 GB at 3.92 MB/s; tree skipped, 571 MB free, needs 697 MB; read back 8.32 MB/s | 791, slowest 532 ms, 0 over 1 s | not run |
+
 ## Commit hashes after the merges of #161, #162 and #175
 
 All three were rebase-merged, so `main` has new hashes. The 0.5.4 sections below (11-19 and 11-20) and `docs/VENDOR_FIXES.md` name the PR's commits. Look the PR hash up here to find it on `main`. The 0.5.4 PR head `b719a1b` is `777f5ad` on `main`.
