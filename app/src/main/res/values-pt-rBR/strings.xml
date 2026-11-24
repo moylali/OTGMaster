@@ -206,7 +206,7 @@
     <string name="no_drive_help_title">A unidade não aparece?</string>
     <string name="no_drive_help_replug">Desconecte a unidade e conecte-a novamente. Quando o Android perguntar se o OTG Master pode acessá-la, toque em Permitir.</string>
     <string name="no_drive_help_adapter">Conecte-a usando um adaptador OTG ou conecte diretamente uma unidade USB-C. Alguns cabos servem apenas para carregar e não transmitem dados.</string>
-    <string name="no_drive_help_otg_switch">Alguns telefones, incluindo os da OnePlus, Oppo, Realme e Vivo, só reconhecem unidades USB quando a função OTG está ativada nas Configurações (pesquise por "OTG" nas Configurações). Ela é desativada automaticamente após alguns minutos sem uso.</string>
+    <string name="no_drive_help_otg_switch">Alguns telefones, incluindo os da OnePlus, Oppo, Realme e Vivo, só reconhecem unidades USB quando a função OTG está ativada nas Configurações (pesquise por \"OTG\" nas Configurações). Ela é desativada automaticamente após alguns minutos sem uso.</string>
     <string name="no_drive_help_charging">Alguns telefones não conseguem ler uma unidade enquanto são carregados pela mesma porta. Se a unidade só aparecer quando o carregador estiver desconectado, conecte-a diretamente usando um adaptador OTG.</string>
     <string name="no_drive_help_power">SSDs e discos rígidos podem precisar de mais energia do que o telefone consegue fornecer. Se a luz da unidade permanecer apagada ou ela se desconectar pouco depois de aparecer, tente usar um hub USB com alimentação própria, desde que o telefone consiga ler unidades por meio dele.</string>
     <string name="no_drive_help_hardware_lock">Unidades bloqueadas pelo próprio hardware, como as que usam proteção por senha da WD, precisam ser desbloqueadas primeiro com o software do fabricante.</string>
@@ -248,7 +248,7 @@
     <string name="notification_channel_plugged_in">Unidade USB conectada</string>
     <string name="notification_plugged_in_title">%1$s conectada</string>
     <string name="notification_plugged_in_text">Toque para abri-la no OTG Master.</string>
-    <string name="log_plugged_in_notice">%1$s foi conectada, mas o Android não abriu o OTG Master para acessá-la (outro app é o padrão ou o telefone estava bloqueado sem um app padrão definido); uma notificação oferece a opção de abri-la. Ao escolher OTG Master com a opção "Sempre", ela será aberta diretamente na próxima vez.</string>
+    <string name="log_plugged_in_notice">%1$s foi conectada, mas o Android não abriu o OTG Master para acessá-la (outro app é o padrão ou o telefone estava bloqueado sem um app padrão definido); uma notificação oferece a opção de abri-la. Ao escolher OTG Master com a opção \"Sempre\", ela será aberta diretamente na próxima vez.</string>
     <string name="log_plugged_in_no_notice">%1$s foi conectada, mas o Android não abriu o OTG Master para acessá-la; como as notificações estão desativadas, o OTG Master não pôde oferecer a opção de abri-la.</string>
     <string name="log_found_usb_devices">%1$d dispositivo(s) USB encontrado(s).</string>
     <string name="log_reoffered_locked_partitions">%1$d partição(ões) bloqueada(s) em %2$s, além de uma já montada.</string>
@@ -258,8 +258,8 @@
     <string name="log_hint_no_usb_host">Este telefone não oferece suporte a unidades USB (não informa suporte a USB Host/OTG).</string>
     <string name="log_hint_connected_to_computer">A porta USB deste telefone está conectada a um computador, com o telefone atuando como dispositivo; por isso, não é possível ler uma unidade por essa porta.</string>
     <string name="log_hint_charging_from_port">Este telefone está sendo carregado pela porta USB. Muitos telefones não conseguem ler unidades USB enquanto são carregados dessa forma: se a unidade estiver conectada a um hub com fonte de alimentação, desconecte a fonte ou conecte a unidade diretamente usando um adaptador OTG.</string>
-    <string name="log_hint_otg_switch_off">A conexão OTG está desativada, portanto as unidades USB não podem ser detectadas. Ative-a nas Configurações (pesquise por "OTG") e conecte a unidade novamente.</string>
-    <string name="log_hint_otg_switch">Em telefones %1$s, as unidades USB só funcionam quando a função OTG está ativada nas Configurações (pesquise por "OTG"). Ela é desativada automaticamente após alguns minutos sem uso.</string>
+    <string name="log_hint_otg_switch_off">A conexão OTG está desativada, portanto as unidades USB não podem ser detectadas. Ative-a nas Configurações (pesquise por \"OTG\") e conecte a unidade novamente.</string>
+    <string name="log_hint_otg_switch">Em telefones %1$s, as unidades USB só funcionam quando a função OTG está ativada nas Configurações (pesquise por \"OTG\"). Ela é desativada automaticamente após alguns minutos sem uso.</string>
     <string name="log_requested_usb_permission">Permissão de acesso USB solicitada…</string>
     <string name="log_requested_usb_permission_for">Permissão de acesso USB solicitada para %1$s…</string>
     <string name="log_usb_permission_still_waiting">Ainda aguardando a permissão de acesso USB para %1$s (solicitada há %2$d s): toque em Permitir na solicitação do Android; se ela não estiver aparecendo, desconecte e reconecte a unidade.</string>
@@ -279,7 +279,7 @@
     <string name="log_mounted_successfully">Montagem de %1$s concluída. Capacidade do volume raiz: %2$d MB</string>
     <string name="log_volume_not_encrypted">%1$s não está criptografado: contém um sistema de arquivos %2$s sem criptografia, portanto não há nada a desbloquear.</string>
     <string name="log_failed_to_unlock">Falha ao desbloquear %1$s: %2$s</string>
-    <string name="log_drive_unmounted">A unidade '%1$s' foi desmontada com segurança.</string>
+    <string name="log_drive_unmounted">A unidade \'%1$s\' foi desmontada com segurança.</string>
     <string name="log_could_not_open_files_app">Não foi possível abrir diretamente o app Arquivos: %1$s</string>
     <string name="log_copied_to_clipboard">%1$s copiado para a área de transferência</string>
 
@@ -327,7 +327,7 @@
     <string name="encrypt_password_short_for_pim">Senha muito curta para este PIM. Use pelo menos %1$d caracteres ou altere o PIM.</string>
     <string name="encrypt_password_too_long">As senhas do VeraCrypt podem ter no máximo %1$d bytes.</string>
     <string name="encrypt_save_password_manager">Salvar a senha no meu gerenciador de senhas</string>
-    <string name="log_password_manager_saved">Senha salva no seu gerenciador de senhas como "%1$s".</string>
+    <string name="log_password_manager_saved">Senha salva no seu gerenciador de senhas como \"%1$s\".</string>
     <string name="log_password_manager_not_saved">A senha não foi salva no seu gerenciador de senhas (%1$s).</string>
     <string name="encrypt_pim_hint_pbkdf2">Deixe em branco para usar o padrão do VeraCrypt (500.000 iterações).</string>
     <string name="encrypt_pim_hint_argon2">Deixe em branco para usar o padrão do VeraCrypt (416 MiB, 6 passagens). Valores maiores exigem mais memória e tempo para desbloquear.</string>
@@ -486,7 +486,7 @@
     <string name="backup_restore_latest">Restaurar o mais recente</string>
     <string name="backup_show_password">Senha</string>
     <string name="backup_delete_job">Remover lembrete</string>
-    <string name="backup_delete_job_title">Remover "%1$s"?</string>
+    <string name="backup_delete_job_title">Remover \"%1$s\"?</string>
     <string name="backup_delete_job_text">O lembrete, seu histórico e a senha salva serão removidos deste telefone. Os backups na unidade permanecerão, mas nada poderá abri-los sem a senha. Salve-a antes de continuar.</string>
     <string name="backup_password_desktop">Em um computador: restic -r &lt;drive&gt;/&lt;folder&gt; snapshots, usando esta senha.</string>
     <string name="backup_password_missing">Não está neste telefone.</string>
