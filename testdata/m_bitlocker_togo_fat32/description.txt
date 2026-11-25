@@ -1,0 +1,1 @@
+Support matrix: FAT32 inside BitLocker To Go (cbc128). Unlock, flower.jpg byte for byte, create/write/mkdir, remount, delete, remount (second mount with the recovery key). Its first sector is a FAT32 boot sector, so it must be offered for unlocking with the BITLOCKER tag, not mounted as plain FAT32 (#184).
