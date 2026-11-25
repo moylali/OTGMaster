@@ -59,6 +59,13 @@ class ProbeActivity : Activity() {
                 }
                 "read" -> finishWith(cmd, read(tree(), intent.getStringExtra("path") ?: error("--es path is required")))
                 "grants" -> finishWith(cmd, grants())
+                "hold" -> {
+                    // Off the main thread: it sleeps while the test locks the container.
+                    val tree = tree(); val rel = intent.getStringExtra("path") ?: error("--es path is required")
+                    val wait = intent.getIntExtra("wait", 20)
+                    Thread { finishWith(cmd, hold(tree, rel, wait)) }.start()
+                    return
+                }
                 "write" -> finishWith(cmd, write(tree(), intent.getStringExtra("name") ?: "saf-probe-write.bin",
                     intent.getIntExtra("bytes", 3 * 1024 * 1024 + 4097), intent.getBooleanExtra("keep", false)))
                 "outside" -> finishWith(cmd, outside(tree(), intent.getStringExtra("docid") ?: error("--es docid is required")))
@@ -171,6 +178,36 @@ class ProbeActivity : Activity() {
             .put("match", size1 == first.size.toLong() && hash1 == hex(first) && size2 == second.size.toLong() && hash2 == hex(second))
         if (!keep) out.put("deleted", DocumentsContract.deleteDocument(contentResolver, doc))
         return out
+    }
+
+    /**
+     * Opens [rel] under the grant and reads its first 64 KiB, keeps the descriptor for [wait]
+     * seconds (writing result-hold-open.json first, so the test knows when to lock), then reads
+     * 64 KiB at 1 MiB through the same descriptor and closes it. Reports both reads: after a
+     * lock the second must fail, and must not return the new session's bytes.
+     */
+    private fun hold(tree: Uri, rel: String, wait: Int): JSONObject {
+        var docId = DocumentsContract.getTreeDocumentId(tree)
+        for (part in rel.split('/').filter { it.isNotEmpty() }) {
+            var next: String? = null
+            contentResolver.query(DocumentsContract.buildChildDocumentsUriUsingTree(tree, docId), arrayOf(
+                DocumentsContract.Document.COLUMN_DOCUMENT_ID, DocumentsContract.Document.COLUMN_DISPLAY_NAME), null, null, null)?.use { c ->
+                while (c.moveToNext()) if (c.getString(1) == part) { next = c.getString(0); break }
+            }
+            docId = next ?: error("'$part' not found under $docId")
+        }
+        val doc = DocumentsContract.buildDocumentUriUsingTree(tree, docId)
+        val out = JSONObject().put("documentId", docId)
+        contentResolver.openFileDescriptor(doc, "r")!!.use { pfd ->
+            val ch = java.io.FileInputStream(pfd.fileDescriptor).channel
+            val first = java.nio.ByteBuffer.allocate(65536)
+            out.put("firstRead", runCatching { ch.read(first, 0) }.fold({ "$it bytes" }, { "error: $it" }))
+            getExternalFilesDir(null)?.let { File(it, "result-hold-open.json").writeText(out.toString()) }
+            Thread.sleep(wait * 1000L)
+            val second = java.nio.ByteBuffer.allocate(65536)
+            out.put("lateRead", runCatching { ch.read(second, 1L shl 20) }.fold({ "$it bytes" }, { "error: $it" }))
+        }
+        return out.put("closed", true)
     }
 
     private fun grants(): JSONObject {
