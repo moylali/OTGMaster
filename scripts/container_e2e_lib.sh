@@ -45,12 +45,12 @@ open_ids() { panel_open; dump | grep -oE 'content-desc="open_[0-9a-f]+"' | grep 
 lock_all() { panel_open; on_screen 'content-desc="lock_all"' && tap 'content-desc="lock_all"'; sleep 3; panel_close; }
 probe() { # probe <cmd> <extras...>: run saf-probe and print its result JSON on one line
   local cmd=$1; shift
-  adb -s "$S" shell "rm -f $F/result-$cmd.json; am start -W -n app.fayaz.safprobe/.ProbeActivity --es cmd $cmd $*" >/dev/null
+  adb -s "$S" shell "rm -f $F/result-$cmd.json; am start -W -f 0x18080000 -n app.fayaz.safprobe/.ProbeActivity --es cmd $cmd $*" >/dev/null
   local i; for i in $(seq 1 30); do adb -s "$S" shell "test -f $F/result-$cmd.json" && break; sleep 1; done
   adb -s "$S" shell cat $F/result-$cmd.json 2>/dev/null | tr -d '\n' | tr -s ' '; }
 # grant <id>: saf-probe takes a picker grant on the container's root; prints the tree URI.
 grant() {
-  adb -s "$S" shell "rm -f $F/result-grant.json; am start -W -n app.fayaz.safprobe/.ProbeActivity --es cmd grant --es initial 'content://$CM.documents/document/$1%3A%2F'" >/dev/null; sleep 5
+  adb -s "$S" shell "rm -f $F/result-grant.json; am start -W -f 0x18080000 -n app.fayaz.safprobe/.ProbeActivity --es cmd grant --es initial 'content://$CM.documents/document/$1%3A%2F'" >/dev/null; sleep 5
   tap_any 'text="Use this folder"' 'text="USE THIS FOLDER"' || return 1; sleep 2
   tap_any 'text="Allow"' 'text="ALLOW"' || return 1; sleep 3
   adb -s "$S" shell cat $F/result-grant.json | grep -oE '"tree": "[^"]*"' | sed -E 's/"tree": "(.*)"/\1/; s#\\/#/#g'; }
