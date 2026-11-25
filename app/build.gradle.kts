@@ -176,6 +176,8 @@ dependencies {
     implementation(project(":mount-core"))
     // Drivers, crypto layers and the native library (libveracrypt-native.so).
     implementation(project(":disk-engine"))
+    // The DocumentsProvider's serving and session safety; VeraCryptDocumentProvider subclasses it.
+    implementation(project(":saf-provider"))
     
     val composeBom = platform("androidx.compose:compose-bom:2025.04.01")
     implementation(composeBom)

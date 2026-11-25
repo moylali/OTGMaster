@@ -71,9 +71,9 @@ class DocumentIdsTest {
     }
 
     @Test fun `an ID-only root query does not ask for free space`() {
-        assertFalse(VeraCryptDocumentProvider.wantsAvailableBytes(arrayOf("root_id")))
-        assertFalse(VeraCryptDocumentProvider.wantsAvailableBytes(arrayOf("root_id", "title", "flags")))
-        assertTrue(VeraCryptDocumentProvider.wantsAvailableBytes(arrayOf("root_id", "available_bytes")))
-        assertTrue(VeraCryptDocumentProvider.wantsAvailableBytes(null))
+        assertFalse(TreeDocumentsProvider.wantsAvailableBytes(arrayOf("root_id")))
+        assertFalse(TreeDocumentsProvider.wantsAvailableBytes(arrayOf("root_id", "title", "flags")))
+        assertTrue(TreeDocumentsProvider.wantsAvailableBytes(arrayOf("root_id", "available_bytes")))
+        assertTrue(TreeDocumentsProvider.wantsAvailableBytes(null))
     }
 }
