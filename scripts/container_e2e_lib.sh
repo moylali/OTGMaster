@@ -31,12 +31,18 @@ unlock() {
   [ -n "${2:-}" ] && adb -s "$S" shell input text "$2"
   adb -s "$S" shell input keyevent KEYCODE_BACK; sleep 1
   tap 'content-desc="unlock"' || return 1
-  local X i; for i in $(seq 1 120); do X=$(dump); echo "$X" | grep -qE 'content-desc="open_|content-desc="message"' && break; sleep 1; done
+  # Done when a message shows (refused) or the form clears the chosen file (opened).
+  local X i; for i in $(seq 1 120); do sleep 1; X=$(dump)
+    echo "$X" | grep -q 'content-desc="message"' && break
+    echo "$X" | grep -q 'content-desc="chosen_file"' || break; done
   if echo "$X" | grep -q 'content-desc="message"'; then
     echo "message: $(echo "$X" | grep -oE 'text="[^"]*"[^>]*content-desc="message"' | sed -E 's/text="([^"]*)".*/\1/')"
-  else echo "$X" | grep -oE 'content-desc="open_[0-9a-f]+"' | sed -E 's/.*open_([0-9a-f]+)"/opened \1/'; fi; }
-open_ids() { cm_front; dump | grep -oE 'content-desc="open_[0-9a-f]+"' | sed -E 's/.*open_([0-9a-f]+)"/\1/'; }
-lock_all() { cm_front; on_screen 'content-desc="lock_all"' && tap 'content-desc="lock_all"'; sleep 3; }
+  else echo "opened $(open_ids | tail -1)"; fi; }
+# The open containers are in the panel behind the top bar's icon, as OTG Master's drives are.
+panel_open() { cm_front; tap 'content-desc="open_containers"'; sleep 1; }
+panel_close() { tap 'content-desc="close_open_containers"'; sleep 1; }
+open_ids() { panel_open; dump | grep -oE 'content-desc="open_[0-9a-f]+"' | grep -v 'open_containers' | sed -E 's/.*open_([0-9a-f]+)"/\1/'; panel_close; }
+lock_all() { panel_open; on_screen 'content-desc="lock_all"' && tap 'content-desc="lock_all"'; sleep 3; panel_close; }
 probe() { # probe <cmd> <extras...>: run saf-probe and print its result JSON on one line
   local cmd=$1; shift
   adb -s "$S" shell "rm -f $F/result-$cmd.json; am start -W -n app.fayaz.safprobe/.ProbeActivity --es cmd $cmd $*" >/dev/null

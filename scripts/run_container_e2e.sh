@@ -26,6 +26,12 @@ EMPTY=$(printf '' | sha256sum | cut -d' ' -f1)
 for t in ext4 ntfs; do
   [ -f testdata/$t/test.img ] || { bash scripts/generate_noroot_testdata.sh || { echo "fixture generation failed"; exit 1; }; }
 done
+# A LUKS2 file, for the format the form follows; only its header is read, so 4 MiB will do.
+if [ ! -f testdata/cm_luks/test.img ]; then
+  mkdir -p testdata/cm_luks; truncate -s 4M testdata/cm_luks/test.img
+  printf 'container-master-luks' | cryptsetup luksFormat --type luks2 -q --pbkdf pbkdf2 --pbkdf-force-iterations 1000 \
+    --luks2-metadata-size 16k --luks2-keyslots-size 512k testdata/cm_luks/test.img - || { echo "LUKS fixture failed"; exit 1; }
+fi
 # The public ID Container Master must give each container: SHA-256 of "veracrypt-salt:" and the
 # header's first 64 bytes, first 10 hex (ContainerSessions.idForSalt).
 cid() { python3 -c 'import hashlib,sys; d=open(sys.argv[1],"rb").read(64); print(hashlib.sha256(b"veracrypt-salt:"+d).hexdigest()[:10])' "$1"; }
@@ -38,10 +44,11 @@ echo "Building Container Master and saf-probe..."
 APK_COMMIT=$(grep -oE 'GIT_COMMIT = "[^"]*"' container-app/build/generated/source/buildConfig/debug/app/fayaz/containermaster/BuildConfig.java | cut -d'"' -f2)
 adb -s "$S" install -r container-app/build/outputs/apk/debug/container-app-debug.apk >/dev/null || exit 1
 adb -s "$S" install -r tools/saf-probe/build/outputs/apk/debug/saf-probe-debug.apk >/dev/null || exit 1
-for t in ext4 ntfs; do
-  want=$(sha256sum testdata/$t/test.img | cut -d' ' -f1)
+for t in ext4 ntfs luks; do
+  [ $t = luks ] && src=testdata/cm_luks/test.img || src=testdata/$t/test.img
+  want=$(sha256sum $src | cut -d' ' -f1)
   have=$(adb -s "$S" shell sha256sum /sdcard/Download/cm-$t.hc 2>/dev/null | cut -d' ' -f1)
-  [ "$want" = "$have" ] || adb -s "$S" push testdata/$t/test.img /sdcard/Download/cm-$t.hc >/dev/null
+  [ "$want" = "$have" ] || adb -s "$S" push $src /sdcard/Download/cm-$t.hc >/dev/null
 done
 adb -s "$S" shell input keyevent KEYCODE_WAKEUP
 DEVICE="$(adb -s "$S" shell getprop ro.product.model | tr -d '\r') / Android $(adb -s "$S" shell getprop ro.build.version.release | tr -d '\r')"
@@ -114,11 +121,37 @@ case_lock_all_service() {
   [ "$(adb -s "$S" shell sha256sum /sdcard/Download/cm-ext4.hc | cut -d' ' -f1)" = "$before" ] || { fail "the container changed"; return 1; }
 }
 
+case_format_luks() {
+  cm_front; pick cm-luks.hc || { fail "could not pick"; return 1; }
+  local X; X=$(dump)
+  echo "$X" | grep -q 'LUKS volume' || { fail "the format line does not name LUKS"; return 1; }
+  echo "$X" | grep -q 'content-desc="password"' && { fail "the VeraCrypt form is shown for a LUKS file"; return 1; }
+  echo "$X" | grep -q 'content-desc="unlock"' && { fail "Unlock is offered for a LUKS file"; return 1; }
+  return 0
+}
+
+case_logs_report() {
+  cm_front; pick cm-ext4.hc || { fail "could not pick"; return 1; }
+  [ "$(unlock password123 1)" = "opened $ID_EXT4" ] || { fail "unlock"; return 1; }
+  cm_front; local X; X=$(dump)
+  echo "$X" | grep -q 'Unlocked and mounted' || { fail "the log does not show the unlock"; return 1; }
+  echo "$X" | grep -q 'offered as VeraCrypt' || { fail "the log does not show the detected format"; return 1; }
+  tap 'content-desc="report_issue"' || { fail "no Report issue"; return 1; }; sleep 3
+  X=$(dump)
+  echo "$X" | grep -q 'Report an issue' || { fail "Report issue did not open"; return 1; }
+  echo "$X" | grep -q 'USB drive make' && { fail "Report issue offers a USB row in Container Master"; return 1; }
+  echo "$X" | grep -q 'Container Master 0' || { fail "the report does not name Container Master's version"; return 1; }
+  adb -s "$S" shell input keyevent KEYCODE_BACK; sleep 1
+  return 0
+}
+
 run_case unlock_read "Pick a VeraCrypt file (ext4 inside), unlock, and read flower.jpg, a name with spaces and an empty file six folders down through saf-probe's grant, by SHA-256; no write, delete or rename offered." case_unlock_read
 run_case ntfs "The same, with NTFS inside the container." case_ntfs
 run_case wrong_password "A wrong password is refused with a message, and nothing opens." case_wrong_password
 run_case relock_grant "Lock: a read through the held grant fails. Pick and unlock again: the same ID, and the same grant reads again." case_relock_grant
 run_case already_open "The same file picked and unlocked a second time while open is refused; one stays open." case_already_open
+run_case format_luks "A LUKS file is recognised and named, and no VeraCrypt form or Unlock is offered for it." case_format_luks
+run_case logs_report "The log shows the detected format and the unlock; Report issue (shared with OTG Master) opens with Container Master's version and no USB row." case_logs_report
 run_case lock_all_service "The foreground service runs while a container is open; Lock all closes it and the service stops; the container file is unchanged." case_lock_all_service
 
 {
