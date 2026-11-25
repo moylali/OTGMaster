@@ -49,6 +49,27 @@ All four were rebase-merged, so `main` has new hashes. The sections below name t
 | #193 | `a6a5286` | `bed05fa` | refactor(provider): look up and list through a DocumentSource tree contract |
 | #193 | `2d4bba3` | `c681622` | docs: the held grant still reads the same file on a6a5286 |
 
+## 2026-11-25: writes through the provider's DocumentHandle, OnePlus 7, Drive 1
+
+Provider split step 1 (`d92baa6`): every client read and write now goes through
+`DocumentHandle`. **Minified** `550abaf` (step 1 plus the saf-probe write command; release
+code and R8, debug key, store package and authority) and `tools/saf-probe` at the same commit.
+OnePlus 7 (GM1901, LineageOS 23.2, Android 16, SDK 36), Drive 1 (`…6B31`), the 7 plain
+partitions auto mounted.
+
+| Step | Result |
+|---|---|
+| The read grant held on `884fb1f107:/BENCH/edge` reads `size_1048577.bin` | 1,048,577 B, SHA-256 `31eb9165…063ff4`, flags 70 |
+| The same grant opens `BENCH/large/seq_2100m.bin` and `BENCH/edge/../large/seq_2100m.bin` | both refused with SecurityException |
+| New picker grants with write on the roots of D1EXFAT (`884fb1f107`), D1FAT32 (`357b690009`), D1NTFS (`36a70e1de7`) and D1EXT4 (`4e703e95fd`) | taken |
+| On each: create `m2-step1-probe.bin`, write 3,149,825 seeded bytes in 100,000-byte calls ("w"), read back; overwrite with the first 1,049,941 ("wt"), read back; delete | all four: sizes and SHA-256 match at both steps (`09ddad31…264d`, then `1f6686ff…b3d9`), deleted |
+| Eject in the app, `sm unmount` of Android's mounts | done |
+
+**Written to the drive:** one file created and deleted at the root of each of those four
+partitions. The host check of those four (each filesystem's checker, and
+`volume_baseline.sh compare`, which should show only the freed allocation and the deleted
+directory entry) is owed with the laptop check of D1 at the end of the milestone.
+
 ## 2026-11-25: the held grant on the R8 build after the :disk-engine move, OnePlus 7, Drive 1
 
 The same check as the `:mount-core` one below, on **minified** `add74bf` (the `:disk-engine`
