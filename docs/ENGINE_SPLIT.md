@@ -96,3 +96,31 @@ companion delegates the static API the app and the tests call (`onDrive`, `lockF
 the grant bookkeeping (`revokeExtendedGrants`, `revokeLeftoverGrants`) and
 `extendReadGrant`, now its `onDocumentServed`.
 
+
+## Milestone 2b: the screens in their own process
+
+**Container Master: done.** `MainActivity` and Report issue run in `:ui`; the open
+containers, the provider, the session service and the log stay in the default process
+behind `EngineProvider`, a non-exported provider whose `call()` takes commands (state,
+detect, open, lock, lock all, idle setting, clear log) and returns copies. State changes
+are announced on its state URI. The E2E case `ui_killed` kills `:ui` with `kill -9` while
+another app holds a descriptor and checks that the reads go on.
+
+**OTG Master: planned, in two steps.** Its mounting is done inside `MainActivity`
+(5,019 lines: USB attach and permission, unlock, mount, Eject, Unmount, Format, Encrypt,
+recovery), with 147 direct `OtgMasterState` references across `MainActivity.kt`,
+`ui/BackupDialogs.kt`, `ui/RecoveryDialog.kt` and `ui/MountBackupButton.kt`. The
+activity cannot move to another process while it owns that work, so:
+
+1. **Extract the mount work** into an engine-side coordinator in the default process:
+   every operation that changes what is mounted, called by the screen with a request
+   and reporting through `OtgMasterState`'s log and drive list, as now. Same process,
+   behaviour unchanged; the full E2E suite and a hardware run on the coordinator build.
+2. **Move the screens to `:ui`** behind an engine door like Container Master's:
+   commands (scan, unlock and mount, unmount, eject, format, encrypt, recovery, backups)
+   and observed state (drive snapshots, log lines, progress, pending ejects and
+   unmounts). Biometric prompts stay in the UI; a secret crosses only for the call.
+   Acceptance as the proposal sets it: a Files-app copy from a mounted drive survives
+   killing `:ui` mid-copy, byte for byte, and fails on the code before; a hardware
+   bigwrite with `:ui` killed mid-run, then the laptop read-back and checkers; the
+   held grant and the baseline roots, IDs and columns unchanged.
