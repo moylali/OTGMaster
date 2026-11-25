@@ -17,7 +17,7 @@ object FilesystemDetector {
         val data = try {
             device.readBlocks(0L, count)
         } catch (e: Exception) {
-            app.fayaz.otgmaster.OtgMasterState.logFailure("detect", "Could not read the start of the volume to find its filesystem", e)
+            app.fayaz.otgmaster.core.EngineLog.logFailure("detect", "Could not read the start of the volume to find its filesystem", e)
             return DetectedFilesystem.Unknown
         }
         return detectFromBytes(data)

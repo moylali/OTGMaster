@@ -50,7 +50,7 @@ class Ext4FileSystemCreator : FileSystemCreator {
         } catch (e: Exception) {
             android.util.Log.e("Ext4", "Failed to mount ext filesystem", e)
             // Swallowed here, so the caller only knew "no filesystem accepted it".
-            app.fayaz.otgmaster.OtgMasterState.log("ext: mount failed: ${e.javaClass.simpleName}: ${e.message}")
+            app.fayaz.otgmaster.core.EngineLog.log("ext: mount failed: ${e.javaClass.simpleName}: ${e.message}")
             null
         }
     }
