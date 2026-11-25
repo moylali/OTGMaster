@@ -67,7 +67,9 @@ jobs:
           EOF
 
       - name: Build signed release APK and AAB
-        run: ./gradlew assembleRelease bundleRelease
+        # Qualified: a second app module must not be built, signed or uploaded by OTG's
+        # release (architecture proposal, F15).
+        run: ./gradlew :app:assembleRelease :app:bundleRelease
 
       - name: Verify signing key matches F-Droid
         run: |

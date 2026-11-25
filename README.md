@@ -82,7 +82,7 @@ To send feedback privately or without a GitHub account, use our [anonymous feedb
 ### Build
 
 ```bash
-./gradlew assembleDebug
+./gradlew :app:assembleDebug
 ```
 
 A signed release build also requires a `keystore.properties` file at the repo root
@@ -90,7 +90,7 @@ A signed release build also requires a `keystore.properties` file at the repo ro
 `keyPassword` entries; without it, `assembleRelease` produces an unsigned APK.
 
 ```bash
-./gradlew assembleRelease
+./gradlew :app:assembleRelease
 ```
 
 ### Testing
@@ -100,7 +100,7 @@ A signed release build also requires a `keystore.properties` file at the repo ro
 JVM unit tests (e.g. `FilesystemDetector`) run without a device:
 
 ```bash
-./gradlew testDebugUnitTest
+./gradlew :app:testDebugUnitTest
 ```
 
 #### UI testing

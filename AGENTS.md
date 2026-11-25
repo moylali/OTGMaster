@@ -21,7 +21,9 @@ These apply to every commit, without being asked.
    Play would have shown it against a build that did not contain any of it. Before
    editing a changelog, confirm the current `versionCode` is higher than the one the
    last tag was built with:
-   `git show $(git describe --tags --abbrev=0):app/build.gradle.kts | grep versionCode`.
+   `git show $(git describe --tags --abbrev=0 --match 'v[0-9]*'):app/build.gradle.kts | grep versionCode`.
+   The `--match` keeps the lookup on OTG Master's own `vX.Y.Z` tags once another
+   product's tags share the repository.
 
    The `versionName` may keep the last release's name until just before the next
    tag, and is renamed once then (decided 2026-10-29: `0.4.2` (49) while 0.5.0 is
