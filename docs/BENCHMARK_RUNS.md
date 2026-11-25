@@ -49,6 +49,28 @@ All four were rebase-merged, so `main` has new hashes. The sections below name t
 | #193 | `a6a5286` | `bed05fa` | refactor(provider): look up and list through a DocumentSource tree contract |
 | #193 | `2d4bba3` | `c681622` | docs: the held grant still reads the same file on a6a5286 |
 
+## 2026-11-25: a USB stick encrypted by Windows 11, on the OnePlus 7 (#184)
+
+The hardware check of `fix/bitlocker-togo-scan` (`021d688`). The stick is the spare SanDisk
+Cruzer Blade (`4C530102400301116182`), written with `/mnt/otgscratch/bitlk/togo-1g.img`: a
+1 GiB USB disk that Windows 11 Enterprise Evaluation (dockurr/windows) partitioned (one MBR
+partition at block 128), formatted FAT32, filled, and encrypted with `Enable-BitLocker
+-EncryptionMethod Aes128` (AES-CBC 128, the whole volume) with a password and a recovery
+password. `compare_test_drive.sh` matched all 1,073,741,824 bytes on the stick against the
+image before the run. OnePlus 7 (GM1901, LineageOS 23.2, Android 16, SDK 36); minified builds,
+`tools/saf-probe` as the independent client.
+
+| Step | Build | Result |
+|---|---|---|
+| Plug in, launch | `5104669` (before the fix) | **the bug**: `Mounting FAT32 on SanDisk Cruzer Blade…`, then `Failed to mount SanDisk Cruzer Blade: invalid fs info structure!`; never offered for unlocking |
+| Install, launch | `021d688` | offered as `Partition 1`, tagged BITLOCKER, with "Password or recovery key" and the .BEK button; logcat `Candidate 'Partition 1': BITLOCKER` |
+| Read-only on, password, Unlock & mount | `021d688` | mounted: BITLOCKER, FAT32, READ-ONLY, 1023.9 MB, 305.0 MB used; `BitLocker AES-CBC 128, sector 512, protectors: [PASSWORD, RECOVERY_PASSWORD]` |
+| saf-probe picker grant on the drive's root (`e78a9b726d`, as `ExtensionContract.stableDriveId` derives it), and reads | `021d688` | `flower.jpg`, `file with spaces.txt`, `large_file.bin`, `nested/very/deep/folder/empty_file.txt` and `random_300m.bin` (314,572,800 B, 18 s) all equal to the hashes taken when Windows wrote them (`trees.sha256`); Windows' own `System Volume Information` listed |
+| Unmount, then the recovery password instead, Unlock & mount; read `flower.jpg` through the same grant | `021d688` | mounted the same way; `57c87dcb…3a04` |
+| Eject | `021d688` | done; Android lists the stick `unmountable` and does not mount it |
+
+Host check after the run: see the comparison row below once the stick is back on the laptop.
+
 ## 2026-11-25: laptop check of Drive 1 after the Milestone 2 and 3 runs
 
 The host check owed by the OnePlus 7 runs above (the probe files created and deleted through the
