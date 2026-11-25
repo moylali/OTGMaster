@@ -49,6 +49,28 @@ All four were rebase-merged, so `main` has new hashes. The sections below name t
 | #193 | `a6a5286` | `bed05fa` | refactor(provider): look up and list through a DocumentSource tree contract |
 | #193 | `2d4bba3` | `c681622` | docs: the held grant still reads the same file on a6a5286 |
 
+## 2026-11-25: the held grant on the R8 build after the :mount-core move, OnePlus 7, Drive 1
+
+Engine extraction Milestone 2: `RawBlockDevice`, `SlicedBlockDevice`, `FileBlockDevice` and
+`DocumentSource` moved from `:app` into the JVM module `:mount-core` (`8c6bc7d`), with the
+`RawBlockDevice` keep rule now in the module's jar. Native code names `RawBlockDevice` in its
+callback signatures, so the check is on a shrunk build: **minified** `8c6bc7d` (release code
+and R8, debug key, store package and authority; installed over debug `a6a5286`, not
+debuggable). No benchmark sections ran. OnePlus 7 (GM1901, LineageOS 23.2, Android 16,
+SDK 36), Drive 1 (`…6B31`).
+
+| Step | Result |
+|---|---|
+| Eject in the debug app (7 partitions), `sm unmount` of Android's four mounts, `adb install -r` | done |
+| Launch: auto mount | all 7 plain partitions mounted, FAT32, the four APFS (read-only), NTFS, ext4, with used and free space on each card |
+| `tools/saf-probe` reads `size_1048577.bin` through the grant on `884fb1f107:/BENCH/edge` held since 11-24 (D1EXFAT, through libexfat's JNI callbacks) | same document ID, 1,048,577 B, SHA-256 `31eb9165…063ff4`, the 6 standard columns, flags 70 |
+| The grant opens `BENCH/large/seq_2100m.bin` and `BENCH/edge/../large/seq_2100m.bin` | both refused with SecurityException (not a descendant) |
+| Eject in the app, `sm unmount` of Android's mounts | done |
+
+Not covered: no write ran (F1's writable exFAT check stays for the disk-engine move), and only
+the exFAT partition was read through a grant; the others were mounted and their space read.
+Nothing was written to the drive by these steps.
+
 ## 2026-11-24: provider upgrade and confinement on the OnePlus 7, Drive 1 (D1EXFAT)
 
 Engine extraction Milestones 0 and 1 (`docs/ENGINE_BASELINE.md`). No benchmark sections ran; this
