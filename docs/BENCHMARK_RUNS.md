@@ -33,6 +33,23 @@ to a row here.
 
 ---
 
+## 2026-11-24: provider upgrade and confinement on the OnePlus 7, Drive 1 (D1EXFAT)
+
+Engine extraction Milestones 0 and 1 (`docs/ENGINE_BASELINE.md`). No benchmark sections ran; this
+is a read through another app's grant. OnePlus 7 (GM1901, LineageOS 23.2, Android 16, SDK 36),
+Drive 1 (`…6B31`), D1EXFAT. Debug builds, which carry the store package and authority.
+
+| Step | Build | Result |
+|---|---|---|
+| `tools/saf-probe` takes a picker grant on `BENCH/edge` and reads `size_1048577.bin` | debug `b483c68` | 1,048,577 B, SHA-256 `31eb9165…063ff4` = manifest; the 6 standard columns, flags 70 |
+| The grant opens `BENCH/large/seq_2100m.bin`, D1FAT32's copy of the file, and `BENCH/edge/../large/seq_2100m.bin` | debug `b483c68` | the first two refused (SecurityException); the `..` path passed the ancestry check and failed only at lookup (FileNotFoundException) |
+| Eject, `adb install -r`, D1 mounted again; the same grant reads the same file | debug `800ebf0` | same document ID, bytes, SHA-256, columns and flags |
+| The same three opens | debug `800ebf0` | all three refused with SecurityException |
+
+Nothing was written to the drive by these steps. Before the first install, the benchmark build
+still had D1 mounted and was force-stopped without an Eject; nothing was writing, but Android may
+have mounted D1's plain partitions briefly. The laptop check at the end of the milestone will say.
+
 ## 2026-11-24: Format inside BitLocker on the OnePlus 7, Drive 1 (D1BLEXFAT)
 
 `efd963e` (Format inside BitLocker, around BitLocker's own metadata) shipped in #175 with only the emulator case `format_bitlocker_ntfs` behind it. This is its hardware run. Benchmark build `0.5.4-bench (53) commit 4839137` (`main` after #186 and #177) on the OnePlus 7 (GM1901, LineageOS 23.2, Android 16, SDK 36).
