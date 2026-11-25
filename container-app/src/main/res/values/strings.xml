@@ -1,7 +1,7 @@
 <?xml version="1.0" encoding="utf-8"?>
 <resources>
     <string name="app_name">Container Master</string>
-    <string name="intro">Open a VeraCrypt container or a ZIP archive from your phone. Its files then show up in the Files app and in any app that opens files, until you lock it.</string>
+    <string name="intro">Open a VeraCrypt or LUKS container, or a ZIP archive, from your phone. Its files then show up in the Files app and in any app that opens files, until you lock it.</string>
     <string name="choose_file">Choose a container file</string>
     <string name="chosen_file">File: %1$s</string>
     <string name="password">Password</string>
@@ -12,7 +12,7 @@
     <string name="none_open">No container is open.</string>
     <string name="lock">Lock</string>
     <string name="lock_all">Lock all</string>
-    <string name="wrong_password">The password, or the PIM, is wrong. Or this file is not a VeraCrypt container.</string>
+    <string name="wrong_password">The password is wrong (or the PIM, for VeraCrypt). Or this file is not that kind of container.</string>
     <string name="already_open">This file is already open.</string>
     <string name="open_failed">Could not open this file: %1$s</string>
     <string name="pim_invalid">The PIM must be a whole number.</string>
@@ -36,7 +36,7 @@
     <string name="open_details">%1$s, read-only</string>
     <string name="version_label">Version %1$s (%2$d), %3$s</string>
     <string name="format_veracrypt">No known signature, so it is offered as a VeraCrypt volume. Enter its password and PIM.</string>
-    <string name="format_luks_later">This is a LUKS volume. This version of Container Master opens VeraCrypt only; LUKS comes in a later version.</string>
+    <string name="format_luks_later">This is a LUKS volume (LUKS1 or LUKS2). Enter its password.</string>
     <string name="format_zip_later">This is a ZIP archive. It opens without a password, read-only.</string>
     <string name="open_archive">Open</string>
     <string name="idle_lock">Lock after no use for</string>

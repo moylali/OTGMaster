@@ -7,7 +7,7 @@ package app.fayaz.containermaster
  */
 enum class ContainerFormat(val supported: Boolean) {
     VERACRYPT(true),
-    LUKS(false),
+    LUKS(true),
     ZIP(true);
 
     companion object {

@@ -59,8 +59,8 @@ object ContainerSessions : MountRegistry {
     }
 
     private fun veraCryptSession(id: String, name: String, uri: Uri, fs: FileSystem,
-                                 decrypted: NativeDecryptedBlockDevice, descriptor: ParcelFileDescriptor) =
-        Session(id, name, uri, "VeraCrypt",
+                                 decrypted: java.io.Closeable, descriptor: ParcelFileDescriptor, format: String = "VeraCrypt") =
+        Session(id, name, uri, format,
             fileSystemName = when (fs) {
                 is app.fayaz.otgmaster.exfat.ExFatFileSystem -> "exFAT"
                 is app.fayaz.otgmaster.ntfs.NtfsFileSystem -> "NTFS"
@@ -206,6 +206,60 @@ object ContainerSessions : MountRegistry {
     }
 
     /**
+     * Opens the LUKS1 or LUKS2 volume [uri] with [password] (architecture proposal, Milestone 5):
+     * the same path as VeraCrypt from the unlocked device on (cache, read-only guard, DiskMounter,
+     * the provider). The ID comes from the header's UUID, which a password change keeps. The
+     * phone's free memory is passed so an Argon2 keyslot that cannot fit is refused, not tried.
+     */
+    fun openLuks(context: Context, uri: Uri, displayName: String, password: CharArray): Session {
+        val masked = app.fayaz.otgmaster.feedback.PathMask.mark(displayName)
+        CmLog.log("Opening $masked as LUKS")
+        val t0 = android.os.SystemClock.elapsedRealtime()
+        val descriptor = context.contentResolver.openFileDescriptor(uri, "r")
+            ?: throw java.io.FileNotFoundException("The file could not be opened")
+        val passwordBytes = String(password).toByteArray(Charsets.UTF_8)
+        password.fill('\u0000')
+        try {
+            val channel = FileInputStream(descriptor.fileDescriptor).channel
+            val device = ChannelBlockDevice(channel, descriptor.statSize.takeIf { it >= 0 })
+            val head = device.readBlocks(0, 1)
+            val id = MessageDigest.getInstance("SHA-256").apply { update("luks-uuid:".toByteArray()); update(head, 168, 40) }
+                .digest().joinToString("") { "%02x".format(it) }.take(10)
+            if (sessions.any { it.id == id }) { CmLog.log("$masked is already open"); throw AlreadyOpenException() }
+            val version = app.fayaz.otgmaster.luks.LuksUnlocker().luksVersion(device, 0)
+            val mem = android.app.ActivityManager.MemoryInfo().also {
+                context.getSystemService(android.app.ActivityManager::class.java).getMemoryInfo(it) }.availMem
+            val decrypted = app.fayaz.otgmaster.luks.LuksUnlocker().unlock(device, 0, device.blockCount, passwordBytes, availableMemoryBytes = mem)
+            try {
+                val cached = CachedBlockDevice(decrypted, readAheadBytes = CachedBlockDevice.DEFAULT_READAHEAD_BYTES)
+                val fs = DiskMounter.mount(ReadOnlyBlockDeviceDriver(ByteBlockDevice(cached)))
+                val session = veraCryptSession(id, displayName, uri, fs, decrypted, descriptor, format = "LUKS$version")
+                synchronized(this) {
+                    if (sessions.any { it.id == id }) { session.close(); throw AlreadyOpenException() }
+                    touch(id)
+                    sessions += session
+                    _open.value = sessions.toList()
+                }
+                notifyRoots(context)
+                CmLog.log("Unlocked and mounted $masked (LUKS$version, ${session.fileSystemName}, read-only) in ${android.os.SystemClock.elapsedRealtime() - t0} ms; open as $id")
+                return session
+            } catch (e: Throwable) {
+                runCatching { decrypted.close() }; throw e
+            }
+        } catch (e: app.fayaz.otgmaster.luks.LuksUnlocker.WrongPasswordException) {
+            runCatching { descriptor.close() }
+            CmLog.log("Could not unlock $masked: wrong password"); throw IllegalArgumentException(e.message, e)
+        } catch (e: AlreadyOpenException) {
+            runCatching { descriptor.close() }; throw e
+        } catch (e: Exception) {
+            runCatching { descriptor.close() }
+            CmLog.log("Could not open $masked: ${e.message ?: e.javaClass.simpleName}"); throw e
+        } finally {
+            passwordBytes.fill(0)
+        }
+    }
+
+    /**
      * Opens the ZIP archive [uri]: reads its central directory through the descriptor and
      * publishes its tree. No password. Its ID comes from the archive's own bytes (its length,
      * first 4 KiB and end record), so a client's grant survives a fresh pick, as for VeraCrypt.
@@ -282,7 +336,7 @@ object ContainerSessions : MountRegistry {
         return ContainerFormat.detect(head).also {
             CmLog.log("Chose ${app.fayaz.otgmaster.feedback.PathMask.mark(displayName)}: " + when (it) {
                 ContainerFormat.VERACRYPT -> "no known signature, so it is offered as VeraCrypt"
-                ContainerFormat.LUKS -> "a LUKS volume, which this version cannot open yet"
+                ContainerFormat.LUKS -> "a LUKS volume"
                 ContainerFormat.ZIP -> "a ZIP archive, opened without a password"
             })
         }
