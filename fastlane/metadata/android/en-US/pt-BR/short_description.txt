@@ -1,1 +1,1 @@
-
+Montar unidades USB criptografadas com VeraCrypt, LUKS, BitLocker e APFS em dispositivos Android sem root.
