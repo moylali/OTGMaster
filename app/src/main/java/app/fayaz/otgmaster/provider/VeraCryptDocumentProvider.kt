@@ -145,6 +145,10 @@ class VeraCryptDocumentProvider : DocumentsProvider() {
 
         fun rootIdForDrive(driveId: String): String = "root_$driveId"
 
+        /** Whether a root query with [projection] needs the free-space column (null means all). */
+        fun wantsAvailableBytes(projection: Array<out String>?): Boolean =
+            projection == null || DocumentsContract.Root.COLUMN_AVAILABLE_BYTES in projection
+
         fun rootDocIdForDrive(driveId: String): String = "$driveId:/"
 
         /**
@@ -434,12 +438,12 @@ class VeraCryptDocumentProvider : DocumentsProvider() {
         mimeType: String?,
         displayName: String?
     ): String {
-        if (displayName == null) throw IllegalArgumentException("displayName cannot be null")
+        val name = DocumentNames.require(displayName)
         val parent = getFileForDocId(documentId) ?: throw FileNotFoundException("Parent not found")
         val newFile = if (mimeType == DocumentsContract.Document.MIME_TYPE_DIR) {
-            parent.createDirectory(displayName)
+            parent.createDirectory(name)
         } else {
-            parent.createFile(displayName)
+            parent.createFile(name)
         }
         return getDocIdForChild(documentId, newFile)
     }
@@ -474,14 +478,13 @@ class VeraCryptDocumentProvider : DocumentsProvider() {
             .also { forgetRows(documentId); forgetRows(parentDocId(documentId)) }
 
     private fun renameDocumentImpl(documentId: String?, displayName: String?): String {
+        // Checked before the file is looked up, so a refused name changes nothing.
+        val name = DocumentNames.require(displayName)
+        val id = DocumentIds.parse(documentId) ?: throw FileNotFoundException("Invalid document ID")
+        if (id.isRoot) throw IllegalArgumentException("A drive's root cannot be renamed")
         val file = getFileForDocId(documentId) ?: throw FileNotFoundException("File not found")
-        if (displayName == null) throw IllegalArgumentException("Display name cannot be null")
-        file.name = displayName
-        
-        val parsed = parseDocId(documentId) ?: throw FileNotFoundException("Invalid document ID")
-        val parentPath = parsed.path.substringBeforeLast('/')
-        val newPath = if (parentPath.isEmpty()) "/" + displayName else parentPath + "/" + displayName
-        return parsed.driveId + ":" + newPath
+        file.name = name
+        return DocumentIds.child(DocumentIds.Id(id.driveId, id.components.dropLast(1)), name).toString()
     }
 
     override fun queryRoots(projection: Array<out String>?): Cursor {
@@ -503,8 +506,12 @@ class VeraCryptDocumentProvider : DocumentsProvider() {
             row.add(DocumentsContract.Root.COLUMN_DOCUMENT_ID, rootDocIdForDrive(drive.id))
             row.add(DocumentsContract.Root.COLUMN_MIME_TYPES, "*/*")
             // Never read under the volume's lock here: a long write holds it for minutes.
-            row.add(DocumentsContract.Root.COLUMN_AVAILABLE_BYTES,
-                rootFreeSpace.availableBytes(drive.id) { drive.fileSystem.freeSpace })
+            // And only when the caller asked for the column: an ID-only query used to pay
+            // for a free-space read per drive (architecture proposal, F6).
+            if (wantsAvailableBytes(projection)) {
+                row.add(DocumentsContract.Root.COLUMN_AVAILABLE_BYTES,
+                    rootFreeSpace.availableBytes(drive.id) { drive.fileSystem.freeSpace })
+            }
             // Use the standard launcher icon
             row.add(DocumentsContract.Root.COLUMN_ICON, app.fayaz.otgmaster.R.mipmap.ic_launcher)
         }
@@ -649,18 +656,20 @@ class VeraCryptDocumentProvider : DocumentsProvider() {
 
         if (isWrite) {
             val callback = object : ProxyFileDescriptorCallback() {
-                override fun onGetSize(): Long = handle.use("size") { it.length }
+                override fun onGetSize(): Long = errno("size") { handle.use("size") { it.length } }
 
                 override fun onRead(offset: Long, size: Int, data: ByteArray): Int =
-                    handle.use("read") { readInto(it, offset, size, data) }
+                    errno("read") { handle.use("read") { readInto(it, offset, size, data) } }
 
                 override fun onWrite(offset: Long, size: Int, data: ByteArray): Int =
-                    handle.use("write") {
-                        it.write(offset, ByteBuffer.wrap(data, 0, size))
-                        size
+                    errno("write") {
+                        handle.use("write") {
+                            it.write(offset, ByteBuffer.wrap(data, 0, size))
+                            size
+                        }
                     }
 
-                override fun onFsync() = handle.use("sync") { it.flush() }
+                override fun onFsync() = errno("fsync") { handle.use("sync") { it.flush() } }
 
                 override fun onRelease() {
                     try {
@@ -684,10 +693,10 @@ class VeraCryptDocumentProvider : DocumentsProvider() {
         }
 
         val callback = object : ProxyFileDescriptorCallback() {
-            override fun onGetSize(): Long = handle.use("size") { it.length }
+            override fun onGetSize(): Long = errno("size") { handle.use("size") { it.length } }
 
             override fun onRead(offset: Long, size: Int, data: ByteArray): Int =
-                handle.use("read") { readInto(it, offset, size, data) }
+                errno("read") { handle.use("read") { readInto(it, offset, size, data) } }
 
             override fun onRelease() {
                 try {
@@ -735,10 +744,9 @@ class VeraCryptDocumentProvider : DocumentsProvider() {
         isChildDocumentImpl(parentDocumentId, documentId)
 
     private fun isChildDocumentImpl(parentDocumentId: String?, documentId: String?): Boolean {
-        val parent = parseDocId(parentDocumentId) ?: return false
-        val child = parseDocId(documentId) ?: return false
-        if (parent.driveId != child.driveId) return false
-        return child.path == parent.path || child.path.startsWith(parent.path.ensureTrailingSlash())
+        val parent = DocumentIds.parse(parentDocumentId) ?: return false
+        val child = DocumentIds.parse(documentId) ?: return false
+        return DocumentIds.isSameOrUnder(parent, child)
     }
 
     /**
@@ -753,23 +761,15 @@ class VeraCryptDocumentProvider : DocumentsProvider() {
      * touches no filesystem.
      */
     override fun findDocumentPath(parentDocumentId: String?, childDocumentId: String): DocumentsContract.Path {
-        val child = parseDocId(childDocumentId) ?: throw FileNotFoundException("Invalid document ID")
+        val child = DocumentIds.parse(childDocumentId) ?: throw FileNotFoundException("Invalid document ID")
         if (OtgMasterState.getDrive(child.driveId) == null) throw FileNotFoundException("Drive not mounted")
-        val parts = child.path.split('/').filter { it.isNotEmpty() }
-        val chain = ArrayList<String>(parts.size + 1)
-        chain += rootDocIdForDrive(child.driveId)
-        var path = ""
-        for (part in parts) {
-            path += "/$part"
-            chain += "${child.driveId}:$path"
-        }
+        val chain = DocumentIds.chain(child)
         if (parentDocumentId != null) {
-            val parent = parseDocId(parentDocumentId) ?: throw FileNotFoundException("Invalid parent ID")
-            val start = chain.indexOfFirst { parseDocId(it)?.path == parent.path }
-            if (parent.driveId != child.driveId || start < 0) throw FileNotFoundException("$childDocumentId is not under $parentDocumentId")
-            return DocumentsContract.Path(null, chain.subList(start, chain.size))
+            val parent = DocumentIds.parse(parentDocumentId) ?: throw FileNotFoundException("Invalid parent ID")
+            if (!DocumentIds.isSameOrUnder(parent, child)) throw FileNotFoundException("$childDocumentId is not under $parentDocumentId")
+            return DocumentsContract.Path(null, chain.drop(parent.components.size).map { it.toString() })
         }
-        return DocumentsContract.Path(rootIdForDrive(child.driveId), chain)
+        return DocumentsContract.Path(rootIdForDrive(child.driveId), chain.map { it.toString() })
     }
 
     /** Puts [rows] (column to value) into a cursor of [columns]; columns a row lacks stay null. */
@@ -815,20 +815,25 @@ class VeraCryptDocumentProvider : DocumentsProvider() {
 
     private data class ParsedDocId(val driveId: String, val path: String)
 
-    private fun parseDocId(docId: String?): ParsedDocId? {
-        if (docId == null) return null
-        val parts = docId.split(":", limit = 2)
-        if (parts.size != 2 || parts[0].isBlank()) return null
-        val path = parts[1].ifBlank { "/" }
-        return ParsedDocId(parts[0], if (path.startsWith("/")) path else "/$path")
+    /**
+     * Runs a proxy callback, turning a failure into the ErrnoException Android passes to
+     * the client; anything else reaches it as EBADF. See [ProxyErrors].
+     */
+    private inline fun <T> errno(op: String, body: () -> T): T = try {
+        body()
+    } catch (e: android.system.ErrnoException) {
+        throw e
+    } catch (e: Exception) {
+        throw android.system.ErrnoException(op, ProxyErrors.errnoFor(e), e)
     }
+
+    /** Canonical IDs only; see [DocumentIds]. */
+    private fun parseDocId(docId: String?): ParsedDocId? =
+        DocumentIds.parse(docId)?.let { ParsedDocId(it.driveId, it.path) }
 
     private fun getDocIdForChild(parentDocId: String?, child: UsbFile): String {
-        val parsed = parseDocId(parentDocId) ?: return child.name
-        val childPath = if (parsed.path == "/") "/${child.name}" else "${parsed.path}/${child.name}"
-        return "${parsed.driveId}:$childPath"
+        val parent = DocumentIds.parse(parentDocId) ?: return child.name
+        return DocumentIds.child(parent, child.name).toString()
     }
-
-    private fun String.ensureTrailingSlash(): String = if (endsWith("/")) this else "$this/"
 
 }
