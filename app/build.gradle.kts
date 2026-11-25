@@ -194,6 +194,7 @@ android {
 
 dependencies {
     implementation(project(":libaums"))
+    implementation(project(":mount-core"))
     
     val composeBom = platform("androidx.compose:compose-bom:2025.04.01")
     implementation(composeBom)
