@@ -38,7 +38,7 @@ object ExFatNative {
         // are worth a line there. At mount every warning counts (an unclean volume).
         val lines = text.lineSequence().filter { it.isNotBlank() && (!errorsOnly || it.startsWith("ERROR")) }
             .take(max).toList()
-        for (line in lines) app.fayaz.otgmaster.OtgMasterState.log("exFAT ($context): $line")
+        for (line in lines) app.fayaz.otgmaster.core.EngineLog.log("exFAT ($context): $line")
         return lines.size
     }
 
@@ -107,7 +107,7 @@ object ExFatNative {
             size
         } catch (e: Exception) {
             e.printStackTrace()
-            app.fayaz.otgmaster.OtgMasterState.logFailure("exfat-io", "exFAT: reading $size bytes at byte $offset failed", e)
+            app.fayaz.otgmaster.core.EngineLog.logFailure("exfat-io", "exFAT: reading $size bytes at byte $offset failed", e)
             -1
         }
     }
@@ -133,7 +133,7 @@ object ExFatNative {
             }
             size
         } catch (e: Exception) {
-            app.fayaz.otgmaster.OtgMasterState.logFailure("exfat-io", "exFAT: writing $size bytes at byte $offset failed", e)
+            app.fayaz.otgmaster.core.EngineLog.logFailure("exfat-io", "exFAT: writing $size bytes at byte $offset failed", e)
             e.printStackTrace()
             -1
         }

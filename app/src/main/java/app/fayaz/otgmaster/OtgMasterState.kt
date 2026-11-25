@@ -400,4 +400,14 @@ object OtgMasterState {
         mountedDrives.removeIf { it.id == id }
         onMountedChanged?.invoke(mountedDrives.toList())
     }
+
+    // Last in the object, so everything log() and logFailure() use is initialised before
+    // the lines engine code logged earlier are handed over.
+    init {
+        app.fayaz.otgmaster.core.EngineLog.install(object : app.fayaz.otgmaster.core.EngineLog.Sink {
+            override fun log(line: String) = OtgMasterState.log(line)
+            override fun logFailure(kind: String, what: String, e: Throwable) =
+                OtgMasterState.logFailure(kind, what, e)
+        })
+    }
 }

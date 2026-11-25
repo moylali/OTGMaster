@@ -84,7 +84,7 @@ class VeraCryptUnlocker {
                     blockCount = c.blockCount, containerType = ContainerType.APFS, apfsVolume = i)
             }
         }.onFailure {
-            app.fayaz.otgmaster.OtgMasterState.logFailure("container",
+            app.fayaz.otgmaster.core.EngineLog.logFailure("container",
                 "Could not list the APFS volumes of the partition at block ${c.startBlock}", it)
         }.getOrDefault(emptyList())
     }
@@ -139,7 +139,7 @@ class VeraCryptUnlocker {
                 ContainerType.VERACRYPT
             }
         } catch (e: Exception) {
-            app.fayaz.otgmaster.OtgMasterState.logFailure("container",
+            app.fayaz.otgmaster.core.EngineLog.logFailure("container",
                 "Could not read the header of the partition at block $startBlock", e)
             ContainerType.UNKNOWN
         }
