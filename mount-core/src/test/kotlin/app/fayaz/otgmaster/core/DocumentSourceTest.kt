@@ -23,6 +23,7 @@ class DocumentSourceTest {
         override fun root() = top
         override fun child(dir: DocumentNode, name: String) = (dir as Node).kids.firstOrNull { it.name == name }
         override fun children(dir: DocumentNode): List<DocumentNode> = (dir as Node).kids
+        override fun open(node: DocumentNode): DocumentHandle = error("no content")
         override fun createFile(dir: DocumentNode, name: String) = error("read-only")
         override fun createDirectory(dir: DocumentNode, name: String) = error("read-only")
         override fun rename(node: DocumentNode, name: String) = error("read-only")

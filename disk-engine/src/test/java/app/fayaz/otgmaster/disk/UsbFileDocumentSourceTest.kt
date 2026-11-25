@@ -84,4 +84,52 @@ class UsbFileDocumentSourceTest {
         assertEquals(listOf("uno.txt"), src.children(dir).map { it.name })
         assertNull(src.readOnlyReason)
     }
+
+    /**
+     * The handle the provider's descriptor callbacks use: writes land, reads return the count
+     * actually read (short near the end, 0 at it) and leave the rest of the buffer alone,
+     * truncate empties the file, and the volume stays clean for e2fsck.
+     */
+    @Test
+    fun `a handle reads what was written, short at the end, and leaves the volume clean`() {
+        assumeTrue("e2fsck not available", run("sh", "-c", "command -v e2fsck") == 0)
+        val payload = ByteArray(5000) { (it * 31 + 7).toByte() }
+        withSource { src ->
+            val node = src.createFile(src.root(), "h.bin")
+            src.open(node).use { h ->
+                h.write(0, payload, 3000)
+                h.write(3000, payload.copyOfRange(3000, 5000), 2000)
+                h.flush()
+            }
+        }
+        withSource { src ->
+            val node = src.resolve(listOf("h.bin"))!!
+            assertEquals(5000L, node.size)
+            src.open(node).use { h ->
+                assertEquals(5000L, h.size())
+                val all = ByteArray(8192) { 0x55 }
+                assertEquals(5000, h.read(0, all, 8192))
+                assertTrue("content", payload.contentEquals(all.copyOf(5000)))
+                assertTrue("bytes past the count were touched", all.copyOfRange(5000, 8192).all { it == 0x55.toByte() })
+                val tail = ByteArray(4096)
+                assertEquals(904, h.read(4096, tail, 4096))
+                assertTrue(payload.copyOfRange(4096, 5000).contentEquals(tail.copyOf(904)))
+                assertEquals(0, h.read(5000, tail, 4096))
+                assertEquals(0, h.read(9999, tail, 4096))
+            }
+        }
+        withSource { src ->
+            src.open(src.resolve(listOf("t.bin")) ?: src.createFile(src.root(), "t.bin")).use { h ->
+                h.write(0, payload, 5000)
+                h.flush()
+                h.truncate()
+                assertEquals(0L, h.size())
+                h.flush()
+            }
+        }
+        withSource { src -> assertEquals(0L, src.resolve(listOf("t.bin"))!!.size) }
+        val p = ProcessBuilder("e2fsck", "-fn", img.absolutePath).redirectErrorStream(true).start()
+        val out = p.inputStream.bufferedReader().readText()
+        assertEquals("e2fsck after the handle's writes:\n$out", 0, p.waitFor())
+    }
 }
