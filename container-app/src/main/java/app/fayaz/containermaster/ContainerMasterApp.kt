@@ -11,6 +11,12 @@ import app.fayaz.otgmaster.provider.TreeDocumentsProvider
 class ContainerMasterApp : Application() {
     override fun onCreate() {
         super.onCreate()
+        // This class runs in both processes (Milestone 2b). The UI process ("…:ui") only needs
+        // Report issue's source, which asks the engine; everything else is the engine's.
+        if (processName().endsWith(":ui")) {
+            Feedback.source = UiFeedbackSource(this)
+            return
+        }
         EngineLog.install(object : EngineLog.Sink {
             override fun log(line: String) = CmLog.log(line)
             override fun logFailure(kind: String, what: String, e: Throwable) =
@@ -30,6 +36,24 @@ class ContainerMasterApp : Application() {
             override fun logs(): List<String> = CmLog.lines.value
             override fun themeMode(): String = prefs(this@ContainerMasterApp).getString(THEME, "SYSTEM") ?: "SYSTEM"
         }
+    }
+
+    private fun processName(): String =
+        if (android.os.Build.VERSION.SDK_INT >= 28) Application.getProcessName()
+        else runCatching { java.io.File("/proc/self/cmdline").readText().trimEnd('\u0000') }.getOrDefault(packageName)
+
+    /** Report issue in the UI process: the engine's open containers and log, read through EngineClient. */
+    private class UiFeedbackSource(private val app: Application) : FeedbackSource {
+        private val engine = EngineClient(app)
+        override val appVersion: String get() = "Container Master ${BuildConfig.VERSION_NAME} (${BuildConfig.VERSION_CODE})"
+        override val usesUsb: Boolean get() = false
+        override fun usbMake(): String = ""
+        override fun volumes(): List<FeedbackSource.Volume> = runCatching { engine.state().open }.getOrDefault(emptyList()).map {
+            FeedbackSource.Volume(null, it.fileSystem, when { it.format == "ZIP" || it.format == "ISO" -> "none"
+                it.format.startsWith("LUKS") -> it.format.lowercase(); it.format == "AES Crypt" -> "aescrypt"; else -> "veracrypt" })
+        }
+        override fun logs(): List<String> = runCatching { engine.state().logs }.getOrDefault(emptyList())
+        override fun themeMode(): String = prefs(app).getString(THEME, "SYSTEM") ?: "SYSTEM"
     }
 
     companion object {

@@ -131,8 +131,15 @@ private data class Picked(val uri: Uri, val name: String, val format: ContainerF
 private fun Screen(theme: String, onTheme: (String) -> Unit) {
     val context = LocalContext.current
     val scope = rememberCoroutineScope()
-    val open by ContainerSessions.open.collectAsState()
-    val logs by CmLog.lines.collectAsState()
+    // The engine runs in another process (Milestone 2b): the screen holds copies, refreshed
+    // whenever the engine announces a change.
+    val engine = remember { EngineClient(context) }
+    var state by remember { mutableStateOf(EngineClient.State(emptyList(), emptyList(), 15)) }
+    LaunchedEffect(Unit) {
+        engine.states().collect { state = withContext(Dispatchers.IO) { runCatching { engine.state() }.getOrDefault(state) } }
+    }
+    val open = state.open
+    val logs = state.logs
     var picked by remember { mutableStateOf<Picked?>(null) }
     var password by remember { mutableStateOf("") }
     var showPassword by remember { mutableStateOf(false) }
@@ -149,8 +156,7 @@ private fun Screen(theme: String, onTheme: (String) -> Unit) {
                 picked = withContext(Dispatchers.IO) {
                     val name = context.contentResolver.query(uri, arrayOf(OpenableColumns.DISPLAY_NAME), null, null, null)
                         ?.use { c -> if (c.moveToFirst()) c.getString(0) else null } ?: uri.lastPathSegment ?: "container"
-                    val format = runCatching { ContainerSessions.detect(context, uri, name) }
-                        .getOrElse { CmLog.log("Could not read the chosen file: ${it.message}"); ContainerFormat.VERACRYPT }
+                    val format = runCatching { engine.detect(uri, name) }.getOrDefault(ContainerFormat.VERACRYPT)
                     Picked(uri, name, format)
                 }
             }
@@ -234,27 +240,17 @@ private fun Screen(theme: String, onTheme: (String) -> Unit) {
                             if (pim.isNotEmpty() && pimValue == null) { message = pimInvalid; return@Button }
                             val chars = password.toCharArray()
                             busy = true; message = null
-                            SessionService.opening = true
+                            // Started from the visible screen, before the key derivation (F4).
                             SessionService.start(context)
                             scope.launch {
                                 message = withContext(Dispatchers.IO) {
-                                    try {
-                                        if (p.format == ContainerFormat.AESCRYPT) ContainerSessions.openAesCrypt(context.applicationContext, p.uri, p.name, chars)
-                                        else if (p.format == ContainerFormat.LUKS) ContainerSessions.openLuks(context.applicationContext, p.uri, p.name, chars)
-                                        else ContainerSessions.openVeraCrypt(context.applicationContext, p.uri, p.name, chars, pimValue)
-                                        null
-                                    } catch (e: IllegalArgumentException) {
-                                        wrong
-                                    } catch (e: ContainerSessions.AlreadyOpenException) {
-                                        already
-                                    } catch (e: Exception) {
-                                        failed.replace("%s", e.message ?: e.javaClass.simpleName)
-                                    } finally {
-                                        chars.fill('\u0000')
+                                    when (val r = engine.open(p.format, p.uri, p.name, chars, pimValue)) {
+                                        EngineClient.OpenResult.Ok -> null
+                                        EngineClient.OpenResult.WrongPassword -> wrong
+                                        EngineClient.OpenResult.AlreadyOpen -> already
+                                        is EngineClient.OpenResult.Failed -> failed.replace("%s", r.message)
                                     }
                                 }
-                                SessionService.opening = false
-                                SessionService.start(context)
                                 busy = false
                                 if (message == null) { password = ""; pim = ""; picked = null }
                             }
@@ -267,20 +263,16 @@ private fun Screen(theme: String, onTheme: (String) -> Unit) {
                     Button(enabled = !busy, modifier = Modifier.desc("open_zip"), onClick = {
                         val p = picked ?: return@Button
                         busy = true; message = null
-                        SessionService.opening = true
                         SessionService.start(context)
                         scope.launch {
                             message = withContext(Dispatchers.IO) {
-                                try {
-                                    if (p.format == ContainerFormat.ISO) ContainerSessions.openIso(context.applicationContext, p.uri, p.name)
-                                    else ContainerSessions.openZip(context.applicationContext, p.uri, p.name)
-                                    null
+                                when (val r = engine.open(p.format, p.uri, p.name)) {
+                                    EngineClient.OpenResult.Ok -> null
+                                    EngineClient.OpenResult.AlreadyOpen -> already
+                                    EngineClient.OpenResult.WrongPassword -> failed.replace("%s", "wrong password")
+                                    is EngineClient.OpenResult.Failed -> failed.replace("%s", r.message)
                                 }
-                                catch (e: ContainerSessions.AlreadyOpenException) { already }
-                                catch (e: Exception) { failed.replace("%s", e.message ?: e.javaClass.simpleName) }
                             }
-                            SessionService.opening = false
-                            SessionService.start(context)
                             busy = false
                             if (message == null) picked = null
                         }
@@ -298,11 +290,11 @@ private fun Screen(theme: String, onTheme: (String) -> Unit) {
                 Card(Modifier.fillMaxWidth().padding(vertical = 4.dp)) {
                     Column(Modifier.padding(12.dp)) {
                         Text(s.name, style = MaterialTheme.typography.titleSmall, modifier = Modifier.desc("open_${s.id}"))
-                        Text(stringResource(R.string.open_details, if (s.format == "ZIP" || s.format == "ISO" || s.format == "AES Crypt") s.fileSystemName else "${s.format}, ${s.fileSystemName}"),
+                        Text(stringResource(R.string.open_details, if (s.format == "ZIP" || s.format == "ISO" || s.format == "AES Crypt") s.fileSystem else "${s.format}, ${s.fileSystem}"),
                             style = MaterialTheme.typography.bodySmall)
                         Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.End) {
                             OutlinedButton(onClick = {
-                                scope.launch(Dispatchers.IO) { ContainerSessions.lock(context.applicationContext, s.id) }
+                                scope.launch(Dispatchers.IO) { engine.lock(s.id) }
                             }, modifier = Modifier.desc("lock_${s.id}")) { Text(stringResource(R.string.lock)) }
                         }
                     }
@@ -310,7 +302,7 @@ private fun Screen(theme: String, onTheme: (String) -> Unit) {
             }
             if (open.isNotEmpty()) {
                 Button(onClick = {
-                    scope.launch(Dispatchers.IO) { ContainerSessions.lockAll(context.applicationContext) }
+                    scope.launch(Dispatchers.IO) { engine.lockAll() }
                 }, modifier = Modifier.fillMaxWidth().desc("lock_all")) { Text(stringResource(R.string.lock_all)) }
             }
         }
@@ -325,13 +317,12 @@ private fun Screen(theme: String, onTheme: (String) -> Unit) {
             }
             HorizontalDivider(Modifier.padding(vertical = 8.dp))
             val prefs = remember { ContainerMasterApp.prefs(context) }
-            var idle by remember { mutableStateOf(ContainerSessions.idleMinutes) }
+            var idle by remember(state.idleMinutes) { mutableStateOf(state.idleMinutes) }
             Text(stringResource(R.string.idle_lock), style = MaterialTheme.typography.titleMedium)
             for (m in listOf(1, 5, 15, 30, 60, 0)) {
                 val pickIdle = {
-                    idle = m; ContainerSessions.idleMinutes = m
-                    prefs.edit().putInt(ContainerMasterApp.IDLE_MINUTES, m).apply()
-                    CmLog.log(if (m == 0) "Idle lock: never" else "Idle lock: after $m min")
+                    idle = m
+                    scope.launch(Dispatchers.IO) { engine.setIdle(m) }
                 }
                 Row(Modifier.fillMaxWidth().clickable { pickIdle() }.desc("idle_$m"), verticalAlignment = Alignment.CenterVertically) {
                     RadioButton(selected = idle == m, onClick = { pickIdle() })
@@ -360,6 +351,8 @@ private fun Screen(theme: String, onTheme: (String) -> Unit) {
 @Composable
 private fun LogsSection(logs: List<String>) {
     val context = LocalContext.current
+    val engine = remember { EngineClient(context) }
+    val scope = rememberCoroutineScope()
     Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween, verticalAlignment = Alignment.CenterVertically) {
         val label = stringResource(R.string.logs)
         Text(label, style = MaterialTheme.typography.titleMedium)
@@ -368,7 +361,7 @@ private fun LogsSection(logs: List<String>) {
                 modifier = Modifier.desc("report_issue")) {
                 Text(stringResource(app.fayaz.otgmaster.common.R.string.feedback_report_issue))
             }
-            IconButton(onClick = { CmLog.clear() }, modifier = Modifier.desc("clear_logs")) {
+            IconButton(onClick = { scope.launch(Dispatchers.IO) { engine.clearLogs() } }, modifier = Modifier.desc("clear_logs")) {
                 Icon(Icons.Default.Delete, contentDescription = stringResource(R.string.cd_clear_logs))
             }
             IconButton(onClick = {
