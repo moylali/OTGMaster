@@ -172,9 +172,13 @@ case_idle_lock() {
   set_idle 15
 }
 
+# A held descriptor runs inside a saf-probe activity that stays open. Every probe is started in
+# a task of its own (-f 0x18080000: NEW_TASK, MULTIPLE_TASK, NEW_DOCUMENT): otherwise Android
+# delivered the next probe's intent to the holding instance on top, and its read never ran
+# (zip_and_veracrypt, c390cfa and f2d1c4b).
 case_held_fd_lock() {
   open_and_grant cm-ext4.hc password123 1 "$ID_EXT4" || return 1
-  adb -s "$S" shell "rm -f $F/result-hold.json $F/result-hold-open.json; am start -n app.fayaz.safprobe/.ProbeActivity --es cmd hold --es tree '$TREE' --es path flower.jpg --ei wait 25" >/dev/null
+  adb -s "$S" shell "rm -f $F/result-hold.json $F/result-hold-open.json; am start -f 0x18080000 -n app.fayaz.safprobe/.ProbeActivity --es cmd hold --es tree '$TREE' --es path flower.jpg --ei wait 25" >/dev/null
   local i; for i in $(seq 1 30); do adb -s "$S" shell "test -f $F/result-hold-open.json" && break; sleep 1; done
   adb -s "$S" shell cat $F/result-hold-open.json | grep -q '"firstRead":"65536 bytes"' || { fail "first read: $(adb -s "$S" shell cat $F/result-hold-open.json)"; return 1; }
   lock_all
@@ -216,7 +220,7 @@ case_zip_and_veracrypt() {
   local ztree=$TREE r
   # A descriptor held on the ZIP's streamed entry, seeking to 1 MiB after a wait, while the
   # VeraCrypt container is read: both through the same provider code.
-  adb -s "$S" shell "rm -f $F/result-hold.json $F/result-hold-open.json; am start -n app.fayaz.safprobe/.ProbeActivity --es cmd hold --es tree '$ztree' --es path big.bin --ei wait 8" >/dev/null
+  adb -s "$S" shell "rm -f $F/result-hold.json $F/result-hold-open.json; am start -f 0x18080000 -n app.fayaz.safprobe/.ProbeActivity --es cmd hold --es tree '$ztree' --es path big.bin --ei wait 8" >/dev/null
   r=$(read_sha "$vtree" flower.jpg); [ "$r" = "\"sha256\": \"$FLOWER\"" ] || { fail "VeraCrypt flower.jpg beside the ZIP: $r"; return 1; }
   r=$(read_sha "$ztree" flower.jpg); [ "$r" = "\"sha256\": \"$FLOWER\"" ] || { fail "ZIP flower.jpg beside VeraCrypt: $r"; return 1; }
   local i; for i in $(seq 1 40); do adb -s "$S" shell "test -f $F/result-hold.json" && break; sleep 1; done
