@@ -49,6 +49,24 @@ All four were rebase-merged, so `main` has new hashes. The sections below name t
 | #193 | `a6a5286` | `bed05fa` | refactor(provider): look up and list through a DocumentSource tree contract |
 | #193 | `2d4bba3` | `c681622` | docs: the held grant still reads the same file on a6a5286 |
 
+## 2026-11-25: the provider as a :saf-provider subclass, OnePlus 7, Drive 1
+
+Provider split steps 2 and 3: the provider asks a `MountRegistry` (`443bd5b`), and its serving
+and session code is `TreeDocumentsProvider` in `:saf-provider`, with
+`VeraCryptDocumentProvider` the subclass (`f9f181e`). **Minified** `f9f181e`; `tools/saf-probe`
+from `550abaf`. OnePlus 7 (GM1901, LineageOS 23.2, Android 16, SDK 36), Drive 1 (`…6B31`), the
+7 plain partitions auto mounted.
+
+| Step | Result |
+|---|---|
+| The read grant held on `884fb1f107:/BENCH/edge` reads `size_1048577.bin` | same document ID, 1,048,577 B, SHA-256 `31eb9165…063ff4`, flags 70 |
+| The same grant opens `BENCH/large/seq_2100m.bin` and `BENCH/edge/../large/seq_2100m.bin` | both refused with SecurityException |
+| Through the write grants taken for step 1, on D1EXFAT, D1FAT32, D1NTFS and D1EXT4: create `m2-step3-probe.bin`, write 3,149,825 bytes, read back, "wt" with 1,049,941, read back, delete | all four match at both steps, deleted |
+| Eject in the app (the delegated `drainCallbacks` and `driveInUse`), `sm unmount` of Android's mounts | done; no crash in logcat |
+
+**Written to the drive:** one more file created and deleted at the root of each of those
+four partitions; their host check is owed with the laptop check of D1, as for step 1.
+
 ## 2026-11-25: writes through the provider's DocumentHandle, OnePlus 7, Drive 1
 
 Provider split step 1 (`d92baa6`): every client read and write now goes through
