@@ -53,10 +53,20 @@ jobs:
               echo "invisible to checkupdates and may sit at any version. Nothing to check."
               exit 0
               ;;
+            container-v*.*.*)
+              # Container Master's releases (architecture proposal, F13). Its fdroiddata
+              # recipe matches ^container-v[0-9]+[.][0-9]+[.][0-9]+$, OTG's ^v...$, so
+              # neither app's checkupdates can take the other's tag.
+              gradle=container-app/build.gradle.kts
+              expected="${tag#container-v}"
+              ;;
             v*.*.*)
+              gradle=app/build.gradle.kts
+              expected="${tag#v}"
               ;;
             *)
-              echo "Error: '$tag' is neither a release tag (vX.Y.Z) nor a test-build tag (test-*)."
+              echo "Error: '$tag' is not a release tag (vX.Y.Z for OTG Master, container-vX.Y.Z"
+              echo "for Container Master) nor a test-build tag (test-*)."
               echo
               echo "Every tag here is read by F-Droid. Name a release vX.Y.Z, and name anything"
               echo "else — a build shared with an issue reporter, a diagnostic build — test-*,"
@@ -65,18 +75,17 @@ jobs:
               ;;
           esac
 
-          expected="${tag#v}"
-          actual=$(grep -oP 'versionName = "\K[^"]+' app/build.gradle.kts)
-          code=$(grep -oP 'versionCode = \K\d+' app/build.gradle.kts)
-          echo "versionName in app/build.gradle.kts: $actual (versionCode $code)"
+          actual=$(grep -oP 'versionName = "\K[^"]+' "$gradle")
+          code=$(grep -oP 'versionCode = \K\d+' "$gradle")
+          echo "versionName in $gradle: $actual (versionCode $code)"
 
           if [ "$actual" != "$expected" ]; then
             echo
-            echo "Error: release tag '$tag' expects versionName '$expected', but the tagged"
-            echo "commit says '$actual'."
+            echo "Error: release tag '$tag' expects versionName '$expected' in $gradle, but the"
+            echo "tagged commit says '$actual'."
             echo
             echo "F-Droid resolves its reference APK URL by substituting %v with versionName,"
-            echo "so it would look for a release named v$actual to check the build from this"
+            echo "so it would look for a release of version $actual to check the build from this"
             echo "commit. Run scripts/bump-version.sh before tagging, and tag the bump commit."
             exit 1
           fi

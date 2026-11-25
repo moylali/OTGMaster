@@ -13,7 +13,10 @@ against; `docs/BENCHMARK_RUNS.md` holds the hardware runs.
 | `:mount-core` | Kotlin/JVM | `core/DocumentSource` and `DocumentHandle` (the tree the provider serves, and an open file of it), `core/MountRegistry` and `MountedTree` (the trees a provider publishes), `core/EngineLog` (where engine code logs), `fs/NoSpaceException`, `block/RawBlockDevice`, `SlicedBlockDevice`, `FileBlockDevice` | nothing |
 | `:disk-engine` | Android library | partitions (MBR, GPT), the block cache and read-only guards, VeraCrypt, LUKS and BitLocker, the filesystem drivers (FAT32 through libaums, exFAT, ext, NTFS, APFS), the formatters, `disk/UsbFileDocumentSource`, and `libveracrypt-native.so` with all vendored C | `:mount-core`, `:libaums` (both as API) |
 | `:saf-provider` | Android library | `TreeDocumentsProvider`, the abstract DocumentsProvider over a `MountRegistry` (cursors and flags, `DocumentIds`, checked names, `BoundedCalls`, `RootFreeSpace`, proxy descriptors, `ProxyErrors`, and the session safety), with no filesystem code | `:mount-core` (as API) |
+| `:file-formats` | Kotlin/JVM | `zip/ZipArchive` and `ZipDocumentSource`: ZIP (stored, Deflate, ZIP64) as a read-only tree, with no disk-driver code | `:mount-core` (as API) |
+| `:app-common` | Android library | Report issue (`FeedbackActivity`, `FeedbackPayload`, `PathMask`, `FeedbackSource`), the system-bar helper | |
 | `:libaums` | Android library, vendored | USB mass storage, FAT32 (`docs/VENDOR_FIXES.md`) | |
+| `:container-app` | Container Master | picker, unlock forms per format (VeraCrypt, LUKS, ZIP), `ContainerSessions` (its `MountRegistry`), `ContainerDocumentsProvider`, the session service with Lock all and the idle lock, its log and Report issue source; its own release files under `container-app/` | all but `:app` |
 | `:app` | OTG Master | USB attach and permission, the UI, backups (restic), recovery, `VeraCryptDocumentProvider` (the manifest entry point, subclassing `TreeDocumentsProvider`) with `OtgMounts`, the harness | all of the above |
 
 Packages kept their names through every move (proposal F1). Native code finds its

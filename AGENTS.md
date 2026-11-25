@@ -143,10 +143,36 @@ These apply to every commit, without being asked.
    its meaning, placeholders and technical terms, and say in the commit that it was
    done. Wording the owner dictated stays as dictated.
 
+## Two apps
+
+The repository builds two apps from shared modules: **OTG Master** (`:app`,
+`app.fayaz.otgmaster`) and **Container Master** (`:container-app`,
+`app.fayaz.containermaster`). `docs/ENGINE_SPLIT.md` maps the modules. Each app
+has its own version, release notes, listing and tags:
+
+| | OTG Master | Container Master |
+|---|---|---|
+| Version | `app/build.gradle.kts` | `container-app/build.gradle.kts` |
+| Fastlane (F-Droid) | `fastlane/metadata/android/en-US/` | `container-app/fastlane/metadata/android/en-US/` |
+| Play notes | `distribution/whatsnew/whatsnew-en-US` | `container-app/distribution/whatsnew/whatsnew-en-US` |
+| Release tags | `vX.Y.Z` | `container-vX.Y.Z` |
+| Release workflow | `release.yml` | `container-release.yml` |
+| Last release | `git describe --tags --abbrev=0 --match 'v[0-9]*'` | `git describe --tags --abbrev=0 --match 'container-v[0-9]*'` |
+| Bump | `scripts/bump-version.sh X.Y.Z` | `scripts/bump-version.sh --container X.Y.Z` |
+
+Commit rule 1 applies to each app separately. **A change to a shared module
+(`:mount-core`, `:disk-engine`, `:saf-provider`, `:file-formats`, `:app-common`)
+is weighed for both apps' release notes**: a fix users of either app would
+notice goes in both changelogs, each under that app's current `versionCode`.
+Both files stay at or under 500 characters. Container Master has no release
+yet, so until its first tag its changelog describes the first release as a
+whole. Its E2E suite is `scripts/run_container_e2e.sh` (commit rule 6 applies
+to a PR that touches it or Container Master's code).
+
 ## Tags
 
-**Only a real release may be named `vX.Y.Z`, and every other tag is named
-`test-*`.** F-Droid reads this repo's tags, and nothing in the app shows it:
+**Only a real release may be named `vX.Y.Z` (OTG Master) or `container-vX.Y.Z`
+(Container Master), and every other tag is named `test-*`.** F-Droid reads this repo's tags, and nothing in the app shows it:
 fdroiddata's entry is `UpdateCheckMode: Tags ^v[0-9]+\.[0-9]+\.[0-9]+$`, so
 `fdroid checkupdates` walks the five most recent tags whose *name* matches that
 pattern, reads `versionCode` out of each tagged tree, and auto-generates a build

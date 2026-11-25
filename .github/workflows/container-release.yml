@@ -1,0 +1,130 @@
+# Container Master's release (architecture proposal, F13 and F15): on a container-vX.Y.Z tag,
+# builds :container-app's signed APK and AAB, checks they are Container Master's (package,
+# signing key, release notes) and publishes them as a GitHub Release. OTG Master's release
+# (release.yml) runs on vX.Y.Z tags and builds :app only; neither builds or uploads the other.
+#
+# Before tagging: scripts/bump-version.sh --container <name>, update
+# container-app/fastlane/metadata/android/en-US/changelogs/<versionCode>.txt and
+# container-app/distribution/whatsnew/whatsnew-en-US, commit, tag the bump commit.
+#
+# Run it by hand (Actions > Container Master release > Run workflow) for a dry run: the same
+# build and checks, the artifacts kept on the run, nothing published.
+#
+# Signing: OTG Master's keystore (the owner's decision, 2026-11-24), from the same secrets
+# release.yml uses. The Play upload waits for the repository variable CONTAINER_PLAY_READY to
+# be "true": Container Master has no Play listing yet, and the first upload of a new app has to
+# be made in the Play Console by hand.
+
+name: Container Master release
+
+on:
+  push:
+    tags:
+      - "container-v*.*.*"
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  build-release:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up JDK 17
+        uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: "17"
+
+      - name: Set up Gradle
+        uses: gradle/actions/setup-gradle@v3
+
+      - name: Accept Android SDK licenses
+        run: yes | "$ANDROID_HOME/cmdline-tools/latest/bin/sdkmanager" --licenses > /dev/null
+
+      - name: Install NDK and CMake
+        run: |
+          "$ANDROID_HOME/cmdline-tools/latest/bin/sdkmanager" "ndk;26.1.10909125" "cmake;3.22.1"
+
+      - name: Release notes are Container Master's and fit the stores
+        # F-Droid and Play both cap notes at 500 characters (AGENTS.md, commit rule 1).
+        run: |
+          code=$(grep -oP 'versionCode = \K\d+' container-app/build.gradle.kts)
+          notes=container-app/fastlane/metadata/android/en-US/changelogs/$code.txt
+          play=container-app/distribution/whatsnew/whatsnew-en-US
+          for f in "$notes" "$play"; do
+            [ -f "$f" ] || { echo "Error: $f is missing"; exit 1; }
+            n=$(wc -c < "$f"); echo "$f: $n characters"
+            [ "$n" -le 500 ] || { echo "Error: $f is over 500 characters"; exit 1; }
+          done
+
+      - name: Decode release keystore
+        run: echo "${{ secrets.RELEASE_KEYSTORE_BASE64 }}" | base64 -d > "${{ github.workspace }}/release.jks"
+
+      - name: Write keystore.properties
+        run: |
+          cat > keystore.properties <<EOF
+          storeFile=${{ github.workspace }}/release.jks
+          storePassword=${{ secrets.RELEASE_KEYSTORE_PASSWORD }}
+          keyAlias=${{ secrets.RELEASE_KEY_ALIAS }}
+          keyPassword=${{ secrets.RELEASE_KEY_PASSWORD }}
+          EOF
+
+      - name: Build signed release APK and AAB
+        run: ./gradlew :container-app:assembleRelease :container-app:bundleRelease
+
+      - name: The APK is Container Master's, signed with the release key
+        run: |
+          APK=$(find container-app/build/outputs/apk/release/ -name "*.apk" | head -n 1)
+          BT=$(find "$ANDROID_HOME/build-tools" -maxdepth 1 -mindepth 1 | sort -V | tail -n 1)
+          pkg=$("$BT/aapt2" dump badging "$APK" | grep -oP "^package: name='\K[^']+")
+          echo "package: $pkg"
+          [ "$pkg" = "app.fayaz.containermaster" ] || { echo "Error: the APK is $pkg, not app.fayaz.containermaster"; exit 1; }
+          CERT=$("$BT/apksigner" verify --print-certs "$APK" | grep -i 'SHA-256 digest:' | awk '{print $NF}' | tr '[:upper:]' '[:lower:]' | head -n 1)
+          [ "$CERT" = "fa2a19b4549dae6c8f71362a0d74be396beda870d9c6fee327ee290976388f3a" ] \
+            || { echo "Error: signed with $CERT, not the release key"; exit 1; }
+          echo "Signed with the release key."
+
+      - name: Clean up signing secrets
+        if: always()
+        run: rm -f release.jks keystore.properties
+
+      - name: Name the R8 mapping after the version
+        run: |
+          name=${GITHUB_REF_NAME}
+          [ "${{ github.event_name }}" = "workflow_dispatch" ] && name="container-dryrun-${GITHUB_SHA::7}"
+          cp container-app/build/outputs/mapping/release/mapping.txt "mapping-$name.txt"
+
+      - name: Keep the dry run's artifacts
+        if: github.event_name == 'workflow_dispatch'
+        uses: actions/upload-artifact@v4
+        with:
+          name: container-master-dryrun
+          path: |
+            container-app/build/outputs/apk/release/*.apk
+            container-app/build/outputs/bundle/release/*.aab
+            mapping-*.txt
+
+      - name: Create GitHub Release
+        if: github.event_name == 'push'
+        uses: softprops/action-gh-release@v2
+        with:
+          name: Container Master ${{ github.ref_name }}
+          files: |
+            container-app/build/outputs/apk/release/*.apk
+            container-app/build/outputs/bundle/release/*.aab
+            mapping-*.txt
+          generate_release_notes: true
+
+      - name: Upload AAB to Google Play (internal track)
+        if: github.event_name == 'push' && vars.CONTAINER_PLAY_READY == 'true'
+        uses: r0adkll/upload-google-play@v1
+        with:
+          serviceAccountJsonPlainText: ${{ secrets.SERVICE_ACCOUNT_JSON }}
+          packageName: app.fayaz.containermaster
+          releaseFiles: container-app/build/outputs/bundle/release/*.aab
+          track: internal
+          status: completed
+          whatsNewDirectory: container-app/distribution/whatsnew
