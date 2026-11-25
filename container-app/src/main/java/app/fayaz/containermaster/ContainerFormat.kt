@@ -8,7 +8,7 @@ package app.fayaz.containermaster
 enum class ContainerFormat(val supported: Boolean) {
     VERACRYPT(true),
     LUKS(false),
-    ZIP(false);
+    ZIP(true);
 
     companion object {
         private val LUKS_MAGIC = byteArrayOf(0x4C, 0x55, 0x4B, 0x53, 0xBA.toByte(), 0xBE.toByte())

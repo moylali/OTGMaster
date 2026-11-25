@@ -256,6 +256,27 @@ private fun Screen(theme: String, onTheme: (String) -> Unit) {
                         },
                     ) { Text(stringResource(if (busy) R.string.unlocking else R.string.unlock)) }
                 }
+                if (picked?.format == ContainerFormat.ZIP) {
+                    val already = stringResource(R.string.already_open)
+                    val failed = stringResource(R.string.open_failed, "%s")
+                    Button(enabled = !busy, modifier = Modifier.desc("open_zip"), onClick = {
+                        val p = picked ?: return@Button
+                        busy = true; message = null
+                        SessionService.opening = true
+                        SessionService.start(context)
+                        scope.launch {
+                            message = withContext(Dispatchers.IO) {
+                                try { ContainerSessions.openZip(context.applicationContext, p.uri, p.name); null }
+                                catch (e: ContainerSessions.AlreadyOpenException) { already }
+                                catch (e: Exception) { failed.replace("%s", e.message ?: e.javaClass.simpleName) }
+                            }
+                            SessionService.opening = false
+                            SessionService.start(context)
+                            busy = false
+                            if (message == null) picked = null
+                        }
+                    }) { Text(stringResource(R.string.open_archive)) }
+                }
                 message?.let { Text(it, color = MaterialTheme.colorScheme.error, modifier = Modifier.desc("message")) }
 
                 LogsSection(logs)
@@ -268,7 +289,8 @@ private fun Screen(theme: String, onTheme: (String) -> Unit) {
                 Card(Modifier.fillMaxWidth().padding(vertical = 4.dp)) {
                     Column(Modifier.padding(12.dp)) {
                         Text(s.name, style = MaterialTheme.typography.titleSmall, modifier = Modifier.desc("open_${s.id}"))
-                        Text(stringResource(R.string.open_details, s.fileSystemName), style = MaterialTheme.typography.bodySmall)
+                        Text(stringResource(R.string.open_details, if (s.format == "ZIP") "ZIP" else "${s.format}, ${s.fileSystemName}"),
+                            style = MaterialTheme.typography.bodySmall)
                         Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.End) {
                             OutlinedButton(onClick = {
                                 scope.launch(Dispatchers.IO) { ContainerSessions.lock(context.applicationContext, s.id) }

@@ -88,6 +88,7 @@ dependencies {
     implementation(project(":mount-core"))
     implementation(project(":disk-engine"))
     implementation(project(":saf-provider"))
+    implementation(project(":file-formats"))
     implementation(project(":app-common"))
 
     val composeBom = platform("androidx.compose:compose-bom:2025.04.01")
