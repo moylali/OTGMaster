@@ -3,13 +3,18 @@
 # sector crypto (VeraCryptNative, Serpent) over mbedtls, each with its JNI bridge —
 # for the host JVM,
 # so the unit tests drive the same native code the app ships against loopback
-# images. Output: $1 (default app/build/host-native/libotg-host.so).
+# images. Output: $1 (default disk-engine/build/host-native/libotg-host.so).
 #
 # Rebuilds only when a source, or this script, is newer than the output.
 set -euo pipefail
 cd "$(dirname "$0")/.."
-out="${1:-app/build/host-native/libotg-host.so}"
-cpp=app/src/main/cpp
+out="${1:-disk-engine/build/host-native/libotg-host.so}"
+mkdir -p "$(dirname "$out")"
+# Unit tests in :disk-engine and :app both call this, and Gradle may run them at once:
+# one build at a time per output, the second then finds it up to date.
+exec 9>"$out.lock"
+flock 9
+cpp=disk-engine/src/main/cpp
 srcs=("$cpp"/ntfs-3g/libntfs-3g/*.c "$cpp"/ntfs-3g/ntfsprogs/*.c "$cpp"/ntfs-3g/ntfsprogs/*.h "$cpp"/ntfs/NtfsNative.cpp "$cpp"/exfat/*.c "$cpp"/exfat/*.h
       "$cpp"/exfat/ExFatNative.cpp
       "$cpp"/bitlocker/*.c "$cpp"/bitlocker/*.cpp "$cpp"/mbedtls/library/*.c
@@ -23,7 +28,7 @@ for l in "${apfs_libs[@]}"; do srcs+=("$cpp"/libfsapfs/"$l"/*.c); done
 # The flags below live in this script, so changing one has to rebuild the library too.
 srcs+=(scripts/build_host_native.sh)
 
-if [[ -f "$out" ]] && [[ -z "$(find "${srcs[@]}" "$cpp"/ntfs/config.h "$cpp"/ntfs-3g/include "$cpp"/bitlocker "$cpp"/libfsapfs app/src/test/cpp -newer "$out" -print -quit)" ]]; then
+if [[ -f "$out" ]] && [[ -z "$(find "${srcs[@]}" "$cpp"/ntfs/config.h "$cpp"/ntfs-3g/include "$cpp"/bitlocker "$cpp"/libfsapfs disk-engine/src/test/cpp -newer "$out" -print -quit)" ]]; then
     echo "$out is up to date"
     exit 0
 fi
@@ -34,12 +39,12 @@ java_home="${JAVA_HOME:-$(dirname "$(dirname "$(readlink -f "$(command -v javac 
 obj="$(dirname "$out")/obj"
 mkdir -p "$obj"
 flags=(-fPIC -O1 -g -DHAVE_CONFIG_H -D_FILE_OFFSET_BITS=64
-       -I"$cpp/ntfs" -I"$cpp/ntfs-3g/include/ntfs-3g" -Iapp/src/test/cpp
+       -I"$cpp/ntfs" -I"$cpp/ntfs-3g/include/ntfs-3g" -Idisk-engine/src/test/cpp
        -I"$java_home/include" -I"$java_home/include/linux" -w)
 objs=()
 pids=()
 # The LTC_* definitions shape symmetric_key, so the Twofish objects and vc_cascade.cpp
-# must be built with the same ones (as app/src/main/cpp/CMakeLists.txt does).
+# must be built with the same ones (as disk-engine/src/main/cpp/CMakeLists.txt does).
 ltc=(-DLTC_NOTHING -DLTC_TWOFISH -DLTC_TWOFISH_TABLES -DLTC_NO_TEST -I"$cpp/libtomcrypt/src/headers")
 mbed=(-I"$cpp/mbedtls/include" -I"$cpp/bitlocker" -I"$cpp/serpent" "${ltc[@]}" -I"$cpp/argon2/include")
 for f in "$cpp"/ntfs-3g/libntfs-3g/*.c; do
@@ -66,12 +71,12 @@ for f in "$cpp"/argon2/src/*.c "$cpp"/argon2/src/blake2/*.c; do
     gcc -c -fPIC -O2 -w -I"$cpp/argon2/include" "$f" -o "$o" & pids+=($!)
     objs+=("$o")
 done
-# libexfat with the defines app/src/main/cpp/CMakeLists.txt gives it. io.c holds the
+# libexfat with the defines disk-engine/src/main/cpp/CMakeLists.txt gives it. io.c holds the
 # JNI_OnLoad, as it does in the app's library. Two differences from the NDK's clang:
 # the desktop jni.h types AttachCurrentThread's env as void** (gcc 14 makes that an
 # error), and g++ has no _Static_assert in C++, which exfat.h uses via compiler.h.
 exfat=(-fPIC -O1 -g -w -D_FILE_OFFSET_BITS=64 -DPACKAGE='"exfat"' -DVERSION='"1.4.0"'
-       -I"$cpp/exfat" -Iapp/src/test/cpp -I"$java_home/include" -I"$java_home/include/linux")
+       -I"$cpp/exfat" -Idisk-engine/src/test/cpp -I"$java_home/include" -I"$java_home/include/linux")
 for f in "$cpp"/exfat/*.c; do
     o="$obj/exfat_$(basename "$f" .c).o"
     gcc -c "${exfat[@]}" -Wno-error=incompatible-pointer-types "$f" -o "$o" & pids+=($!)
@@ -91,7 +96,7 @@ for l in "${apfs_libs[@]}"; do
         objs+=("$o")
     done
 done
-g++ -c -std=c++17 -fPIC -O1 -g -w "${apfs_inc[@]}" -Iapp/src/test/cpp \
+g++ -c -std=c++17 -fPIC -O1 -g -w "${apfs_inc[@]}" -Idisk-engine/src/test/cpp \
     -I"$java_home/include" -I"$java_home/include/linux" "$cpp/apfs/ApfsNative.cpp" -o "$obj/ApfsNative.o" & pids+=($!)
 objs+=("$obj/ApfsNative.o")
 # zstd's decoder, with the definitions CMakeLists.txt gives it.

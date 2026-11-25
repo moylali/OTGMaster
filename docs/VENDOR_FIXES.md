@@ -11,15 +11,15 @@ See `AGENTS.md` for what a new entry must contain and how to record an upstream 
 | Library | Upstream | Pinned commit | Vendored in |
 |---|---|---|---|
 | `libaums/` | [magnusja/libaums](https://github.com/magnusja/libaums) | `57fa482` | `b03705d` (last pull) |
-| `app/src/main/cpp/exfat/` | [relan/exfat](https://github.com/relan/exfat) | see note below | pre-dates this registry |
-| `app/src/main/cpp/ntfs-3g/` | [tuxera/ntfs-3g](https://github.com/tuxera/ntfs-3g) | `7f0f841` (2026.9.28) | see the section below |
-| `app/src/main/cpp/libfsapfs/` | [libyal/libfsapfs](https://github.com/libyal/libfsapfs) + 16 libyal libraries | `f63c83b` (20260921) | see the section below |
-| `app/src/test/resources/bitlk/bitlk-images.tar.xz` (test data) | [cryptsetup](https://gitlab.com/cryptsetup/cryptsetup) | `ca4cc7a` | see the section below |
-| `app/src/main/cpp/` (VeraCrypt primitives, mbedtls) | VeraCrypt / Mbed-TLS | see note below | pre-dates this registry |
-| `app/src/main/cpp/serpent/serpent_generic.c` | [torvalds/linux](https://github.com/torvalds/linux) `crypto/serpent_generic.c` | `adc2186` (v6.12) | see the section below |
-| `app/src/main/cpp/libtomcrypt/` (Twofish only) | [libtom/libtomcrypt](https://github.com/libtom/libtomcrypt) | `7e7eb69` (v1.18.2) | see the section below |
-| `app/src/main/cpp/argon2/` | [P-H-C/phc-winner-argon2](https://github.com/P-H-C/phc-winner-argon2) | `f57e61e` | see the section below |
-| `app/src/main/cpp/zstd/` (decoder only) | [facebook/zstd](https://github.com/facebook/zstd) | `f8745da` (v1.5.7) | see the section below |
+| `disk-engine/src/main/cpp/exfat/` | [relan/exfat](https://github.com/relan/exfat) | see note below | pre-dates this registry |
+| `disk-engine/src/main/cpp/ntfs-3g/` | [tuxera/ntfs-3g](https://github.com/tuxera/ntfs-3g) | `7f0f841` (2026.9.28) | see the section below |
+| `disk-engine/src/main/cpp/libfsapfs/` | [libyal/libfsapfs](https://github.com/libyal/libfsapfs) + 16 libyal libraries | `f63c83b` (20260921) | see the section below |
+| `disk-engine/src/test/resources/bitlk/bitlk-images.tar.xz` (test data) | [cryptsetup](https://gitlab.com/cryptsetup/cryptsetup) | `ca4cc7a` | see the section below |
+| `disk-engine/src/main/cpp/` (VeraCrypt primitives, mbedtls) | VeraCrypt / Mbed-TLS | see note below | pre-dates this registry |
+| `disk-engine/src/main/cpp/serpent/serpent_generic.c` | [torvalds/linux](https://github.com/torvalds/linux) `crypto/serpent_generic.c` | `adc2186` (v6.12) | see the section below |
+| `disk-engine/src/main/cpp/libtomcrypt/` (Twofish only) | [libtom/libtomcrypt](https://github.com/libtom/libtomcrypt) | `7e7eb69` (v1.18.2) | see the section below |
+| `disk-engine/src/main/cpp/argon2/` | [P-H-C/phc-winner-argon2](https://github.com/P-H-C/phc-winner-argon2) | `f57e61e` | see the section below |
+| `disk-engine/src/main/cpp/zstd/` (decoder only) | [facebook/zstd](https://github.com/facebook/zstd) | `f8745da` (v1.5.7) | see the section below |
 
 **Licences** are listed in the table in `README.md`, which is authoritative: this
 registry deliberately does not restate them, to avoid the two drifting apart.
@@ -33,12 +33,12 @@ before a vendoring commit lands.
 
 ---
 
-# `app/src/main/cpp/serpent/serpent_generic.c`
+# `disk-engine/src/main/cpp/serpent/serpent_generic.c`
 
 The Linux kernel's Serpent (Dag Arne Osvik's bitsliced implementation), for VeraCrypt's
 Serpent volumes and the cascades that include it (AES-Twofish-Serpent, Serpent-AES,
 Serpent-Twofish-AES, Twofish-Serpent). Driven through `serpent/serpent_adapter.c` and
-`serpent/xts_generic.c` by `app/src/main/cpp/vc_cascade.cpp`.
+`serpent/xts_generic.c` by `disk-engine/src/main/cpp/vc_cascade.cpp`.
 
 - **Pinned upstream:** `adc218676eef25575469234709c2d87185ca223a`, the `v6.12` release
   tag, pinned 2026-10-18.
@@ -67,11 +67,11 @@ Serpent-Twofish-AES, Twofish-Serpent). Driven through `serpent/serpent_adapter.c
 
 ---
 
-# `app/src/main/cpp/libtomcrypt/`
+# `disk-engine/src/main/cpp/libtomcrypt/`
 
 LibTomCrypt's Twofish, for VeraCrypt's Twofish volumes and the cascades that include
 it (AES-Twofish, AES-Twofish-Serpent, Serpent-Twofish-AES, Twofish-Serpent). Driven by
-`app/src/main/cpp/vc_cascade.cpp`.
+`disk-engine/src/main/cpp/vc_cascade.cpp`.
 
 - **Pinned upstream:** `7e7eb695d581782f04b24dc444cbfde86af59853`, the `v1.18.2`
   release tag, pinned 2026-10-10.
@@ -79,7 +79,7 @@ it (AES-Twofish, AES-Twofish-Serpent, Serpent-Twofish-AES, Twofish-Serpent). Dri
   helpers it calls (`src/misc/burn_stack.c`, `zeromem.c`, `compare_testvector.c`,
   `src/misc/crypt/crypt_argchk.c`), every header in `src/headers/`, and `LICENSE`,
   byte for byte. Nothing else of the library. It is built with `LTC_NOTHING
-  LTC_TWOFISH LTC_TWOFISH_TABLES LTC_NO_TEST` (`app/src/main/cpp/CMakeLists.txt`), so
+  LTC_TWOFISH LTC_TWOFISH_TABLES LTC_NO_TEST` (`disk-engine/src/main/cpp/CMakeLists.txt`), so
   the headers declare Twofish alone; those definitions are PUBLIC because they set the
   size of `symmetric_key`, which `vc_cascade.cpp` allocates.
 - **Why vendored rather than a dependency:** no Android package of a C Twofish exists to
@@ -99,7 +99,7 @@ it (AES-Twofish, AES-Twofish-Serpent, Serpent-Twofish-AES, Twofish-Serpent). Dri
 
 ---
 
-# `app/src/main/cpp/zstd/`
+# `disk-engine/src/main/cpp/zstd/`
 
 zstd's own decoder, for restic repositories: format 2 compresses index files, snapshots and
 blobs. Called from `zstd/ZstdNative.cpp` (not from upstream) through `ZstdNative.kt`.
@@ -128,11 +128,11 @@ blobs. Called from `zstd/ZstdNative.cpp` (not from upstream) through `ZstdNative
 
 ---
 
-# `app/src/main/cpp/argon2/`
+# `disk-engine/src/main/cpp/argon2/`
 
 The Password Hashing Competition's reference Argon2, for VeraCrypt's Argon2id header
 key derivation (VeraCrypt 1.26.24 and later). Called from
-`app/src/main/cpp/VeraCryptNative.cpp`.
+`disk-engine/src/main/cpp/VeraCryptNative.cpp`.
 
 - **Pinned upstream:** `f57e61e19229e23c4445b85494dbf7c07de721cb`, the head of
   `master` (2021-06-25, after the `20190702` release), pinned 2026-10-10.
@@ -161,10 +161,10 @@ key derivation (VeraCrypt 1.26.24 and later). Called from
 
 ---
 
-# `app/src/main/cpp/ntfs-3g/`
+# `disk-engine/src/main/cpp/ntfs-3g/`
 
 The library half of [tuxera/ntfs-3g](https://github.com/tuxera/ntfs-3g): NTFS read
-and write, used by `app/src/main/cpp/ntfs/NtfsNative.cpp`.
+and write, used by `disk-engine/src/main/cpp/ntfs/NtfsNative.cpp`.
 
 - **Pinned upstream:** `7f0f841fc52cf719106c5c93bafe465004e36816`, tagged
   `2026.9.28` (upstream's version number), pinned 2026-10-01.
@@ -179,8 +179,8 @@ and write, used by `app/src/main/cpp/ntfs/NtfsNative.cpp`.
   supplies `ntfs_device_operations` instead) and `win32_io.c`.
 - **Why vendored rather than a dependency:** there is no Android build of libntfs-3g
   to depend on: upstream ships autotools sources only, and its `configure` cannot run
-  against the NDK. It is compiled by `app/src/main/cpp/CMakeLists.txt` against the
-  hand-written `app/src/main/cpp/ntfs/config.h`. Why ntfs-3g at all rather than a
+  against the NDK. It is compiled by `disk-engine/src/main/cpp/CMakeLists.txt` against the
+  hand-written `disk-engine/src/main/cpp/ntfs/config.h`. Why ntfs-3g at all rather than a
   driver written here: NTFS writes (index B+trees, `$Bitmap`, `$MFT` allocation,
   update-sequence fixups, attribute lists) are where a filesystem driver destroys
   volumes, and ntfs-3g's write path has had fifteen years of use on Linux. The ext4
@@ -204,10 +204,10 @@ and write, used by `app/src/main/cpp/ntfs/NtfsNative.cpp`.
 
 ---
 
-# `app/src/main/cpp/libfsapfs/`
+# `disk-engine/src/main/cpp/libfsapfs/`
 
 [libyal/libfsapfs](https://github.com/libyal/libfsapfs): read-only APFS, plain and
-natively encrypted, used by `app/src/main/cpp/apfs/ApfsNative.cpp`.
+natively encrypted, used by `disk-engine/src/main/cpp/apfs/ApfsNative.cpp`.
 
 - **Pinned upstream:** `f63c83b462275214fc5e4b0919540d892f50b467` (2026-09-23), the
   commit behind release `20260921` (upstream's version number); pinned 2026-10-02.
@@ -271,7 +271,7 @@ natively encrypted, used by `app/src/main/cpp/apfs/ApfsNative.cpp`.
 
 ---
 
-# `app/src/test/resources/bitlk/bitlk-images.tar.xz`
+# `disk-engine/src/test/resources/bitlk/bitlk-images.tar.xz`
 
 BitLocker volumes made on Windows, from cryptsetup's `tests/` directory: the
 known-answer set `BitLockerCompatTest` decrypts and compares against.
@@ -287,7 +287,7 @@ known-answer set `BitLockerCompatTest` decrypts and compares against.
   filesystem tests, which use volumes built by `scripts/make_bitlocker_image.py`
   instead.
 - **Licence:** GPL-2.0-or-later (cryptsetup's default per its `README.licensing`).
-  See `app/src/test/resources/bitlk/PROVENANCE.md`.
+  See `disk-engine/src/test/resources/bitlk/PROVENANCE.md`.
 
 ## Patches
 
@@ -297,7 +297,7 @@ known-answer set `BitLockerCompatTest` decrypts and compares against.
 
 ---
 
-# `app/src/main/cpp/exfat/`
+# `disk-engine/src/main/cpp/exfat/`
 
 libexfat ([relan/exfat](https://github.com/relan/exfat)), with the device I/O in
 `io.c` replaced by JNI calls into `ExFatNative.pread`/`pwrite`. Its upstream pin

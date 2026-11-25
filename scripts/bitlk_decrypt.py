@@ -4,7 +4,7 @@ Decrypts a BitLocker image to a plain image, independently of the app.
 
 Key and layout come from cryptsetup (`bitlkDump --dump-volume-key`, no root
 needed for an image file); the sector crypto is Python's `cryptography`. Nothing
-here shares code with app/src/main/cpp/bitlocker, so a volume the app wrote that
+here shares code with disk-engine/src/main/cpp/bitlocker, so a volume the app wrote that
 decrypts to a clean filesystem here was written correctly, not merely in a way
 the app's own decryptor happens to agree with.
 

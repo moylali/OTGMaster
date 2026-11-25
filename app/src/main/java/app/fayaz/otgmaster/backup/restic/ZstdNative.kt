@@ -3,7 +3,7 @@ package app.fayaz.otgmaster.backup.restic
 import java.io.IOException
 
 /**
- * zstd's own decoder (app/src/main/cpp/zstd, docs/VENDOR_FIXES.md). Restic compresses by
+ * zstd's own decoder (disk-engine/src/main/cpp/zstd, docs/VENDOR_FIXES.md). Restic compresses by
  * default since format 2, so every repository a desktop made needs it. A pure-Java decoder
  * was used first and passed on the host, but read fields of sun.misc.Unsafe that Android
  * does not have: the first compressed file crashed the app with NoSuchFieldError.

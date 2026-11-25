@@ -119,13 +119,6 @@ data class UsbDeviceCandidate(
     val hiddenPartitions: Int = 0
 )
 
-data class PlainPartition(
-    val label: String,
-    val startBlock: Long,
-    val blockCount: Long,
-    val filesystemName: String
-)
-
 class MainActivity : AppCompatActivity() {
     // Provider for USB device handling (real implementation)
     private lateinit var usbDeviceProvider: app.fayaz.otgmaster.usb.UsbDeviceProvider

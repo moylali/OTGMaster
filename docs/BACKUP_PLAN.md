@@ -161,7 +161,7 @@ func (h *FileHandle) Close() error
   and `x86` is worth discussing: a gomobile `.so` with restic linked in is roughly 12–20 MB
   stripped *per ABI*, so this dominates APK size. Recommend enabling ABI splits / AAB delivery.
 - **Reproducibility** (this repo already cares: see the `-ffile-prefix-map` block in
-  `app/src/main/cpp/CMakeLists.txt`): pin the exact Go toolchain version, and build with
+  `disk-engine/src/main/cpp/CMakeLists.txt`): pin the exact Go toolchain version, and build with
   `-trimpath -buildvcs=false -ldflags=-buildid=`. **F-Droid reproducible builds with a Go toolchain
   need verifying before committing to this**: see §9.
 - CI: add Go setup to `.github/workflows/ci.yml`; add `go test ./mobile/...`.

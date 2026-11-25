@@ -45,11 +45,6 @@ android {
         versionCode = 54
         versionName = "0.5.5"
         testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
-        externalNativeBuild {
-            cmake {
-                cppFlags += "-std=c++17"
-            }
-        }
     }
 
     signingConfigs {
@@ -66,20 +61,14 @@ android {
     buildTypes {
         debug {
             buildConfigField("String", "GIT_COMMIT", "\"${gitCommit()}${if (gitDirty()) "-dirty" else ""}\"")
-            // Compiles the libexfat I/O counters (ExFatIoStats / OTG_IO_STATS in
-            // src/main/cpp/CMakeLists.txt). Debug only: release builds must not
-            // carry instrumentation, and the Kotlin side lives in src/debug so a
-            // release build cannot reference the missing native symbols.
-            externalNativeBuild {
-                cmake {
-                    arguments += "-DOTG_IO_STATS=ON"
-                }
-            }
+            // The libexfat I/O counters (ExFatIoStats, OTG_IO_STATS) come from :disk-engine's
+            // debug build type, which this one selects by name.
         }
         release {
             // R8 shrinks and obfuscates the release build: Play Console flagged 0.4.x at 0%
             // obfuscation. Everything native code reaches by name (JNI methods, the classes
-            // it constructs, the callbacks it looks up) is kept in proguard-rules.pro — a
+            // it constructs, the callbacks it looks up) is kept in proguard-rules.pro and
+            // :disk-engine's consumer-rules.pro — a
             // missing rule shows up as NoSuchMethodError on the first mount of that format.
             isMinifyEnabled = true
             isShrinkResources = true
@@ -123,13 +112,9 @@ android {
             signingConfig = signingConfigs.getByName("debug")
             matchingFallbacks += listOf("release")
             buildConfigField("String", "GIT_COMMIT", "\"${gitCommit()}${if (gitDirty()) "-dirty" else ""}\"")
-            // The harness reads the libexfat I/O counters, so they are compiled in here
-            // too. They cost a counter increment per pread/pwrite.
-            externalNativeBuild {
-                cmake {
-                    arguments += "-DOTG_IO_STATS=ON"
-                }
-            }
+            // The harness reads the libexfat I/O counters: :disk-engine's benchmark build
+            // type (selected by name, before the release fallback) compiles them, at a
+            // counter increment per pread/pwrite.
         }
     }
 
@@ -151,12 +136,6 @@ android {
     compileOptions {
         sourceCompatibility = JavaVersion.VERSION_17
         targetCompatibility = JavaVersion.VERSION_17
-    }
-
-    externalNativeBuild {
-        cmake {
-            path("src/main/cpp/CMakeLists.txt")
-        }
     }
 
     kotlinOptions {
@@ -195,6 +174,8 @@ android {
 dependencies {
     implementation(project(":libaums"))
     implementation(project(":mount-core"))
+    // Drivers, crypto layers and the native library (libveracrypt-native.so).
+    implementation(project(":disk-engine"))
     
     val composeBom = platform("androidx.compose:compose-bom:2025.04.01")
     implementation(composeBom)

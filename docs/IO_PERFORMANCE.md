@@ -24,7 +24,7 @@ Files app ──binder/AppFuse──▶ DocumentsProvider          [binder threa
 
 ### The exFAT path ping-pongs across the JNI boundary three times
 
-`exfat_pread` (`app/src/main/cpp/exfat/io.c:97`) calls **up** into Kotlin for every block chunk,
+`exfat_pread` (`disk-engine/src/main/cpp/exfat/io.c:97`) calls **up** into Kotlin for every block chunk,
 and on every single call it does:
 
 ```c

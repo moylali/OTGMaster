@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# Regenerates app/src/test/resources/veracrypt/: one fixture per VeraCrypt cipher the app
+# Regenerates disk-engine/src/test/resources/veracrypt/: one fixture per VeraCrypt cipher the app
 # supports, with each supported header KDF, made by VeraCrypt itself (docs/TEST_DATA.md).
 #
 #   scripts/make_veracrypt_fixtures.sh            # needs veracrypt >= 1.26.24 (Argon2) on PATH
@@ -18,7 +18,7 @@
 # random keys, so regenerating changes every byte; nothing else may depend on them.
 set -euo pipefail
 cd "$(dirname "$0")/.."
-out=app/src/test/resources/veracrypt
+out=disk-engine/src/test/resources/veracrypt
 password=otgmaster-test-password-2026
 ciphers=(AES Serpent Twofish AES-Twofish AES-Twofish-Serpent Serpent-AES Serpent-Twofish-AES Twofish-Serpent)
 hashes=(SHA-512 Argon2)

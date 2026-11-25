@@ -22,7 +22,7 @@ class ZstdNativeTest {
         @JvmStatic
         @BeforeClass
         fun loadHostLibrary() {
-            val lib = File(repo, "app/build/host-native/libotg-host.so")
+            val lib = File(repo, "disk-engine/build/host-native/libotg-host.so")
             val p = ProcessBuilder(File(repo, "scripts/build_host_native.sh").path, lib.path).redirectErrorStream(true).start()
             val out = p.inputStream.bufferedReader().readText()
             check(p.waitFor() == 0) { "host build of the native code failed:\n$out" }

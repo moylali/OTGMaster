@@ -7,25 +7,12 @@
 
 # ── JNI entry points ──────────────────────────────────────────────────────────
 # Every `external fun` is bound by its mangled Java name (Java_app_fayaz_…): the class
-# and the method keep their names. Covers VeraCryptNative, ExFatNative, NtfsNative,
-# ApfsNative, BitLockerNative and libaums' AndroidUsbCommunication.
+# and the method keep their names. Here for the app's own (ZstdNative for restic) and
+# libaums' AndroidUsbCommunication; :disk-engine's consumer-rules.pro carries the same
+# rule and the callbacks and constructed classes of the engine's drivers.
 -keepclasseswithmembernames,includedescriptorclasses class * {
     native <methods>;
 }
-
-# ── Callbacks native code looks up with GetStaticMethodID ────────────────────
-# exfat/io.c, ntfs/NtfsNative.cpp, apfs/ApfsNative.cpp: pread, pwrite, getDeviceSize,
-# with RawBlockDevice in the signature.
--keep class app.fayaz.otgmaster.exfat.ExFatNative { *; }
--keep class app.fayaz.otgmaster.ntfs.NtfsNative { *; }
--keep class app.fayaz.otgmaster.apfs.ApfsNative { *; }
-# RawBlockDevice, named in those signatures, is kept by :mount-core's own rule
-# (mount-core/src/main/resources/META-INF/proguard/mount-core.pro).
-
-# ── Classes native code constructs (FindClass + GetMethodID "<init>") ─────────
--keep class app.fayaz.otgmaster.exfat.ExFatNode { *; }
--keep class app.fayaz.otgmaster.ntfs.NtfsNode { *; }
--keep class app.fayaz.otgmaster.apfs.ApfsNode { *; }
 
 # ── Standard Android keep rules (supplement proguard-android-optimize.txt) ────
 -keepclassmembers class * implements android.os.Parcelable {

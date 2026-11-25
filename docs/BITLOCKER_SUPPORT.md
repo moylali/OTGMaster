@@ -1,7 +1,7 @@
 # BitLocker support: what is implemented, and the gaps
 
-An audit of `app/src/main/java/app/fayaz/otgmaster/bitlocker/` and
-`app/src/main/cpp/bitlocker/` against BitLocker's format as cryptsetup
+An audit of `disk-engine/src/main/java/app/fayaz/otgmaster/bitlocker/` and
+`disk-engine/src/main/cpp/bitlocker/` against BitLocker's format as cryptsetup
 (`lib/bitlk/bitlk.c`), dislocker and libbde document it, made for the 0.5.4
 backlog on 2026-11-18. The code follows cryptsetup's layout; where Microsoft does
 not document something, this list says which of those projects it rests on.
