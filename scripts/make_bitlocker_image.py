@@ -32,6 +32,11 @@ the discovery volume Windows 7 reads it through) with BitLocker's GUID at byte 4
 and the metadata offsets after it, instead of the "-FVE-FS-" header. A reader that
 checks for a filesystem before it checks for BitLocker takes it for plain FAT32
 (#184). The discovery volume's own files are not written: no reader here uses them.
+
+--fat32-bpb writes the header Windows 10 and 11 write for a FAT32 volume: "-FVE-FS-",
+but with the volume's FAT32 BPB kept (bytes 11 to 89, "FAT32   " at byte 82) and the
+number of FATs set to 0, as a Windows 11 encryption of a USB stick showed. It is the
+form #184 most likely hit, since Windows has stopped writing the discovery volume.
 """
 import argparse
 import hashlib
@@ -130,7 +135,8 @@ def crypt(encrypt, mode, key, sector, first_sector, data):
     return bytes(out)
 
 
-def build(plain_path, out_path, password, recovery, cipher, inside=None, bek_path=None, togo=False):
+def build(plain_path, out_path, password, recovery, cipher, inside=None, bek_path=None, togo=False,
+          fat32_bpb=False):
     algo, key_len = CIPHERS[cipher]
     sector = 512
     plain_size = os.path.getsize(plain_path)
@@ -206,6 +212,12 @@ def build(plain_path, out_path, password, recovery, cipher, inside=None, bek_pat
         struct.pack_into("<HBH", boot, 11, sector, 8, 0)
         boot[21] = 0xF8
         struct.pack_into("<HH", boot, 24, 0x3F, 0xFF)
+        if fat32_bpb:
+            with open(plain_path, "rb") as f:
+                plain0 = f.read(512)
+            assert plain0[82:90] == b"FAT32   ", "--fat32-bpb needs a FAT32 plain image"
+            boot[11:90] = plain0[11:90]
+            boot[16] = 0   # no FATs, as Windows writes it
         boot[160:176] = GUID_NORMAL
         struct.pack_into("<QQQ", boot, 176, *meta_offsets)
     boot[510:512] = b"\x55\xaa"
@@ -279,13 +291,15 @@ def main():
                     help="also add a startup-key protector and write its key file here")
     ap.add_argument("--metadata-at", help="M1,M2,M3,H: byte offsets inside the volume, as Windows places them")
     ap.add_argument("--togo", action="store_true", help="BitLocker To Go: a FAT32 discovery boot sector")
+    ap.add_argument("--fat32-bpb", action="store_true",
+                    help="keep the FAT32 BPB in the -FVE-FS- header, as Windows 10 and 11 do")
     a = ap.parse_args()
     if not a.password and not a.recovery and not a.startup_key:
         ap.error("give --password, --recovery, --startup-key or several")
     inside = [int(x, 0) for x in a.metadata_at.split(",")] if a.metadata_at else None
     if inside is not None and len(inside) != 4:
         ap.error("--metadata-at takes four offsets")
-    fvek = build(a.plain, a.out, a.password, a.recovery, a.cipher, inside, a.startup_key, a.togo)
+    fvek = build(a.plain, a.out, a.password, a.recovery, a.cipher, inside, a.startup_key, a.togo, a.fat32_bpb)
     print(f"{a.out}: BitLocker{' To Go' if a.togo else ''} {a.cipher}, {os.path.getsize(a.out)} bytes")
     if a.verify:
         verify(a.plain, a.out, a.password, a.recovery, fvek, inside, a.startup_key)

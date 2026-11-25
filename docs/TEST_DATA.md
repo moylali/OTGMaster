@@ -269,7 +269,11 @@ How each piece is made, and what vouches for it:
   `FAT32   ` at byte 82) with BitLocker's GUID at byte 424, and cryptsetup reports it
   as a "BITLK To Go device". `m_bitlocker_togo_fat32` (`make_e2e_matrix.py
   bitlocker_togo fat32`) is that around FAT32; it must be offered for unlocking with
-  the BITLOCKER tag rather than mounted as plain FAT32 (#184).
+  the BITLOCKER tag rather than mounted as plain FAT32 (#184). `--fat32-bpb` writes
+  the header Windows 10 and 11 write on FAT32 instead: `-FVE-FS-`, but keeping the
+  FAT32 BPB (`FAT32   ` at byte 82) with the number of FATs set to 0, as a Windows 11
+  encryption of a USB stick showed (`app/src/test/resources/bitlk/win11-fat32-usb-head.bin`).
+  `m_bitlocker_bpb_fat32` is that around FAT32, with the same expectation.
 
 Password `password123`; BitLocker recovery key
 `111111-222222-333333-444444-555555-666666-111111-222222` (each group a multiple of
