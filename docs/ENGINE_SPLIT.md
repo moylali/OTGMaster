@@ -10,10 +10,11 @@ against; `docs/BENCHMARK_RUNS.md` holds the hardware runs.
 
 | Module | Kind | Holds | Depends on |
 |---|---|---|---|
-| `:mount-core` | Kotlin/JVM | `core/DocumentSource` (the tree the provider serves), `core/EngineLog` (where engine code logs), `block/RawBlockDevice`, `SlicedBlockDevice`, `FileBlockDevice` | nothing |
+| `:mount-core` | Kotlin/JVM | `core/DocumentSource` and `DocumentHandle` (the tree the provider serves, and an open file of it), `core/MountRegistry` and `MountedTree` (the trees a provider publishes), `core/EngineLog` (where engine code logs), `fs/NoSpaceException`, `block/RawBlockDevice`, `SlicedBlockDevice`, `FileBlockDevice` | nothing |
 | `:disk-engine` | Android library | partitions (MBR, GPT), the block cache and read-only guards, VeraCrypt, LUKS and BitLocker, the filesystem drivers (FAT32 through libaums, exFAT, ext, NTFS, APFS), the formatters, `disk/UsbFileDocumentSource`, and `libveracrypt-native.so` with all vendored C | `:mount-core`, `:libaums` (both as API) |
+| `:saf-provider` | Android library | `TreeDocumentsProvider`, the abstract DocumentsProvider over a `MountRegistry` (cursors and flags, `DocumentIds`, checked names, `BoundedCalls`, `RootFreeSpace`, proxy descriptors, `ProxyErrors`, and the session safety), with no filesystem code | `:mount-core` (as API) |
 | `:libaums` | Android library, vendored | USB mass storage, FAT32 (`docs/VENDOR_FIXES.md`) | |
-| `:app` | OTG Master | USB attach and permission, the UI, backups (restic), recovery, the DocumentsProvider, the harness | all of the above |
+| `:app` | OTG Master | USB attach and permission, the UI, backups (restic), recovery, `VeraCryptDocumentProvider` (the manifest entry point, subclassing `TreeDocumentsProvider`) with `OtgMounts`, the harness | all of the above |
 
 Packages kept their names through every move (proposal F1). Native code finds its
 callbacks and the classes it constructs by binary name, so a move between Gradle
@@ -28,7 +29,7 @@ Engine code logs through `EngineLog`; each app installs a sink. OTG Master's is
 `OtgMasterState`, which keeps its wording and its limit on repeated failures. Lines
 logged before the sink exists are queued (200) and delivered when it arrives.
 
-## The provider split (next)
+## The provider split
 
 The provider is the last large piece in `:app` that Container Master needs. It mixes
 three things:
@@ -50,8 +51,8 @@ three things:
   through this provider to another drive), the no-space toast, the launcher icon and
   the strings, the authority.
 
-The first two move to `:saf-provider`; the third stays in the app. Three steps, each
-behaviour-preserving, each with its own E2E run and hardware check:
+The first two moved to `:saf-provider`; the third stays in the app. Three steps, each
+behaviour-preserving, all three done (`d92baa6`, `443bd5b`, and the move after them):
 
 1. **An open-file handle on `DocumentSource`.** `open(node, write, truncate)` returns a
    handle with `size()`, `read(offset, buffer, length)` returning the bytes actually
@@ -78,3 +79,17 @@ reads the same bytes and is still confined, on the R8 build; the provider E2E ca
 (`provider_*`, `eject_*`, `unmount_*`) unchanged; and for step 1, a write through the
 Files app or the E2E write cases, followed by the host's filesystem checker, since the
 handle carries writes.
+
+As built in step 3: the companion of `TreeDocumentsProvider` holds the process-wide state
+and two settable hooks, `mounts` (the registry; an empty one until the app installs its
+own) and `failureHook` (called after a failed call under `onDrive` was logged). The
+subclass supplies `rootDocumentName`, `rootSummary`, `rootIcon` and `fallbackAuthority`, and
+may override `onDocumentServed`. `VeraCryptDocumentProvider`'s companion installs
+`OtgMounts` and the no-space hook from its `init`, which runs when the class is first
+used, and Android creates the provider at process start, before it serves anything. Its
+companion delegates the static API the app and the tests call (`onDrive`, `lockFor`,
+`retire`, `drainCallbacks`, `driveInUse`, `awaitWriters`, `openUnderLock`,
+`rootIdForDrive`, `rootDocIdForDrive`, `wantsAvailableBytes`, `IDLE_SETTLE_MS`) and keeps
+the grant bookkeeping (`revokeExtendedGrants`, `revokeLeftoverGrants`) and
+`extendReadGrant`, now its `onDocumentServed`.
+
