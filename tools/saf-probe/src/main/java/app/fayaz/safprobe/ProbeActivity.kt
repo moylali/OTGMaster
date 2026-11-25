@@ -1,0 +1,150 @@
+package app.fayaz.safprobe
+
+import android.app.Activity
+import android.content.Intent
+import android.net.Uri
+import android.os.Bundle
+import android.provider.DocumentsContract
+import android.util.Log
+import org.json.JSONArray
+import org.json.JSONObject
+import java.io.File
+import java.security.MessageDigest
+
+/**
+ * An independent SAF client for the architecture milestones (Milestone 0 baseline,
+ * upgrade acceptance). It is a separate package with its own UID, so what it can reach
+ * is exactly what Android grants an ordinary app through the picker: no access to OTG
+ * Master's internals, no MANAGE_DOCUMENTS.
+ *
+ * Driven over adb, one command per launch; each writes its result as JSON to
+ * `files/result-<cmd>.json` in the app's external files directory and logs it under
+ * the tag SAFPROBE:
+ *
+ *   am start -n app.fayaz.safprobe/.ProbeActivity --es cmd grant [--es initial <document URI>]
+ *       Opens the folder picker; the chosen tree's read grant is persisted.
+ *   am start -n app.fayaz.safprobe/.ProbeActivity --es cmd read --es path <a/b/c> [--es tree <tree URI>]
+ *       Walks the tree by display name (no internal IDs assumed), reads the file through
+ *       the grant and records its document ID, size, SHA-256 and every column returned.
+ *   am start -n app.fayaz.safprobe/.ProbeActivity --es cmd grants
+ *       Lists the persisted grants.
+ *   am start -n app.fayaz.safprobe/.ProbeActivity --es cmd outside --es docid <id> [--es tree <tree URI>]
+ *       Tries to open a document ID through the tree grant, to show the grant is
+ *       confined to its tree (a SecurityException is the expected result for an ID
+ *       outside it).
+ *
+ * `tree` defaults to the most recently persisted grant.
+ */
+class ProbeActivity : Activity() {
+
+    private val tag = "SAFPROBE"
+    private val requestTree = 1
+
+    override fun onCreate(savedInstanceState: Bundle?) {
+        super.onCreate(savedInstanceState)
+        if (savedInstanceState != null) return
+        val cmd = intent.getStringExtra("cmd") ?: "grants"
+        try {
+            when (cmd) {
+                "grant" -> {
+                    val pick = Intent(Intent.ACTION_OPEN_DOCUMENT_TREE).addFlags(
+                        Intent.FLAG_GRANT_READ_URI_PERMISSION or Intent.FLAG_GRANT_PERSISTABLE_URI_PERMISSION)
+                    intent.getStringExtra("initial")?.let {
+                        pick.putExtra(DocumentsContract.EXTRA_INITIAL_URI, Uri.parse(it))
+                    }
+                    startActivityForResult(pick, requestTree)
+                    return
+                }
+                "read" -> finishWith(cmd, read(tree(), intent.getStringExtra("path") ?: error("--es path is required")))
+                "grants" -> finishWith(cmd, grants())
+                "outside" -> finishWith(cmd, outside(tree(), intent.getStringExtra("docid") ?: error("--es docid is required")))
+                else -> finishWith(cmd, JSONObject().put("error", "unknown cmd $cmd"))
+            }
+        } catch (e: Exception) {
+            finishWith(cmd, JSONObject().put("error", "${e.javaClass.name}: ${e.message}"))
+        }
+    }
+
+    @Deprecated("Deprecated in Java")
+    override fun onActivityResult(requestCode: Int, resultCode: Int, data: Intent?) {
+        super.onActivityResult(requestCode, resultCode, data)
+        val out = JSONObject().put("resultCode", resultCode)
+        val uri = data?.data
+        if (resultCode == RESULT_OK && uri != null) {
+            contentResolver.takePersistableUriPermission(uri, Intent.FLAG_GRANT_READ_URI_PERMISSION)
+            out.put("tree", uri.toString())
+                .put("authority", uri.authority)
+                .put("treeDocumentId", DocumentsContract.getTreeDocumentId(uri))
+        }
+        finishWith("grant", out)
+    }
+
+    private fun tree(): Uri {
+        intent.getStringExtra("tree")?.let { return Uri.parse(it) }
+        val last = contentResolver.persistedUriPermissions.maxByOrNull { it.persistedTime }
+            ?: error("no persisted grant; run cmd grant first")
+        return last.uri
+    }
+
+    private fun read(tree: Uri, path: String): JSONObject {
+        var docId = DocumentsContract.getTreeDocumentId(tree)
+        val walked = JSONArray().put(docId)
+        for (part in path.split('/').filter { it.isNotEmpty() }) {
+            val children = DocumentsContract.buildChildDocumentsUriUsingTree(tree, docId)
+            var next: String? = null
+            contentResolver.query(children, arrayOf(
+                DocumentsContract.Document.COLUMN_DOCUMENT_ID,
+                DocumentsContract.Document.COLUMN_DISPLAY_NAME), null, null, null)?.use { c ->
+                while (c.moveToNext()) if (c.getString(1) == part) { next = c.getString(0); break }
+            }
+            docId = next ?: error("'$part' not found under $docId")
+            walked.put(docId)
+        }
+        val doc = DocumentsContract.buildDocumentUriUsingTree(tree, docId)
+        val columns = JSONObject()
+        contentResolver.query(doc, null, null, null, null)?.use { c ->
+            if (c.moveToFirst()) for (i in 0 until c.columnCount) columns.put(c.getColumnName(i), c.getString(i) ?: JSONObject.NULL)
+        }
+        val md = MessageDigest.getInstance("SHA-256")
+        var size = 0L
+        contentResolver.openInputStream(doc)!!.use { input ->
+            val buf = ByteArray(1 shl 16)
+            while (true) {
+                val n = input.read(buf)
+                if (n < 0) break
+                md.update(buf, 0, n); size += n
+            }
+        }
+        return JSONObject().put("tree", tree.toString()).put("path", path).put("documentId", docId)
+            .put("walked", walked).put("columns", columns).put("bytes", size)
+            .put("sha256", md.digest().joinToString("") { "%02x".format(it) })
+    }
+
+    private fun grants(): JSONObject {
+        val list = JSONArray()
+        for (p in contentResolver.persistedUriPermissions) {
+            list.put(JSONObject().put("uri", p.uri.toString()).put("read", p.isReadPermission)
+                .put("write", p.isWritePermission).put("persistedTime", p.persistedTime))
+        }
+        return JSONObject().put("grants", list)
+    }
+
+    private fun outside(tree: Uri, docId: String): JSONObject {
+        val out = JSONObject().put("tree", tree.toString()).put("documentId", docId)
+        return try {
+            contentResolver.openInputStream(DocumentsContract.buildDocumentUriUsingTree(tree, docId))!!.use {
+                out.put("opened", true).put("firstByte", it.read())
+            }
+        } catch (e: Exception) {
+            out.put("opened", false).put("refusal", "${e.javaClass.name}: ${e.message}")
+        }
+    }
+
+    private fun finishWith(cmd: String, result: JSONObject) {
+        result.put("cmd", cmd).put("time", System.currentTimeMillis())
+        val text = result.toString(2)
+        Log.i(tag, text)
+        getExternalFilesDir(null)?.let { File(it, "result-$cmd.json").writeText(text) }
+        finish()
+    }
+}
