@@ -44,6 +44,14 @@ object ContainerSessions : MountRegistry {
         private val descriptor: ParcelFileDescriptor,
     ) : MountedTree {
         override val readOnlyReason: String get() = READ_ONLY_REASON
+        val capacityBytes: Long? get() = runCatching { fileSystem.capacity }.getOrNull()
+        val fileSystemName: String get() = when (fileSystem) {
+            is app.fayaz.otgmaster.exfat.ExFatFileSystem -> "exFAT"
+            is app.fayaz.otgmaster.ntfs.NtfsFileSystem -> "NTFS"
+            is app.fayaz.otgmaster.ext4.Ext4FileSystem -> "ext4"
+            is app.fayaz.otgmaster.apfs.ApfsFileSystem -> "APFS"
+            else -> "FAT32"
+        }
         override val tree: DocumentSource = UsbFileDocumentSource(fileSystem) { READ_ONLY_REASON }
         override val session: Any get() = fileSystem
         // Unknown for a read-only container; the root shows none rather than a guess.
@@ -99,6 +107,26 @@ object ContainerSessions : MountRegistry {
      * @throws AlreadyOpenException if the same file is open
      */
     fun openVeraCrypt(context: Context, uri: Uri, displayName: String, password: CharArray, pim: Int?): Session {
+        val masked = app.fayaz.otgmaster.feedback.PathMask.mark(displayName)
+        CmLog.log("Opening $masked as VeraCrypt (PIM ${if (pim == null) "default" else "custom"})")
+        val t0 = android.os.SystemClock.elapsedRealtime()
+        try {
+            return openVeraCryptLogged(context, uri, displayName, password, pim).also {
+                CmLog.log("Unlocked and mounted $masked (${it.fileSystemName}, read-only) in ${android.os.SystemClock.elapsedRealtime() - t0} ms; open as ${it.id}")
+            }
+        } catch (e: IllegalArgumentException) {
+            CmLog.log("Could not unlock $masked: wrong password or PIM, or not a VeraCrypt volume")
+            throw e
+        } catch (e: AlreadyOpenException) {
+            CmLog.log("$masked is already open")
+            throw e
+        } catch (e: Exception) {
+            CmLog.log("Could not open $masked: ${e.message ?: e.javaClass.simpleName}")
+            throw e
+        }
+    }
+
+    private fun openVeraCryptLogged(context: Context, uri: Uri, displayName: String, password: CharArray, pim: Int?): Session {
         val descriptor = context.contentResolver.openFileDescriptor(uri, "r")
             ?: throw java.io.FileNotFoundException("The file could not be opened")
         try {
@@ -147,6 +175,23 @@ object ContainerSessions : MountRegistry {
         notifyRoots(context)
         TreeDocumentsProvider.drainCallbacks(id)
         TreeDocumentsProvider.onDrive("$id:/", "lock") { session.close() }
+        CmLog.log("Locked ${app.fayaz.otgmaster.feedback.PathMask.mark(session.name)} ($id)")
+    }
+
+    /** The format a picked file looks like, from its first 4 KiB; logged. */
+    fun detect(context: Context, uri: Uri, displayName: String): ContainerFormat {
+        val head = context.contentResolver.openInputStream(uri)?.use { s ->
+            val b = ByteArray(4096); var n = 0
+            while (n < b.size) { val r = s.read(b, n, b.size - n); if (r < 0) break; n += r }
+            b.copyOf(n)
+        } ?: ByteArray(0)
+        return ContainerFormat.detect(head).also {
+            CmLog.log("Chose ${app.fayaz.otgmaster.feedback.PathMask.mark(displayName)}: " + when (it) {
+                ContainerFormat.VERACRYPT -> "no known signature, so it is offered as VeraCrypt"
+                ContainerFormat.LUKS -> "a LUKS volume, which this version cannot open yet"
+                ContainerFormat.ZIP -> "a ZIP archive, which this version cannot open yet"
+            })
+        }
     }
 
     fun lockAll(context: Context) = sessions.map { it.id }.forEach { lock(context, it) }
