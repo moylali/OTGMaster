@@ -15,4 +15,4 @@ dependencyResolutionManagement {
 }
 
 rootProject.name = "OTGMaster"
-include(":app", ":libaums", ":mount-core", ":disk-engine", ":saf-provider", ":app-common", ":container-app")
+include(":app", ":libaums", ":mount-core", ":disk-engine", ":saf-provider", ":file-formats", ":app-common", ":container-app")
