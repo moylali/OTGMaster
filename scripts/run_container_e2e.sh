@@ -32,6 +32,16 @@ if [ ! -f testdata/cm_luks/test.img ]; then
   printf 'container-master-luks' | cryptsetup luksFormat --type luks2 -q --pbkdf pbkdf2 --pbkdf-force-iterations 1000 \
     --luks2-metadata-size 16k --luks2-keyslots-size 512k testdata/cm_luks/test.img - || { echo "LUKS fixture failed"; exit 1; }
 fi
+# A ZIP made by Info-ZIP: the shared fixture files, and a 20 MiB entry, past the 16 MiB that is
+# inflated whole, so its reads go through the streamed path.
+if [ ! -f testdata/cm_zip/test.zip ]; then
+  t=$(mktemp -d); mkdir -p "$t/nested/very/deep/folder" testdata/cm_zip
+  cp testdata/flower.jpg "$t/"; printf 'Hello World\n' > "$t/file with spaces.txt"; : > "$t/nested/very/deep/folder/empty_file.txt"
+  python3 -c 'import sys; open(sys.argv[1],"wb").write(bytes((i // 7) % 251 for i in range(20 << 20)))' "$t/big.bin"
+  (cd "$t" && zip -q -r -6 "$OLDPWD/testdata/cm_zip/test.zip" .) || { echo "ZIP fixture failed"; exit 1; }
+  rm -rf "$t"
+fi
+BIG=$(python3 -c 'import hashlib; print(hashlib.sha256(bytes((i // 7) % 251 for i in range(20 << 20))).hexdigest())')
 # The public ID Container Master must give each container: SHA-256 of "veracrypt-salt:" and the
 # header's first 64 bytes, first 10 hex (ContainerSessions.idForSalt).
 cid() { python3 -c 'import hashlib,sys; d=open(sys.argv[1],"rb").read(64); print(hashlib.sha256(b"veracrypt-salt:"+d).hexdigest()[:10])' "$1"; }
@@ -44,8 +54,8 @@ echo "Building Container Master and saf-probe..."
 APK_COMMIT=$(grep -oE 'GIT_COMMIT = "[^"]*"' container-app/build/generated/source/buildConfig/debug/app/fayaz/containermaster/BuildConfig.java | cut -d'"' -f2)
 adb -s "$S" install -r container-app/build/outputs/apk/debug/container-app-debug.apk >/dev/null || exit 1
 adb -s "$S" install -r tools/saf-probe/build/outputs/apk/debug/saf-probe-debug.apk >/dev/null || exit 1
-for t in ext4 ntfs luks; do
-  [ $t = luks ] && src=testdata/cm_luks/test.img || src=testdata/$t/test.img
+for t in ext4 ntfs luks zip; do
+  case $t in luks) src=testdata/cm_luks/test.img ;; zip) src=testdata/cm_zip/test.zip ;; *) src=testdata/$t/test.img ;; esac
   want=$(sha256sum $src | cut -d' ' -f1)
   have=$(adb -s "$S" shell sha256sum /sdcard/Download/cm-$t.hc 2>/dev/null | cut -d' ' -f1)
   [ "$want" = "$have" ] || adb -s "$S" push $src /sdcard/Download/cm-$t.hc >/dev/null
@@ -179,6 +189,41 @@ case_held_fd_lock() {
   local r2; r2=$(read_sha "$TREE" flower.jpg); [ "$r2" = "\"sha256\": \"$FLOWER\"" ] || { fail "a fresh read after the relock: $r2"; return 1; }
 }
 
+open_zip_and_grant() { # sets TREE and ZID
+  cm_front; pick cm-zip.hc || { fail "could not pick the ZIP"; return 1; }
+  dump | grep -q 'opens without a password' || { fail "the ZIP was not recognised"; return 1; }
+  dump | grep -q 'content-desc="password"' && { fail "a password form for a ZIP"; return 1; }
+  tap 'content-desc="open_zip"' || { fail "no Open for the ZIP"; return 1; }
+  local i; for i in $(seq 1 60); do sleep 1; on_screen 'content-desc="chosen_file"' || break; on_screen 'content-desc="message"' && break; done
+  on_screen 'content-desc="message"' && { fail "the ZIP did not open: $(dump | grep -oE 'text="[^"]*"[^>]*content-desc="message"')"; return 1; }
+  ZID=$(open_ids | tail -1); [ -n "$ZID" ] || { fail "the ZIP is not listed as open"; return 1; }
+  TREE=$(grant "$ZID"); [ -n "$TREE" ] || { fail "no grant on the ZIP"; return 1; }
+}
+
+case_zip_read() {
+  open_zip_and_grant || return 1
+  local r
+  r=$(read_sha "$TREE" flower.jpg); [ "$r" = "\"sha256\": \"$FLOWER\"" ] || { fail "flower.jpg: $r"; return 1; }
+  r=$(read_sha "$TREE" "file with spaces.txt"); [ "$r" = "\"sha256\": \"$SPACES\"" ] || { fail "file with spaces.txt: $r"; return 1; }
+  r=$(read_sha "$TREE" nested/very/deep/folder/empty_file.txt); [ "$r" = "\"sha256\": \"$EMPTY\"" ] || { fail "empty_file.txt: $r"; return 1; }
+  r=$(read_sha "$TREE" big.bin); [ "$r" = "\"sha256\": \"$BIG\"" ] || { fail "big.bin (streamed): $r"; return 1; }
+}
+
+case_zip_and_veracrypt() {
+  open_and_grant cm-ext4.hc password123 1 "$ID_EXT4" || return 1
+  local vtree=$TREE
+  open_zip_and_grant || return 1
+  local ztree=$TREE r
+  # A descriptor held on the ZIP's streamed entry, seeking to 1 MiB after a wait, while the
+  # VeraCrypt container is read: both through the same provider code.
+  adb -s "$S" shell "rm -f $F/result-hold.json $F/result-hold-open.json; am start -n app.fayaz.safprobe/.ProbeActivity --es cmd hold --es tree '$ztree' --es path big.bin --ei wait 8" >/dev/null
+  r=$(read_sha "$vtree" flower.jpg); [ "$r" = "\"sha256\": \"$FLOWER\"" ] || { fail "VeraCrypt flower.jpg beside the ZIP: $r"; return 1; }
+  r=$(read_sha "$ztree" flower.jpg); [ "$r" = "\"sha256\": \"$FLOWER\"" ] || { fail "ZIP flower.jpg beside VeraCrypt: $r"; return 1; }
+  local i; for i in $(seq 1 40); do adb -s "$S" shell "test -f $F/result-hold.json" && break; sleep 1; done
+  adb -s "$S" shell cat $F/result-hold.json | tr -d '\n' | grep -q '"lateRead": "65536 bytes"' || { fail "the ZIP seek: $(adb -s "$S" shell cat $F/result-hold.json | tr -d '\n')"; return 1; }
+  [ "$(open_ids | wc -l)" = 2 ] || { fail "not both open"; return 1; }
+}
+
 run_case unlock_read "Pick a VeraCrypt file (ext4 inside), unlock, and read flower.jpg, a name with spaces and an empty file six folders down through saf-probe's grant, by SHA-256; no write, delete or rename offered." case_unlock_read
 run_case ntfs "The same, with NTFS inside the container." case_ntfs
 run_case wrong_password "A wrong password is refused with a message, and nothing opens." case_wrong_password
@@ -188,6 +233,8 @@ run_case format_luks "A LUKS file is recognised and named, and no VeraCrypt form
 run_case logs_report "The log shows the detected format and the unlock; Report issue (shared with OTG Master) opens with Container Master's version and no USB row." case_logs_report
 run_case idle_lock "Lock after 1 minute without use: a read works, then after 75 s with no I/O the held grant's read fails, nothing is open, and the log says it locked for idleness." case_idle_lock
 run_case held_fd_lock "A client holds a descriptor across Lock and a fresh unlock of the same container: its late read fails rather than reaching the new session, it still closes, and a fresh open reads the file." case_held_fd_lock
+run_case zip_read "A ZIP made by Info-ZIP opens with no password; flower.jpg, a name with spaces, an empty file six folders down and a 20 MiB streamed entry read by SHA-256 through saf-probe's grant." case_zip_read
+run_case zip_and_veracrypt "A ZIP and a VeraCrypt container open together; the same flower.jpg reads from both through the same provider code, while a descriptor held on the ZIP's streamed entry seeks to 1 MiB." case_zip_and_veracrypt
 run_case lock_all_service "The foreground service runs while a container is open; Lock all closes it and the service stops; the container file is unchanged." case_lock_all_service
 
 {

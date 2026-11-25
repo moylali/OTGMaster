@@ -1,7 +1,7 @@
 <?xml version="1.0" encoding="utf-8"?>
 <resources>
     <string name="app_name">Container Master</string>
-    <string name="intro">Open a VeraCrypt container file from your phone. Its files then show up in the Files app and in any app that opens files, until you lock it.</string>
+    <string name="intro">Open a VeraCrypt container or a ZIP archive from your phone. Its files then show up in the Files app and in any app that opens files, until you lock it.</string>
     <string name="choose_file">Choose a container file</string>
     <string name="chosen_file">File: %1$s</string>
     <string name="password">Password</string>
@@ -37,7 +37,8 @@
     <string name="version_label">Version %1$s (%2$d), %3$s</string>
     <string name="format_veracrypt">No known signature, so it is offered as a VeraCrypt volume. Enter its password and PIM.</string>
     <string name="format_luks_later">This is a LUKS volume. This version of Container Master opens VeraCrypt only; LUKS comes in a later version.</string>
-    <string name="format_zip_later">This is a ZIP archive. This version of Container Master opens VeraCrypt only; ZIP comes in a later version.</string>
+    <string name="format_zip_later">This is a ZIP archive. It opens without a password, read-only.</string>
+    <string name="open_archive">Open</string>
     <string name="idle_lock">Lock after no use for</string>
     <string name="idle_never">Never</string>
     <plurals name="idle_minutes">

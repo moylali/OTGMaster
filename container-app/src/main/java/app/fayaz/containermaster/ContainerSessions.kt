@@ -35,35 +35,49 @@ object ContainerSessions : MountRegistry {
     /** Container Master opens every container read-only in this first release. */
     const val READ_ONLY_REASON = "Container Master opens containers read-only"
 
+    /**
+     * One open container: its tree, how the screen and Report issue describe it, and how it is
+     * closed. [session] is the identity a handle and a cached row are tied to (MountedTree).
+     */
     class Session internal constructor(
         override val id: String,
         override val name: String,
         val uri: Uri,
-        private val fileSystem: FileSystem,
-        private val decrypted: NativeDecryptedBlockDevice,
-        private val descriptor: ParcelFileDescriptor,
+        /** "VeraCrypt" or "ZIP". */
+        val format: String,
+        /** What is inside: "exFAT", "ext4", ... for a volume, "ZIP" for an archive. */
+        val fileSystemName: String,
+        val capacityBytes: Long?,
+        override val tree: DocumentSource,
+        override val session: Any,
+        private val closer: () -> Unit,
     ) : MountedTree {
         override val readOnlyReason: String get() = READ_ONLY_REASON
-        val capacityBytes: Long? get() = runCatching { fileSystem.capacity }.getOrNull()
-        val fileSystemName: String get() = when (fileSystem) {
-            is app.fayaz.otgmaster.exfat.ExFatFileSystem -> "exFAT"
-            is app.fayaz.otgmaster.ntfs.NtfsFileSystem -> "NTFS"
-            is app.fayaz.otgmaster.ext4.Ext4FileSystem -> "ext4"
-            is app.fayaz.otgmaster.apfs.ApfsFileSystem -> "APFS"
-            else -> "FAT32"
-        }
-        override val tree: DocumentSource = UsbFileDocumentSource(fileSystem) { READ_ONLY_REASON }
-        override val session: Any get() = fileSystem
         // Unknown for a read-only container; the root shows none rather than a guess.
         override fun freeBytes(): Long = 0L
+        internal fun close() = closer()
+    }
 
-        internal fun close() {
+    private fun veraCryptSession(id: String, name: String, uri: Uri, fs: FileSystem,
+                                 decrypted: NativeDecryptedBlockDevice, descriptor: ParcelFileDescriptor) =
+        Session(id, name, uri, "VeraCrypt",
+            fileSystemName = when (fs) {
+                is app.fayaz.otgmaster.exfat.ExFatFileSystem -> "exFAT"
+                is app.fayaz.otgmaster.ntfs.NtfsFileSystem -> "NTFS"
+                is app.fayaz.otgmaster.ext4.Ext4FileSystem -> "ext4"
+                is app.fayaz.otgmaster.apfs.ApfsFileSystem -> "APFS"
+                else -> "FAT32"
+            },
+            capacityBytes = runCatching { fs.capacity }.getOrNull(),
+            tree = UsbFileDocumentSource(fs) { READ_ONLY_REASON },
+            session = fs,
+        ) {
             runCatching {
-                when (fileSystem) {
-                    is app.fayaz.otgmaster.exfat.ExFatFileSystem -> fileSystem.unmount()
-                    is app.fayaz.otgmaster.ntfs.NtfsFileSystem -> fileSystem.unmount()
-                    is app.fayaz.otgmaster.ext4.Ext4FileSystem -> fileSystem.unmount()
-                    is app.fayaz.otgmaster.apfs.ApfsFileSystem -> fileSystem.unmount()
+                when (fs) {
+                    is app.fayaz.otgmaster.exfat.ExFatFileSystem -> fs.unmount()
+                    is app.fayaz.otgmaster.ntfs.NtfsFileSystem -> fs.unmount()
+                    is app.fayaz.otgmaster.ext4.Ext4FileSystem -> fs.unmount()
+                    is app.fayaz.otgmaster.apfs.ApfsFileSystem -> fs.unmount()
                     else -> Unit   // libaums' FAT32 holds nothing to release on a read-only mount
                 }
             }
@@ -71,7 +85,6 @@ object ContainerSessions : MountRegistry {
             runCatching { decrypted.close() }
             runCatching { descriptor.close() }
         }
-    }
 
     private val sessions = CopyOnWriteArrayList<Session>()
     private val _open = MutableStateFlow<List<Session>>(emptyList())
@@ -173,7 +186,7 @@ object ContainerSessions : MountRegistry {
             try {
                 val cached = CachedBlockDevice(decrypted, readAheadBytes = CachedBlockDevice.DEFAULT_READAHEAD_BYTES)
                 val fs = DiskMounter.mount(ReadOnlyBlockDeviceDriver(ByteBlockDevice(cached)))
-                val session = Session(id, displayName, uri, fs, decrypted, descriptor)
+                val session = veraCryptSession(id, displayName, uri, fs, decrypted, descriptor)
                 synchronized(this) {
                     if (sessions.any { it.id == id }) { session.close(); throw AlreadyOpenException() }
                     touch(id)
@@ -188,6 +201,53 @@ object ContainerSessions : MountRegistry {
             }
         } catch (e: Throwable) {
             runCatching { descriptor.close() }
+            throw e
+        }
+    }
+
+    /**
+     * Opens the ZIP archive [uri]: reads its central directory through the descriptor and
+     * publishes its tree. No password. Its ID comes from the archive's own bytes (its length,
+     * first 4 KiB and end record), so a client's grant survives a fresh pick, as for VeraCrypt.
+     */
+    fun openZip(context: Context, uri: Uri, displayName: String): Session {
+        val masked = app.fayaz.otgmaster.feedback.PathMask.mark(displayName)
+        CmLog.log("Opening $masked as a ZIP archive")
+        val t0 = android.os.SystemClock.elapsedRealtime()
+        val descriptor = context.contentResolver.openFileDescriptor(uri, "r")
+            ?: throw java.io.FileNotFoundException("The file could not be opened")
+        try {
+            val channel = FileInputStream(descriptor.fileDescriptor).channel
+            val length = descriptor.statSize.takeIf { it >= 0 } ?: channel.size()
+            val md = MessageDigest.getInstance("SHA-256")
+            md.update("zip:$length:".toByteArray())
+            fun part(pos: Long, len: Int) = java.nio.ByteBuffer.allocate(len).also { b ->
+                var p = pos; while (b.hasRemaining()) { if (channel.read(b, p).also { p += it } < 0) break } }.array()
+            md.update(part(0, minOf(4096L, length).toInt())); md.update(part(maxOf(0, length - 22), minOf(22L, length).toInt()))
+            val id = md.digest().joinToString("") { "%02x".format(it) }.take(10)
+            if (sessions.any { it.id == id }) { CmLog.log("$masked is already open"); throw AlreadyOpenException() }
+            val archive = app.fayaz.otgmaster.zip.ZipArchive.open(channel, length)
+            val tree = app.fayaz.otgmaster.zip.ZipDocumentSource(archive)
+            val session = Session(id, displayName, uri, "ZIP", "ZIP", length, tree, archive) {
+                runCatching { descriptor.close() }
+            }
+            synchronized(this) {
+                if (sessions.any { it.id == id }) { session.close(); throw AlreadyOpenException() }
+                touch(id)
+                sessions += session
+                _open.value = sessions.toList()
+            }
+            notifyRoots(context)
+            val files = archive.entries.count { !it.isDirectory }
+            CmLog.log("Opened $masked: $files files" +
+                (if (archive.skippedUnsafe > 0) ", ${archive.skippedUnsafe} entries with unsafe names left out" else "") +
+                " in ${android.os.SystemClock.elapsedRealtime() - t0} ms; open as $id")
+            return session
+        } catch (e: AlreadyOpenException) {
+            runCatching { descriptor.close() }; throw e
+        } catch (e: Exception) {
+            runCatching { descriptor.close() }
+            CmLog.log("Could not open $masked: ${e.message ?: e.javaClass.simpleName}")
             throw e
         }
     }
@@ -223,7 +283,7 @@ object ContainerSessions : MountRegistry {
             CmLog.log("Chose ${app.fayaz.otgmaster.feedback.PathMask.mark(displayName)}: " + when (it) {
                 ContainerFormat.VERACRYPT -> "no known signature, so it is offered as VeraCrypt"
                 ContainerFormat.LUKS -> "a LUKS volume, which this version cannot open yet"
-                ContainerFormat.ZIP -> "a ZIP archive, which this version cannot open yet"
+                ContainerFormat.ZIP -> "a ZIP archive, opened without a password"
             })
         }
     }

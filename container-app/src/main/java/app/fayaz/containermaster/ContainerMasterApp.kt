@@ -25,7 +25,7 @@ class ContainerMasterApp : Application() {
             override val usesUsb: Boolean get() = false
             override fun usbMake(): String = ""
             override fun volumes(): List<FeedbackSource.Volume> = ContainerSessions.open.value.map {
-                FeedbackSource.Volume(it.capacityBytes, it.fileSystemName, "veracrypt")
+                FeedbackSource.Volume(it.capacityBytes, it.fileSystemName, if (it.format == "ZIP") "none" else "veracrypt")
             }
             override fun logs(): List<String> = CmLog.lines.value
             override fun themeMode(): String = prefs(this@ContainerMasterApp).getString(THEME, "SYSTEM") ?: "SYSTEM"
