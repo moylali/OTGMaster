@@ -220,12 +220,13 @@ ensure_testdata() {
 # The commit the APKs are built from, read before the build rather than when the
 # report is written: a commit or checkout during a long run would otherwise relabel
 # it. --dirty marks a tree with uncommitted changes, which the label cannot name.
-GIT_COMMIT=$(git describe --always --dirty --abbrev=7 2>/dev/null || echo "unknown")
+# --match: label OTG builds by OTG's own release tags, not another product's (F14).
+GIT_COMMIT=$(git describe --always --dirty --abbrev=7 --match 'v[0-9]*' 2>/dev/null || echo "unknown")
 
 if [ "$NO_BUILD" = false ]; then
     ensure_testdata
     echo "Building Android Test APKs..."
-    ./gradlew "assemble${BUILD_TYPE_CAP}" "assemble${BUILD_TYPE_CAP}AndroidTest" \
+    ./gradlew ":app:assemble${BUILD_TYPE_CAP}" ":app:assemble${BUILD_TYPE_CAP}AndroidTest" \
         -Potg.testBuildType="$E2E_BUILD_TYPE" || { echo "Build failed!"; exit 1; }
 fi
 [ "$PREPARE_ONLY" = true ] && { echo "Prepared."; exit 0; }

@@ -32,7 +32,7 @@ done
 
 # The commit the APKs are built from, read before --prepare-only builds them, not
 # when the report is written half an hour later. --dirty marks uncommitted work.
-GIT_COMMIT=$(git describe --always --dirty --abbrev=7 2>/dev/null || echo "unknown")
+GIT_COMMIT=$(git describe --always --dirty --abbrev=7 --match 'v[0-9]*' 2>/dev/null || echo "unknown")
 START=$SECONDS
 
 echo "Preparing fixtures and APKs once..."
@@ -82,7 +82,7 @@ for p in "${pids[@]}"; do wait "$p"; done
 
 # Merge: every result row from the shard reports, renumbered, with totals.
 APP_VERSION=$(grep 'versionName' app/build.gradle.kts | head -1 | grep -o '"[^"]*"' | tr -d '"')
-END_COMMIT=$(git describe --always --dirty --abbrev=7 2>/dev/null || echo "unknown")
+END_COMMIT=$(git describe --always --dirty --abbrev=7 --match 'v[0-9]*' 2>/dev/null || echo "unknown")
 AVD_NAME=$(sed -n 's/^AVD_NAME="\(.*\)"$/\1/p' scripts/run_e2e_tests.sh | head -1)
 AVD_IMAGE=$(sed -n 's|^image.sysdir.1=system-images/||p' "${ANDROID_AVD_HOME:-$HOME/.android/avd}/$AVD_NAME.avd/config.ini" 2>/dev/null | sed 's|/$||')
 ELAPSED=$((SECONDS - START))

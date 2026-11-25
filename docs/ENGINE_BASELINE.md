@@ -98,8 +98,8 @@ only matters once Container Master exists.
 | F11 | ISO and UDF | Second app | |
 | F12 | ZIP | Second app | |
 | F13 | Release metadata per app | Second app | OTG's paths are the table's left column today |
-| F14 | Tag lookups per product | Planned | The E2E reporters label builds with `git describe --always --dirty --abbrev=7` and `AGENTS.md`'s changelog check uses `git describe --tags --abbrev=0`, both without a tag pattern |
-| F15 | Qualified build tasks | Planned | CI runs `:app:testDebugUnitTest` but unqualified `assembleDebug` and `assembleBenchmark`; the release workflow runs unqualified `assembleRelease bundleRelease`. Safe only while there is one app |
+| F14 | Tag lookups per product | Done for OTG in Milestone 2's first PR (`--match 'v[0-9]*'` in the E2E reporters and the AGENTS.md check); was: | The E2E reporters label builds with `git describe --always --dirty --abbrev=7` and `AGENTS.md`'s changelog check uses `git describe --tags --abbrev=0`, both without a tag pattern |
+| F15 | Qualified build tasks | Done in Milestone 2's first PR (CI, release, E2E launcher and README use `:app:` tasks); was: | CI runs `:app:testDebugUnitTest` but unqualified `assembleDebug` and `assembleBenchmark`; the release workflow runs unqualified `assembleRelease bundleRelease`. Safe only while there is one app |
 | F16 | Reproducibility, alignment, licensing | Implemented for OTG | Build baseline above; 16 KiB alignment measured on the shipped APK |
 | F17 | Ancestry from the mounted tree | Planned | `isChildDocument` and `findDocumentPath` compare path strings |
 | F18 | Cooperative KDF cancellation | Planned | No cancellation in `VeraCryptUnlocker` or `LuksUnlocker` |
