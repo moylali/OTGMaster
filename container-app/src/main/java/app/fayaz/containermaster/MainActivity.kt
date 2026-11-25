@@ -198,7 +198,8 @@ private fun Screen(theme: String, onTheme: (String) -> Unit) {
                 }
                 // The form follows the chosen file's format. VeraCrypt: a password and a PIM.
                 // LUKS and ZIP are recognised and named, and come in later versions.
-                if (picked == null || picked?.format == ContainerFormat.VERACRYPT) {
+                val isLuks = picked?.format == ContainerFormat.LUKS
+                if (picked == null || picked?.format == ContainerFormat.VERACRYPT || isLuks) {
                     OutlinedTextField(
                         value = password, onValueChange = { password = it },
                         label = { Text(stringResource(R.string.password)) },
@@ -212,7 +213,7 @@ private fun Screen(theme: String, onTheme: (String) -> Unit) {
                         },
                         singleLine = true, modifier = Modifier.fillMaxWidth().desc("password"),
                     )
-                    OutlinedTextField(
+                    if (!isLuks) OutlinedTextField(
                         value = pim, onValueChange = { pim = it.filter(Char::isDigit) },
                         label = { Text(stringResource(R.string.pim)) },
                         keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Number),
@@ -236,7 +237,8 @@ private fun Screen(theme: String, onTheme: (String) -> Unit) {
                             scope.launch {
                                 message = withContext(Dispatchers.IO) {
                                     try {
-                                        ContainerSessions.openVeraCrypt(context.applicationContext, p.uri, p.name, chars, pimValue)
+                                        if (p.format == ContainerFormat.LUKS) ContainerSessions.openLuks(context.applicationContext, p.uri, p.name, chars)
+                                        else ContainerSessions.openVeraCrypt(context.applicationContext, p.uri, p.name, chars, pimValue)
                                         null
                                     } catch (e: IllegalArgumentException) {
                                         wrong

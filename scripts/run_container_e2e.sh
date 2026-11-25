@@ -26,12 +26,6 @@ EMPTY=$(printf '' | sha256sum | cut -d' ' -f1)
 for t in ext4 ntfs; do
   [ -f testdata/$t/test.img ] || { bash scripts/generate_noroot_testdata.sh || { echo "fixture generation failed"; exit 1; }; }
 done
-# A LUKS2 file, for the format the form follows; only its header is read, so 4 MiB will do.
-if [ ! -f testdata/cm_luks/test.img ]; then
-  mkdir -p testdata/cm_luks; truncate -s 4M testdata/cm_luks/test.img
-  printf 'container-master-luks' | cryptsetup luksFormat --type luks2 -q --pbkdf pbkdf2 --pbkdf-force-iterations 1000 \
-    --luks2-metadata-size 16k --luks2-keyslots-size 512k testdata/cm_luks/test.img - || { echo "LUKS fixture failed"; exit 1; }
-fi
 # A ZIP made by Info-ZIP: the shared fixture files, and a 20 MiB entry, past the 16 MiB that is
 # inflated whole, so its reads go through the streamed path.
 if [ ! -f testdata/cm_zip/test.zip ]; then
@@ -46,6 +40,10 @@ BIG=$(python3 -c 'import hashlib; print(hashlib.sha256(bytes((i // 7) % 251 for 
 # header's first 64 bytes, first 10 hex (ContainerSessions.idForSalt).
 cid() { python3 -c 'import hashlib,sys; d=open(sys.argv[1],"rb").read(64); print(hashlib.sha256(b"veracrypt-salt:"+d).hexdigest()[:10])' "$1"; }
 ID_EXT4=$(cid testdata/ext4/test.img); ID_NTFS=$(cid testdata/ntfs/test.img)
+# A LUKS volume's ID: SHA-256 of "luks-uuid:" and the header's 40 bytes at 168 (its UUID).
+lid() { python3 -c 'import hashlib,sys; d=open(sys.argv[1],"rb").read(208); print(hashlib.sha256(b"luks-uuid:"+d[168:208]).hexdigest()[:10])' "$1"; }
+for t in m_luks2_ext4 m_luks1_ext4; do [ -f testdata/$t/test.img ] || { echo "testdata/$t is missing: sudo bash scripts/generate_testdata.sh makes it"; exit 1; }; done
+ID_LUKS2=$(lid testdata/m_luks2_ext4/test.img); ID_LUKS1=$(lid testdata/m_luks1_ext4/test.img)
 
 echo "Building Container Master and saf-probe..."
 ./gradlew -q :container-app:assembleDebug || exit 1
@@ -54,8 +52,8 @@ echo "Building Container Master and saf-probe..."
 APK_COMMIT=$(grep -oE 'GIT_COMMIT = "[^"]*"' container-app/build/generated/source/buildConfig/debug/app/fayaz/containermaster/BuildConfig.java | cut -d'"' -f2)
 adb -s "$S" install -r container-app/build/outputs/apk/debug/container-app-debug.apk >/dev/null || exit 1
 adb -s "$S" install -r tools/saf-probe/build/outputs/apk/debug/saf-probe-debug.apk >/dev/null || exit 1
-for t in ext4 ntfs luks zip; do
-  case $t in luks) src=testdata/cm_luks/test.img ;; zip) src=testdata/cm_zip/test.zip ;; *) src=testdata/$t/test.img ;; esac
+for t in ext4 ntfs luks2 luks1 zip; do
+  case $t in luks2) src=testdata/m_luks2_ext4/test.img ;; luks1) src=testdata/m_luks1_ext4/test.img ;; zip) src=testdata/cm_zip/test.zip ;; *) src=testdata/$t/test.img ;; esac
   want=$(sha256sum $src | cut -d' ' -f1)
   have=$(adb -s "$S" shell sha256sum /sdcard/Download/cm-$t.hc 2>/dev/null | cut -d' ' -f1)
   [ "$want" = "$have" ] || adb -s "$S" push $src /sdcard/Download/cm-$t.hc >/dev/null
@@ -131,14 +129,17 @@ case_lock_all_service() {
   [ "$(adb -s "$S" shell sha256sum /sdcard/Download/cm-ext4.hc | cut -d' ' -f1)" = "$before" ] || { fail "the container changed"; return 1; }
 }
 
-case_format_luks() {
-  cm_front; pick cm-luks.hc || { fail "could not pick"; return 1; }
+luks_case() { # luks_case <file> <expected id>
+  cm_front; pick "$1" || { fail "could not pick $1"; return 1; }
   local X; X=$(dump)
   echo "$X" | grep -q 'LUKS volume' || { fail "the format line does not name LUKS"; return 1; }
-  echo "$X" | grep -q 'content-desc="password"' && { fail "the VeraCrypt form is shown for a LUKS file"; return 1; }
-  echo "$X" | grep -q 'content-desc="unlock"' && { fail "Unlock is offered for a LUKS file"; return 1; }
-  return 0
+  echo "$X" | grep -q 'content-desc="pim"' && { fail "a PIM field for a LUKS volume"; return 1; }
+  local out; out=$(unlock password123); [ "$out" = "opened $2" ] || { fail "unlock: got '$out', expected 'opened $2'"; return 1; }
+  TREE=$(grant "$2"); [ -n "$TREE" ] || { fail "no grant on $2"; return 1; }
+  local r; r=$(read_sha "$TREE" flower.jpg); [ "$r" = "\"sha256\": \"$FLOWER\"" ] || { fail "flower.jpg: $r"; return 1; }
 }
+case_luks2() { luks_case cm-luks2.hc "$ID_LUKS2"; }
+case_luks1() { luks_case cm-luks1.hc "$ID_LUKS1"; }
 
 case_logs_report() {
   cm_front; pick cm-ext4.hc || { fail "could not pick"; return 1; }
@@ -233,7 +234,8 @@ run_case ntfs "The same, with NTFS inside the container." case_ntfs
 run_case wrong_password "A wrong password is refused with a message, and nothing opens." case_wrong_password
 run_case relock_grant "Lock: a read through the held grant fails. Pick and unlock again: the same ID, and the same grant reads again." case_relock_grant
 run_case already_open "The same file picked and unlocked a second time while open is refused; one stays open." case_already_open
-run_case format_luks "A LUKS file is recognised and named, and no VeraCrypt form or Unlock is offered for it." case_format_luks
+run_case luks2_ext4 "A LUKS2 file (Argon2id, ext4 inside, made by cryptsetup) is recognised, asks for a password and no PIM, unlocks with the ID from its UUID, and flower.jpg reads by SHA-256." case_luks2
+run_case luks1_ext4 "The same for a LUKS1 file (PBKDF2)." case_luks1
 run_case logs_report "The log shows the detected format and the unlock; Report issue (shared with OTG Master) opens with Container Master's version and no USB row." case_logs_report
 run_case idle_lock "Lock after 1 minute without use: a read works, then after 75 s with no I/O the held grant's read fails, nothing is open, and the log says it locked for idleness." case_idle_lock
 run_case held_fd_lock "A client holds a descriptor across Lock and a fresh unlock of the same container: its late read fails rather than reaching the new session, it still closes, and a fresh open reads the file." case_held_fd_lock

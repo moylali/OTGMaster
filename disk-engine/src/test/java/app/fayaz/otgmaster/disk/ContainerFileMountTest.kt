@@ -114,4 +114,53 @@ class ContainerFileMountTest {
         assertThrows(IllegalArgumentException::class.java) { open("not-it".toCharArray()) { } }
         assertEquals(before, sha(img))
     }
+
+    /** The same path for a LUKS2 file, as Container Master opens it (Milestone 5). */
+    @Test
+    fun `a picked LUKS2 file opens read-only and serves its files byte for byte`() {
+        val luks = File.createTempFile("container", ".luks").apply { deleteOnExit() }
+        RandomAccessFile(luks, "rw").use { it.setLength(32L shl 20) }
+        VeraCryptImages.ImageDevice(luks).use { dev ->
+            val vol = app.fayaz.otgmaster.luks.LuksVolumeCreator.create(dev, "luks-container-test".toByteArray())
+            ExFatFormatter.format(vol, totalSectors = vol.blockCount, label = "CML")
+            val fs = DiskMounter.mount(ByteBlockDevice(RawBlockDeviceAdapter(vol)))
+            fs.rootDirectory.createFile("Manual.pdf").apply { write(0, ByteBuffer.wrap(manual)); flush(); close() }
+            (fs as? app.fayaz.otgmaster.exfat.ExFatFileSystem)?.unmount()
+            vol.close()
+        }
+        // cryptsetup, which shares no code with the app, must accept what the engine wrote.
+        val p = ProcessBuilder("cryptsetup", "luksDump", luks.path).redirectErrorStream(true).start()
+        val dump = p.inputStream.bufferedReader().readText()
+        if (p.waitFor() == 0) assertTrue(dump, dump.contains("Version:"))
+        val before = sha(luks)
+        RandomAccessFile(luks, "r").use { raf ->
+            val dev = ChannelBlockDevice(raf.channel)
+            val decrypted = app.fayaz.otgmaster.luks.LuksUnlocker().unlock(dev, 0, dev.blockCount, "luks-container-test".toByteArray())
+            try {
+                val fs = DiskMounter.mount(ReadOnlyBlockDeviceDriver(ByteBlockDevice(
+                    CachedBlockDevice(decrypted, readAheadBytes = CachedBlockDevice.DEFAULT_READAHEAD_BYTES))))
+                try {
+                    val src = UsbFileDocumentSource(fs) { "opened read-only" }
+                    val node = src.resolve(listOf("Manual.pdf"))!!
+                    src.open(node).use { h ->
+                        val out = ByteArray(manual.size)
+                        var off = 0
+                        val chunk = ByteArray(65_536)
+                        while (off < out.size) {
+                            val n = h.read(off.toLong(), chunk, minOf(chunk.size, out.size - off))
+                            assertTrue("no progress at $off", n > 0)
+                            chunk.copyInto(out, off, 0, n); off += n
+                        }
+                        assertEquals(sha(manual), sha(out))
+                        assertEquals(0, h.read(manual.size.toLong(), chunk, 16))
+                    }
+                } finally { (fs as? app.fayaz.otgmaster.exfat.ExFatFileSystem)?.unmount() }
+            } finally { decrypted.close() }
+        }
+        assertEquals("the LUKS file changed", before, sha(luks))
+        assertThrows(app.fayaz.otgmaster.luks.LuksUnlocker.WrongPasswordException::class.java) {
+            RandomAccessFile(luks, "r").use { raf -> val dev = ChannelBlockDevice(raf.channel)
+                app.fayaz.otgmaster.luks.LuksUnlocker().unlock(dev, 0, dev.blockCount, "wrong".toByteArray()) }
+        }
+    }
 }
