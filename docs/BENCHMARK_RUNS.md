@@ -49,6 +49,39 @@ All four were rebase-merged, so `main` has new hashes. The sections below name t
 | #193 | `a6a5286` | `bed05fa` | refactor(provider): look up and list through a DocumentSource tree contract |
 | #193 | `2d4bba3` | `c681622` | docs: the held grant still reads the same file on a6a5286 |
 
+## 2026-11-25: read sections before and after the :disk-engine move, OnePlus 7, D1EXFAT
+
+Engine extraction Milestone 2. Benchmark builds (release code, R8, `.bench`): `8c6bc7d` (the
+`:mount-core` move, before the log seam and the engine move) and `d626181` (the drivers,
+crypto layers, formatters and native code in `:disk-engine`). OnePlus 7 (GM1901, LineageOS
+23.2, Android 16, SDK 36), Drive 1 (`…6B31`), D1EXFAT, screen on, USB powered, battery 100%.
+Sections `free,block,dir,path,seq,random,opens,fixtures` only: **no write section ran**, and no
+`--es cache` or credentials, so each run measured the mount as auto mount left it (the seven
+plain partitions; the fingerprint prompt for the encrypted ones dismissed). The two runs were
+back to back on the same mount state, `d626181` first.
+
+| Run | Build | Time | Verdicts | freeSpace | block 512 KiB / 4 MiB | list cold, short / LFN | seq 32 / 128 / 512 KiB buf | random 4 KiB | opens short / LFN | fixtures |
+|---|---|---|---|---|---|---|---|---|---|---|
+| op7-m2e-d1exfat | `d626181` | 02:38 | no FAILED, PARTIAL or THROTTLED | 4.0 then 3.1 ms | 73.97 / 70.40 MB/s | 615.0 / 803.8 ms | 61.83 / 64.21 / 67.15 MB/s | 1.3 ms | 10.4 / 13.6 ms | ALL 20963 MATCHED |
+| op7-m2a-d1exfat | `8c6bc7d` | 02:42 | no FAILED, PARTIAL or THROTTLED | 1.4 then 1.4 ms | 75.74 / 70.92 MB/s | 584.7 / 855.1 ms | 61.11 / 57.84 / 63.03 MB/s | 1.3 ms | 10.9 / 13.6 ms | ALL 20963 MATCHED |
+
+The two builds' figures are within each other's run-to-run spread, as the identical native
+libraries predict; the single-sample 4 KiB block read (5.38 against 9.90 MB/s) and the first
+freeSpace call are the noisiest lines and differ the most. Both runs read about 2.5 times
+faster than `op7-054e-d1exfat` (11-22, `b5c79aa`: seq 25.63 / 24.55 / 25.20 MB/s): that run
+remounted through `--es cache` and credentials with all eleven partitions open, four of them
+encrypted, so it is not this comparison's baseline, and the difference is not attributed to
+any change.
+
+The libexfat I/O counters reported in both (`io: 40706 preads` on the first listing), so the
+benchmark variant of `:disk-engine` carries `ExFatIoStats` and `OTG_IO_STATS` (proposal F2).
+
+A first attempt at 02:37 passed `--es cache default` without credentials: the runner unmounted
+everything to apply it and ended `NO DRIVES MOUNTED`, with no result. The `d626181` build was
+reinstalled over `8c6bc7d` with D1 still mounted after the second run had finished (read-only
+sections, nothing writing). Nothing was written to the drive; the laptop check of D1 is still
+owed at the end of the milestone.
+
 ## 2026-11-25: the held grant on the R8 build after the :mount-core move, OnePlus 7, Drive 1
 
 Engine extraction Milestone 2: `RawBlockDevice`, `SlicedBlockDevice`, `FileBlockDevice` and
