@@ -1,9 +1,6 @@
 package app.fayaz.otgmaster.feedback
 
 import android.os.Build
-import app.fayaz.otgmaster.BuildConfig
-import app.fayaz.otgmaster.MountedDrive
-import app.fayaz.otgmaster.veracrypt.ContainerType
 import org.json.JSONArray
 import org.json.JSONObject
 
@@ -76,40 +73,25 @@ object FeedbackPayload {
      * remains is make, capacity, filesystem and whether the volume is encrypted —
      * enough to reproduce a storage bug without identifying the drive or its owner.
      */
-    fun collect(drives: List<MountedDrive>, logs: List<String>, usbEvents: List<String> = emptyList()): Contents {
-        val first = drives.firstOrNull()
-        val partitions = drives.map { d ->
-            val encType = when (d.sourceVolumeCandidate?.containerType) {
-                ContainerType.LUKS1    -> "luks1"
-                ContainerType.LUKS2    -> "luks2"
-                ContainerType.VERACRYPT -> "veracrypt"
-                ContainerType.BITLOCKER -> "bitlocker"
-                ContainerType.APFS -> "apfs"
-                else -> if (d.isPlain) "none" else "veracrypt"
-            }
+    fun collect(source: FeedbackSource): Contents {
+        val partitions = source.volumes().map { v ->
             Partition(
-                sizeGb = runCatching { "%.1f".format(d.fileSystem.capacity / 1_000_000_000.0) }
-                    .getOrDefault("?"),
-                fileSystem = d.filesystemName.ifEmpty { "unknown" },
-                encrypted = encType != "none",
-                encryptionType = encType,
+                sizeGb = v.capacityBytes?.let { "%.1f".format(it / 1_000_000_000.0) } ?: "?",
+                fileSystem = v.fileSystem.ifEmpty { "unknown" },
+                encrypted = v.encryptionType != "none",
+                encryptionType = v.encryptionType,
             )
         }
-        val (kept, dropped) = trimLogs(logs.map(PathMask::maskMarked), usbEvents.map(PathMask::maskMarked))
+        val (kept, dropped) = trimLogs(source.logs().map(PathMask::maskMarked), source.usbEvents().map(PathMask::maskMarked))
         return Contents(
             deviceName = "${Build.MANUFACTURER} ${Build.MODEL} (Android ${Build.VERSION.RELEASE})",
-            appVersion = "${BuildConfig.VERSION_NAME} (${BuildConfig.VERSION_CODE})",
-            usbMake = first?.sourceDeviceDisplayName ?: "",
+            appVersion = source.appVersion,
+            usbMake = source.usbMake(),
             usbSize = partitions.firstOrNull()?.sizeGb?.let { "$it GB" } ?: "",
             partitions = partitions,
             logLines = kept,
             logLinesDropped = dropped,
         )
-    }
-
-    private fun MountedDrive.uncachedIsEncrypted(): Boolean {
-        val cached = blockDevice as? app.fayaz.otgmaster.block.CachedBlockDevice ?: return false
-        return cached.uncached.javaClass.simpleName == "NativeDecryptedBlockDevice"
     }
 
     /**

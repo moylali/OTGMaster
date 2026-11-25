@@ -178,6 +178,8 @@ dependencies {
     implementation(project(":disk-engine"))
     // The DocumentsProvider's serving and session safety; VeraCryptDocumentProvider subclasses it.
     implementation(project(":saf-provider"))
+    // Report issue and the system-bar helper, shared with Container Master.
+    implementation(project(":app-common"))
     
     val composeBom = platform("androidx.compose:compose-bom:2025.04.01")
     implementation(composeBom)
