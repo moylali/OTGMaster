@@ -27,9 +27,12 @@ pick() {
 clear_field() { adb -s "$S" shell input keyevent KEYCODE_MOVE_END; adb -s "$S" shell input keyevent $(printf '67 %.0s' $(seq 64)); }
 unlock() {
   tap 'content-desc="password"'; sleep 1; clear_field; adb -s "$S" shell input text "$1"; adb -s "$S" shell input keyevent KEYCODE_BACK; sleep 1
-  tap 'content-desc="pim"'; sleep 1; clear_field
-  [ -n "${2:-}" ] && adb -s "$S" shell input text "$2"
-  adb -s "$S" shell input keyevent KEYCODE_BACK; sleep 1
+  # LUKS, ZIP and AES Crypt have no PIM field. A BACK with no keyboard up leaves the screen.
+  if on_screen 'content-desc="pim"'; then
+    tap 'content-desc="pim"'; sleep 1; clear_field
+    [ -n "${2:-}" ] && adb -s "$S" shell input text "$2"
+    adb -s "$S" shell input keyevent KEYCODE_BACK; sleep 1
+  fi
   tap 'content-desc="unlock"' || return 1
   # Done when a message shows (refused) or the form clears the chosen file (opened).
   local X i; for i in $(seq 1 120); do sleep 1; X=$(dump)
