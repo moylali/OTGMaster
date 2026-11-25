@@ -18,6 +18,7 @@ keystore.properties
 testdata/**/*.img
 testdata/**/*.zip
 testdata/**/*.iso
+testdata/**/*.aes
 testdata/**/*.key
 testdata/**/*.BEK
 testdata/**/pim.txt

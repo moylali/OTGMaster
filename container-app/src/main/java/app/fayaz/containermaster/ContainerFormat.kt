@@ -9,7 +9,8 @@ enum class ContainerFormat(val supported: Boolean) {
     VERACRYPT(true),
     LUKS(true),
     ZIP(true),
-    ISO(true);
+    ISO(true),
+    AESCRYPT(true);
 
     companion object {
         private val LUKS_MAGIC = byteArrayOf(0x4C, 0x55, 0x4B, 0x53, 0xBA.toByte(), 0xBE.toByte())
@@ -20,6 +21,7 @@ enum class ContainerFormat(val supported: Boolean) {
             head.startsWith(LUKS_MAGIC) -> LUKS
             head.startsWith(ZIP_MAGIC) -> ZIP
             app.fayaz.otgmaster.iso.IsoDocumentSource.looksLikeIso(sector16) -> ISO
+            app.fayaz.otgmaster.aescrypt.AesCryptSource.looksLikeAesCrypt(head) -> AESCRYPT
             else -> VERACRYPT
         }
 
