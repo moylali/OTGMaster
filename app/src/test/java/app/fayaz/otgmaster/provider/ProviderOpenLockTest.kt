@@ -2,6 +2,7 @@ package app.fayaz.otgmaster.provider
 
 import app.fayaz.otgmaster.MountedDrive
 import app.fayaz.otgmaster.OtgMasterState
+import app.fayaz.otgmaster.disk.UsbFileDocumentSource
 import me.jahnen.libaums.core.fs.AbstractUsbFile
 import me.jahnen.libaums.core.fs.FileSystem
 import me.jahnen.libaums.core.fs.UsbFile
@@ -72,7 +73,7 @@ class ProviderOpenLockTest {
         val opener = Thread {
             VeraCryptDocumentProvider.openUnderLock(doc, write = true, truncate = true) {
                 if (holding.get()) resolvedWhileHeld.set(true)
-                file
+                UsbFileDocumentSource.Handle(file)
             }
         }
         opener.start()
@@ -117,8 +118,8 @@ class ProviderOpenLockTest {
         mount(id, old)
         try {
             val file = FakeFile()
-            val handle = VeraCryptDocumentProvider.openUnderLock("$id:/a.bin", write = true, truncate = false) { file }
-            handle.use("write") { it.write(0, ByteBuffer.allocate(1)) }
+            val handle = VeraCryptDocumentProvider.openUnderLock("$id:/a.bin", write = true, truncate = false) { UsbFileDocumentSource.Handle(file) }
+            handle.use("write") { it.write(0, ByteArray(1), 1) }
             assertEquals(1, file.writes)
 
             // What formatDrive does: retire, drop the drive, mount the new filesystem.
@@ -127,7 +128,7 @@ class ProviderOpenLockTest {
             mount(id, fs())
 
             try {
-                handle.use("write") { it.write(0, ByteBuffer.allocate(1)) }
+                handle.use("write") { it.write(0, ByteArray(1), 1) }
                 fail("a write through the old filesystem reached the reformatted partition")
             } catch (e: java.io.IOException) {
                 assertTrue(e.message ?: "", (e.message ?: "").contains("formatted"))
@@ -148,10 +149,10 @@ class ProviderOpenLockTest {
         mount(id, fs())
         try {
             val file = FakeFile()
-            val handle = VeraCryptDocumentProvider.openUnderLock("$id:/b.bin", write = true, truncate = false) { file }
+            val handle = VeraCryptDocumentProvider.openUnderLock("$id:/b.bin", write = true, truncate = false) { UsbFileDocumentSource.Handle(file) }
             OtgMasterState.removeDrive(id)
             try {
-                handle.use("write") { it.write(0, ByteBuffer.allocate(1)) }
+                handle.use("write") { it.write(0, ByteArray(1), 1) }
                 fail("a write after unmount was accepted")
             } catch (e: java.io.IOException) { /* expected */ }
             handle.release()

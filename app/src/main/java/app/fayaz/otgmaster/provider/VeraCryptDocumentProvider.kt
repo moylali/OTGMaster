@@ -1,10 +1,10 @@
 package app.fayaz.otgmaster.provider
 
+import app.fayaz.otgmaster.core.DocumentHandle
 import app.fayaz.otgmaster.core.DocumentNode
 import app.fayaz.otgmaster.core.DocumentSource
 import app.fayaz.otgmaster.core.resolve
 import app.fayaz.otgmaster.disk.UsbFileDocumentSource
-import app.fayaz.otgmaster.disk.UsbFileDocumentSource.Companion.file
 
 import android.database.Cursor
 import android.database.MatrixCursor
@@ -16,9 +16,7 @@ import android.webkit.MimeTypeMap
 import app.fayaz.otgmaster.OtgMasterState
 import app.fayaz.otgmaster.extension.ExtensionContract
 import me.jahnen.libaums.core.fs.FileSystem
-import me.jahnen.libaums.core.fs.UsbFile
 import java.io.FileNotFoundException
-import java.nio.ByteBuffer
 import android.os.ProxyFileDescriptorCallback
 import android.os.storage.StorageManager
 
@@ -157,28 +155,7 @@ class VeraCryptDocumentProvider : DocumentsProvider() {
 
         fun rootDocIdForDrive(driveId: String): String = "$driveId:/"
 
-        /**
-         * Fills [data] from [file] and reports how many bytes were actually read.
-         *
-         * Both onRead callbacks used to return the requested length unconditionally.
-         * A short or failed read therefore handed the client whatever the recycled
-         * SAF buffer already contained, presented as file content — silent
-         * corruption with no error anywhere. The ByteBuffer's final position is the
-         * only honest answer, so use it.
-         */
-        private fun readInto(
-            file: me.jahnen.libaums.core.fs.UsbFile,
-            offset: Long,
-            size: Int,
-            data: ByteArray,
-        ): Int {
-            val length = file.length
-            if (offset >= length) return 0
-            val toRead = Math.min(size.toLong(), length - offset).toInt()
-            val buffer = ByteBuffer.wrap(data, 0, toRead)
-            file.read(offset, buffer)
-            return buffer.position()
-        }
+        // Short reads: DocumentHandle.read returns the bytes actually read (UsbFileDocumentSource.Handle).
 
         /**
          * One lock per drive, serialising all access to that drive's filesystem.
@@ -362,12 +339,12 @@ class VeraCryptDocumentProvider : DocumentsProvider() {
          * finished before it. Review finding 8, 2026-11-09.
          */
         internal fun openUnderLock(documentId: String?, write: Boolean, truncate: Boolean,
-                                   resolve: () -> UsbFile?): OpenFile = onDrive(documentId, "open") {
+                                   resolve: () -> DocumentHandle?): OpenFile = onDrive(documentId, "open") {
             // The filesystem the file belongs to, read under the same lock as the
             // resolution, so the handle is tied to the volume it was really opened on.
             val fs = driveIdOf(documentId)?.let { OtgMasterState.getDrive(it)?.fileSystem }
             val file = resolve() ?: throw FileNotFoundException("File not found")
-            if (truncate) file.length = 0
+            if (truncate) file.truncate()
             if (write) documentId?.let { writerOpened(it) }
             handleOpened(documentId)
             OpenFile(documentId, file, fs)
@@ -387,11 +364,11 @@ class VeraCryptDocumentProvider : DocumentsProvider() {
          * it skips the close only once Format or Encrypt has [retire]d the filesystem, or
          * the drive is mounted again with a different one.
          */
-        internal class OpenFile(val documentId: String?, val file: UsbFile, private val fs: FileSystem?) {
+        internal class OpenFile(val documentId: String?, val file: DocumentHandle, private val fs: FileSystem?) {
             val isLive: Boolean
                 get() = fs != null && driveIdOf(documentId)?.let { OtgMasterState.getDrive(it)?.fileSystem } === fs
 
-            fun <T> use(op: String, body: (UsbFile) -> T): T = onDrive(documentId, op) {
+            fun <T> use(op: String, body: (DocumentHandle) -> T): T = onDrive(documentId, op) {
                 if (!isLive) throw java.io.IOException(
                     "The drive this file was opened on was unmounted, formatted or encrypted since")
                 body(file)
@@ -445,13 +422,13 @@ class VeraCryptDocumentProvider : DocumentsProvider() {
         displayName: String?
     ): String {
         val name = DocumentNames.require(displayName)
-        val parent = getFileForDocId(documentId) ?: throw FileNotFoundException("Parent not found")
-        val newFile = if (mimeType == DocumentsContract.Document.MIME_TYPE_DIR) {
-            parent.createDirectory(name)
+        val (source, parent) = resolveDoc(documentId) ?: throw FileNotFoundException("Parent not found")
+        val created = if (mimeType == DocumentsContract.Document.MIME_TYPE_DIR) {
+            source.createDirectory(parent, name)
         } else {
-            parent.createFile(name)
+            source.createFile(parent, name)
         }
-        return getDocIdForChild(documentId, newFile)
+        return getDocIdForChild(documentId, created.name)
     }
 
     override fun deleteDocument(documentId: String?) {
@@ -475,8 +452,8 @@ class VeraCryptDocumentProvider : DocumentsProvider() {
     }
 
     private fun deleteDocumentImpl(documentId: String?) {
-        val file = getFileForDocId(documentId) ?: throw FileNotFoundException("File not found")
-        file.delete()
+        val (source, node) = resolveDoc(documentId) ?: throw FileNotFoundException("File not found")
+        source.delete(node)
     }
 
     override fun renameDocument(documentId: String?, displayName: String?): String =
@@ -488,8 +465,8 @@ class VeraCryptDocumentProvider : DocumentsProvider() {
         val name = DocumentNames.require(displayName)
         val id = DocumentIds.parse(documentId) ?: throw FileNotFoundException("Invalid document ID")
         if (id.isRoot) throw IllegalArgumentException("A drive's root cannot be renamed")
-        val file = getFileForDocId(documentId) ?: throw FileNotFoundException("File not found")
-        file.name = name
+        val (source, node) = resolveDoc(documentId) ?: throw FileNotFoundException("File not found")
+        source.rename(node, name)
         return DocumentIds.child(DocumentIds.Id(id.driveId, id.components.dropLast(1)), name).toString()
     }
 
@@ -553,8 +530,8 @@ class VeraCryptDocumentProvider : DocumentsProvider() {
     }
 
     private fun documentRows(documentId: String?): List<Map<String, Any?>> {
-        val file = getFileForDocId(documentId) ?: return emptyList()
-        return listOf(fileRow(documentId, file))
+        val node = nodeFor(documentId) ?: return emptyList()
+        return listOf(fileRow(documentId, node))
     }
 
     /**
@@ -593,8 +570,8 @@ class VeraCryptDocumentProvider : DocumentsProvider() {
         val parent = source.resolve(id.components)
         if (parent == null || !parent.isDirectory) return emptyList()
         return source.children(parent).map { child ->
-            val childId = getDocIdForChild(parentDocumentId, child.file)
-            fileRow(childId, child.file).also { row -> queryKey(childId)?.let { knownRows.put(it, row) } }
+            val childId = getDocIdForChild(parentDocumentId, child.name)
+            fileRow(childId, child).also { row -> queryKey(childId)?.let { knownRows.put(it, row) } }
         }
     }
 
@@ -656,23 +633,23 @@ class VeraCryptDocumentProvider : DocumentsProvider() {
         val isWrite = mode?.contains("w") == true || mode?.contains("a") == true || mode?.contains("t") == true
         val storageManager = context?.getSystemService(StorageManager::class.java)
             ?: throw IllegalStateException("StorageManager not available")
+        var isDirectory = false
         val handle = openUnderLock(documentId, write = isWrite, truncate = isWrite && mode?.contains("t") == true) {
-            getFileForDocId(documentId)
+            resolveDoc(documentId)?.let { (source, node) -> isDirectory = node.isDirectory; source.open(node) }
         }
-        val file = handle.file
-        if (!file.isDirectory) extendReadGrant(documentId)
+        if (!isDirectory) extendReadGrant(documentId)
 
         if (isWrite) {
             val callback = object : ProxyFileDescriptorCallback() {
-                override fun onGetSize(): Long = errno("size") { handle.use("size") { it.length } }
+                override fun onGetSize(): Long = errno("size") { handle.use("size") { it.size() } }
 
                 override fun onRead(offset: Long, size: Int, data: ByteArray): Int =
-                    errno("read") { handle.use("read") { readInto(it, offset, size, data) } }
+                    errno("read") { handle.use("read") { it.read(offset, data, size) } }
 
                 override fun onWrite(offset: Long, size: Int, data: ByteArray): Int =
                     errno("write") {
                         handle.use("write") {
-                            it.write(offset, ByteBuffer.wrap(data, 0, size))
+                            it.write(offset, data, size)
                             size
                         }
                     }
@@ -701,10 +678,10 @@ class VeraCryptDocumentProvider : DocumentsProvider() {
         }
 
         val callback = object : ProxyFileDescriptorCallback() {
-            override fun onGetSize(): Long = errno("size") { handle.use("size") { it.length } }
+            override fun onGetSize(): Long = errno("size") { handle.use("size") { it.size() } }
 
             override fun onRead(offset: Long, size: Int, data: ByteArray): Int =
-                errno("read") { handle.use("read") { readInto(it, offset, size, data) } }
+                errno("read") { handle.use("read") { it.read(offset, data, size) } }
 
             override fun onRelease() {
                 try {
@@ -725,7 +702,12 @@ class VeraCryptDocumentProvider : DocumentsProvider() {
         }
     }
     
-    private fun getFileForDocId(docId: String?): UsbFile? = nodeFor(docId)?.file
+    /** The tree and node a document ID names, matched exactly at each level, or null. */
+    private fun resolveDoc(docId: String?): Pair<DocumentSource, DocumentNode>? {
+        val id = DocumentIds.parse(docId) ?: return null
+        val source = sourceFor(id.driveId) ?: return null
+        return source.resolve(id.components)?.let { source to it }
+    }
 
     /** The mounted tree a drive ID names, through the [DocumentSource] contract. */
     private fun sourceFor(driveId: String): DocumentSource? =
@@ -780,15 +762,15 @@ class VeraCryptDocumentProvider : DocumentsProvider() {
         return result
     }
 
-    private fun fileRow(docId: String?, file: UsbFile): Map<String, Any?> {
+    private fun fileRow(docId: String?, file: DocumentNode): Map<String, Any?> {
         val row = LinkedHashMap<String, Any?>()
         fun MutableMap<String, Any?>.add(col: String, value: Any?) { put(col, value) }
         row.add(DocumentsContract.Document.COLUMN_DOCUMENT_ID, docId)
         row.add(DocumentsContract.Document.COLUMN_DISPLAY_NAME, if (file.isRoot) "VeraCrypt Drive" else file.name)
-        // libaums throws for several metadata accessors on directories and/or the root
-        // specifically (length: "This is a directory!", lastModified: "root dir!") — rather
-        // than chase each one individually, treat any failure here as "unknown" (0).
-        row.add(DocumentsContract.Document.COLUMN_SIZE, runCatching { if (file.isDirectory) 0L else file.length }.getOrDefault(0L))
+        // 0 for a folder or when the size cannot be read: libaums throws for several metadata
+        // accessors on directories and the root ("This is a directory!", "root dir!"), and
+        // DocumentNode turns any failure into "unknown".
+        row.add(DocumentsContract.Document.COLUMN_SIZE, file.size)
 
         // On a read-only volume the filesystem refuses every write anyway; not
         // advertising the capabilities keeps the Files app from offering them.
@@ -806,7 +788,7 @@ class VeraCryptDocumentProvider : DocumentsProvider() {
         }
 
         row.add(DocumentsContract.Document.COLUMN_MIME_TYPE, mimeType)
-        row.add(DocumentsContract.Document.COLUMN_LAST_MODIFIED, runCatching { file.lastModified() }.getOrDefault(0L))
+        row.add(DocumentsContract.Document.COLUMN_LAST_MODIFIED, file.lastModified)
         row.add(DocumentsContract.Document.COLUMN_FLAGS, flags)
         return row
     }
@@ -829,9 +811,9 @@ class VeraCryptDocumentProvider : DocumentsProvider() {
     private fun parseDocId(docId: String?): ParsedDocId? =
         DocumentIds.parse(docId)?.let { ParsedDocId(it.driveId, it.path) }
 
-    private fun getDocIdForChild(parentDocId: String?, child: UsbFile): String {
-        val parent = DocumentIds.parse(parentDocId) ?: return child.name
-        return DocumentIds.child(parent, child.name).toString()
+    private fun getDocIdForChild(parentDocId: String?, childName: String): String {
+        val parent = DocumentIds.parse(parentDocId) ?: return childName
+        return DocumentIds.child(parent, childName).toString()
     }
 
 }
