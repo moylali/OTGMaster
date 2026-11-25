@@ -307,6 +307,42 @@ object ContainerSessions : MountRegistry {
     }
 
     /**
+     * Opens the ISO 9660 image [uri] (Milestone 6): its volume descriptors, then its folders as
+     * they are listed. No password. Its ID comes from its primary volume descriptor (label,
+     * dates, sizes), so a client's grant survives a fresh pick.
+     */
+    fun openIso(context: Context, uri: Uri, displayName: String): Session {
+        val masked = app.fayaz.otgmaster.feedback.PathMask.mark(displayName)
+        CmLog.log("Opening $masked as an ISO 9660 image")
+        val t0 = android.os.SystemClock.elapsedRealtime()
+        val descriptor = context.contentResolver.openFileDescriptor(uri, "r")
+            ?: throw java.io.FileNotFoundException("The file could not be opened")
+        try {
+            val channel = FileInputStream(descriptor.fileDescriptor).channel
+            val length = descriptor.statSize.takeIf { it >= 0 } ?: channel.size()
+            val pvd = java.nio.ByteBuffer.allocate(2048).also { b -> var p = 16L * 2048
+                while (b.hasRemaining()) { if (channel.read(b, p).also { p += it } < 0) break } }.array()
+            val id = MessageDigest.getInstance("SHA-256").apply { update("iso-pvd:".toByteArray()); update(pvd) }
+                .digest().joinToString("") { "%02x".format(it) }.take(10)
+            if (sessions.any { it.id == id }) { CmLog.log("$masked is already open"); throw AlreadyOpenException() }
+            val tree = app.fayaz.otgmaster.iso.IsoDocumentSource.open(channel, length)
+            val session = Session(id, displayName, uri, "ISO", "ISO 9660", length, tree, tree) { runCatching { descriptor.close() } }
+            synchronized(this) {
+                if (sessions.any { it.id == id }) { session.close(); throw AlreadyOpenException() }
+                touch(id); sessions += session; _open.value = sessions.toList()
+            }
+            notifyRoots(context)
+            CmLog.log("Opened $masked (${tree.volumeLabel.ifEmpty { "no label" }}) in ${android.os.SystemClock.elapsedRealtime() - t0} ms; open as $id")
+            return session
+        } catch (e: AlreadyOpenException) {
+            runCatching { descriptor.close() }; throw e
+        } catch (e: Exception) {
+            runCatching { descriptor.close() }
+            CmLog.log("Could not open $masked: ${e.message ?: e.javaClass.simpleName}"); throw e
+        }
+    }
+
+    /**
      * Locks [id]: withdraws its root first, so no new open or read is admitted and a descriptor
      * a client still holds fails with EIO from then on, then waits for callbacks already queued,
      * then unmounts under the tree's lock, zeroes the key and closes the file.
@@ -328,16 +364,20 @@ object ContainerSessions : MountRegistry {
 
     /** The format a picked file looks like, from its first 4 KiB; logged. */
     fun detect(context: Context, uri: Uri, displayName: String): ContainerFormat {
-        val head = context.contentResolver.openInputStream(uri)?.use { s ->
-            val b = ByteArray(4096); var n = 0
+        // The first 4 KiB, and the start of sector 16 (byte 32,768), where an ISO image says CD001.
+        val first = context.contentResolver.openInputStream(uri)?.use { s ->
+            val b = ByteArray(32_768 + 8); var n = 0
             while (n < b.size) { val r = s.read(b, n, b.size - n); if (r < 0) break; n += r }
             b.copyOf(n)
         } ?: ByteArray(0)
-        return ContainerFormat.detect(head).also {
+        val head = first.copyOf(minOf(first.size, 4096))
+        val s16 = if (first.size > 32_768) first.copyOfRange(32_768, first.size) else ByteArray(0)
+        return ContainerFormat.detect(head, s16).also {
             CmLog.log("Chose ${app.fayaz.otgmaster.feedback.PathMask.mark(displayName)}: " + when (it) {
                 ContainerFormat.VERACRYPT -> "no known signature, so it is offered as VeraCrypt"
                 ContainerFormat.LUKS -> "a LUKS volume"
                 ContainerFormat.ZIP -> "a ZIP archive, opened without a password"
+                ContainerFormat.ISO -> "an ISO 9660 disc image, opened without a password"
             })
         }
     }

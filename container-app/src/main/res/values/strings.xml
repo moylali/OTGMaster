@@ -1,7 +1,7 @@
 <?xml version="1.0" encoding="utf-8"?>
 <resources>
     <string name="app_name">Container Master</string>
-    <string name="intro">Open a VeraCrypt or LUKS container, or a ZIP archive, from your phone. Its files then show up in the Files app and in any app that opens files, until you lock it.</string>
+    <string name="intro">Open a VeraCrypt or LUKS container, a ZIP archive or an ISO disc image from your phone. Its files then show up in the Files app and in any app that opens files, until you lock it.</string>
     <string name="choose_file">Choose a container file</string>
     <string name="chosen_file">File: %1$s</string>
     <string name="password">Password</string>
@@ -39,6 +39,7 @@
     <string name="format_luks_later">This is a LUKS volume (LUKS1 or LUKS2). Enter its password.</string>
     <string name="format_zip_later">This is a ZIP archive. It opens without a password, read-only.</string>
     <string name="open_archive">Open</string>
+    <string name="format_iso">This is an ISO 9660 disc image. It opens without a password, read-only.</string>
     <string name="idle_lock">Lock after no use for</string>
     <string name="idle_never">Never</string>
     <plurals name="idle_minutes">
