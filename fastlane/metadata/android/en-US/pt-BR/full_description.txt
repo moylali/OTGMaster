@@ -1,0 +1,55 @@
+O OTG Master permite montar unidades USB criptografadas com VeraCrypt, LUKS e BitLocker, além de acessar unidades Mac com APFS, diretamente no seu dispositivo Android — sem necessidade de root.
+
+Conecte um volume criptografado por USB OTG, digite sua senha ou use sua impressão digital e acesse seus arquivos criptografados pelo aplicativo Arquivos nativo do Android. Ao terminar, desmonte a unidade com segurança.
+
+## RECURSOS
+
+• **Múltiplos formatos de criptografia** — monta volumes VeraCrypt, LUKS1, LUKS2 e BitLocker (com senha, chave de recuperação de 48 dígitos ou arquivo de chave .BEK).
+
+• **Amplo suporte a sistemas de arquivos** — permite ler e gravar arquivos em partições FAT32, exFAT, NTFS e ext4.
+
+• **Unidades Mac** — permite ler unidades APFS, criptografadas ou não, com distinção entre maiúsculas e minúsculas ativada ou desativada.
+
+• **Modo somente leitura** — permite montar partições com segurança, evitando modificações acidentais.
+
+• **Reparo de ext4** — se uma unidade não tiver sido desmontada corretamente, ela será aberta em modo somente leitura. Com um único toque, o aplicativo reproduz o journal do sistema de arquivos, como o Linux faria, permitindo novamente a gravação.
+
+• **Montagem automática** — desbloqueia automaticamente unidades conhecidas ao conectá-las, usando autenticação biométrica.
+
+• **Suporte a hubs USB** — todas as unidades conectadas por meio de um hub USB podem ser desbloqueadas em uma única etapa de autenticação biométrica.
+
+• **Volumes ocultos do VeraCrypt** — permite abrir um volume oculto com sua própria senha e protegê-lo contra danos durante gravações no volume externo.
+
+• **Suporte a arquivos de chave** — permite usar um arquivo de chave adicionalmente à senha ou em substituição a ela.
+
+• **PIM personalizado** — oferece suporte a valores de PIM não padrão para fortalecer a derivação de chaves.
+
+• **Seleção de cifras** — AES, Serpent e Twofish, as cinco combinações em cascata dessas cifras disponíveis no VeraCrypt, além dos métodos de derivação de chaves SHA-512 e Argon2id.
+
+• **Criptografia de unidades** — transforma uma partição USB em um novo volume VeraCrypt, com qualquer uma dessas cifras, PIM e arquivos de chave, ou em um volume LUKS2 para Linux. Permite utilizar FAT32, exFAT, ext4 ou NTFS no interior do volume.
+
+• **Formatação** — apaga e formata uma partição diretamente na unidade em FAT32, exFAT, ext4 ou NTFS, preservando sua criptografia e senha, inclusive no caso do BitLocker.
+
+• **Backups** — faz cópias de segurança de pastas entre o telefone e uma unidade, como cópias simples ou snapshots incrementais no formato padrão do restic, que podem ser abertos pelo restic em um computador. Permite explorar um backup como uma unidade somente leitura e envia lembretes quando um backup está atrasado.
+
+• **Recuperação de arquivos excluídos** — localiza arquivos excluídos de unidades FAT32 e exFAT e permite copiá-los para o telefone. Apenas arquivos excluídos são listados, e nada é gravado na unidade.
+
+• **Celulares e câmeras** — outros celulares e câmeras conectados por USB são reconhecidos como unidades, em modo somente leitura.
+
+• **Layout para tablets** — em telas largas, as unidades montadas são exibidas ao lado do formulário de desbloqueio.
+
+• **Discos com partições** — identifica tabelas de partição MBR/GPT e permite selecionar exatamente o volume que deseja desbloquear.
+
+• **Sem necessidade de root** — funciona em dispositivos Android convencionais, sem modificações no sistema.
+
+• **Sem nuvem e sem rastreamento** — seus arquivos nunca saem do dispositivo.
+
+## REQUISITOS
+
+• Android 8.0 (Oreo) ou posterior.
+
+• Cabo ou adaptador USB OTG.
+
+• Uma unidade USB criptografada com VeraCrypt, LUKS ou BitLocker, ou uma unidade APFS de um Mac.
+
+O OTG Master é gratuito e de código aberto.
