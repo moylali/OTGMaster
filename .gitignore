@@ -19,6 +19,7 @@ testdata/**/*.img
 testdata/**/*.zip
 testdata/**/*.iso
 testdata/**/*.aes
+testdata-container/
 testdata/**/*.key
 testdata/**/*.BEK
 testdata/**/pim.txt
