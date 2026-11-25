@@ -66,7 +66,9 @@ module move (F1):
 - libexfat still carries the older `com/otgmaster/...` names as a fallback lookup.
 
 `app/proguard-rules.pro` keeps native methods, the static callbacks and the constructed
-classes by name.
+classes by name. Since `RawBlockDevice` moved to `:mount-core` (Milestone 2), its rule
+travels with it in `mount-core/src/main/resources/META-INF/proguard/mount-core.pro`,
+which R8 reads from the jar.
 
 ## Build baseline (F16)
 
@@ -84,7 +86,7 @@ only matters once Container Master exists.
 
 | | Finding | State at `b483c68` | Evidence |
 |---|---|---|---|
-| F1 | JNI-visible names | Implemented, recorded above | Native inventory above; `proguard-rules.pro` |
+| F1 | JNI-visible names | Implemented, recorded above. `RawBlockDevice` moved to `:mount-core` in Milestone 2 under the same binary name | Native inventory above; `proguard-rules.pro`, `mount-core.pro` |
 | F2 | Native instrumentation per variant | Implemented in `:app` | `OTG_IO_STATS` in `CMakeLists.txt` and the debug and benchmark `externalNativeBuild` arguments; `ExFatIoStats` in `src/debug` |
 | F3 | Explicit disk mounter instead of factory registration | Planned | `MainActivity` registers the exFAT, ext4, NTFS and APFS creators with libaums' `FileSystemFactory` and mounts through `createFileSystem` |
 | N1 | Read-only guard on raw drivers | Partly | `ReadOnlyBlockDeviceDriver` guards the byte driver; there is no raw-block guard above the cache yet |

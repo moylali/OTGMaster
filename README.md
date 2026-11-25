@@ -100,7 +100,7 @@ A signed release build also requires a `keystore.properties` file at the repo ro
 JVM unit tests (e.g. `FilesystemDetector`) run without a device:
 
 ```bash
-./gradlew :app:testDebugUnitTest
+./gradlew :mount-core:test :app:testDebugUnitTest
 ```
 
 #### UI testing

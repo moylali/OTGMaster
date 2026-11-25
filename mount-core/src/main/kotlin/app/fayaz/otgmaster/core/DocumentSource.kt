@@ -4,8 +4,8 @@ package app.fayaz.otgmaster.core
  * A mounted tree as the document provider sees it (architecture proposal, "Contracts
  * between layers": `DocumentSource`).
  *
- * This package has no Android or libaums imports: it is what moves into the shared
- * `:mount-core` module in Milestone 2. A filesystem on a USB drive implements it through
+ * It lives in `:mount-core`, which has no Android or libaums imports, so both apps can
+ * share it. A filesystem on a USB drive implements it through
  * [app.fayaz.otgmaster.disk.UsbFileDocumentSource]; an archive reader (ZIP, ISO) will
  * implement it over its own index, so the provider serves both the same way.
  *

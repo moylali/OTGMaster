@@ -19,7 +19,8 @@
 -keep class app.fayaz.otgmaster.exfat.ExFatNative { *; }
 -keep class app.fayaz.otgmaster.ntfs.NtfsNative { *; }
 -keep class app.fayaz.otgmaster.apfs.ApfsNative { *; }
--keep class app.fayaz.otgmaster.block.RawBlockDevice { *; }
+# RawBlockDevice, named in those signatures, is kept by :mount-core's own rule
+# (mount-core/src/main/resources/META-INF/proguard/mount-core.pro).
 
 # ── Classes native code constructs (FindClass + GetMethodID "<init>") ─────────
 -keep class app.fayaz.otgmaster.exfat.ExFatNode { *; }
