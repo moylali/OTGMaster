@@ -125,19 +125,43 @@ directory, logged under the tag `SAFPROBE`:
   grant stops at its tree.
 - `--es cmd grants`: list persisted grants.
 
+## Recorded on hardware, 2026-11-24
+
+OnePlus 7 (GM1901, LineageOS 23.2, Android 16, SDK 36), Drive 1 (`…6B31`), partition
+D1EXFAT (plain exFAT, start block 57753640). The debug build was used because it has the
+store package and authority (`app.fayaz.otgmaster`, `app.fayaz.otgmaster.documents`) and
+can be upgraded in place with the local debug key; the signing certificate does not
+change between builds, so the release certificate above still applies.
+
+1. **The held grant.** On the debug build of `b483c68`, `saf-probe` took a grant through the
+   picker on `BENCH/edge`: tree URI
+   `content://app.fayaz.otgmaster.documents/tree/884fb1f107%3A%2FBENCH%2Fedge`. The drive ID
+   `884fb1f107` is the first 10 hex digits of SHA-256 over `5451:4102:071C5C4E138E6B31@57753640`,
+   as documented above. It read `884fb1f107:/BENCH/edge/size_1048577.bin`: 1,048,577 bytes,
+   SHA-256 `31eb9165dca25d528334e6c4a4c471d3b0e06076a223f355072928acd4063ff4`, which is the
+   fixture manifest's value. Columns returned: `document_id`, `mime_type`, `_display_name`,
+   `last_modified`, `flags` (70: write, delete, rename) and `_size`, nothing else.
+2. **Confinement.** Through that grant, a sibling folder on the same partition
+   (`884fb1f107:/BENCH/large/seq_2100m.bin`) and the same path on D1FAT32
+   (`357b690009:/BENCH/edge/size_1048577.bin`) were refused with `SecurityException: … is not
+   a descendant`. `884fb1f107:/BENCH/edge/../large/seq_2100m.bin` was **not** refused as
+   outside the tree: it passed the ancestry check and failed only at lookup
+   (`FileNotFoundException`), because no driver lists a `..` entry.
+3. **Upgrade (Milestone 1 acceptance).** D1 was ejected in the app, the debug build of
+   `800ebf0` (Milestone 1, provider guards) was installed over it with `adb install -r`, and
+   D1 mounted again. The same grant was still held and read the same document ID, bytes,
+   SHA-256, columns and flags. The two refusals above were unchanged, and the `..` path is
+   now refused with `SecurityException` like any document outside the tree.
+
 ## Still to record on hardware
 
 Each needs a phone and a matrix drive, and goes in `BENCHMARK_RUNS.md` with the build it
 ran on.
 
-1. **The held grant.** With the v0.5.4 release build installed, `saf-probe` takes a grant on
-   a fixture folder of a mounted partition and reads a known file. Record device, Android
-   version, drive and partition, filesystem, tree URI, document ID, columns, size and
-   SHA-256. This grant is the gate for the upgrade test in Milestone 1.
-2. **Confinement.** The same grant cannot open a document of another partition, and on a
-   VeraCrypt partition with a hidden volume, a grant on the outer volume cannot reach the
-   hidden one.
-3. **Representative USB timings.** The v0.5.4 matrix runs in `BENCHMARK_RUNS.md`
+1. **Hidden volume confinement.** On a VeraCrypt partition with a hidden volume, a grant
+   on the outer volume cannot reach the hidden one. Neither assigned drive has a hidden
+   volume; the E2E case `hidden_unlock` covers the drive IDs on the emulator.
+2. **Representative USB timings.** The v0.5.4 matrix runs in `BENCHMARK_RUNS.md`
    (2026-11-21 to 11-24) are the reference; Milestone 2 compares against the same
    partitions on the same phones.
 
