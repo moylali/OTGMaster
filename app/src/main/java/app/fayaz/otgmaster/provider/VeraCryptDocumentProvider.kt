@@ -1,10 +1,11 @@
 package app.fayaz.otgmaster.provider
 
 import app.fayaz.otgmaster.core.DocumentHandle
+import app.fayaz.otgmaster.core.EngineLog
+import app.fayaz.otgmaster.core.MountRegistry
 import app.fayaz.otgmaster.core.DocumentNode
 import app.fayaz.otgmaster.core.DocumentSource
 import app.fayaz.otgmaster.core.resolve
-import app.fayaz.otgmaster.disk.UsbFileDocumentSource
 
 import android.database.Cursor
 import android.database.MatrixCursor
@@ -13,9 +14,7 @@ import android.os.ParcelFileDescriptor
 import android.provider.DocumentsContract
 import android.provider.DocumentsProvider
 import android.webkit.MimeTypeMap
-import app.fayaz.otgmaster.OtgMasterState
 import app.fayaz.otgmaster.extension.ExtensionContract
-import me.jahnen.libaums.core.fs.FileSystem
 import java.io.FileNotFoundException
 import android.os.ProxyFileDescriptorCallback
 import android.os.storage.StorageManager
@@ -24,6 +23,9 @@ class VeraCryptDocumentProvider : DocumentsProvider() {
 
     companion object {
         const val AUTHORITY = ExtensionContract.AUTHORITY
+
+        /** The mounted trees this provider serves; see [MountRegistry]. */
+        internal val mounts: MountRegistry get() = OtgMounts
 
         /** Free space for the roots, read without blocking the binder thread; see [RootFreeSpace]. */
         internal val rootFreeSpace = RootFreeSpace()
@@ -54,8 +56,8 @@ class VeraCryptDocumentProvider : DocumentsProvider() {
          * read before an unmount, Format or Encrypt is never answered for what replaced it.
          */
         private fun queryKey(docId: String?): String? {
-            val drive = driveIdOf(docId)?.let { OtgMasterState.getDrive(it) } ?: return null
-            return "${System.identityHashCode(drive.fileSystem)}|$docId"
+            val drive = driveIdOf(docId)?.let { mounts.find(it) } ?: return null
+            return "${System.identityHashCode(drive.session)}|$docId"
         }
 
         /** Forgets cached rows for [docId] and everything under it; after a change to it. */
@@ -192,7 +194,7 @@ class VeraCryptDocumentProvider : DocumentsProvider() {
                 // and the user sees "couldn't copy" at best; the reason was nowhere a
                 // report could carry. No file name: reports are anonymous by design.
                 if (e !is FileNotFoundException) {
-                    OtgMasterState.logFailure("provider-$op", "Files app: $op on a mounted drive failed", e)
+                    EngineLog.logFailure("provider-$op", "Files app: $op on a mounted drive failed", e)
                 }
                 if (app.fayaz.otgmaster.fs.NoSpace.isNoSpace(e)) reportNoSpace(docId?.substringBefore(':'))
                 throw e
@@ -217,9 +219,9 @@ class VeraCryptDocumentProvider : DocumentsProvider() {
             val last = noSpaceReportedAt[key]
             if (last != null && now - last < 10_000L) return
             noSpaceReportedAt[key] = now
-            val name = driveId?.let { OtgMasterState.getDrive(it)?.name } ?: ctx.getString(app.fayaz.otgmaster.R.string.log_this_drive)
+            val name = driveId?.let { mounts.find(it)?.name } ?: ctx.getString(app.fayaz.otgmaster.R.string.log_this_drive)
             val text = ctx.getString(app.fayaz.otgmaster.R.string.no_space_on_drive, name)
-            OtgMasterState.log(text)
+            EngineLog.log(text)
             android.os.Handler(android.os.Looper.getMainLooper()).post {
                 android.widget.Toast.makeText(ctx, text, android.widget.Toast.LENGTH_LONG).show()
             }
@@ -254,8 +256,8 @@ class VeraCryptDocumentProvider : DocumentsProvider() {
         }
 
         private fun readHandlerFor(documentId: String?): android.os.Handler {
-            val drive = OtgMasterState.mountedDrives.firstOrNull { it.id == documentId?.substringBefore(':') }
-            return if (drive?.fileSystem is app.fayaz.otgmaster.backup.restic.ResticFileSystem) backupProxyHandler else proxyHandlerFor(documentId)
+            val tree = driveIdOf(documentId)?.let { mounts.find(it) }
+            return if (tree?.readsThroughOtherTrees == true) backupProxyHandler else proxyHandlerFor(documentId)
         }
 
         /** Documents open for writing, each with how many handles have it open. */
@@ -340,9 +342,9 @@ class VeraCryptDocumentProvider : DocumentsProvider() {
          */
         internal fun openUnderLock(documentId: String?, write: Boolean, truncate: Boolean,
                                    resolve: () -> DocumentHandle?): OpenFile = onDrive(documentId, "open") {
-            // The filesystem the file belongs to, read under the same lock as the
+            // The mount the file belongs to, read under the same lock as the
             // resolution, so the handle is tied to the volume it was really opened on.
-            val fs = driveIdOf(documentId)?.let { OtgMasterState.getDrive(it)?.fileSystem }
+            val fs = driveIdOf(documentId)?.let { mounts.find(it)?.session }
             val file = resolve() ?: throw FileNotFoundException("File not found")
             if (truncate) file.truncate()
             if (write) documentId?.let { writerOpened(it) }
@@ -364,9 +366,9 @@ class VeraCryptDocumentProvider : DocumentsProvider() {
          * it skips the close only once Format or Encrypt has [retire]d the filesystem, or
          * the drive is mounted again with a different one.
          */
-        internal class OpenFile(val documentId: String?, val file: DocumentHandle, private val fs: FileSystem?) {
+        internal class OpenFile(val documentId: String?, val file: DocumentHandle, private val fs: Any?) {
             val isLive: Boolean
-                get() = fs != null && driveIdOf(documentId)?.let { OtgMasterState.getDrive(it)?.fileSystem } === fs
+                get() = fs != null && driveIdOf(documentId)?.let { mounts.find(it)?.session } === fs
 
             fun <T> use(op: String, body: (DocumentHandle) -> T): T = onDrive(documentId, op) {
                 if (!isLive) throw java.io.IOException(
@@ -376,22 +378,22 @@ class VeraCryptDocumentProvider : DocumentsProvider() {
 
             /** Closes the file unless its filesystem was erased or replaced; then only lets it go. */
             fun release() = onDrive(documentId, "close") {
-                val now = driveIdOf(documentId)?.let { OtgMasterState.getDrive(it)?.fileSystem }
+                val now = driveIdOf(documentId)?.let { mounts.find(it)?.session }
                 val replaced = now != null && now !== fs
                 if (!replaced && !isRetired(fs)) file.close()
             }
         }
 
         /** Filesystems Format or Encrypt is replacing; weak, so they do not outlive the volume. */
-        private val retired = java.util.Collections.newSetFromMap(java.util.WeakHashMap<FileSystem, Boolean>())
+        private val retired = java.util.Collections.newSetFromMap(java.util.WeakHashMap<Any, Boolean>())
 
-        private fun isRetired(fs: FileSystem?) = fs != null && synchronized(retired) { fs in retired }
+        private fun isRetired(fs: Any?) = fs != null && synchronized(retired) { fs in retired }
 
         /**
          * Marks [fs] as about to be overwritten by Format or Encrypt, so a handle still
          * open on it can no longer write to the partition, not even its closing flush.
          */
-        fun retire(fs: FileSystem) { synchronized(retired) { retired.add(fs) } }
+        fun retire(fs: Any) { synchronized(retired) { retired.add(fs) } }
 
         /**
          * Blocks until the file callbacks already queued for [driveId] (every drive's, when
@@ -473,7 +475,7 @@ class VeraCryptDocumentProvider : DocumentsProvider() {
     override fun queryRoots(projection: Array<out String>?): Cursor {
         val result = MatrixCursor(projection ?: DEFAULT_ROOT_PROJECTION)
 
-        val drives = OtgMasterState.mountedDrives.toList()
+        val drives = mounts.mounted()
         rootFreeSpace.retainOnly(drives.map { it.id })
         for (drive in drives) {
             val row = result.newRow()
@@ -483,7 +485,7 @@ class VeraCryptDocumentProvider : DocumentsProvider() {
             // not offer to save into it.
             var rootFlags = DocumentsContract.Root.FLAG_SUPPORTS_IS_CHILD or
                 DocumentsContract.Root.FLAG_LOCAL_ONLY
-            if (!drive.isReadOnly) rootFlags = rootFlags or DocumentsContract.Root.FLAG_SUPPORTS_CREATE
+            if (drive.readOnlyReason == null) rootFlags = rootFlags or DocumentsContract.Root.FLAG_SUPPORTS_CREATE
             row.add(DocumentsContract.Root.COLUMN_FLAGS, rootFlags)
             row.add(DocumentsContract.Root.COLUMN_TITLE, drive.name)
             row.add(DocumentsContract.Root.COLUMN_DOCUMENT_ID, rootDocIdForDrive(drive.id))
@@ -493,7 +495,7 @@ class VeraCryptDocumentProvider : DocumentsProvider() {
             // for a free-space read per drive (architecture proposal, F6).
             if (wantsAvailableBytes(projection)) {
                 row.add(DocumentsContract.Root.COLUMN_AVAILABLE_BYTES,
-                    rootFreeSpace.availableBytes(drive.id) { drive.fileSystem.freeSpace })
+                    rootFreeSpace.availableBytes(drive.id) { drive.freeBytes() })
             }
             // Use the standard launcher icon
             row.add(DocumentsContract.Root.COLUMN_ICON, app.fayaz.otgmaster.R.mipmap.ic_launcher)
@@ -579,8 +581,8 @@ class VeraCryptDocumentProvider : DocumentsProvider() {
     private fun registeredAuthority(): String = (context?.packageName ?: "app.fayaz.otgmaster") + ".documents"
 
     private fun busy(documentId: String?): FileNotFoundException {
-        val name = parseDocId(documentId)?.driveId?.let { OtgMasterState.getDrive(it)?.name }
-        OtgMasterState.log("Files app: ${name ?: "a drive"} was busy for ${QUERY_WAIT_MAX_MS / 1000} s with a long operation, so a file could not be shown yet")
+        val name = parseDocId(documentId)?.driveId?.let { mounts.find(it)?.name }
+        EngineLog.log("Files app: ${name ?: "a drive"} was busy for ${QUERY_WAIT_MAX_MS / 1000} s with a long operation, so a file could not be shown yet")
         return FileNotFoundException("The drive is busy with a long operation; try again when it finishes")
     }
 
@@ -710,8 +712,7 @@ class VeraCryptDocumentProvider : DocumentsProvider() {
     }
 
     /** The mounted tree a drive ID names, through the [DocumentSource] contract. */
-    private fun sourceFor(driveId: String): DocumentSource? =
-        OtgMasterState.getDrive(driveId)?.let { drive -> UsbFileDocumentSource(drive.fileSystem) { drive.readOnlyReason } }
+    private fun sourceFor(driveId: String): DocumentSource? = mounts.find(driveId)?.tree
 
     /** The node a document ID names, matched exactly at each level, or null. */
     private fun nodeFor(docId: String?): DocumentNode? {
@@ -742,7 +743,7 @@ class VeraCryptDocumentProvider : DocumentsProvider() {
      */
     override fun findDocumentPath(parentDocumentId: String?, childDocumentId: String): DocumentsContract.Path {
         val child = DocumentIds.parse(childDocumentId) ?: throw FileNotFoundException("Invalid document ID")
-        if (OtgMasterState.getDrive(child.driveId) == null) throw FileNotFoundException("Drive not mounted")
+        if (mounts.find(child.driveId) == null) throw FileNotFoundException("Drive not mounted")
         val chain = DocumentIds.chain(child)
         if (parentDocumentId != null) {
             val parent = DocumentIds.parse(parentDocumentId) ?: throw FileNotFoundException("Invalid parent ID")
@@ -774,7 +775,7 @@ class VeraCryptDocumentProvider : DocumentsProvider() {
 
         // On a read-only volume the filesystem refuses every write anyway; not
         // advertising the capabilities keeps the Files app from offering them.
-        val readOnly = parseDocId(docId)?.let { OtgMasterState.getDrive(it.driveId)?.isReadOnly } == true
+        val readOnly = parseDocId(docId)?.let { mounts.find(it.driveId)?.readOnlyReason != null } == true
         var flags = if (readOnly) 0 else
             DocumentsContract.Document.FLAG_SUPPORTS_DELETE or DocumentsContract.Document.FLAG_SUPPORTS_RENAME
         val mimeType: String
