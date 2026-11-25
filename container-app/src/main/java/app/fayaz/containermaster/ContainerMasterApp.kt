@@ -17,6 +17,9 @@ class ContainerMasterApp : Application() {
                 CmLog.log("$what: ${e.message?.takeIf { it.isNotBlank() } ?: e.javaClass.simpleName}")
         })
         TreeDocumentsProvider.mounts = ContainerSessions
+        ContainerSessions.appContext = this
+        ContainerSessions.idleMinutes = prefs(this).getInt(IDLE_MINUTES, 15)
+        TreeDocumentsProvider.activityHook = { id -> ContainerSessions.touch(id) }
         Feedback.source = object : FeedbackSource {
             override val appVersion: String get() = "Container Master ${BuildConfig.VERSION_NAME} (${BuildConfig.VERSION_CODE})"
             override val usesUsb: Boolean get() = false
@@ -31,6 +34,8 @@ class ContainerMasterApp : Application() {
 
     companion object {
         const val THEME = "theme_mode"
+        const val IDLE_MINUTES = "idle_minutes"
+        const val LOCK_ON_SCREEN_OFF = "lock_on_screen_off"
         fun prefs(c: Context) = c.getSharedPreferences("containermaster_prefs", Context.MODE_PRIVATE)
     }
 }
