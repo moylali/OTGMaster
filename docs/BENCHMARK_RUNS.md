@@ -49,6 +49,22 @@ All four were rebase-merged, so `main` has new hashes. The sections below name t
 | #193 | `a6a5286` | `bed05fa` | refactor(provider): look up and list through a DocumentSource tree contract |
 | #193 | `2d4bba3` | `c681622` | docs: the held grant still reads the same file on a6a5286 |
 
+## 2026-11-25: the held grant on the R8 build after the :disk-engine move, OnePlus 7, Drive 1
+
+The same check as the `:mount-core` one below, on **minified** `add74bf` (the `:disk-engine`
+move plus its benchmark record; release code and R8, debug key, store package and authority,
+installed over minified `8c6bc7d`). OnePlus 7 (GM1901, LineageOS 23.2, Android 16, SDK 36),
+Drive 1 (`…6B31`).
+
+| Step | Result |
+|---|---|
+| `sm unmount` of Android's mounts, launch, fingerprint prompt dismissed | the 7 plain partitions auto mounted (FAT32, the four APFS read-only, NTFS, ext4), each with used and free space |
+| `tools/saf-probe` reads `size_1048577.bin` through the grant on `884fb1f107:/BENCH/edge` | same document ID, 1,048,577 B, SHA-256 `31eb9165…063ff4`, flags 70 |
+| The grant opens `BENCH/large/seq_2100m.bin` and `BENCH/edge/../large/seq_2100m.bin` | both refused with SecurityException |
+| Eject in the app, `sm unmount` of Android's mounts | done |
+
+No write ran. Nothing was written to the drive by these steps.
+
 ## 2026-11-25: read sections before and after the :disk-engine move, OnePlus 7, D1EXFAT
 
 Engine extraction Milestone 2. Benchmark builds (release code, R8, `.bench`): `8c6bc7d` (the
