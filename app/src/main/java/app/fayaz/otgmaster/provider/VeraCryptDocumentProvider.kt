@@ -1,5 +1,11 @@
 package app.fayaz.otgmaster.provider
 
+import app.fayaz.otgmaster.core.DocumentNode
+import app.fayaz.otgmaster.core.DocumentSource
+import app.fayaz.otgmaster.core.resolve
+import app.fayaz.otgmaster.disk.UsbFileDocumentSource
+import app.fayaz.otgmaster.disk.UsbFileDocumentSource.Companion.file
+
 import android.database.Cursor
 import android.database.MatrixCursor
 import android.os.CancellationSignal
@@ -582,11 +588,13 @@ class VeraCryptDocumentProvider : DocumentsProvider() {
     }
 
     private fun childRows(parentDocumentId: String?): List<Map<String, Any?>> {
-        val parent = getFileForDocId(parentDocumentId)
+        val id = DocumentIds.parse(parentDocumentId) ?: return emptyList()
+        val source = sourceFor(id.driveId) ?: return emptyList()
+        val parent = source.resolve(id.components)
         if (parent == null || !parent.isDirectory) return emptyList()
-        return parent.listFiles().map { child ->
-            val childId = getDocIdForChild(parentDocumentId, child)
-            fileRow(childId, child).also { row -> queryKey(childId)?.let { knownRows.put(it, row) } }
+        return source.children(parent).map { child ->
+            val childId = getDocIdForChild(parentDocumentId, child.file)
+            fileRow(childId, child.file).also { row -> queryKey(childId)?.let { knownRows.put(it, row) } }
         }
     }
 
@@ -717,26 +725,16 @@ class VeraCryptDocumentProvider : DocumentsProvider() {
         }
     }
     
-    private fun getFileForDocId(docId: String?): UsbFile? {
-        val parsed = parseDocId(docId) ?: return null
-        val drive = OtgMasterState.getDrive(parsed.driveId) ?: return null
-        if (parsed.path == "/") return drive.fileSystem.rootDirectory
-        
-        var currentFile = drive.fileSystem.rootDirectory
-        val parts = parsed.path.split("/")
-        for (part in parts) {
-            if (part.isEmpty()) continue
-            var found = false
-            for (child in currentFile.listFiles()) {
-                if (child.name == part) {
-                    currentFile = child
-                    found = true
-                    break
-                }
-            }
-            if (!found) return null
-        }
-        return currentFile
+    private fun getFileForDocId(docId: String?): UsbFile? = nodeFor(docId)?.file
+
+    /** The mounted tree a drive ID names, through the [DocumentSource] contract. */
+    private fun sourceFor(driveId: String): DocumentSource? =
+        OtgMasterState.getDrive(driveId)?.let { drive -> UsbFileDocumentSource(drive.fileSystem) { drive.readOnlyReason } }
+
+    /** The node a document ID names, matched exactly at each level, or null. */
+    private fun nodeFor(docId: String?): DocumentNode? {
+        val id = DocumentIds.parse(docId) ?: return null
+        return sourceFor(id.driveId)?.resolve(id.components)
     }
 
     // String work only: it used to wait on the drive's lock, behind any long write.
