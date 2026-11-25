@@ -162,6 +162,23 @@ case_idle_lock() {
   set_idle 15
 }
 
+case_held_fd_lock() {
+  open_and_grant cm-ext4.hc password123 1 "$ID_EXT4" || return 1
+  adb -s "$S" shell "rm -f $F/result-hold.json $F/result-hold-open.json; am start -n app.fayaz.safprobe/.ProbeActivity --es cmd hold --es tree '$TREE' --es path flower.jpg --ei wait 25" >/dev/null
+  local i; for i in $(seq 1 30); do adb -s "$S" shell "test -f $F/result-hold-open.json" && break; sleep 1; done
+  adb -s "$S" shell cat $F/result-hold-open.json | grep -q '"firstRead":"65536 bytes"' || { fail "first read: $(adb -s "$S" shell cat $F/result-hold-open.json)"; return 1; }
+  lock_all
+  # Unlock the same container again while the old descriptor is still held, so a late read
+  # resolving to the new session would succeed; it must not.
+  cm_front; pick cm-ext4.hc || { fail "could not pick again"; return 1; }
+  [ "$(unlock password123 1)" = "opened $ID_EXT4" ] || { fail "second unlock"; return 1; }
+  for i in $(seq 1 60); do adb -s "$S" shell "test -f $F/result-hold.json" && break; sleep 1; done
+  local r; r=$(adb -s "$S" shell cat $F/result-hold.json | tr -d '\n')
+  echo "$r" | grep -q '"lateRead": "error' || { fail "the held descriptor read after the lock: $r"; return 1; }
+  echo "$r" | grep -q '"closed": true' || { fail "the held descriptor did not close: $r"; return 1; }
+  local r2; r2=$(read_sha "$TREE" flower.jpg); [ "$r2" = "\"sha256\": \"$FLOWER\"" ] || { fail "a fresh read after the relock: $r2"; return 1; }
+}
+
 run_case unlock_read "Pick a VeraCrypt file (ext4 inside), unlock, and read flower.jpg, a name with spaces and an empty file six folders down through saf-probe's grant, by SHA-256; no write, delete or rename offered." case_unlock_read
 run_case ntfs "The same, with NTFS inside the container." case_ntfs
 run_case wrong_password "A wrong password is refused with a message, and nothing opens." case_wrong_password
@@ -170,6 +187,7 @@ run_case already_open "The same file picked and unlocked a second time while ope
 run_case format_luks "A LUKS file is recognised and named, and no VeraCrypt form or Unlock is offered for it." case_format_luks
 run_case logs_report "The log shows the detected format and the unlock; Report issue (shared with OTG Master) opens with Container Master's version and no USB row." case_logs_report
 run_case idle_lock "Lock after 1 minute without use: a read works, then after 75 s with no I/O the held grant's read fails, nothing is open, and the log says it locked for idleness." case_idle_lock
+run_case held_fd_lock "A client holds a descriptor across Lock and a fresh unlock of the same container: its late read fails rather than reaching the new session, it still closes, and a fresh open reads the file." case_held_fd_lock
 run_case lock_all_service "The foreground service runs while a container is open; Lock all closes it and the service stops; the container file is unchanged." case_lock_all_service
 
 {
