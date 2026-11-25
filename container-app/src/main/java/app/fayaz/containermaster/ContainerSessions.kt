@@ -75,10 +75,20 @@ object ContainerSessions : MountRegistry {
 
     class AlreadyOpenException : Exception("already open")
 
-    /** The public ID of [uri]: a document ID's first part, stable for the same file. */
-    fun idFor(uri: Uri): String =
-        MessageDigest.getInstance("SHA-256").digest(uri.toString().toByteArray())
-            .joinToString("") { "%02x".format(it) }.take(10)
+    /**
+     * The public ID of a VeraCrypt container: a document ID's first part, so a client's grant on
+     * a folder inside it still resolves after a lock and a fresh unlock. Taken from the header's
+     * salt, its first 64 bytes, which VeraCrypt draws at random for each volume: the picker can
+     * return a different URI for the same file each time (a search and a Downloads listing gave
+     * two on the Pixel), so the URI is not an identity. It changes when the password is changed,
+     * since that writes a new salt. Hashed, so the ID does not carry the salt.
+     */
+    internal fun idForSalt(salt: ByteArray): String {
+        val md = MessageDigest.getInstance("SHA-256")
+        md.update("veracrypt-salt:".toByteArray())
+        md.update(salt)
+        return md.digest().joinToString("") { "%02x".format(it) }.take(10)
+    }
 
     /**
      * Opens the VeraCrypt container [uri] with [password] and [pim]: reads it through its
@@ -89,14 +99,15 @@ object ContainerSessions : MountRegistry {
      * @throws AlreadyOpenException if the same file is open
      */
     fun openVeraCrypt(context: Context, uri: Uri, displayName: String, password: CharArray, pim: Int?): Session {
-        val id = idFor(uri)
-        if (sessions.any { it.id == id }) throw AlreadyOpenException()
         val descriptor = context.contentResolver.openFileDescriptor(uri, "r")
             ?: throw java.io.FileNotFoundException("The file could not be opened")
         try {
             val channel = FileInputStream(descriptor.fileDescriptor).channel
             val length = descriptor.statSize.takeIf { it >= 0 }
             val device = ChannelBlockDevice(channel, length)
+            val id = idForSalt(device.readBlocks(0, 1).copyOf(64))
+            // Before the key derivation: the same file picked through another URI is refused here.
+            if (sessions.any { it.id == id }) throw AlreadyOpenException()
             val candidate = VolumeCandidate(displayName, 0, device.blockCount, ContainerType.VERACRYPT)
             val decrypted = VeraCryptUnlocker().unlock(device, candidate, password, pim = pim,
                 headers = VeraCryptUnlocker.Headers.STANDARD_ONLY)
