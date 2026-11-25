@@ -49,6 +49,34 @@ All four were rebase-merged, so `main` has new hashes. The sections below name t
 | #193 | `a6a5286` | `bed05fa` | refactor(provider): look up and list through a DocumentSource tree contract |
 | #193 | `2d4bba3` | `c681622` | docs: the held grant still reads the same file on a6a5286 |
 
+## 2026-11-25: Container Master's first slice on the Pixel 7 Pro
+
+Milestone 3: Container Master opens a VeraCrypt file the user picked and serves it through its
+own provider. Debug builds of `bc529c0` (the first slice) and `8035619` (the ID from the
+header salt); `tools/saf-probe` from `550abaf` as the independent client. Pixel 7 Pro (Android
+17). The container is `testdata/ext4/test.img`, made by desktop VeraCrypt (AES, SHA-512, PIM 1,
+`--filesystem=none`) and filled with ext4 by `mkfs.ext4 -d` (`scripts/generate_noroot_testdata.sh`),
+pushed as `/sdcard/Download/vault-ext4.hc` (16,777,216 bytes, SHA-256 `1f644b3d…ddaf` on host and
+phone). No USB drive was involved.
+
+| Step | Build | Result |
+|---|---|---|
+| Choose the file (system picker, search), password and PIM 1, Unlock | `bc529c0` | listed as open about 2.6 s after the tap (screen polled each second) |
+| saf-probe takes a picker grant on the container's root; the picker lists `lost+found`, `nested`, `file with spaces.txt`, `flower.jpg`, `large_file.bin` | `bc529c0` | grant on `941b56c518:/` under `app.fayaz.containermaster.documents` |
+| saf-probe reads `flower.jpg` and `file with spaces.txt` | `bc529c0` | 722,359 B `57c87dcb…3a04` and 12 B `d2a84f4b…4a26`, both equal to the host's; flags 0 (no write, delete or rename) |
+| Lock, then read again | `bc529c0` | the root is gone, the read fails (not found); the foreground service stopped |
+| Pick the same file again, unlock, read through the same grant | `bc529c0` | **failed**: the picker returned another URI, so the ID was `849c396206` and the old grant found nothing. Fixed in `8035619` |
+| Unlock, grant on `681766bfb6:/`, read `flower.jpg` | `8035619` | same bytes and hash |
+| Lock, read | `8035619` | fails (not found) |
+| Pick and unlock again, read both files through the grant from before the lock | `8035619` | same ID `681766bfb6`, both files byte for byte |
+| Pick and unlock the same file while it is open | `8035619` | refused: "This file is already open." |
+| Lock all | `8035619` | nothing open; the service stopped; the container's SHA-256 still `1f644b3d…ddaf` |
+
+Not covered yet: a descriptor held across the lock (saf-probe opens, reads and closes), Container
+Master beside OTG Master with OTG's held grant (next on the OnePlus), and the release build.
+While driving the picker over adb, the picker reopened with its last search still open and the
+test password was typed into its search box; the helper now clears the query first.
+
 ## 2026-11-25: mounting through DiskMounter, OnePlus 7, Drive 1
 
 F3 step 1 (`5104669`): the drivers are registered by `DiskMounter`, once per process, and every
