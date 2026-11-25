@@ -1,0 +1,25 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <string name="app_name">Container Master</string>
+    <string name="intro">Open a VeraCrypt container file from your phone. Its files then show up in the Files app and in any app that opens files, until you lock it.</string>
+    <string name="choose_file">Choose a container file</string>
+    <string name="chosen_file">File: %1$s</string>
+    <string name="password">Password</string>
+    <string name="pim">PIM (leave empty for the default)</string>
+    <string name="unlock">Unlock</string>
+    <string name="unlocking">Unlocking…</string>
+    <string name="open_containers">Open containers</string>
+    <string name="none_open">No container is open.</string>
+    <string name="lock">Lock</string>
+    <string name="lock_all">Lock all</string>
+    <string name="wrong_password">The password, or the PIM, is wrong. Or this file is not a VeraCrypt container.</string>
+    <string name="already_open">This file is already open.</string>
+    <string name="open_failed">Could not open this file: %1$s</string>
+    <string name="pim_invalid">The PIM must be a whole number.</string>
+    <string name="root_summary">Unlocked container, read-only</string>
+    <string name="notification_channel">Open containers</string>
+    <plurals name="notification_text">
+        <item quantity="one">%d container is open. Its files can be read in other apps.</item>
+        <item quantity="other">%d containers are open. Their files can be read in other apps.</item>
+    </plurals>
+</resources>
