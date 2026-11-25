@@ -47,8 +47,10 @@ class ProbeActivity : Activity() {
         try {
             when (cmd) {
                 "grant" -> {
-                    val pick = Intent(Intent.ACTION_OPEN_DOCUMENT_TREE).addFlags(
-                        Intent.FLAG_GRANT_READ_URI_PERMISSION or Intent.FLAG_GRANT_PERSISTABLE_URI_PERMISSION)
+                    wantWrite = intent.getBooleanExtra("write", false)
+                    var flags = Intent.FLAG_GRANT_READ_URI_PERMISSION or Intent.FLAG_GRANT_PERSISTABLE_URI_PERMISSION
+                    if (wantWrite) flags = flags or Intent.FLAG_GRANT_WRITE_URI_PERMISSION
+                    val pick = Intent(Intent.ACTION_OPEN_DOCUMENT_TREE).addFlags(flags)
                     intent.getStringExtra("initial")?.let {
                         pick.putExtra(DocumentsContract.EXTRA_INITIAL_URI, Uri.parse(it))
                     }
@@ -57,6 +59,8 @@ class ProbeActivity : Activity() {
                 }
                 "read" -> finishWith(cmd, read(tree(), intent.getStringExtra("path") ?: error("--es path is required")))
                 "grants" -> finishWith(cmd, grants())
+                "write" -> finishWith(cmd, write(tree(), intent.getStringExtra("name") ?: "saf-probe-write.bin",
+                    intent.getIntExtra("bytes", 3 * 1024 * 1024 + 4097), intent.getBooleanExtra("keep", false)))
                 "outside" -> finishWith(cmd, outside(tree(), intent.getStringExtra("docid") ?: error("--es docid is required")))
                 else -> finishWith(cmd, JSONObject().put("error", "unknown cmd $cmd"))
             }
@@ -71,13 +75,17 @@ class ProbeActivity : Activity() {
         val out = JSONObject().put("resultCode", resultCode)
         val uri = data?.data
         if (resultCode == RESULT_OK && uri != null) {
-            contentResolver.takePersistableUriPermission(uri, Intent.FLAG_GRANT_READ_URI_PERMISSION)
+            var keep = Intent.FLAG_GRANT_READ_URI_PERMISSION
+            if (wantWrite) keep = keep or Intent.FLAG_GRANT_WRITE_URI_PERMISSION
+            contentResolver.takePersistableUriPermission(uri, keep)
             out.put("tree", uri.toString())
                 .put("authority", uri.authority)
                 .put("treeDocumentId", DocumentsContract.getTreeDocumentId(uri))
         }
         finishWith("grant", out)
     }
+
+    private var wantWrite = false
 
     private fun tree(): Uri {
         intent.getStringExtra("tree")?.let { return Uri.parse(it) }
@@ -118,6 +126,51 @@ class ProbeActivity : Activity() {
         return JSONObject().put("tree", tree.toString()).put("path", path).put("documentId", docId)
             .put("walked", walked).put("columns", columns).put("bytes", size)
             .put("sha256", md.digest().joinToString("") { "%02x".format(it) })
+    }
+
+    private fun sha256(doc: Uri): Pair<Long, String> {
+        val md = MessageDigest.getInstance("SHA-256")
+        var size = 0L
+        contentResolver.openInputStream(doc)!!.use { input ->
+            val buf = ByteArray(1 shl 16)
+            while (true) {
+                val n = input.read(buf)
+                if (n < 0) break
+                md.update(buf, 0, n); size += n
+            }
+        }
+        return size to md.digest().joinToString("") { "%02x".format(it) }
+    }
+
+    private fun hex(b: ByteArray) = MessageDigest.getInstance("SHA-256").digest(b).joinToString("") { "%02x".format(it) }
+
+    /**
+     * Through the provider, in the granted tree's top folder: create [name], write [bytes] of
+     * seeded pseudo-random data ("w"), read it back; overwrite it with a third of that ("wt",
+     * which truncates), read it back; then delete it unless [keep]. Each step's hash is
+     * compared with the bytes written, so a short or misplaced write shows as a mismatch.
+     */
+    private fun write(tree: Uri, name: String, bytes: Int, keep: Boolean): JSONObject {
+        val parent = DocumentsContract.buildDocumentUriUsingTree(tree, DocumentsContract.getTreeDocumentId(tree))
+        val doc = DocumentsContract.createDocument(contentResolver, parent, "application/octet-stream", name)
+            ?: error("createDocument returned null")
+        val first = ByteArray(bytes).also { java.util.Random(184L).nextBytes(it) }
+        contentResolver.openOutputStream(doc, "w")!!.use { out ->
+            var off = 0
+            while (off < first.size) { val n = minOf(100_000, first.size - off); out.write(first, off, n); off += n }
+        }
+        val (size1, hash1) = sha256(doc)
+        val second = first.copyOf(bytes / 3)
+        contentResolver.openOutputStream(doc, "wt")!!.use { it.write(second) }
+        val (size2, hash2) = sha256(doc)
+        val out = JSONObject().put("tree", tree.toString()).put("documentId", DocumentsContract.getDocumentId(doc))
+            .put("written", JSONObject().put("bytes", first.size).put("sha256", hex(first)))
+            .put("readBack", JSONObject().put("bytes", size1).put("sha256", hash1))
+            .put("rewritten", JSONObject().put("bytes", second.size).put("sha256", hex(second)))
+            .put("readBackAfterTruncate", JSONObject().put("bytes", size2).put("sha256", hash2))
+            .put("match", size1 == first.size.toLong() && hash1 == hex(first) && size2 == second.size.toLong() && hash2 == hex(second))
+        if (!keep) out.put("deleted", DocumentsContract.deleteDocument(contentResolver, doc))
+        return out
     }
 
     private fun grants(): JSONObject {
