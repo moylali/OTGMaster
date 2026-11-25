@@ -1,0 +1,9 @@
+<?xml version="1.0" encoding="utf-8"?>
+<manifest xmlns:android="http://schemas.android.com/apk/res/android">
+    <application>
+        <!-- Report issue: merged into each app that includes app-common. -->
+        <activity
+            android:name="app.fayaz.otgmaster.feedback.FeedbackActivity"
+            android:exported="false" />
+    </application>
+</manifest>

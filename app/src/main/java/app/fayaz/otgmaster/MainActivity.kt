@@ -4005,7 +4005,7 @@ fun OtgMasterApp(
                             Intent(ctx, app.fayaz.otgmaster.feedback.FeedbackActivity::class.java)
                         )
                     }) {
-                        Text(stringResource(R.string.feedback_report_issue))
+                        Text(stringResource(app.fayaz.otgmaster.common.R.string.feedback_report_issue))
                     }
                     IconButton(onClick = { onClearLogs() }) {
                         Icon(Icons.Default.Delete, contentDescription = stringResource(R.string.cd_clear_logs))

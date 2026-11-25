@@ -46,8 +46,7 @@ import androidx.compose.ui.platform.LocalUriHandler
 import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.text.TextStyle
 import androidx.compose.ui.unit.dp
-import app.fayaz.otgmaster.OtgMasterState
-import app.fayaz.otgmaster.R
+import app.fayaz.otgmaster.common.R
 
 /**
  * Reviews what a bug report would contain, and opens the form with it.
@@ -71,8 +70,7 @@ class FeedbackActivity : ComponentActivity() {
             // MainActivity applies MaterialTheme inline rather than exposing a named
             // theme composable, so match it here and read the same preference — a
             // report screen that ignored the user's dark-mode choice would be jarring.
-            val prefs = getSharedPreferences("otgmaster_prefs", MODE_PRIVATE)
-            val saved = prefs.getString("theme_mode", "SYSTEM")
+            val saved = Feedback.source?.themeMode() ?: "SYSTEM"
             val dark = when (saved) {
                 "LIGHT" -> false
                 "DARK" -> true
@@ -101,14 +99,14 @@ class FeedbackActivity : ComponentActivity() {
         // Snapshotted once, on entry. The log and mount state can change while this
         // screen is open, and the details shown must be the details sent — a payload
         // rebuilt at the moment of tapping could differ from what was reviewed.
-        val contents = remember {
-            FeedbackPayload.collect(
-                OtgMasterState.mountedDrives.toList(),
-                OtgMasterState.recentLogs(),
-                OtgMasterState.usbEvents(),
-            )
+        val source = remember { Feedback.source }
+        val contents = remember { source?.let(FeedbackPayload::collect) }
+        if (source == null || contents == null) {
+            // No source means the app never installed one; there is nothing honest to show.
+            androidx.compose.runtime.LaunchedEffect(Unit) { finish() }
+            return
         }
-        var sel by remember { mutableStateOf(FeedbackPayload.Selection()) }
+        var sel by remember { mutableStateOf(FeedbackPayload.Selection(usb = source.usesUsb)) }
         // The log is editable here, so a user can take out file or folder names (a
         // backup's "not read:" lines carry them) before anything leaves the app. What is
         // in the editor is what is sent: the summary, the count and the URL all use it.
@@ -159,7 +157,7 @@ class FeedbackActivity : ComponentActivity() {
                 IncludeRow(stringResource(R.string.feedback_include_version), sel.appVersion) {
                     sel = sel.copy(appVersion = it)
                 }
-                IncludeRow(stringResource(R.string.feedback_include_usb), sel.usb) {
+                if (source.usesUsb) IncludeRow(stringResource(R.string.feedback_include_usb), sel.usb) {
                     sel = sel.copy(usb = it)
                 }
                 IncludeRow(stringResource(R.string.feedback_include_partitions), sel.partitions) {

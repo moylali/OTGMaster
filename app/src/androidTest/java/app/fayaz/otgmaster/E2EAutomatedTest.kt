@@ -3896,7 +3896,7 @@ class E2EAutomatedTest {
         // A backup error's line, naming a file: the report must carry it masked (#165).
         // check_github_issue.py then looks for the masked form, and for no trace of the name.
         OtgMasterState.log("Backup \"E2E\": not read: ${app.fayaz.otgmaster.feedback.PathMask.mark(REPORT_PATH)}: Permission denied")
-        val report = findScrolling(By.text(usbText(R.string.feedback_report_issue)))
+        val report = findScrolling(By.text(usbText(app.fayaz.otgmaster.common.R.string.feedback_report_issue)))
         assertNotNull("no Report issue button", report)
         report!!.click()
         // The log can be edited before it is sent, and what is in the editor is what goes.
@@ -3907,7 +3907,7 @@ class E2EAutomatedTest {
         assertTrue("the review screen shows the file's name: $shown", REPORT_NAME !in shown)
         assertTrue("the review screen does not show the masked path", REPORT_MASKED in shown)
         editor.text = "$shown\n$REPORT_EDIT"
-        val open = findScrolling(By.text(usbText(R.string.feedback_open)), firstWaitMs = 10_000L)
+        val open = findScrolling(By.text(usbText(app.fayaz.otgmaster.common.R.string.feedback_open)), firstWaitMs = 10_000L)
         assertNotNull("no button to open the form", open)
         open!!.click()
 

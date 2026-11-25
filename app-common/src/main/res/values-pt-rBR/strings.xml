@@ -1,0 +1,25 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- Report issue, shared by OTG Master and Container Master (app-common). -->
+<resources>
+    <string name="feedback_report_issue">Relatar problema</string>
+    <string name="feedback_title">Relatar um problema</string>
+    <string name="feedback_summary">Relate um problema ou sugira uma melhoria</string>
+    <string name="feedback_url">https://otgmaster-feedback.moylali.workers.dev/</string>
+    <string name="feedback_intro">O formulário será aberto no navegador. O app não envia nada: você confere os dados abaixo e envia o formulário manualmente.</string>
+    <string name="feedback_review_heading">O formulário será preenchido exatamente com estes dados</string>
+    <string name="feedback_choose_heading">Escolha o que incluir</string>
+    <string name="feedback_back">Voltar</string>
+    <string name="feedback_include_device">Modelo do dispositivo e versão do Android</string>
+    <string name="feedback_include_version">Versão do app</string>
+    <string name="feedback_include_usb">Fabricante e capacidade da unidade USB</string>
+    <string name="feedback_include_partitions">Tamanhos das partições, sistemas de arquivos e criptografia</string>
+    <string name="feedback_include_logs">Registro do app (%1$d linhas)</string>
+    <string name="feedback_include_nothing">Não incluir nada</string>
+    <string name="feedback_open">Abrir o formulário com estes dados</string>
+    <string name="feedback_open_empty">Abrir o formulário sem dados</string>
+    <string name="feedback_excluded">Não incluídos: o rótulo do volume da unidade e seu número de série. O registro pode conter nomes de arquivos ou pastas; confira-o acima antes de enviar.</string>
+    <string name="feedback_log_heading">Registro do app</string>
+    <string name="feedback_log_hint">Este é o registro que será enviado. Os nomes de arquivos e pastas já foram mascarados. Exclua ou altere qualquer outra informação que prefira não compartilhar.</string>
+    <string name="feedback_log_restore">Restaurar o registro completo</string>
+    <string name="feedback_no_browser">Nenhum navegador disponível para abrir o formulário</string>
+</resources>

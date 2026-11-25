@@ -1,0 +1,25 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- Report issue, shared by OTG Master and Container Master (app-common). -->
+<resources>
+    <string name="feedback_report_issue">Report issue</string>
+    <string name="feedback_title">Report an issue</string>
+    <string name="feedback_summary">Report a problem or suggest an improvement</string>
+    <string name="feedback_url">https://otgmaster-feedback.moylali.workers.dev/</string>
+    <string name="feedback_intro">The form opens in your browser. The app sends nothing: you review the details below and submit the form yourself.</string>
+    <string name="feedback_review_heading">The form will be filled in with exactly this</string>
+    <string name="feedback_choose_heading">Choose what to include</string>
+    <string name="feedback_back">Back</string>
+    <string name="feedback_include_device">Device model and Android version</string>
+    <string name="feedback_include_version">App version</string>
+    <string name="feedback_include_usb">USB drive make and capacity</string>
+    <string name="feedback_include_partitions">Partition sizes, filesystems, encryption</string>
+    <string name="feedback_include_logs">App log (%1$d lines)</string>
+    <string name="feedback_include_nothing">Don\'t include anything</string>
+    <string name="feedback_open">Open the form with these details</string>
+    <string name="feedback_open_empty">Open the form without any details</string>
+    <string name="feedback_excluded">Not included: your drive\'s volume label and its serial number. The log can name files or folders, so check it above before sending.</string>
+    <string name="feedback_log_heading">App log</string>
+    <string name="feedback_log_hint">This is the log that will be sent. File and folder names in it are already masked. Delete or change anything else you would rather not share.</string>
+    <string name="feedback_log_restore">Restore the full log</string>
+    <string name="feedback_no_browser">No browser available to open the form</string>
+</resources>
