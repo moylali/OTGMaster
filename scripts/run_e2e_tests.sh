@@ -188,6 +188,12 @@ ensure_testdata() {
         python3 scripts/make_e2e_matrix.py || { echo "Matrix fixture generation failed!"; exit 1; }
     fi
 
+    # BitLocker To Go (#184), added to the matrix after the rest was generated.
+    if [ ! -f "$TESTDATA_DIR/m_bitlocker_togo_fat32/test.img" ]; then
+        echo "Generating the BitLocker To Go fixture..."
+        python3 scripts/make_e2e_matrix.py bitlocker_togo fat32 || { echo "To Go fixture generation failed!"; exit 1; }
+    fi
+
     # Backups made through the app; two of them reuse the matrix's encrypted images.
     if [ ! -f "$TESTDATA_DIR/backup_interrupted/test.img" ] || [ ! -f "$TESTDATA_DIR/backup_run_veracrypt/test.img" ]; then
         echo "Generating the backup-run fixtures..."

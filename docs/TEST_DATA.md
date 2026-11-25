@@ -264,7 +264,12 @@ How each piece is made, and what vouches for it:
   `--metadata-at M1,M2,M3,H` puts them inside the volume instead, as Windows does,
   over whatever the plain image held there; Format inside BitLocker is tested on such
   volumes (`BitLockerFormatTest`, `format_bitlocker_ntfs`), since there the new
-  filesystem has to keep off them.
+  filesystem has to keep off them. `--togo` writes BitLocker To Go, the form Windows
+  gives removable drives: the first sector is a FAT32 boot sector (`MSWIN4.1`,
+  `FAT32   ` at byte 82) with BitLocker's GUID at byte 424, and cryptsetup reports it
+  as a "BITLK To Go device". `m_bitlocker_togo_fat32` (`make_e2e_matrix.py
+  bitlocker_togo fat32`) is that around FAT32; it must be offered for unlocking with
+  the BITLOCKER tag rather than mounted as plain FAT32 (#184).
 
 Password `password123`; BitLocker recovery key
 `111111-222222-333333-444444-555555-666666-111111-222222` (each group a multiple of

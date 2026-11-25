@@ -25,6 +25,13 @@ aligned), as Windows does: the volume is then exactly the plain image's size, an
 whatever the plain image had there is lost (it reads as zeros). Format inside
 BitLocker is tested on such volumes, since there the new filesystem has to keep
 off them.
+
+--togo writes the volume as BitLocker To Go, the form Windows gives removable
+drives: its first sector is a FAT32 boot sector ("MSWIN4.1", "FAT32   " at byte 82,
+the discovery volume Windows 7 reads it through) with BitLocker's GUID at byte 424
+and the metadata offsets after it, instead of the "-FVE-FS-" header. A reader that
+checks for a filesystem before it checks for BitLocker takes it for plain FAT32
+(#184). The discovery volume's own files are not written: no reader here uses them.
 """
 import argparse
 import hashlib
@@ -123,7 +130,7 @@ def crypt(encrypt, mode, key, sector, first_sector, data):
     return bytes(out)
 
 
-def build(plain_path, out_path, password, recovery, cipher, inside=None, bek_path=None):
+def build(plain_path, out_path, password, recovery, cipher, inside=None, bek_path=None, togo=False):
     algo, key_len = CIPHERS[cipher]
     sector = 512
     plain_size = os.path.getsize(plain_path)
@@ -180,12 +187,27 @@ def build(plain_path, out_path, password, recovery, cipher, inside=None, bek_pat
 
     boot = bytearray(512)
     boot[0:3] = b"\xeb\x58\x90"
-    boot[3:11] = b"-FVE-FS-"
-    struct.pack_into("<HBH", boot, 11, sector, 8, 0)
-    boot[21] = 0xF8
-    struct.pack_into("<HH", boot, 24, 0x3F, 0xFF)
-    boot[160:176] = GUID_NORMAL
-    struct.pack_into("<QQQ", boot, 176, *meta_offsets)
+    if togo:
+        # A FAT32 BPB for the discovery volume: 512-byte sectors, 8 per cluster,
+        # 32 reserved, one FAT, the volume's sector count, root at cluster 2.
+        boot[3:11] = b"MSWIN4.1"
+        struct.pack_into("<HBHB", boot, 11, sector, 8, 32, 1)
+        boot[21] = 0xF8
+        struct.pack_into("<HHII", boot, 24, 0x3F, 0xFF, 0, total // sector)
+        struct.pack_into("<IHHIHH", boot, 36, 1, 0, 0, 2, 1, 6)
+        boot[64] = 0x80
+        boot[66] = 0x29
+        boot[71:82] = b"NO NAME    "
+        boot[82:90] = b"FAT32   "
+        boot[424:440] = GUID_NORMAL
+        struct.pack_into("<QQQ", boot, 440, *meta_offsets)
+    else:
+        boot[3:11] = b"-FVE-FS-"
+        struct.pack_into("<HBH", boot, 11, sector, 8, 0)
+        boot[21] = 0xF8
+        struct.pack_into("<HH", boot, 24, 0x3F, 0xFF)
+        boot[160:176] = GUID_NORMAL
+        struct.pack_into("<QQQ", boot, 176, *meta_offsets)
     boot[510:512] = b"\x55\xaa"
 
     with open(plain_path, "rb") as src, open(out_path, "wb") as out:
@@ -256,14 +278,15 @@ def main():
     ap.add_argument("--startup-key", metavar="FILE.BEK",
                     help="also add a startup-key protector and write its key file here")
     ap.add_argument("--metadata-at", help="M1,M2,M3,H: byte offsets inside the volume, as Windows places them")
+    ap.add_argument("--togo", action="store_true", help="BitLocker To Go: a FAT32 discovery boot sector")
     a = ap.parse_args()
     if not a.password and not a.recovery and not a.startup_key:
         ap.error("give --password, --recovery, --startup-key or several")
     inside = [int(x, 0) for x in a.metadata_at.split(",")] if a.metadata_at else None
     if inside is not None and len(inside) != 4:
         ap.error("--metadata-at takes four offsets")
-    fvek = build(a.plain, a.out, a.password, a.recovery, a.cipher, inside, a.startup_key)
-    print(f"{a.out}: BitLocker {a.cipher}, {os.path.getsize(a.out)} bytes")
+    fvek = build(a.plain, a.out, a.password, a.recovery, a.cipher, inside, a.startup_key, a.togo)
+    print(f"{a.out}: BitLocker{' To Go' if a.togo else ''} {a.cipher}, {os.path.getsize(a.out)} bytes")
     if a.verify:
         verify(a.plain, a.out, a.password, a.recovery, fvek, inside, a.startup_key)
 
