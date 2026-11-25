@@ -45,6 +45,7 @@ Drive 1 (`…6B31`), D1EXFAT. Debug builds, which carry the store package and au
 | The grant opens `BENCH/large/seq_2100m.bin`, D1FAT32's copy of the file, and `BENCH/edge/../large/seq_2100m.bin` | debug `b483c68` | the first two refused (SecurityException); the `..` path passed the ancestry check and failed only at lookup (FileNotFoundException) |
 | Eject, `adb install -r`, D1 mounted again; the same grant reads the same file | debug `800ebf0` | same document ID, bytes, SHA-256, columns and flags |
 | The same three opens | debug `800ebf0` | all three refused with SecurityException |
+| Eject, `adb install -r`, D1 mounted again; the same read and the same three opens | debug `a6a5286` (lookup through `DocumentSource`) | same document ID, bytes, SHA-256, columns and flags; all three refused with SecurityException |
 
 Nothing was written to the drive by these steps. Before the first install, the benchmark build
 still had D1 mounted and was force-stopped without an Eject; nothing was writing, but Android may
