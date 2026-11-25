@@ -104,6 +104,26 @@ class PlainPartitionsTest {
         assertEquals(emptyList<String>(), PlainPartitions.detect(dev, candidates).map { it.label })
     }
 
+    /**
+     * A USB stick as Windows 11 encrypts it: made in a Windows 11 Enterprise VM from a FAT32
+     * stick (one MBR partition at 64 KiB, BitLocker AES-CBC-128). Windows 10 and 11 no longer
+     * write the "MSWIN4.1" discovery volume; the header says "-FVE-FS-" but keeps the FAT32
+     * BPB, "FAT32   " at byte 82 included, which is what the FAT32 check matched. The
+     * resource is the image's first 128 KiB: the MBR and the BitLocker header.
+     */
+    @Test
+    fun `a FAT32 stick encrypted by Windows 11 is offered for unlocking, not mounted as FAT32`() {
+        val head = File(javaClass.classLoader!!.getResource("bitlk/win11-fat32-usb-head.bin")!!.toURI()).readBytes()
+        val dev = MemoryDevice(head.copyOf(64 * 1024 * 1024))
+        val sector = head.copyOfRange(65536, 65536 + 512)
+        assertEquals("-FVE-FS-", String(sector, 3, 8, Charsets.US_ASCII))
+        assertEquals("FAT32   ", String(sector, 82, 8, Charsets.US_ASCII))
+        val candidates = VeraCryptUnlocker().probeCandidates(dev)
+        assertEquals(listOf("Partition 1" to ContainerType.BITLOCKER), candidates.map { it.label to it.containerType })
+        assertEquals(128L, candidates.single().startBlock)
+        assertEquals(emptyList<String>(), PlainPartitions.detect(dev, candidates).map { it.label })
+    }
+
     @Test
     fun `the same FAT32 boot sector without the BitLocker GUID still mounts as plain FAT32`() {
         val dev = partitioned(withoutBitLockerGuid(head()))
