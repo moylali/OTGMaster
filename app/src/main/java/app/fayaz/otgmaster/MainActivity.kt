@@ -2713,28 +2713,8 @@ class MainActivity : AppCompatActivity() {
         }
     }
 
-    private fun detectPlainPartitions(device: RawBlockDevice, candidates: List<VolumeCandidate>): List<PlainPartition> {
-        return candidates.mapNotNull { candidate ->
-            // Encrypted APFS carries the same container superblock as plain APFS, so
-            // the signature alone would auto-mount it without its password.
-            if (candidate.containerType == app.fayaz.otgmaster.veracrypt.ContainerType.APFS) return@mapNotNull null
-            val startBlock = candidate.startBlock
-            val available = device.blockCount - startBlock
-            if (available <= 0) return@mapNotNull null
-            val data = try {
-                device.readBlocks(startBlock, minOf(4, available).toInt())
-            } catch (_: Exception) { return@mapNotNull null }
-            val fs = FilesystemDetector.detectFromBytes(data)
-            if (fs is DetectedFilesystem.Supported) {
-                PlainPartition(
-                    label = candidate.label,
-                    startBlock = startBlock,
-                    blockCount = candidate.blockCount ?: available,
-                    filesystemName = fs.displayName
-                )
-            } else null
-        }
-    }
+    private fun detectPlainPartitions(device: RawBlockDevice, candidates: List<VolumeCandidate>): List<PlainPartition> =
+        app.fayaz.otgmaster.fs.PlainPartitions.detect(device, candidates)
 
     /**
      * Plain partitions being mounted right now, as "deviceKey@startBlock".

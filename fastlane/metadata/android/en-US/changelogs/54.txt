@@ -1,0 +1,1 @@
+• Fixed: some BitLocker drives from Windows were opened as FAT32 and never asked for the password
