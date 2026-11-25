@@ -69,7 +69,9 @@ image before the run. OnePlus 7 (GM1901, LineageOS 23.2, Android 16, SDK 36); mi
 | Unmount, then the recovery password instead, Unlock & mount; read `flower.jpg` through the same grant | `021d688` | mounted the same way; `57c87dcb…3a04` |
 | Eject | `021d688` | done; Android lists the stick `unmountable` and does not mount it |
 
-Host check after the run: see the comparison row below once the stick is back on the laptop.
+Host check after the run: back on the laptop, `compare_test_drive.sh` matched all 1,073,741,824
+bytes of the stick against the image, so nothing was written to it, neither by the old build's failed
+FAT32 attempt nor by the two read-only mounts.
 
 ## 2026-11-25: laptop check of Drive 1 after the Milestone 2 and 3 runs
 
