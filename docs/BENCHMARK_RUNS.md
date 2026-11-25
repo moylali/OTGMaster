@@ -49,6 +49,25 @@ All four were rebase-merged, so `main` has new hashes. The sections below name t
 | #193 | `a6a5286` | `bed05fa` | refactor(provider): look up and list through a DocumentSource tree contract |
 | #193 | `2d4bba3` | `c681622` | docs: the held grant still reads the same file on a6a5286 |
 
+## 2026-11-25: Container Master beside OTG Master on the OnePlus 7
+
+Milestone 3's coexistence check: both apps installed, both providers serving at once, and
+OTG's held grant unaffected. Container Master debug `8035619`, OTG Master minified `5104669`
+(the store package and authority), `tools/saf-probe` `550abaf`. OnePlus 7 (GM1901, LineageOS
+23.2, Android 16, SDK 36), Drive 1 (`…6B31`) plugged in, and the same `vault-ext4.hc` as on the
+Pixel (SHA-256 `1f644b3d…ddaf`).
+
+| Step | Result |
+|---|---|
+| Container Master installed beside `app.fayaz.otgmaster` and `.bench`; OTG cold-started, the 7 plain partitions auto mounted | done |
+| OTG's grant held since 11-24 reads `size_1048577.bin` | `31eb9165…063ff4`, flags 70 |
+| The system picker in Container Master lists OTG's mounted drives as roots next to the files; the container picked by search and unlocked | opened as `681766bfb6`, the same ID as on the Pixel (the ID comes from the container) |
+| saf-probe grant on `681766bfb6:/`, read `flower.jpg`; then OTG's grant, with the container still open | `57c87dcb…3a04` flags 0, and `31eb9165…063ff4` flags 70 |
+| Lock all in Container Master; read the container, then OTG's grant | the container's root is gone (not found); OTG's grant reads `31eb9165…063ff4` |
+| The container's SHA-256 after; Eject in OTG, `sm unmount` of Android's mounts | unchanged; done |
+
+Nothing was written to Drive 1.
+
 ## 2026-11-25: Container Master's first slice on the Pixel 7 Pro
 
 Milestone 3: Container Master opens a VeraCrypt file the user picked and serves it through its
