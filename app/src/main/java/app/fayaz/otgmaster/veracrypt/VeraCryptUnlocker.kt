@@ -13,7 +13,14 @@ class VeraCryptUnlocker {
         val hexSuffix = sector0.slice(510..511).joinToString("") { String.format("%02X", it) }
         android.util.Log.i("VeraCryptUnlocker", "Sector 0 prefix: $hexPrefix, suffix: $hexSuffix")
 
-        val partitions = app.fayaz.otgmaster.partition.MbrParser.parse(sector0)
+        // A BitLocker volume written straight to the drive, with no partition table, is
+        // not an MBR even though it ends in 55AA: the bytes where an MBR keeps its
+        // partition table are its boot code. Parsed as an MBR, cryptsetup's To Go image
+        // gave four "partitions", one at block 0 with 2 billion sectors and others past
+        // the end of the drive (#184).
+        val volumeAtZero = app.fayaz.otgmaster.bitlocker.BitLockerHeader.hasSignature(sector0)
+        val partitions = if (volumeAtZero) emptyList()
+            else app.fayaz.otgmaster.partition.MbrParser.parse(sector0)
         android.util.Log.i("VeraCryptUnlocker", "MBR partitions found: ${partitions.joinToString()}")
 
         val hasGpt = partitions.any { it.type == 0xEE }
