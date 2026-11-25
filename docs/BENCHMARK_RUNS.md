@@ -33,6 +33,46 @@ to a row here.
 
 ---
 
+## 2026-11-24: Format inside BitLocker on the OnePlus 7, Drive 1 (D1BLEXFAT)
+
+`efd963e` (Format inside BitLocker, around BitLocker's own metadata) shipped in #175 with only the emulator case `format_bitlocker_ntfs` behind it. This is its hardware run. Benchmark build `0.5.4-bench (53) commit 4839137` (`main` after #186 and #177) on the OnePlus 7 (GM1901, LineageOS 23.2, Android 16, SDK 36).
+
+| Step | Time | Result |
+|---|---|---|
+| Format, Partition 11 (D1BLEXFAT, BitLocker AES-XTS 256 + exFAT), exFAT, label kept, Quick off (every sector overwritten) | confirmed about 14:38, "Formatted as exFAT and mounted." on screen at the 14:44:26 check (the check polled every 20 s) | done, no error |
+| Benchmark `op7-blfmt` (free, write, unaligned, correct, bigwrite) on the new volume | 14:46 | **nothing written**: the volume has no `BENCH/MANIFEST.txt`, so the suite runs block reads only, by design. freeSpace first 4.8 ms, then 3.8 ms avg over 5 |
+| Files app "Copy to…" of `big-1g.bin` (1,073,741,824 bytes) and `small.bin` (300,000 bytes), random data made on the phone, onto the new volume | 15:02:59 to about 15:15 | done, no error notification; about 1.5 MB/s through the Files app and the provider (the app's own bigwrite on this partition and phone measured 7.34 MB/s in `op7-054e`; the Files-app path has no earlier figure) |
+| Eject in the app, then `sm unmount` of Android's mounts | 15:16 | done |
+
+Host check after the run (`matrix/d1-after-op7-blfmt.md`):
+- D1BLEXFAT: `cryptsetup bitlkDump` reads the header and both protectors (passphrase and recovery). Decrypted with `scripts/bitlk_decrypt.py`, which shares no code with the app: `fsck.exfat -n` clean, 1 directory, 2 files. Mounted read-only, `big-1g.bin` SHA-256 `9ea50914…cad1` and `small.bin` `ec99e4d1…2f0b`, both equal to the hashes taken on the phone before the copy. The new exFAT is 5,866,078,208 bytes in the 5,872,025,600-byte partition. The 20,898 fixtures are gone, as a Format should leave it.
+- The other nine: D1BLNTFS, the neighbouring BitLocker partition, CLEAN with every fixture matched; the four APFS, D1EXFAT, D1NTFS and D1EXT4 CLEAN. D1FAT32 failed only on the dirty flag (boot sector byte 0x41) with all 20,995 fixtures matched: Android mounted D1's plain partitions for a few seconds after each Eject (14:16 and 15:16), the same finding as Pixel D1FAT32 above.
+
+Restore: `write_matrix_drive.sh --only D1BLEXFAT` from the build image, then a full read-back (`matrix/d1-after-blfmt-restore.md`): D1BLEXFAT CLEAN with 20,898 of 20,898 fixtures, 9 of 10 CLEAN, D1FAT32 the dirty flag only.
+
+## Commit hashes after the merges of #186 and #177
+
+Both were rebase-merged, so `main` has new hashes. The 0.5.4 sections below name the PR's commits. Look the PR hash up here to find it on `main`.
+
+### #186: the 0.5.4 matrix fixes
+
+| At the PR head | On `main` | Commit |
+|---|---|---|
+| `068d7c7` | `e6a5963` | fix: a USB reset could lose the block before the replayed writes |
+| `475972e` | `c4d0b5c` | fix: the drive list no longer waits on a busy volume (ANR) |
+| `ccfa3c7` | `dd794bd` | bench: time the drive-list query during bigwrite |
+| `c6466d3` | `ce62985` | scripts: format_test_drive.sh for the two spare test sticks |
+| `959ac22` | `4307067` | fix: Files app queries answer in bounded time while a drive is busy |
+| `b5c79aa` | `deb26e0` | testdata: the provider_* E2E case files |
+| `c43aff2` | `c598f0a` | docs: record the 0.5.4 matrix on the Tab, the OnePlus 7 and the Pixel 7 Pro |
+
+### #177: Brazilian Portuguese
+
+| At the PR head | On `main` | Commit |
+|---|---|---|
+| `e87b063` | `ab95637` | Add Brazilian Portuguese translation (by its contributor) |
+| `6069b22` | `4839137` | fix: escape the quotes in the pt-BR strings so the file compiles |
+
 ## 2026-11-23 to 11-24: 0.5.4 on the Pixel 7 Pro, all five drives
 
 Benchmark build `0.5.4-bench (53) commit b5c79aa` on the Pixel 7 Pro (Android 17, SDK 37), on AC from the second drive on. Sections: free, block, dir, path, seq, random, opens, write, unaligned, correct, bigwrite, fixtures, one partition per run via `sequence_runs.sh`, which leaves bigwrite out on D5/1's FMT and ENC_TO partitions. `Started` is the phone's clock. No USB resets were logged. Every sequence ended with the Eject, and then unmounted whatever Android mounted once the app let go.

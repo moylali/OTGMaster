@@ -1,3 +1,4 @@
+• New: Brazilian Portuguese
 • New: saved passwords need a screen lock
 • New: BitLocker Format and .BEK key files
 • New: read-only mode for plain drives
@@ -8,5 +9,4 @@
 • Fixed: USB hiccups stopped copies, lost data
 • Fixed: freezes during big writes
 • Fixed: an ext4 space leak
-• Fixed: full drives say "Not enough space"
-• Fixed: FAT32 cards showed 0 B free
+• Fixed: space shown wrong on full drives, FAT32 cards
