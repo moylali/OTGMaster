@@ -6,6 +6,8 @@
 #
 #   scripts/run_container_e2e.sh -s <adb serial> [--only <case>]...
 #
+# Fixtures it makes itself (ZIP, ISO, AES Crypt) go in testdata-container/, not testdata/: OTG's
+# runner takes every folder under testdata/ for a case of its own (cm_luks was "not run" on 9b3342e).
 # Fixtures: testdata/ext4 and testdata/ntfs, VeraCrypt AES/SHA-512 volumes made by desktop
 # VeraCrypt and filled without root (scripts/generate_noroot_testdata.sh, docs/TEST_DATA.md).
 # They are pushed to the device's Download folder as cm-ext4.hc and cm-ntfs.hc.
@@ -28,19 +30,19 @@ for t in ext4 ntfs; do
 done
 # A ZIP made by Info-ZIP: the shared fixture files, and a 20 MiB entry, past the 16 MiB that is
 # inflated whole, so its reads go through the streamed path.
-if [ ! -f testdata/cm_zip/test.zip ]; then
-  t=$(mktemp -d); mkdir -p "$t/nested/very/deep/folder" testdata/cm_zip
+if [ ! -f testdata-container/zip/test.zip ]; then
+  t=$(mktemp -d); mkdir -p "$t/nested/very/deep/folder" testdata-container/zip
   cp testdata/flower.jpg "$t/"; printf 'Hello World\n' > "$t/file with spaces.txt"; : > "$t/nested/very/deep/folder/empty_file.txt"
   python3 -c 'import sys; open(sys.argv[1],"wb").write(bytes((i // 7) % 251 for i in range(20 << 20)))' "$t/big.bin"
-  (cd "$t" && zip -q -r -6 "$OLDPWD/testdata/cm_zip/test.zip" .) || { echo "ZIP fixture failed"; exit 1; }
+  (cd "$t" && zip -q -r -6 "$OLDPWD/testdata-container/zip/test.zip" .) || { echo "ZIP fixture failed"; exit 1; }
   rm -rf "$t"
 fi
 # An ISO 9660 image with Joliet names: xorriso if installed, else pycdlib through uv.
-if [ ! -f testdata/cm_iso/test.iso ]; then
-  t=$(mktemp -d); mkdir -p "$t/nested/very/deep/folder" testdata/cm_iso
+if [ ! -f testdata-container/iso/test.iso ]; then
+  t=$(mktemp -d); mkdir -p "$t/nested/very/deep/folder" testdata-container/iso
   cp testdata/flower.jpg "$t/"; printf 'Hello World\n' > "$t/file with spaces.txt"; : > "$t/nested/very/deep/folder/empty_file.txt"
-  if command -v xorriso >/dev/null; then xorriso -as mkisofs -quiet -J -o testdata/cm_iso/test.iso "$t" || exit 1
-  else uv run --quiet --with pycdlib python - "$t" testdata/cm_iso/test.iso <<'PY' || { echo "ISO fixture failed"; exit 1; }
+  if command -v xorriso >/dev/null; then xorriso -as mkisofs -quiet -J -o testdata-container/iso/test.iso "$t" || exit 1
+  else uv run --quiet --with pycdlib python - "$t" testdata-container/iso/test.iso <<'PY' || { echo "ISO fixture failed"; exit 1; }
 import pycdlib, sys, os
 src, out = sys.argv[1], sys.argv[2]
 iso = pycdlib.PyCdlib(); iso.new(interchange_level=3, joliet=3)
@@ -54,10 +56,10 @@ PY
   rm -rf "$t"
 fi
 # An AES Crypt (version 2) file, made by pyAesCrypt through uv, holding flower.jpg.
-if [ ! -f testdata/cm_aes/flower.jpg.aes ]; then
-  mkdir -p testdata/cm_aes
+if [ ! -f testdata-container/aes/flower.jpg.aes ]; then
+  mkdir -p testdata-container/aes
   uv run --quiet --with pyAesCrypt python -c 'import pyAesCrypt,sys; pyAesCrypt.encryptFile(sys.argv[1], sys.argv[2], "password123")' \
-    testdata/flower.jpg testdata/cm_aes/flower.jpg.aes || { echo "AES Crypt fixture failed"; exit 1; }
+    testdata/flower.jpg testdata-container/aes/flower.jpg.aes || { echo "AES Crypt fixture failed"; exit 1; }
 fi
 BIG=$(python3 -c 'import hashlib; print(hashlib.sha256(bytes((i // 7) % 251 for i in range(20 << 20))).hexdigest())')
 # The public ID Container Master must give each container: SHA-256 of "veracrypt-salt:" and the
@@ -77,13 +79,13 @@ APK_COMMIT=$(grep -oE 'GIT_COMMIT = "[^"]*"' container-app/build/generated/sourc
 adb -s "$S" install -r container-app/build/outputs/apk/debug/container-app-debug.apk >/dev/null || exit 1
 adb -s "$S" install -r tools/saf-probe/build/outputs/apk/debug/saf-probe-debug.apk >/dev/null || exit 1
 for t in ext4 ntfs luks2 luks1 zip iso; do
-  case $t in luks2) src=testdata/m_luks2_ext4/test.img ;; luks1) src=testdata/m_luks1_ext4/test.img ;; zip) src=testdata/cm_zip/test.zip ;; iso) src=testdata/cm_iso/test.iso ;; *) src=testdata/$t/test.img ;; esac
+  case $t in luks2) src=testdata/m_luks2_ext4/test.img ;; luks1) src=testdata/m_luks1_ext4/test.img ;; zip) src=testdata-container/zip/test.zip ;; iso) src=testdata-container/iso/test.iso ;; *) src=testdata/$t/test.img ;; esac
   want=$(sha256sum $src | cut -d' ' -f1)
   have=$(adb -s "$S" shell sha256sum /sdcard/Download/cm-$t.hc 2>/dev/null | cut -d' ' -f1)
   [ "$want" = "$have" ] || adb -s "$S" push $src /sdcard/Download/cm-$t.hc >/dev/null
 done
-want=$(sha256sum testdata/cm_aes/flower.jpg.aes | cut -d' ' -f1)
-[ "$want" = "$(adb -s "$S" shell sha256sum /sdcard/Download/flower.jpg.aes 2>/dev/null | cut -d' ' -f1)" ] || adb -s "$S" push testdata/cm_aes/flower.jpg.aes /sdcard/Download/flower.jpg.aes >/dev/null
+want=$(sha256sum testdata-container/aes/flower.jpg.aes | cut -d' ' -f1)
+[ "$want" = "$(adb -s "$S" shell sha256sum /sdcard/Download/flower.jpg.aes 2>/dev/null | cut -d' ' -f1)" ] || adb -s "$S" push testdata-container/aes/flower.jpg.aes /sdcard/Download/flower.jpg.aes >/dev/null
 adb -s "$S" shell input keyevent KEYCODE_WAKEUP
 DEVICE="$(adb -s "$S" shell getprop ro.product.model | tr -d '\r') / Android $(adb -s "$S" shell getprop ro.build.version.release | tr -d '\r')"
 
