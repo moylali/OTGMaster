@@ -5872,6 +5872,23 @@ class E2EAutomatedTest {
         // Overwrite ("wt") truncates: the old, longer content must not survive past the new end.
         pvWrite(ctx, DocumentsContract.getDocumentId(file), "short")
         assertEquals("short", pvRead(ctx, DocumentsContract.getDocumentId(file)))
+        // A name that cannot be one directory entry is refused and creates nothing
+        // (architecture proposal, F6). Before, the name went straight to the driver.
+        pvCreateDocument(ctx, root, "pv_bad_a")
+        for (bad in listOf("pv_bad_a/inner.txt", "..")) {
+            val made = runCatching {
+                DocumentsContract.createDocument(ctx.contentResolver, pvDocUri(root), "text/plain", bad)
+            }
+            assertTrue("createDocument accepted \"$bad\": ${made.getOrNull()}", made.getOrNull() == null)
+        }
+        assertTrue("a refused name made a file in the folder it named",
+            pvRows(ctx, DocumentsContract.buildChildDocumentsUri(AUTHORITY, pvChild(ctx, root, "pv_bad_a")!![
+                DocumentsContract.Document.COLUMN_DOCUMENT_ID]!!)).isEmpty())
+    }
+
+    private fun pvCreateDocument(ctx: Context, parent: String, dirName: String) {
+        assertNotNull("createDocument($dirName) returned null", DocumentsContract.createDocument(
+            ctx.contentResolver, pvDocUri(parent), DocumentsContract.Document.MIME_TYPE_DIR, dirName))
     }
 
     private fun pvRename(ctx: Context, root: String) {
@@ -5884,6 +5901,12 @@ class E2EAutomatedTest {
         assertNotNull("the new name is not listed", row)
         assertEquals("renamed content", pvRead(ctx, row!![DocumentsContract.Document.COLUMN_DOCUMENT_ID]!!))
         assertTrue("the old id still answers", pvRows(ctx, file).isEmpty())
+        // A name with a "/" is refused and leaves the file as it was (F6).
+        val afterUri = pvDocUri(row[DocumentsContract.Document.COLUMN_DOCUMENT_ID]!!)
+        val bad = runCatching { DocumentsContract.renameDocument(ctx.contentResolver, afterUri, "pv_x/y.txt") }
+        assertTrue("renameDocument accepted \"pv_x/y.txt\": ${bad.getOrNull()}", bad.getOrNull() == null)
+        assertNotNull("a refused rename lost the file", pvChild(ctx, root, "pv_after.txt"))
+        assertEquals("renamed content", pvRead(ctx, row[DocumentsContract.Document.COLUMN_DOCUMENT_ID]!!))
     }
 
     private fun pvDelete(ctx: Context, root: String) {
@@ -5919,6 +5942,14 @@ class E2EAutomatedTest {
         val path = DocumentsContract.findDocumentPath(ctx.contentResolver, viaTree)
         assertNotNull("findDocumentPath returned null", path)
         assertEquals(listOf(dirId, innerId), path!!.path)
+        // A ".." path under the tree is not inside it. The old string-prefix test said it
+        // was, and only the drivers' hiding of ".." entries kept the lookup from leaving
+        // the tree (architecture proposal, F17).
+        try {
+            pvRows(ctx, DocumentsContract.buildDocumentUriUsingTree(tree, "$dirId/../${flower.substringAfter(":/")}"))
+            fail("a \"..\" path under the tree was answered")
+        } catch (_: SecurityException) {
+        }
     }
 
     /** queryRoots while the volume's lock is held: answers within the bound, with the last free space. */
