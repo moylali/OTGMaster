@@ -28,8 +28,10 @@ How each layer is made, with no root:
   - BitLocker To Go, FAT32 only: the same with --togo, the form Windows gives
                removable drives, whose first sector is itself a FAT32 boot sector
                (#184: the app mounted it as plain FAT32 and never asked for the password)
+  - BitLocker as Windows 10 and 11 write it on FAT32, FAT32 only: --fat32-bpb, a
+               "-FVE-FS-" header that keeps the FAT32 BPB (the same #184 symptom)
 
-    python3 scripts/make_e2e_matrix.py            # all 22
+    python3 scripts/make_e2e_matrix.py            # all 23
     python3 scripts/make_e2e_matrix.py luks2 ext4 # one container x fs
 """
 import os
@@ -49,17 +51,18 @@ FS_BYTES = 40 << 20           # FAT32 needs >= 65525 clusters; 40 MiB at 512 B g
 READ_ONLY_FS = ("ext2", "ext3")
 BITLOCKER_CIPHER = {"fat32": "cbc128", "exfat": "xts256", "ntfs": "xts128"}
 TAG = {"vc": "VERACRYPT", "luks1": "LUKS1", "luks2": "LUKS2", "luks2_4k": "LUKS2", "bitlocker": "BITLOCKER",
-       "bitlocker_togo": "BITLOCKER"}
+       "bitlocker_togo": "BITLOCKER", "bitlocker_bpb": "BITLOCKER"}
 NAMES = {"vc": "VeraCrypt AES/SHA-512", "luks1": "LUKS1 aes-xts-plain64 (PBKDF2)",
          "luks2": "LUKS2 aes-xts-plain64 (Argon2id, 512-byte sectors)",
          "luks2_4k": "LUKS2 aes-xts-plain64 (Argon2id, 4096-byte sectors)", "bitlocker_togo": "BitLocker To Go",
+         "bitlocker_bpb": "BitLocker as Windows 11 writes it",
          "ext2": "ext2", "ext3": "ext3",
          "ext4": "ext4", "exfat": "exFAT", "fat32": "FAT32", "ntfs": "NTFS"}
 
 MATRIX = ([(c, fs) for fs in ("ext2", "ext3", "ext4") for c in ("luks1", "luks2", "luks2_4k", "vc")] +
           [(c, fs) for fs in ("exfat", "fat32", "ntfs")
            for c in ("luks1", "luks2", "luks2_4k", "vc", "bitlocker")] +
-          [("bitlocker_togo", "fat32")])
+          [("bitlocker_togo", "fat32"), ("bitlocker_bpb", "fat32")])
 
 
 def sh(*cmd, input=None):
@@ -165,11 +168,12 @@ def build(container, fs, work):
         offset = int(re.search(r"Payload offset:\s+(\d+)", dump).group(1)) * 512
         make_fs(fs, plain, os.path.getsize(img) - offset, work)
         sh(sys.executable, os.path.join(ROOT, "scripts/luks_payload.py"), "encrypt", img, PASSWORD, plain)
-    elif container in ("bitlocker", "bitlocker_togo"):
+    elif container in ("bitlocker", "bitlocker_togo", "bitlocker_bpb"):
         make_fs(fs, plain, FS_BYTES, work)
         sh(sys.executable, os.path.join(ROOT, "scripts/make_bitlocker_image.py"), plain, img,
            "--password", PASSWORD, "--recovery", RECOVERY, "--cipher", BITLOCKER_CIPHER[fs], "--verify",
-           *(["--togo"] if container == "bitlocker_togo" else []))
+           *(["--togo"] if container == "bitlocker_togo" else []),
+           *(["--fat32-bpb"] if container == "bitlocker_bpb" else []))
     else:
         raise SystemExit(f"unknown container {container}")
     os.chmod(img, 0o644)
@@ -182,7 +186,7 @@ def build(container, fs, work):
     put("password.txt", PASSWORD)
     if container == "vc":
         put("pim.txt", str(PIM))
-    if container in ("bitlocker", "bitlocker_togo"):
+    if container in ("bitlocker", "bitlocker_togo", "bitlocker_bpb"):
         put("recovery.txt", RECOVERY)
     put("container.txt", TAG[container])
     if fs in READ_ONLY_FS:
@@ -190,7 +194,7 @@ def build(container, fs, work):
     else:
         put("write_test.txt", "true")
         put("verify_flower.txt", "true")
-    extra = f" ({BITLOCKER_CIPHER[fs]})" if container in ("bitlocker", "bitlocker_togo") else ""
+    extra = f" ({BITLOCKER_CIPHER[fs]})" if container in ("bitlocker", "bitlocker_togo", "bitlocker_bpb") else ""
     if fs in READ_ONLY_FS:
         put("description.txt",
             f"Support matrix: {NAMES[fs]} inside {NAMES.get(container, 'BitLocker')}. Unlock, read "
@@ -200,9 +204,12 @@ def build(container, fs, work):
         put("description.txt",
             f"Support matrix: {NAMES[fs]} inside {NAMES.get(container, 'BitLocker')}{extra}. Unlock, "
             f"flower.jpg byte for byte, create/write/mkdir, remount, delete, remount"
-            + (" (second mount with the recovery key)" if container in ("bitlocker", "bitlocker_togo") else "") + "."
+            + (" (second mount with the recovery key)" if container in ("bitlocker", "bitlocker_togo", "bitlocker_bpb") else "") + "."
             + (" Its first sector is a FAT32 boot sector, so it must be offered for unlocking with the"
-               " BITLOCKER tag, not mounted as plain FAT32 (#184)." if container == "bitlocker_togo" else ""))
+               " BITLOCKER tag, not mounted as plain FAT32 (#184)." if container == "bitlocker_togo" else "")
+            + (" Its header keeps the FAT32 BPB, as Windows 10 and 11 write it, so it must be offered"
+               " for unlocking with the BITLOCKER tag, not mounted as plain FAT32 (#184)."
+               if container == "bitlocker_bpb" else ""))
     print(f"{d}: {os.path.getsize(img) >> 20} MiB")
 
 

@@ -1,0 +1,1 @@
+Support matrix: FAT32 inside BitLocker as Windows 11 writes it (cbc128). Unlock, flower.jpg byte for byte, create/write/mkdir, remount, delete, remount (second mount with the recovery key). Its header keeps the FAT32 BPB, as Windows 10 and 11 write it, so it must be offered for unlocking with the BITLOCKER tag, not mounted as plain FAT32 (#184).
