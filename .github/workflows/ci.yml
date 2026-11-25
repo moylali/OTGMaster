@@ -36,10 +36,15 @@ jobs:
       - name: Run JVM unit tests
         # Scoped to this project's modules — :libaums's own pre-existing unit tests have a
         # broken Mockito dependency unrelated to this project's code (see UsbFileInputStreamTest).
-        run: ./gradlew :mount-core:test :disk-engine:testDebugUnitTest :saf-provider:testDebugUnitTest :app:testDebugUnitTest
+        run: ./gradlew :mount-core:test :file-formats:test :disk-engine:testDebugUnitTest :saf-provider:testDebugUnitTest :app-common:testDebugUnitTest :app:testDebugUnitTest
 
       - name: Build debug APK
         run: ./gradlew :app:assembleDebug
+
+      - name: Build Container Master debug APK
+        # The second app (architecture proposal, Milestone 3), on the same modules. Built here so
+        # a change to a shared module that breaks it is caught; it has no release workflow yet.
+        run: ./gradlew :container-app:assembleDebug
 
       - name: Build benchmark APK
         # Release code plus the harness (see "Which APK to measure" in

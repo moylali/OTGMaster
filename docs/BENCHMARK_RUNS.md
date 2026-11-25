@@ -304,6 +304,27 @@ Host check after the run (`matrix/d1-after-op7-blfmt.md`):
 
 Restore: `write_matrix_drive.sh --only D1BLEXFAT` from the build image, then a full read-back (`matrix/d1-after-blfmt-restore.md`): D1BLEXFAT CLEAN with 20,898 of 20,898 fixtures, 9 of 10 CLEAN, D1FAT32 the dirty flag only.
 
+## Commit hashes after the merges of #196 and #198
+
+Both were rebase-merged, so `main` has new hashes. The sections above name the PR's commits.
+Look the PR hash up here to find it on `main`.
+
+### #196: Gradle tasks qualified, tag lookups scoped (engine split, Milestone 2)
+
+| At the PR head | On `main` | Commit |
+|---|---|---|
+| `66a64e8` | `8b717b6` | build: qualify Gradle tasks to :app and scope tag lookups to OTG's tags |
+| `d1bc47d` | `9ce796e` | docs: hash tables for the rebase-merges of #188, #189, #190 and #193 |
+
+### #198: BitLocker drives from Windows offered for unlocking (#184)
+
+| At the PR head | On `main` | Commit |
+|---|---|---|
+| `b17a8ea` | `6427b41` | test: a BitLocker To Go fixture, m_bitlocker_togo_fat32 |
+| `64aa1e1` | `8f77119` | fix: BitLocker To Go drives are offered for unlocking, not mounted as FAT32 |
+| `c64bbc5` | `0296307` | test: a FAT32 USB stick encrypted by Windows 11 is offered for unlocking |
+| `021d688` | `06fcb18` | test: the E2E matrix gains BitLocker as Windows 11 writes it on FAT32 |
+
 ## Commit hashes after the merges of #186 and #177
 
 Both were rebase-merged, so `main` has new hashes. The 0.5.4 sections below name the PR's commits. Look the PR hash up here to find it on `main`.
