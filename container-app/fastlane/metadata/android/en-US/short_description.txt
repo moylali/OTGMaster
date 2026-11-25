@@ -1,1 +1,1 @@
-Open VeraCrypt and LUKS containers and ZIP files from your phone, read-only
+Open VeraCrypt and LUKS containers, ZIP and ISO files on your phone, read-only

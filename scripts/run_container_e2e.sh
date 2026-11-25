@@ -35,6 +35,24 @@ if [ ! -f testdata/cm_zip/test.zip ]; then
   (cd "$t" && zip -q -r -6 "$OLDPWD/testdata/cm_zip/test.zip" .) || { echo "ZIP fixture failed"; exit 1; }
   rm -rf "$t"
 fi
+# An ISO 9660 image with Joliet names: xorriso if installed, else pycdlib through uv.
+if [ ! -f testdata/cm_iso/test.iso ]; then
+  t=$(mktemp -d); mkdir -p "$t/nested/very/deep/folder" testdata/cm_iso
+  cp testdata/flower.jpg "$t/"; printf 'Hello World\n' > "$t/file with spaces.txt"; : > "$t/nested/very/deep/folder/empty_file.txt"
+  if command -v xorriso >/dev/null; then xorriso -as mkisofs -quiet -J -o testdata/cm_iso/test.iso "$t" || exit 1
+  else uv run --quiet --with pycdlib python - "$t" testdata/cm_iso/test.iso <<'PY' || { echo "ISO fixture failed"; exit 1; }
+import pycdlib, sys, os
+src, out = sys.argv[1], sys.argv[2]
+iso = pycdlib.PyCdlib(); iso.new(interchange_level=3, joliet=3)
+for d in ['nested', 'nested/very', 'nested/very/deep', 'nested/very/deep/folder']:
+    iso.add_directory('/' + d.upper(), joliet_path='/' + d)
+for rel, short in [('flower.jpg', 'FLOWER.JPG'), ('file with spaces.txt', 'SPACES.TXT'), ('nested/very/deep/folder/empty_file.txt', 'NESTED/VERY/DEEP/FOLDER/EMPTY.TXT')]:
+    iso.add_file(os.path.join(src, rel), '/' + short + ';1', joliet_path='/' + rel)
+iso.write(out); iso.close()
+PY
+  fi
+  rm -rf "$t"
+fi
 BIG=$(python3 -c 'import hashlib; print(hashlib.sha256(bytes((i // 7) % 251 for i in range(20 << 20))).hexdigest())')
 # The public ID Container Master must give each container: SHA-256 of "veracrypt-salt:" and the
 # header's first 64 bytes, first 10 hex (ContainerSessions.idForSalt).
@@ -52,8 +70,8 @@ echo "Building Container Master and saf-probe..."
 APK_COMMIT=$(grep -oE 'GIT_COMMIT = "[^"]*"' container-app/build/generated/source/buildConfig/debug/app/fayaz/containermaster/BuildConfig.java | cut -d'"' -f2)
 adb -s "$S" install -r container-app/build/outputs/apk/debug/container-app-debug.apk >/dev/null || exit 1
 adb -s "$S" install -r tools/saf-probe/build/outputs/apk/debug/saf-probe-debug.apk >/dev/null || exit 1
-for t in ext4 ntfs luks2 luks1 zip; do
-  case $t in luks2) src=testdata/m_luks2_ext4/test.img ;; luks1) src=testdata/m_luks1_ext4/test.img ;; zip) src=testdata/cm_zip/test.zip ;; *) src=testdata/$t/test.img ;; esac
+for t in ext4 ntfs luks2 luks1 zip iso; do
+  case $t in luks2) src=testdata/m_luks2_ext4/test.img ;; luks1) src=testdata/m_luks1_ext4/test.img ;; zip) src=testdata/cm_zip/test.zip ;; iso) src=testdata/cm_iso/test.iso ;; *) src=testdata/$t/test.img ;; esac
   want=$(sha256sum $src | cut -d' ' -f1)
   have=$(adb -s "$S" shell sha256sum /sdcard/Download/cm-$t.hc 2>/dev/null | cut -d' ' -f1)
   [ "$want" = "$have" ] || adb -s "$S" push $src /sdcard/Download/cm-$t.hc >/dev/null
@@ -214,6 +232,20 @@ case_zip_read() {
   r=$(read_sha "$TREE" big.bin); [ "$r" = "\"sha256\": \"$BIG\"" ] || { fail "big.bin (streamed): $r"; return 1; }
 }
 
+case_iso_read() {
+  cm_front; pick cm-iso.hc || { fail "could not pick the ISO"; return 1; }
+  dump | grep -q 'ISO 9660' || { fail "the ISO was not recognised"; return 1; }
+  tap 'content-desc="open_zip"' || { fail "no Open for the ISO"; return 1; }
+  local i; for i in $(seq 1 60); do sleep 1; on_screen 'content-desc="chosen_file"' || break; on_screen 'content-desc="message"' && break; done
+  on_screen 'content-desc="message"' && { fail "the ISO did not open"; return 1; }
+  local id; id=$(open_ids | tail -1); [ -n "$id" ] || { fail "the ISO is not listed as open"; return 1; }
+  TREE=$(grant "$id"); [ -n "$TREE" ] || { fail "no grant on the ISO"; return 1; }
+  local r
+  r=$(read_sha "$TREE" flower.jpg); [ "$r" = "\"sha256\": \"$FLOWER\"" ] || { fail "flower.jpg: $r"; return 1; }
+  r=$(read_sha "$TREE" "file with spaces.txt"); [ "$r" = "\"sha256\": \"$SPACES\"" ] || { fail "file with spaces.txt: $r"; return 1; }
+  r=$(read_sha "$TREE" nested/very/deep/folder/empty_file.txt); [ "$r" = "\"sha256\": \"$EMPTY\"" ] || { fail "empty_file.txt: $r"; return 1; }
+}
+
 case_zip_and_veracrypt() {
   open_and_grant cm-ext4.hc password123 1 "$ID_EXT4" || return 1
   local vtree=$TREE
@@ -240,6 +272,7 @@ run_case logs_report "The log shows the detected format and the unlock; Report i
 run_case idle_lock "Lock after 1 minute without use: a read works, then after 75 s with no I/O the held grant's read fails, nothing is open, and the log says it locked for idleness." case_idle_lock
 run_case held_fd_lock "A client holds a descriptor across Lock and a fresh unlock of the same container: its late read fails rather than reaching the new session, it still closes, and a fresh open reads the file." case_held_fd_lock
 run_case zip_read "A ZIP made by Info-ZIP opens with no password; flower.jpg, a name with spaces, an empty file six folders down and a 20 MiB streamed entry read by SHA-256 through saf-probe's grant." case_zip_read
+run_case iso_read "An ISO 9660 image with Joliet names opens with no password; flower.jpg, a name with spaces and an empty file six folders down read by SHA-256 through saf-probe's grant." case_iso_read
 run_case zip_and_veracrypt "A ZIP and a VeraCrypt container open together; the same flower.jpg reads from both through the same provider code, while a descriptor held on the ZIP's streamed entry seeks to 1 MiB." case_zip_and_veracrypt
 run_case lock_all_service "The foreground service runs while a container is open; Lock all closes it and the service stops; the container file is unchanged." case_lock_all_service
 

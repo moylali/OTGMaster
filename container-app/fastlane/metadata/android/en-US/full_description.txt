@@ -4,6 +4,7 @@ Container Master opens container files that are stored on your phone, so you can
 • VeraCrypt volumes made with VeraCrypt's defaults, AES and SHA-512, with or without a PIM
 • LUKS1 and LUKS2 volumes with AES-XTS, including LUKS2 with Argon2id
 • ZIP archives, stored or compressed, with no password
+• ISO 9660 disc images, with Joliet names, with no password
 • Inside an encrypted volume: exFAT, NTFS and ext4
 
 <b>How it works</b>

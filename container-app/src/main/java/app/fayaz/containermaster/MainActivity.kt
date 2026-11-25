@@ -192,6 +192,7 @@ private fun Screen(theme: String, onTheme: (String) -> Unit) {
                                 ContainerFormat.VERACRYPT -> R.string.format_veracrypt
                                 ContainerFormat.LUKS -> R.string.format_luks_later
                                 ContainerFormat.ZIP -> R.string.format_zip_later
+                                ContainerFormat.ISO -> R.string.format_iso
                             }), style = MaterialTheme.typography.bodySmall, modifier = Modifier.desc("format"))
                         }
                     }
@@ -258,7 +259,7 @@ private fun Screen(theme: String, onTheme: (String) -> Unit) {
                         },
                     ) { Text(stringResource(if (busy) R.string.unlocking else R.string.unlock)) }
                 }
-                if (picked?.format == ContainerFormat.ZIP) {
+                if (picked?.format == ContainerFormat.ZIP || picked?.format == ContainerFormat.ISO) {
                     val already = stringResource(R.string.already_open)
                     val failed = stringResource(R.string.open_failed, "%s")
                     Button(enabled = !busy, modifier = Modifier.desc("open_zip"), onClick = {
@@ -268,7 +269,11 @@ private fun Screen(theme: String, onTheme: (String) -> Unit) {
                         SessionService.start(context)
                         scope.launch {
                             message = withContext(Dispatchers.IO) {
-                                try { ContainerSessions.openZip(context.applicationContext, p.uri, p.name); null }
+                                try {
+                                    if (p.format == ContainerFormat.ISO) ContainerSessions.openIso(context.applicationContext, p.uri, p.name)
+                                    else ContainerSessions.openZip(context.applicationContext, p.uri, p.name)
+                                    null
+                                }
                                 catch (e: ContainerSessions.AlreadyOpenException) { already }
                                 catch (e: Exception) { failed.replace("%s", e.message ?: e.javaClass.simpleName) }
                             }
@@ -291,7 +296,7 @@ private fun Screen(theme: String, onTheme: (String) -> Unit) {
                 Card(Modifier.fillMaxWidth().padding(vertical = 4.dp)) {
                     Column(Modifier.padding(12.dp)) {
                         Text(s.name, style = MaterialTheme.typography.titleSmall, modifier = Modifier.desc("open_${s.id}"))
-                        Text(stringResource(R.string.open_details, if (s.format == "ZIP") "ZIP" else "${s.format}, ${s.fileSystemName}"),
+                        Text(stringResource(R.string.open_details, if (s.format == "ZIP" || s.format == "ISO") s.fileSystemName else "${s.format}, ${s.fileSystemName}"),
                             style = MaterialTheme.typography.bodySmall)
                         Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.End) {
                             OutlinedButton(onClick = {
