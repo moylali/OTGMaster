@@ -49,6 +49,25 @@ All four were rebase-merged, so `main` has new hashes. The sections below name t
 | #193 | `a6a5286` | `bed05fa` | refactor(provider): look up and list through a DocumentSource tree contract |
 | #193 | `2d4bba3` | `c681622` | docs: the held grant still reads the same file on a6a5286 |
 
+## 2026-11-25: mounting through DiskMounter, OnePlus 7, Drive 1
+
+F3 step 1 (`5104669`): the drivers are registered by `DiskMounter`, once per process, and every
+mount that went through `FileSystemFactory.createFileSystem` in MainActivity goes through
+`DiskMounter.mount`. **Minified** `5104669`; `tools/saf-probe` from `550abaf`. OnePlus 7 (GM1901,
+LineageOS 23.2, Android 16, SDK 36), Drive 1 (`…6B31`).
+
+| Step | Result |
+|---|---|
+| Launch: auto mount | the 7 plain partitions mounted (FAT32, the four APFS read-only, NTFS, ext4) |
+| The read grant on `884fb1f107:/BENCH/edge` reads `size_1048577.bin` | 1,048,577 B, SHA-256 `31eb9165…063ff4` |
+| The write check (create, 3,149,825 B, read back, "wt" 1,049,941 B, read back, delete) on D1EXFAT and D1FAT32 | both match at both steps, deleted |
+| Eject in the app, `sm unmount` of Android's mounts | done |
+
+Not checked on the phone: the duplicate registrations themselves (a recreated activity, then a
+volume no driver accepts), since every partition on D1 is one a driver accepts;
+`DiskMounterTest` covers the count. **Written to the drive:** one more file created and deleted
+at the roots of D1EXFAT and D1FAT32; their host check is owed with the laptop check of D1.
+
 ## 2026-11-25: the provider as a :saf-provider subclass, OnePlus 7, Drive 1
 
 Provider split steps 2 and 3: the provider asks a `MountRegistry` (`443bd5b`), and its serving
