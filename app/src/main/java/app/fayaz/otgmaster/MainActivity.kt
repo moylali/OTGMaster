@@ -95,9 +95,6 @@ import kotlinx.coroutines.sync.withLock
 import kotlinx.coroutines.withContext
 import kotlinx.coroutines.withTimeoutOrNull
 import me.jahnen.libaums.core.fs.fat32.Fat32FileSystemCreator
-import me.jahnen.libaums.core.fs.FileSystemFactory
-import me.jahnen.libaums.core.partition.PartitionTableEntry
-import app.fayaz.otgmaster.exfat.ExFatFileSystemCreator
 
 /**
  * One attached, not-yet-mounted USB mass-storage device that's been opened and probed for
@@ -539,10 +536,8 @@ class MainActivity : AppCompatActivity() {
         // Hourly: start due backups whose drives are mounted, remind about overdue ones.
         runCatching { app.fayaz.otgmaster.backup.BackupScheduler.ensurePeriodic(this) }
             .onFailure { OtgMasterState.logFailure("backup-scheduler", "Could not schedule the hourly backup check", it) }
-        FileSystemFactory.registerFileSystem(ExFatFileSystemCreator(), 1)
-        FileSystemFactory.registerFileSystem(app.fayaz.otgmaster.ext4.Ext4FileSystemCreator(), 2)
-        FileSystemFactory.registerFileSystem(app.fayaz.otgmaster.ntfs.NtfsFileSystemCreator(), 2)
-        FileSystemFactory.registerFileSystem(app.fayaz.otgmaster.apfs.ApfsFileSystemCreator(), 2)
+        // Once per process, not per onCreate: libaums keeps every registration (see DiskMounter).
+        app.fayaz.otgmaster.disk.DiskMounter.ensureRegistered()
 
         // Read grants a previous process extended and could not revoke (it crashed or was killed).
         if (OtgMasterState.mountedDrives.isEmpty()) {
@@ -1689,7 +1684,6 @@ class MainActivity : AppCompatActivity() {
                     withContext(Dispatchers.Main) { appendLog(getString(R.string.log_filesystem_unrecognized)) }
                 }
 
-                val dummyEntry = PartitionTableEntry(0, 0, 0)
                 // Read cache with readahead between the filesystem driver and the
                 // decrypted device. libexfat reads directory and FAT entries
                 // unbuffered — measured at 100,844 preads averaging 24 bytes to list
@@ -1710,7 +1704,7 @@ class MainActivity : AppCompatActivity() {
                             withContext(Dispatchers.Main) { appendLog(getString(R.string.log_unlock_successful)) }
                         }
                     } else {
-                        FileSystemFactory.createFileSystem(dummyEntry, fsDevice)
+                        app.fayaz.otgmaster.disk.DiskMounter.mount(fsDevice)
                     }
                 } catch (e: app.fayaz.otgmaster.apfs.ApfsFileSystem.WrongPasswordException) {
                     throw e   // an unlock failure, reported (and cached credentials dropped) below
@@ -2530,7 +2524,7 @@ class MainActivity : AppCompatActivity() {
     ): MountedDrive {
         val byteDevice = me.jahnen.libaums.core.driver.ByteBlockDevice(
             device as me.jahnen.libaums.core.driver.BlockDeviceDriver)
-        val fileSystem = FileSystemFactory.createFileSystem(PartitionTableEntry(0, 0, 0), byteDevice)
+        val fileSystem = app.fayaz.otgmaster.disk.DiskMounter.mount(byteDevice)
         val displayName = old.sourceDeviceDisplayName ?: old.name
         val drive = old.copy(
             name = if (plain) getString(R.string.mounted_drive_name_plain, displayName, filesystemName, old.id)
@@ -2737,7 +2731,6 @@ class MainActivity : AppCompatActivity() {
         appendLog("Mounting ${plain.filesystemName} on $deviceDisplayName…")
         lifecycleScope.launch(Dispatchers.IO) {
             try {
-                val dummyEntry = PartitionTableEntry(0, 0, 0)
                 // Same cache for plain volumes: libaums rebuilds directory state that
                 // libexfat keeps parsed, so FAT32 re-reads blocks instead (its warm
                 // listing is 556 ms against exFAT's 30 ms).
@@ -2750,7 +2743,7 @@ class MainActivity : AppCompatActivity() {
                 val readOnly = isPartitionReadOnly(candidate.deviceName, plain.startBlock)
                 val fsDevice: me.jahnen.libaums.core.driver.BlockDeviceDriver =
                     if (readOnly) app.fayaz.otgmaster.block.ReadOnlyBlockDeviceDriver(byteDevice) else byteDevice
-                val fileSystem = FileSystemFactory.createFileSystem(dummyEntry, fsDevice)
+                val fileSystem = app.fayaz.otgmaster.disk.DiskMounter.mount(fsDevice)
                 val driveId = app.fayaz.otgmaster.extension.ExtensionContract.stableDriveId(
                     candidate.deviceName, plain.startBlock, OtgMasterState.mountedDrives.map { it.id })
                 val mountedDrive = MountedDrive(
