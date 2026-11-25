@@ -265,6 +265,23 @@ case_aescrypt() {
   local r; r=$(read_sha "$TREE" flower.jpg); [ "$r" = "\"sha256\": \"$FLOWER\"" ] || { fail "flower.jpg: $r"; return 1; }
 }
 
+case_ui_killed() {
+  open_zip_and_grant || return 1
+  local engine; engine=$(adb -s "$S" shell pidof $CM | tr -d '\r')
+  local ui; ui=$(adb -s "$S" shell pidof $CM:ui | tr -d '\r')
+  [ -n "$engine" ] && [ -n "$ui" ] && [ "$engine" != "$ui" ] || { fail "expected an engine and a :ui process, got engine '$engine' ui '$ui'"; return 1; }
+  adb -s "$S" shell "rm -f $F/result-hold.json $F/result-hold-open.json; am start -f 0x18080000 -n app.fayaz.safprobe/.ProbeActivity --es cmd hold --es tree '$TREE' --es path big.bin --ei wait 15" >/dev/null
+  local i; for i in $(seq 1 30); do adb -s "$S" shell "test -f $F/result-hold-open.json" && break; sleep 1; done
+  # The screen's process dies while another app holds a descriptor on the container.
+  adb -s "$S" shell run-as $CM kill -9 "$ui"; sleep 2
+  [ -z "$(adb -s "$S" shell pidof $CM:ui | tr -d '\r')" ] || { fail "the :ui process survived kill -9"; return 1; }
+  [ "$(adb -s "$S" shell pidof $CM | tr -d '\r')" = "$engine" ] || { fail "the engine process changed when the UI died"; return 1; }
+  for i in $(seq 1 40); do adb -s "$S" shell "test -f $F/result-hold.json" && break; sleep 1; done
+  adb -s "$S" shell cat $F/result-hold.json | tr -d '\n' | grep -q '"lateRead": "65536 bytes"' || { fail "the held read after the UI died: $(adb -s "$S" shell cat $F/result-hold.json | tr -d '\n')"; return 1; }
+  local r; r=$(read_sha "$TREE" big.bin); [ "$r" = "\"sha256\": \"$BIG\"" ] || { fail "a fresh read after the UI died: $r"; return 1; }
+  [ "$(open_ids | tail -1)" = "$ZID" ] || { fail "the relaunched screen does not list the container"; return 1; }
+}
+
 case_zip_and_veracrypt() {
   open_and_grant cm-ext4.hc password123 1 "$ID_EXT4" || return 1
   local vtree=$TREE
@@ -293,6 +310,7 @@ run_case held_fd_lock "A client holds a descriptor across Lock and a fresh unloc
 run_case zip_read "A ZIP made by Info-ZIP opens with no password; flower.jpg, a name with spaces, an empty file six folders down and a 20 MiB streamed entry read by SHA-256 through saf-probe's grant." case_zip_read
 run_case iso_read "An ISO 9660 image with Joliet names opens with no password; flower.jpg, a name with spaces and an empty file six folders down read by SHA-256 through saf-probe's grant." case_iso_read
 run_case aescrypt "An AES Crypt file made by pyAesCrypt: a wrong password refused, the right one opens it, and the one file inside, flower.jpg, reads by SHA-256 through saf-probe's grant." case_aescrypt
+run_case ui_killed "Milestone 2b: the screen's process (:ui) is killed while another app holds a descriptor on an open ZIP; the engine process lives on, the held read and a fresh read return the right bytes, and the relaunched screen lists the container." case_ui_killed
 run_case zip_and_veracrypt "A ZIP and a VeraCrypt container open together; the same flower.jpg reads from both through the same provider code, while a descriptor held on the ZIP's streamed entry seeks to 1 MiB." case_zip_and_veracrypt
 run_case lock_all_service "The foreground service runs while a container is open; Lock all closes it and the service stops; the container file is unchanged." case_lock_all_service
 

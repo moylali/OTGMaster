@@ -1,5 +1,6 @@
 <?xml version="1.0" encoding="utf-8"?>
-<manifest xmlns:android="http://schemas.android.com/apk/res/android">
+<manifest xmlns:android="http://schemas.android.com/apk/res/android"
+    xmlns:tools="http://schemas.android.com/tools">
 
     <uses-permission android:name="android.permission.FOREGROUND_SERVICE" />
     <uses-permission android:name="android.permission.FOREGROUND_SERVICE_SPECIAL_USE" />
@@ -13,8 +14,12 @@
         android:supportsRtl="true"
         android:theme="@android:style/Theme.DeviceDefault.NoActionBar">
 
+        <!-- The screens run in ":ui" (architecture proposal, Milestone 2b), so a crash or ANR in
+             them cannot end the containers other apps are reading; the engine (sessions,
+             provider, service) stays in the default process behind EngineProvider. -->
         <activity
             android:name=".MainActivity"
+            android:process=":ui"
             android:exported="true"
             android:launchMode="singleTop">
             <intent-filter>
@@ -33,6 +38,16 @@
                 android:name="android.app.PROPERTY_SPECIAL_USE_FGS_SUBTYPE"
                 android:value="Keeps a container file the user unlocked open, so its files stay readable in other apps until the user locks it." />
         </service>
+
+        <activity
+            android:name="app.fayaz.otgmaster.feedback.FeedbackActivity"
+            android:process=":ui"
+            tools:node="merge" />
+
+        <provider
+            android:name=".EngineProvider"
+            android:authorities="${applicationId}.engine"
+            android:exported="false" />
 
         <provider
             android:name=".ContainerDocumentsProvider"
