@@ -1,0 +1,144 @@
+# Engine extraction: Milestone 0 baseline
+
+The architecture proposal splits the storage engine out of OTG Master into shared
+modules (`:mount-core`, `:disk-engine`, `:saf-provider`) so a second app, Container
+Master, can open container files with the same engine. Milestone 0 records what OTG
+Master does today, so every later milestone can be checked against it. Nothing in the
+app changes in this milestone.
+
+- **Shipped reference:** v0.5.4 (versionCode 53), tag `v0.5.4` on `1e628f5`.
+- **Integration revision:** `b483c68` (main, 0.5.5 / 54 after the bump). The app code is
+  the same as `1e628f5`; only the version literals differ.
+
+## The shipped artifact
+
+From `app-release.apk` attached to the v0.5.4 GitHub release.
+
+| | Value |
+|---|---|
+| Package | `app.fayaz.otgmaster` |
+| Version | 0.5.4 (53) |
+| min / target / compile SDK | 26 / 36 / 36 |
+| Signing certificate | `CN=moylali, OU=OTGMaster, O=OTGMaster, L=Unknown, ST=Unknown, C=US` |
+| Certificate SHA-256 | `fa2a19b4549dae6c8f71362a0d74be396beda870d9c6fee327ee290976388f3a` |
+| ABIs | arm64-v8a, armeabi-v7a, x86, x86_64 |
+| Native libraries | `libveracrypt-native.so`, `libusb-lib.so`, `liberrno-lib.so` (and AndroidX's `libandroidx.graphics.path.so`) |
+| ELF LOAD alignment | `0x4000` (16 KiB) for every segment of the three app libraries, on every ABI |
+
+The benchmark build (`app.fayaz.otgmaster.bench`, authority
+`app.fayaz.otgmaster.bench.documents`) installs beside it and is evidence for its own
+build only.
+
+## The provider contract other apps rely on
+
+`provider/VeraCryptDocumentProvider.kt` and `extension/ExtensionContract.kt` at `b483c68`.
+
+| | Shipped behaviour |
+|---|---|
+| Authority | `app.fayaz.otgmaster.documents` (`BuildConfig.APPLICATION_ID + ".documents"`) |
+| Drive ID | First 10 hex digits of SHA-256 over `"<deviceKey>@<startBlock>"`; a hidden VeraCrypt volume appends `#hidden`, a later APFS volume `#apfs<n>`; a collision gets `-2`, `-3`, … |
+| Device key | `"<vendorId>:<productId>:<serial>"`, or `"<vendorId>:<productId>:<deviceName>"` when the drive reports no serial |
+| Root ID | `root_<driveId>` |
+| Document ID | `<driveId>:<path>`, the root being `<driveId>:/`, for example `<driveId>:/Photos/a.jpg` |
+| Root columns | root ID, MIME types `*/*`, flags, icon, title (the drive name), summary `Unlocked Volume`, document ID, available bytes |
+| Root flags | `FLAG_SUPPORTS_IS_CHILD`, `FLAG_LOCAL_ONLY`, plus `FLAG_SUPPORTS_CREATE` when writable |
+| Document columns | document ID, MIME type, display name, last modified, flags, size. Nothing else: v0.5.4 removed the `otgmaster_*` columns and the mount broadcasts (#165), and that removal is part of the contract |
+| Document flags | none on a read-only volume; otherwise delete and rename, plus write for files and create for folders |
+| MIME type | from the extension (`MimeTypeMap`), `application/octet-stream` when unknown |
+
+## Native inventory
+
+Exported JNI entry points in the shipped arm64-v8a libraries (the same count on every ABI):
+
+| Library | Entry points |
+|---|---|
+| `libveracrypt-native.so` | 60: `apfs.ApfsNative` 12, `backup.restic` 1, `bitlocker.BitLockerNative` 6, `exfat.ExFatNative` 16, `ntfs.NtfsNative` 21, `veracrypt.VeraCryptNative` 4 (all under `app.fayaz.otgmaster`) |
+| `libusb-lib.so` | 2: `me.jahnen.libaums.core.usb.AndroidUsbCommunication.clearHaltNative`, `resetUsbDeviceNative` |
+| `liberrno-lib.so` | 2: `com.github.mjdev.libaums.ErrNo.getErrnoNative`, `getErrstrNative` |
+
+Native code also reaches JVM code by name, so these names and signatures must survive any
+module move (F1):
+
+- `FindClass` on `app/fayaz/otgmaster/apfs/ApfsNode`, `exfat/ExFatNode`, `exfat/ExFatNative`,
+  `ntfs/NtfsNode`, `ntfs/NtfsNative` and their `<init>(J Ljava/lang/String; …)` constructors.
+- `GetStaticMethodID` for `pread`, `pwrite` and `getDeviceSize` taking
+  `app/fayaz/otgmaster/block/RawBlockDevice`.
+- libexfat still carries the older `com/otgmaster/...` names as a fallback lookup.
+
+`app/proguard-rules.pro` keeps native methods, the static callbacks and the constructed
+classes by name.
+
+## Build baseline (F16)
+
+min SDK 26, compile and target SDK 36 for `:app`, compile SDK 34 for the vendored
+`:libaums`, NDK `26.1.10909125` for both, `dependenciesInfo` excluded from APK and
+bundle, `-ffile-prefix-map` for the source, build and NDK paths, and
+`-Wl,-z,max-page-size=16384` on `veracrypt-native`. `OTG_IO_STATS` is compiled into the
+debug and benchmark builds only.
+
+## Findings F1 to F21 at the integration revision
+
+**Implemented** means the shipped code already does what the finding asks. **Partly**
+means some of it, as described. **Planned** means nothing yet. **Second app** means it
+only matters once Container Master exists.
+
+| | Finding | State at `b483c68` | Evidence |
+|---|---|---|---|
+| F1 | JNI-visible names | Implemented, recorded above | Native inventory above; `proguard-rules.pro` |
+| F2 | Native instrumentation per variant | Implemented in `:app` | `OTG_IO_STATS` in `CMakeLists.txt` and the debug and benchmark `externalNativeBuild` arguments; `ExFatIoStats` in `src/debug` |
+| F3 | Explicit disk mounter instead of factory registration | Planned | `MainActivity` registers the exFAT, ext4, NTFS and APFS creators with libaums' `FileSystemFactory` and mounts through `createFileSystem` |
+| N1 | Read-only guard on raw drivers | Partly | `ReadOnlyBlockDeviceDriver` guards the byte driver; there is no raw-block guard above the cache yet |
+| F4 | Visible lifetime for a background mount | Partly, for OTG | `MountedDriveService` is a `connectedDevice` foreground service; idle relock and Lock all are second-app work |
+| F5 | Session generations and held descriptors | Partly | Per-drive proxy threads (`4307067`), handles bound to their filesystem (`ProviderOpenLockTest`: "a handle from before Format can neither write nor close onto the new filesystem"); no explicit generation or admission count |
+| F6 | Provider behaviour | Partly | Resolve and truncate under the drive lock (`ProviderOpenLockTest`). Gaps confirmed in code: create and rename pass the display name through unchecked; path lookup lists every directory along the path (`getFileForDocId`); `queryRoots` computes free space whatever the projection; proxy callbacks do not translate failures to errno values |
+| F7 | Picker and Open with | Second app | |
+| F8 | VeraCrypt header, extent, keyfiles | Partly | `VeraCryptHeader.unusableReason` refuses newer formats, system encryption, unfinished in-place encryption and a sector-size mismatch (`7ba1d7c`); `dataArea` bounds the device to the header's volume size, which leaves out the backup-header area; an unreadable keyfile fails before the KDF (`VeraCryptKeyfiles`); the PIM is not logged. Still to show with desktop fixtures: last valid and first out-of-range sector, nonzero partition offset |
+| F9 | LUKS2 metadata and KDF budget | Partly | `Luks2ValidationTest` (both metadata copies, digests, segments, keyslot areas); Argon2i and Argon2id dispatch (`LuksArgon2iTest`); a slot whose Argon2 memory exceeds free memory is unsupported, not a wrong password (L08). The modelled 1 GiB request with zero native calls is not tested yet |
+| F10 | AES Crypt | Second app | |
+| F11 | ISO and UDF | Second app | |
+| F12 | ZIP | Second app | |
+| F13 | Release metadata per app | Second app | OTG's paths are the table's left column today |
+| F14 | Tag lookups per product | Planned | The E2E reporters label builds with `git describe --always --dirty --abbrev=7` and `AGENTS.md`'s changelog check uses `git describe --tags --abbrev=0`, both without a tag pattern |
+| F15 | Qualified build tasks | Planned | CI runs `:app:testDebugUnitTest` but unqualified `assembleDebug` and `assembleBenchmark`; the release workflow runs unqualified `assembleRelease bundleRelease`. Safe only while there is one app |
+| F16 | Reproducibility, alignment, licensing | Implemented for OTG | Build baseline above; 16 KiB alignment measured on the shipped APK |
+| F17 | Ancestry from the mounted tree | Planned | `isChildDocument` and `findDocumentPath` compare path strings |
+| F18 | Cooperative KDF cancellation | Planned | No cancellation in `VeraCryptUnlocker` or `LuksUnlocker` |
+| F19 | Generalised mount input | Planned | Input is a `RawBlockDevice` only |
+| F20 | Image scope | Second app | |
+| F21 | Shared algorithm capabilities | Planned | Cipher and hash lists live in the app (`VeraCryptCipher`) |
+
+## The independent client
+
+`tools/saf-probe` is a separate app (`app.fayaz.safprobe`, its own UID) that reaches OTG
+Master only the way any app can: a folder grant from the picker. It is a standalone
+Gradle build, so the root build's tasks do not include it:
+
+    ./gradlew -p tools/saf-probe assembleDebug
+
+Each command is one launch and leaves `result-<cmd>.json` in the app's external files
+directory, logged under the tag `SAFPROBE`:
+
+- `--es cmd grant`: pick a folder; its read grant is persisted.
+- `--es cmd read --es path <a/b/c>`: walk the granted tree by display name, read the file,
+  record its document ID, size, SHA-256 and every column the provider returned.
+- `--es cmd outside --es docid <id>`: try to open an ID through the grant, to show the
+  grant stops at its tree.
+- `--es cmd grants`: list persisted grants.
+
+## Still to record on hardware
+
+Each needs a phone and a matrix drive, and goes in `BENCHMARK_RUNS.md` with the build it
+ran on.
+
+1. **The held grant.** With the v0.5.4 release build installed, `saf-probe` takes a grant on
+   a fixture folder of a mounted partition and reads a known file. Record device, Android
+   version, drive and partition, filesystem, tree URI, document ID, columns, size and
+   SHA-256. This grant is the gate for the upgrade test in Milestone 1.
+2. **Confinement.** The same grant cannot open a document of another partition, and on a
+   VeraCrypt partition with a hidden volume, a grant on the outer volume cannot reach the
+   hidden one.
+3. **Representative USB timings.** The v0.5.4 matrix runs in `BENCHMARK_RUNS.md`
+   (2026-11-21 to 11-24) are the reference; Milestone 2 compares against the same
+   partitions on the same phones.
+
+Not covered by this baseline: Android 10, since no device here runs it.
