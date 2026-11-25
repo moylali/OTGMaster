@@ -191,7 +191,8 @@ class ExFatDeleteTreeTest {
     @Test
     fun aReadOnlyVolumeRefusesAndKeepsEverything() {
         withFs { fs -> tree(fs.rootDirectory) }
-        val before = img.readBytes()
+        // Digests, not two 128 MiB copies: the suite shares one test JVM's heap.
+        val before = sha256(img)
         val dev = Device(img)
         val ptr = ExFatNative.mount(dev, true)
         assertNotEquals(0L, ptr)
@@ -202,7 +203,16 @@ class ExFatDeleteTreeTest {
         } finally {
             fs.unmount(); dev.close()
         }
-        assertArrayEquals("a refused delete wrote to the volume", before, img.readBytes())
+        assertEquals("a refused delete wrote to the volume", before, sha256(img))
+    }
+
+    private fun sha256(f: File): String {
+        val md = java.security.MessageDigest.getInstance("SHA-256")
+        f.inputStream().use { input ->
+            val buf = ByteArray(1 shl 20)
+            while (true) { val n = input.read(buf); if (n < 0) break; md.update(buf, 0, n) }
+        }
+        return md.digest().joinToString("") { "%02x".format(it) }
     }
 
     /**
