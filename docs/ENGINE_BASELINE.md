@@ -65,10 +65,12 @@ module move (F1):
   `app/fayaz/otgmaster/block/RawBlockDevice`.
 - libexfat still carries the older `com/otgmaster/...` names as a fallback lookup.
 
-`app/proguard-rules.pro` keeps native methods, the static callbacks and the constructed
-classes by name. Since `RawBlockDevice` moved to `:mount-core` (Milestone 2), its rule
-travels with it in `mount-core/src/main/resources/META-INF/proguard/mount-core.pro`,
-which R8 reads from the jar.
+Keep rules hold native methods, the static callbacks and the constructed classes by
+name. Since Milestone 2 they travel with the code they protect: `RawBlockDevice`'s in
+`:mount-core` (`mount-core/src/main/resources/META-INF/proguard/mount-core.pro`, which
+R8 reads from the jar), the drivers' in `:disk-engine` (`disk-engine/consumer-rules.pro`).
+`app/proguard-rules.pro` keeps the native-method rule for the app's own `ZstdNative`
+and libaums.
 
 ## Build baseline (F16)
 
@@ -86,8 +88,8 @@ only matters once Container Master exists.
 
 | | Finding | State at `b483c68` | Evidence |
 |---|---|---|---|
-| F1 | JNI-visible names | Implemented, recorded above. `RawBlockDevice` moved to `:mount-core` in Milestone 2 under the same binary name | Native inventory above; `proguard-rules.pro`, `mount-core.pro` |
-| F2 | Native instrumentation per variant | Implemented in `:app` | `OTG_IO_STATS` in `CMakeLists.txt` and the debug and benchmark `externalNativeBuild` arguments; `ExFatIoStats` in `src/debug` |
+| F1 | JNI-visible names | Implemented, recorded above. Milestone 2 moved `RawBlockDevice` to `:mount-core` and the drivers, crypto layers, formatters and native code to `:disk-engine`, all under the same binary names | Native inventory above; `mount-core.pro`, `consumer-rules.pro`. Release and benchmark APKs before and after the move: the same 60 (release) and 62 (benchmark) `Java_` exports per ABI, all 16 `.so` files byte-identical, the same 18 class names left unrenamed by R8 |
+| F2 | Native instrumentation per variant | Implemented, in `:disk-engine` since Milestone 2 | The library has the app's four build types by name: debug and benchmark pass `-DOTG_IO_STATS=ON` and compile `disk-engine/src/debug` (`ExFatIoStats`); release and minified do neither. The benchmark APK still exports the 2 counter symbols and carries `ExFatIoStats`; the release APK has neither |
 | F3 | Explicit disk mounter instead of factory registration | Planned | `MainActivity` registers the exFAT, ext4, NTFS and APFS creators with libaums' `FileSystemFactory` and mounts through `createFileSystem` |
 | N1 | Read-only guard on raw drivers | Partly | `ReadOnlyBlockDeviceDriver` guards the byte driver; there is no raw-block guard above the cache yet |
 | F4 | Visible lifetime for a background mount | Partly, for OTG | `MountedDriveService` is a `connectedDevice` foreground service; idle relock and Lock all are second-app work |

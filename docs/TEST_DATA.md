@@ -27,7 +27,7 @@ what is missing, and what to do next.
 
 Adding test data for something the app cannot do is useful (that is the rejection
 case), but you need to know which side of the line you are on. The authority is
-`app/src/main/java/app/fayaz/otgmaster/veracrypt/VeraCryptCipher.kt`:
+`disk-engine/src/main/java/app/fayaz/otgmaster/veracrypt/VeraCryptCipher.kt`:
 
 **Ciphers**: every `VeraCryptCipher` entry is supported:
 
@@ -47,7 +47,7 @@ builds the name from the last cipher of its table entry back to the first. `comp
 follows the table, because that is also the order of the keys in the header (every
 cipher's 32-byte primary key, then every cipher's 32-byte tweak key), and
 `keySizeBytes` is `components.size * 64`. Native ids (`SingleCipher.nativeId`, the
-`VC_CIPHER_*` ids in `app/src/main/cpp/vc_cascade.h`): AES 0, Serpent 1, Twofish 2.
+`VC_CIPHER_*` ids in `disk-engine/src/main/cpp/vc_cascade.h`): AES 0, Serpent 1, Twofish 2.
 VeraCrypt's Camellia and Kuznyechik, and their cascades, are not offered.
 
 **Hashes**: SHA-512 (PBKDF2), and Argon2 (Argon2id, VeraCrypt 1.26.24 and later) are
@@ -79,7 +79,7 @@ by an earlier VeraCrypt that did not check.
 
 ### 1.1 Cipher and KDF fixtures for the host tests (no root)
 
-`app/src/test/resources/veracrypt/` holds one 1 KiB fixture per cipher × supported KDF
+`disk-engine/src/test/resources/veracrypt/` holds one 1 KiB fixture per cipher × supported KDF
 (16), cut from volumes VeraCrypt formatted itself: the header sector, then the first data
 sector (a FAT boot sector). `VeraCryptCascadeTest` unlocks each through
 `VeraCryptUnlocker` and expects that boot sector back. Regenerate them with:
@@ -94,7 +94,7 @@ new cipher or KDF, add it to the two lists at the top of the script.
 
 ### 1.2 Keyfile fixtures for the host tests (no root)
 
-`app/src/test/resources/veracrypt/keyfiles/` holds three volumes VeraCrypt made with
+`disk-engine/src/test/resources/veracrypt/keyfiles/` holds three volumes VeraCrypt made with
 keyfiles, cut the same way: no password with two keyfiles (one past the 1 MiB VeraCrypt
 reads), a 40-character password (the 64-byte keyfile pool) and a 70-character one (the
 128-byte pool). The keyfiles are not stored; both the script and `VeraCryptKeyfilesTest`
@@ -139,7 +139,7 @@ legibly. Add the name in both places.
 Work in this order. Steps 1–2 are app code; a fixture for an unimplemented cipher is
 only ever a rejection case.
 
-1. **Native.** Add a stage to `app/src/main/cpp/vc_cascade.cpp` and a
+1. **Native.** Add a stage to `disk-engine/src/main/cpp/vc_cascade.cpp` and a
    `VC_CIPHER_<NAME>` id to `vc_cascade.h`. Key schedules are built once per
    `cryptSectorsInPlace` run, not per sector; a new cipher gets that for free.
 2. **Kotlin.** Add it to `SingleCipher` with that id, and add `VeraCryptCipher` entries
@@ -173,7 +173,7 @@ a passing E2E case, is not the same as measured.
 
 ## 4. Adding a new hash
 
-1. Implement it natively (a `KDF_*` id in `app/src/main/cpp/VeraCryptNative.cpp`), and
+1. Implement it natively (a `KDF_*` id in `disk-engine/src/main/cpp/VeraCryptNative.cpp`), and
    set the same id as `kdfNativeId` on its `VeraCryptHash` entry.
 2. Give it VeraCrypt's PIM rule in `KdfParams.forVolume`, from
    `get_pkcs5_iteration_count` (or `get_argon2_params`) in VeraCrypt's
@@ -252,7 +252,7 @@ How each piece is made, and what vouches for it:
   XTS-encrypts the NTFS into the data area. Decrypting it back independently gives a
   clean NTFS with flower.jpg byte-identical.
 - **BitLocker**: only Windows creates BitLocker volumes, and cryptsetup's sample
-  images (vendored as test data, `app/src/test/resources/bitlk/`) have their unused
+  images (vendored as test data, `disk-engine/src/test/resources/bitlk/`) have their unused
   ciphertext zeroed, so the NTFS inside them is mostly noise. So
   `scripts/make_bitlocker_image.py` builds one around a real NTFS, and `--verify`
   makes cryptsetup the judge: it must parse the metadata, release the same volume
@@ -272,7 +272,7 @@ How each piece is made, and what vouches for it:
   the BITLOCKER tag rather than mounted as plain FAT32 (#184). `--fat32-bpb` writes
   the header Windows 10 and 11 write on FAT32 instead: `-FVE-FS-`, but keeping the
   FAT32 BPB (`FAT32   ` at byte 82) with the number of FATs set to 0, as a Windows 11
-  encryption of a USB stick showed (`app/src/test/resources/bitlk/win11-fat32-usb-head.bin`).
+  encryption of a USB stick showed (`disk-engine/src/test/resources/bitlk/win11-fat32-usb-head.bin`).
   `m_bitlocker_bpb_fat32` is that around FAT32, with the same expectation.
 
 Password `password123`; BitLocker recovery key

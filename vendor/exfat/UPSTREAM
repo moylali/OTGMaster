@@ -4,7 +4,7 @@ link:   https://github.com/relan/exfat/commit/8cffe412eadd2d9f22ed8ee114b72cc8c6
 date:   2025-06-11
 note:   "Include config.h before all other headers." (post-v1.4.0, unreleased)
 
-Vendored into: app/src/main/cpp/exfat/
+Vendored into: disk-engine/src/main/cpp/exfat/
 Upstream sources live under libexfat/ in the upstream repo.
 Our copy is flat (no libexfat/ subdirectory).
 
@@ -28,6 +28,6 @@ already removed upstream in 8cffe412 itself.
 
 To update:
   1. Clone upstream, checkout the new tag.
-  2. Copy libexfat/*.{c,h} → app/src/main/cpp/exfat/ (do NOT overwrite ExFatNative.cpp).
+  2. Copy libexfat/*.{c,h} → disk-engine/src/main/cpp/exfat/ (do NOT overwrite ExFatNative.cpp).
   3. Re-apply: patch -p1 < vendor/exfat/patches/0001-jni-android-port.patch
   4. Build and test; update this file with the new tag and commit hash.

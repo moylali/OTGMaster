@@ -2,7 +2,7 @@ source: https://github.com/torvalds/linux — crypto/serpent_generic.c
 commit: adc218676eef25575469234709c2d87185ca223a (v6.12), taken 2026-10-18
 licence: GPL-2.0-or-later (SPDX header of the file)
 
-Vendored into: app/src/main/cpp/serpent/serpent_generic.c
+Vendored into: disk-engine/src/main/cpp/serpent/serpent_generic.c
 Local patches (marked LOCAL PATCH in the file, recorded in docs/VENDOR_FIXES.md):
   S1  kernel #includes -> serpent_kernel_shim.h outside the kernel
   S2  kernel crypto-API/module glue wrapped in #ifdef __KERNEL__
@@ -10,4 +10,4 @@ Local patches (marked LOCAL PATCH in the file, recorded in docs/VENDOR_FIXES.md)
 To update: fetch crypto/serpent_generic.c at a newer commit, re-apply S1/S2, diff against
 this one, and re-run VeraCryptCascadeTest and VeraCryptVolumeCreatorTest.
 Before 2026-10-18 this directory held the 1998 NIST reference implementation (public
-domain), replaced for speed; see app/src/main/cpp/serpent/PROVENANCE.md.
+domain), replaced for speed; see disk-engine/src/main/cpp/serpent/PROVENANCE.md.

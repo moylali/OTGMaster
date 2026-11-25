@@ -34,9 +34,9 @@ jobs:
         run: sudo apt-get update && sudo apt-get install -y e2fsprogs dosfstools exfatprogs ntfs-3g cryptsetup python3-cryptography
 
       - name: Run JVM unit tests
-        # Scoped to :app and :mount-core — :libaums's own pre-existing unit tests have a
+        # Scoped to :app, :disk-engine and :mount-core — :libaums's own pre-existing unit tests have a
         # broken Mockito dependency unrelated to this project's code (see UsbFileInputStreamTest).
-        run: ./gradlew :mount-core:test :app:testDebugUnitTest
+        run: ./gradlew :mount-core:test :disk-engine:testDebugUnitTest :app:testDebugUnitTest
 
       - name: Build debug APK
         run: ./gradlew :app:assembleDebug

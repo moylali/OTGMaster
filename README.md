@@ -100,7 +100,7 @@ A signed release build also requires a `keystore.properties` file at the repo ro
 JVM unit tests (e.g. `FilesystemDetector`) run without a device:
 
 ```bash
-./gradlew :mount-core:test :app:testDebugUnitTest
+./gradlew :mount-core:test :disk-engine:testDebugUnitTest :app:testDebugUnitTest
 ```
 
 #### UI testing
@@ -144,14 +144,14 @@ Argon2 reference implementation are public domain or dual-licensed with a permis
 | Component | License | Notes |
 |---|---|---|
 | [libaums](libaums/) | Apache-2.0 | USB mass-storage + FAT32 filesystem driver |
-| [mbedTLS](app/src/main/cpp/mbedtls/) | Apache-2.0 OR GPL-2.0-or-later | AES, PBKDF2, SHA-512 primitives |
-| `libexfat` (`app/src/main/cpp/exfat/`) | GPL-2.0-or-later | exFAT filesystem driver |
-| [libntfs-3g](https://github.com/tuxera/ntfs-3g) (`app/src/main/cpp/ntfs-3g/`) | GPL-2.0-or-later | NTFS filesystem driver; pinned in [VENDOR_FIXES.md](docs/VENDOR_FIXES.md) |
-| [libfsapfs](https://github.com/libyal/libfsapfs) and 16 libyal libraries (`app/src/main/cpp/libfsapfs/`) | LGPL-3.0-or-later | APFS reader, plain and natively encrypted; pinned in [VENDOR_FIXES.md](docs/VENDOR_FIXES.md). LGPL-3.0 code cannot be combined into a GPL-2.0-only binary, which is why the project moved to GPL-3.0-or-later |
-| Serpent from the Linux kernel (`app/src/main/cpp/serpent/serpent_generic.c`) | GPL-2.0-or-later | `crypto/serpent_generic.c` at v6.12, pinned in [VENDOR_FIXES.md](docs/VENDOR_FIXES.md); see [PROVENANCE.md](app/src/main/cpp/serpent/PROVENANCE.md) |
-| [zstd](https://github.com/facebook/zstd) decoder (`app/src/main/cpp/zstd/`) | BSD-3-Clause OR GPL-2.0-only | Reads restic's compressed repositories; v1.5.7, pinned in [VENDOR_FIXES.md](docs/VENDOR_FIXES.md) |
-| [LibTomCrypt](https://github.com/libtom/libtomcrypt) Twofish (`app/src/main/cpp/libtomcrypt/`) | Public domain OR WTFPL | Twofish for VeraCrypt volumes and cascades; pinned in [VENDOR_FIXES.md](docs/VENDOR_FIXES.md) |
-| [Argon2 reference implementation](https://github.com/P-H-C/phc-winner-argon2) (`app/src/main/cpp/argon2/`) | CC0-1.0 OR Apache-2.0 | Argon2 KDF for VeraCrypt headers and LUKS2 key slots; pinned in [VENDOR_FIXES.md](docs/VENDOR_FIXES.md) |
+| [mbedTLS](disk-engine/src/main/cpp/mbedtls/) | Apache-2.0 OR GPL-2.0-or-later | AES, PBKDF2, SHA-512 primitives |
+| `libexfat` (`disk-engine/src/main/cpp/exfat/`) | GPL-2.0-or-later | exFAT filesystem driver |
+| [libntfs-3g](https://github.com/tuxera/ntfs-3g) (`disk-engine/src/main/cpp/ntfs-3g/`) | GPL-2.0-or-later | NTFS filesystem driver; pinned in [VENDOR_FIXES.md](docs/VENDOR_FIXES.md) |
+| [libfsapfs](https://github.com/libyal/libfsapfs) and 16 libyal libraries (`disk-engine/src/main/cpp/libfsapfs/`) | LGPL-3.0-or-later | APFS reader, plain and natively encrypted; pinned in [VENDOR_FIXES.md](docs/VENDOR_FIXES.md). LGPL-3.0 code cannot be combined into a GPL-2.0-only binary, which is why the project moved to GPL-3.0-or-later |
+| Serpent from the Linux kernel (`disk-engine/src/main/cpp/serpent/serpent_generic.c`) | GPL-2.0-or-later | `crypto/serpent_generic.c` at v6.12, pinned in [VENDOR_FIXES.md](docs/VENDOR_FIXES.md); see [PROVENANCE.md](disk-engine/src/main/cpp/serpent/PROVENANCE.md) |
+| [zstd](https://github.com/facebook/zstd) decoder (`disk-engine/src/main/cpp/zstd/`) | BSD-3-Clause OR GPL-2.0-only | Reads restic's compressed repositories; v1.5.7, pinned in [VENDOR_FIXES.md](docs/VENDOR_FIXES.md) |
+| [LibTomCrypt](https://github.com/libtom/libtomcrypt) Twofish (`disk-engine/src/main/cpp/libtomcrypt/`) | Public domain OR WTFPL | Twofish for VeraCrypt volumes and cascades; pinned in [VENDOR_FIXES.md](docs/VENDOR_FIXES.md) |
+| [Argon2 reference implementation](https://github.com/P-H-C/phc-winner-argon2) (`disk-engine/src/main/cpp/argon2/`) | CC0-1.0 OR Apache-2.0 | Argon2 KDF for VeraCrypt headers and LUKS2 key slots; pinned in [VENDOR_FIXES.md](docs/VENDOR_FIXES.md) |
 
 ### Support
 

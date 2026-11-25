@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# Regenerates app/src/test/resources/veracrypt/keyfiles/: VeraCrypt volumes made with
+# Regenerates disk-engine/src/test/resources/veracrypt/keyfiles/: VeraCrypt volumes made with
 # keyfiles, by VeraCrypt itself, for VeraCryptKeyfilesTest (docs/TEST_DATA.md).
 #
 #   scripts/make_veracrypt_keyfile_fixtures.sh    # needs veracrypt on PATH; no root
@@ -14,7 +14,7 @@
 # repo holds 3 KiB instead of a megabyte of noise.
 set -euo pipefail
 cd "$(dirname "$0")/.."
-out=app/src/test/resources/veracrypt/keyfiles
+out=disk-engine/src/test/resources/veracrypt/keyfiles
 command -v veracrypt >/dev/null || { echo "veracrypt not on PATH" >&2; exit 1; }
 tmp=$(mktemp -d)
 trap 'rm -rf "$tmp"' EXIT
