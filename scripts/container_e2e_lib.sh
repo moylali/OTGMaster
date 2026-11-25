@@ -22,9 +22,14 @@ pick() {
   tap "text=\"$1\"" || return 1; sleep 3
   on_screen "text=\"File: $1\""; }
 # unlock <password> [pim]: prints "opened <id>" or "message: <text>".
+# clear_field: empties the focused field (end of text, then 64 deletes); the form keeps what was
+# typed after a refused unlock, and typing after it made the next case's password wrong.
+clear_field() { adb -s "$S" shell input keyevent KEYCODE_MOVE_END; adb -s "$S" shell input keyevent $(printf '67 %.0s' $(seq 64)); }
 unlock() {
-  tap 'content-desc="password"'; sleep 1; adb -s "$S" shell input text "$1"; adb -s "$S" shell input keyevent KEYCODE_BACK; sleep 1
-  if [ -n "${2:-}" ]; then tap 'content-desc="pim"'; sleep 1; adb -s "$S" shell input text "$2"; adb -s "$S" shell input keyevent KEYCODE_BACK; sleep 1; fi
+  tap 'content-desc="password"'; sleep 1; clear_field; adb -s "$S" shell input text "$1"; adb -s "$S" shell input keyevent KEYCODE_BACK; sleep 1
+  tap 'content-desc="pim"'; sleep 1; clear_field
+  [ -n "${2:-}" ] && adb -s "$S" shell input text "$2"
+  adb -s "$S" shell input keyevent KEYCODE_BACK; sleep 1
   tap 'content-desc="unlock"' || return 1
   local X i; for i in $(seq 1 120); do X=$(dump); echo "$X" | grep -qE 'content-desc="open_|content-desc="message"' && break; sleep 1; done
   if echo "$X" | grep -q 'content-desc="message"'; then
