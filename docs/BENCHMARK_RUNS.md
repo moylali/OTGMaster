@@ -49,6 +49,26 @@ All four were rebase-merged, so `main` has new hashes. The sections below name t
 | #193 | `a6a5286` | `bed05fa` | refactor(provider): look up and list through a DocumentSource tree contract |
 | #193 | `2d4bba3` | `c681622` | docs: the held grant still reads the same file on a6a5286 |
 
+## 2026-11-25: laptop check of Drive 1 after the Milestone 2 and 3 runs
+
+The host check owed by the OnePlus 7 runs above (the probe files created and deleted through the
+provider on D1EXFAT, D1FAT32, D1NTFS and D1EXT4 on 11-25; a force-stop with D1 mounted on 11-24;
+a reinstall over a mounted D1 on 11-25). Read back with `read_matrix_drive.sh`, then
+`verify_matrix_drive.py` (each filesystem's own checker, every fixture by SHA-256, the comparison
+with the build): `matrix/d1-after-m2.md`.
+
+| Partition | Verdict | Fixtures |
+|---|---|---|
+| D1APFSCI, D1APFSCS, D1APFSECI, D1APFSECS | CLEAN | all matched |
+| D1EXFAT, D1NTFS, D1EXT4 | CLEAN, checker clean | all matched |
+| D1BLNTFS, D1BLEXFAT | CLEAN | all matched |
+| D1FAT32 | **FAILED** on the dirty bit only: `fsck.fat` reports boot sector byte 65 (0x41) set to 01, its backup 00, and nothing else | 20,995 of 20,995 matched |
+
+The dirty bit is the known effect of Android mounting the plain FAT32 partition for a few seconds
+after each Eject (`sm list-volumes` showed it `checking` and `mounted` after the Ejects in these
+runs; the same finding as earlier D1FAT32 rows). No probe file is left on any partition, and no
+checker found anything else on the four partitions the provider wrote to.
+
 ## 2026-11-25: Container Master beside OTG Master on the OnePlus 7
 
 Milestone 3's coexistence check: both apps installed, both providers serving at once, and
