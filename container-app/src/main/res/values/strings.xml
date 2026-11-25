@@ -38,4 +38,11 @@
     <string name="format_veracrypt">No known signature, so it is offered as a VeraCrypt volume. Enter its password and PIM.</string>
     <string name="format_luks_later">This is a LUKS volume. This version of Container Master opens VeraCrypt only; LUKS comes in a later version.</string>
     <string name="format_zip_later">This is a ZIP archive. This version of Container Master opens VeraCrypt only; ZIP comes in a later version.</string>
+    <string name="idle_lock">Lock after no use for</string>
+    <string name="idle_never">Never</string>
+    <plurals name="idle_minutes">
+        <item quantity="one">%d minute</item>
+        <item quantity="other">%d minutes</item>
+    </plurals>
+    <string name="lock_on_screen_off">Lock when the screen turns off</string>
 </resources>

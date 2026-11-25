@@ -58,6 +58,8 @@ import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.RadioButton
 import androidx.compose.material3.Scaffold
 import androidx.compose.material3.Surface
+import androidx.compose.material3.Switch
+import androidx.compose.ui.res.pluralStringResource
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.material3.TopAppBar
@@ -289,6 +291,28 @@ private fun Screen(theme: String, onTheme: (String) -> Unit) {
                     RadioButton(selected = theme == value, onClick = { onTheme(value) })
                     Text(stringResource(label))
                 }
+            }
+            HorizontalDivider(Modifier.padding(vertical = 8.dp))
+            val prefs = remember { ContainerMasterApp.prefs(context) }
+            var idle by remember { mutableStateOf(ContainerSessions.idleMinutes) }
+            Text(stringResource(R.string.idle_lock), style = MaterialTheme.typography.titleMedium)
+            for (m in listOf(1, 5, 15, 30, 60, 0)) {
+                val pickIdle = {
+                    idle = m; ContainerSessions.idleMinutes = m
+                    prefs.edit().putInt(ContainerMasterApp.IDLE_MINUTES, m).apply()
+                    CmLog.log(if (m == 0) "Idle lock: never" else "Idle lock: after $m min")
+                }
+                Row(Modifier.fillMaxWidth().clickable { pickIdle() }.desc("idle_$m"), verticalAlignment = Alignment.CenterVertically) {
+                    RadioButton(selected = idle == m, onClick = { pickIdle() })
+                    Text(if (m == 0) stringResource(R.string.idle_never) else pluralStringResource(R.plurals.idle_minutes, m, m))
+                }
+            }
+            var screenOff by remember { mutableStateOf(prefs.getBoolean(ContainerMasterApp.LOCK_ON_SCREEN_OFF, false)) }
+            Row(Modifier.fillMaxWidth().padding(vertical = 8.dp), verticalAlignment = Alignment.CenterVertically) {
+                Text(stringResource(R.string.lock_on_screen_off), Modifier.weight(1f))
+                Switch(checked = screenOff, onCheckedChange = {
+                    screenOff = it; prefs.edit().putBoolean(ContainerMasterApp.LOCK_ON_SCREEN_OFF, it).apply()
+                }, modifier = Modifier.desc("lock_on_screen_off"))
             }
             HorizontalDivider(Modifier.padding(vertical = 8.dp))
             TextButton(onClick = { context.startActivity(Intent(context, FeedbackActivity::class.java)) },

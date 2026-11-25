@@ -64,6 +64,14 @@ abstract class TreeDocumentsProvider : DocumentsProvider() {
         @Volatile
         var failureHook: ((driveId: String?, e: Throwable) -> Unit)? = null
 
+        /**
+         * Called when a client opens a file, or reads or writes one, on [driveId]: content I/O,
+         * which an idle timeout counts as use. Listing roots does not call it. Container Master
+         * renews its idle time here (architecture proposal, N2).
+         */
+        @Volatile
+        var activityHook: ((driveId: String) -> Unit)? = null
+
         /** Free space for the roots, read without blocking the binder thread; see [RootFreeSpace]. */
         internal val rootFreeSpace = RootFreeSpace()
 
@@ -301,6 +309,7 @@ abstract class TreeDocumentsProvider : DocumentsProvider() {
             if (truncate) file.truncate()
             if (write) documentId?.let { writerOpened(it) }
             handleOpened(documentId)
+            driveIdOf(documentId)?.let { id -> activityHook?.invoke(id) }
             OpenFile(documentId, file, fs)
         }
 
@@ -325,6 +334,7 @@ abstract class TreeDocumentsProvider : DocumentsProvider() {
             fun <T> use(op: String, body: (DocumentHandle) -> T): T = onDrive(documentId, op) {
                 if (!isLive) throw java.io.IOException(
                     "The drive this file was opened on was unmounted, formatted or encrypted since")
+                driveIdOf(documentId)?.let { id -> activityHook?.invoke(id) }
                 body(file)
             }
 

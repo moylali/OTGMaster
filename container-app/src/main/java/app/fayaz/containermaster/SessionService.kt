@@ -26,6 +26,18 @@ class SessionService : Service() {
 
     private val scope = CoroutineScope(SupervisorJob() + Dispatchers.Main)
     private var watcher: Job? = null
+    private var ticker: Job? = null
+
+    /** Locks everything when the screen turns off, if the user chose that in Settings. */
+    private val screenOff = object : android.content.BroadcastReceiver() {
+        override fun onReceive(c: Context, i: Intent) {
+            if (ContainerMasterApp.prefs(c).getBoolean(ContainerMasterApp.LOCK_ON_SCREEN_OFF, false) &&
+                ContainerSessions.open.value.isNotEmpty()) {
+                CmLog.log("The screen turned off: locking every container")
+                Thread { ContainerSessions.lockAll(applicationContext) }.start()
+            }
+        }
+    }
 
     override fun onBind(intent: Intent?): IBinder? = null
 
@@ -34,6 +46,15 @@ class SessionService : Service() {
         val nm = getSystemService(NotificationManager::class.java)
         nm.createNotificationChannel(NotificationChannel(CHANNEL, getString(R.string.notification_channel),
             NotificationManager.IMPORTANCE_LOW))
+        registerReceiver(screenOff, android.content.IntentFilter(Intent.ACTION_SCREEN_OFF))
+        // Each find() also checks expiry, so a container a client uses after the phone slept
+        // is refused even before this runs; the ticker locks the ones nobody touches.
+        ticker = scope.launch {
+            while (true) {
+                kotlinx.coroutines.delay(30_000L)
+                kotlinx.coroutines.withContext(Dispatchers.IO) { ContainerSessions.lockExpired(applicationContext) }
+            }
+        }
     }
 
     override fun onStartCommand(intent: Intent?, flags: Int, startId: Int): Int {
@@ -71,6 +92,7 @@ class SessionService : Service() {
     }
 
     override fun onDestroy() {
+        runCatching { unregisterReceiver(screenOff) }
         scope.coroutineContext[Job]?.cancel()
         super.onDestroy()
     }

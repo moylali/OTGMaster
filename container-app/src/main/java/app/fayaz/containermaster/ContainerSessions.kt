@@ -79,7 +79,38 @@ object ContainerSessions : MountRegistry {
     /** The open sessions, for the activity and the service. */
     val open: StateFlow<List<Session>> = _open
 
-    override fun mounted(): List<MountedTree> = sessions.toList()
+    override fun mounted(): List<MountedTree> = sessions.toList().filter { !expired(it.id) }
+
+    /**
+     * Every provider operation asks the registry for its tree, so this is where an idle
+     * container is refused: before the operation is admitted, also for a descriptor a client
+     * already holds (OpenFile.isLive asks find), and also after the phone slept through the
+     * timeout without the service's check running (architecture proposal, N2).
+     */
+    override fun find(id: String): MountedTree? {
+        val s = sessions.firstOrNull { it.id == id } ?: return null
+        if (expired(id)) { appContext?.let { ctx -> Thread { lock(ctx, id, idle = true) }.start() }; return null }
+        return s
+    }
+
+    @Volatile internal var appContext: Context? = null
+    private val lastUse = java.util.concurrent.ConcurrentHashMap<String, Long>()
+
+    /** Idle minutes before a container locks; 0 never. Set from Settings. */
+    @Volatile var idleMinutes: Int = 15
+
+    /** Content I/O or a user action on [id]: renews its idle time. */
+    fun touch(id: String) { lastUse[id] = android.os.SystemClock.elapsedRealtime() }
+
+    fun expired(id: String): Boolean {
+        val minutes = idleMinutes
+        if (minutes <= 0) return false
+        val last = lastUse[id] ?: return false
+        return android.os.SystemClock.elapsedRealtime() - last > minutes * 60_000L
+    }
+
+    /** Locks every container idle past the timeout; the service calls it periodically. */
+    fun lockExpired(context: Context) = sessions.filter { expired(it.id) }.forEach { lock(context, it.id, idle = true) }
 
     class AlreadyOpenException : Exception("already open")
 
@@ -145,6 +176,7 @@ object ContainerSessions : MountRegistry {
                 val session = Session(id, displayName, uri, fs, decrypted, descriptor)
                 synchronized(this) {
                     if (sessions.any { it.id == id }) { session.close(); throw AlreadyOpenException() }
+                    touch(id)
                     sessions += session
                     _open.value = sessions.toList()
                 }
@@ -165,7 +197,7 @@ object ContainerSessions : MountRegistry {
      * a client still holds fails with EIO from then on, then waits for callbacks already queued,
      * then unmounts under the tree's lock, zeroes the key and closes the file.
      */
-    fun lock(context: Context, id: String) {
+    fun lock(context: Context, id: String, idle: Boolean = false) {
         val session = synchronized(this) {
             val s = sessions.firstOrNull { it.id == id } ?: return
             sessions.remove(s)
@@ -175,7 +207,9 @@ object ContainerSessions : MountRegistry {
         notifyRoots(context)
         TreeDocumentsProvider.drainCallbacks(id)
         TreeDocumentsProvider.onDrive("$id:/", "lock") { session.close() }
-        CmLog.log("Locked ${app.fayaz.otgmaster.feedback.PathMask.mark(session.name)} ($id)")
+        lastUse.remove(id)
+        CmLog.log("Locked ${app.fayaz.otgmaster.feedback.PathMask.mark(session.name)} ($id)" +
+            if (idle) ", idle for more than $idleMinutes min" else "")
     }
 
     /** The format a picked file looks like, from its first 4 KiB; logged. */

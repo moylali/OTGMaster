@@ -145,6 +145,23 @@ case_logs_report() {
   return 0
 }
 
+set_idle() { # set_idle <minutes>: Settings, Lock after no use for
+  cm_front; tap 'content-desc="settings"'; sleep 1; tap "content-desc=\"idle_$1\"" || { tap 'content-desc="close_settings"'; return 1; }
+  sleep 1; tap 'content-desc="close_settings"'; sleep 1; }
+
+case_idle_lock() {
+  set_idle 1 || { fail "no 1-minute idle choice"; return 1; }
+  open_and_grant cm-ext4.hc password123 1 "$ID_EXT4" || { set_idle 15; return 1; }
+  local r; r=$(read_sha "$TREE" flower.jpg)
+  [ "$r" = "\"sha256\": \"$FLOWER\"" ] || { fail "read before the timeout: $r"; set_idle 15; return 1; }
+  sleep 75
+  r=$(read_sha "$TREE" flower.jpg)
+  [[ "$r" == '"error"'* ]] || { fail "a read after 75 s idle with a 1-minute timeout: $r"; set_idle 15; return 1; }
+  [ -z "$(open_ids)" ] || { fail "still listed as open after the idle timeout"; set_idle 15; return 1; }
+  cm_front; dump | grep -q 'idle for more than 1 min' || { fail "the log does not say it locked for idleness"; set_idle 15; return 1; }
+  set_idle 15
+}
+
 run_case unlock_read "Pick a VeraCrypt file (ext4 inside), unlock, and read flower.jpg, a name with spaces and an empty file six folders down through saf-probe's grant, by SHA-256; no write, delete or rename offered." case_unlock_read
 run_case ntfs "The same, with NTFS inside the container." case_ntfs
 run_case wrong_password "A wrong password is refused with a message, and nothing opens." case_wrong_password
@@ -152,6 +169,7 @@ run_case relock_grant "Lock: a read through the held grant fails. Pick and unloc
 run_case already_open "The same file picked and unlocked a second time while open is refused; one stays open." case_already_open
 run_case format_luks "A LUKS file is recognised and named, and no VeraCrypt form or Unlock is offered for it." case_format_luks
 run_case logs_report "The log shows the detected format and the unlock; Report issue (shared with OTG Master) opens with Container Master's version and no USB row." case_logs_report
+run_case idle_lock "Lock after 1 minute without use: a read works, then after 75 s with no I/O the held grant's read fails, nothing is open, and the log says it locked for idleness." case_idle_lock
 run_case lock_all_service "The foreground service runs while a container is open; Lock all closes it and the service stops; the container file is unchanged." case_lock_all_service
 
 {
