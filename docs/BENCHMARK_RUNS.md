@@ -33,6 +33,22 @@ to a row here.
 
 ---
 
+## Commit hashes after the merges of #188, #189, #190 and #193
+
+All four were rebase-merged, so `main` has new hashes. The sections below name the PR's commits.
+
+| PR | At the PR head | On `main` | Commit |
+|---|---|---|---|
+| #188 | `0756a3f` | `8454723` | docs: Format inside BitLocker on hardware, hash tables, pt-BR changelog |
+| #188 | `4d99abd` | `1e628f5` | docs: v0.5.4 regression report (tagged `v0.5.4`) |
+| #189 | `3112a24` | `b483c68` | chore: bump to 0.5.5 (54) after the v0.5.4 tag |
+| #190 | `d786729` | `4829e36` | docs: engine extraction Milestone 0 baseline, and a SAF probe app |
+| #193 | `2c53ae7` | `c6a0c02` | test(e2e): the provider refuses names and ".." paths |
+| #193 | `800ebf0` | `4e15124` | fix(provider): canonical document IDs, checked names, errno codes, lazy free space |
+| #193 | `96f30a1` | `c74836a` | docs: Milestone 0 and 1 hardware evidence |
+| #193 | `a6a5286` | `bed05fa` | refactor(provider): look up and list through a DocumentSource tree contract |
+| #193 | `2d4bba3` | `c681622` | docs: the held grant still reads the same file on a6a5286 |
+
 ## 2026-11-24: provider upgrade and confinement on the OnePlus 7, Drive 1 (D1EXFAT)
 
 Engine extraction Milestones 0 and 1 (`docs/ENGINE_BASELINE.md`). No benchmark sections ran; this
