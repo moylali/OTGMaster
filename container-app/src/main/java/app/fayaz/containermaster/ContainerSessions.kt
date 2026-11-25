@@ -343,6 +343,50 @@ object ContainerSessions : MountRegistry {
     }
 
     /**
+     * Opens the AES Crypt file [uri] with [password] (Milestone 6): one file inside, named
+     * after the container without ".aes". The whole ciphertext's HMAC is checked before the
+     * file is published, so a damaged or altered file opens nothing. Its ID comes from its
+     * header (which holds its random IV), so a grant survives a fresh pick.
+     */
+    fun openAesCrypt(context: Context, uri: Uri, displayName: String, password: CharArray): Session {
+        val masked = app.fayaz.otgmaster.feedback.PathMask.mark(displayName)
+        CmLog.log("Opening $masked as AES Crypt")
+        val t0 = android.os.SystemClock.elapsedRealtime()
+        val descriptor = context.contentResolver.openFileDescriptor(uri, "r")
+            ?: throw java.io.FileNotFoundException("The file could not be opened")
+        try {
+            val channel = FileInputStream(descriptor.fileDescriptor).channel
+            val length = descriptor.statSize.takeIf { it >= 0 } ?: channel.size()
+            val head = java.nio.ByteBuffer.allocate(minOf(256L, length).toInt()).also { b -> var p = 0L
+                while (b.hasRemaining()) { if (channel.read(b, p).also { p += it } < 0) break } }.array()
+            val id = MessageDigest.getInstance("SHA-256").apply { update("aescrypt:".toByteArray()); update(head) }
+                .digest().joinToString("") { "%02x".format(it) }.take(10)
+            if (sessions.any { it.id == id }) { CmLog.log("$masked is already open"); throw AlreadyOpenException() }
+            val tree = try {
+                app.fayaz.otgmaster.aescrypt.AesCryptSource.open(channel, length, password, displayName)
+            } finally { password.fill('\u0000') }
+            val session = Session(id, displayName, uri, "AES Crypt", "AES Crypt", length, tree, tree) {
+                tree.close(); runCatching { descriptor.close() }
+            }
+            synchronized(this) {
+                if (sessions.any { it.id == id }) { session.close(); throw AlreadyOpenException() }
+                touch(id); sessions += session; _open.value = sessions.toList()
+            }
+            notifyRoots(context)
+            CmLog.log("Opened $masked (verified) in ${android.os.SystemClock.elapsedRealtime() - t0} ms; open as $id")
+            return session
+        } catch (e: app.fayaz.otgmaster.aescrypt.AesCryptSource.WrongPasswordException) {
+            runCatching { descriptor.close() }
+            CmLog.log("Could not open $masked: wrong password"); throw IllegalArgumentException(e.message, e)
+        } catch (e: AlreadyOpenException) {
+            runCatching { descriptor.close() }; throw e
+        } catch (e: Exception) {
+            runCatching { descriptor.close() }
+            CmLog.log("Could not open $masked: ${e.message ?: e.javaClass.simpleName}"); throw e
+        }
+    }
+
+    /**
      * Locks [id]: withdraws its root first, so no new open or read is admitted and a descriptor
      * a client still holds fails with EIO from then on, then waits for callbacks already queued,
      * then unmounts under the tree's lock, zeroes the key and closes the file.
@@ -378,6 +422,7 @@ object ContainerSessions : MountRegistry {
                 ContainerFormat.LUKS -> "a LUKS volume"
                 ContainerFormat.ZIP -> "a ZIP archive, opened without a password"
                 ContainerFormat.ISO -> "an ISO 9660 disc image, opened without a password"
+                ContainerFormat.AESCRYPT -> "an AES Crypt file"
             })
         }
     }

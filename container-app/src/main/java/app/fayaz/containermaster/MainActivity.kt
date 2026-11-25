@@ -193,13 +193,14 @@ private fun Screen(theme: String, onTheme: (String) -> Unit) {
                                 ContainerFormat.LUKS -> R.string.format_luks_later
                                 ContainerFormat.ZIP -> R.string.format_zip_later
                                 ContainerFormat.ISO -> R.string.format_iso
+                                ContainerFormat.AESCRYPT -> R.string.format_aescrypt
                             }), style = MaterialTheme.typography.bodySmall, modifier = Modifier.desc("format"))
                         }
                     }
                 }
                 // The form follows the chosen file's format. VeraCrypt: a password and a PIM.
                 // LUKS and ZIP are recognised and named, and come in later versions.
-                val isLuks = picked?.format == ContainerFormat.LUKS
+                val isLuks = picked?.format == ContainerFormat.LUKS || picked?.format == ContainerFormat.AESCRYPT
                 if (picked == null || picked?.format == ContainerFormat.VERACRYPT || isLuks) {
                     OutlinedTextField(
                         value = password, onValueChange = { password = it },
@@ -238,7 +239,8 @@ private fun Screen(theme: String, onTheme: (String) -> Unit) {
                             scope.launch {
                                 message = withContext(Dispatchers.IO) {
                                     try {
-                                        if (p.format == ContainerFormat.LUKS) ContainerSessions.openLuks(context.applicationContext, p.uri, p.name, chars)
+                                        if (p.format == ContainerFormat.AESCRYPT) ContainerSessions.openAesCrypt(context.applicationContext, p.uri, p.name, chars)
+                                        else if (p.format == ContainerFormat.LUKS) ContainerSessions.openLuks(context.applicationContext, p.uri, p.name, chars)
                                         else ContainerSessions.openVeraCrypt(context.applicationContext, p.uri, p.name, chars, pimValue)
                                         null
                                     } catch (e: IllegalArgumentException) {
@@ -296,7 +298,7 @@ private fun Screen(theme: String, onTheme: (String) -> Unit) {
                 Card(Modifier.fillMaxWidth().padding(vertical = 4.dp)) {
                     Column(Modifier.padding(12.dp)) {
                         Text(s.name, style = MaterialTheme.typography.titleSmall, modifier = Modifier.desc("open_${s.id}"))
-                        Text(stringResource(R.string.open_details, if (s.format == "ZIP" || s.format == "ISO") s.fileSystemName else "${s.format}, ${s.fileSystemName}"),
+                        Text(stringResource(R.string.open_details, if (s.format == "ZIP" || s.format == "ISO" || s.format == "AES Crypt") s.fileSystemName else "${s.format}, ${s.fileSystemName}"),
                             style = MaterialTheme.typography.bodySmall)
                         Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.End) {
                             OutlinedButton(onClick = {

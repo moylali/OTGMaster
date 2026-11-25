@@ -53,6 +53,12 @@ PY
   fi
   rm -rf "$t"
 fi
+# An AES Crypt (version 2) file, made by pyAesCrypt through uv, holding flower.jpg.
+if [ ! -f testdata/cm_aes/flower.jpg.aes ]; then
+  mkdir -p testdata/cm_aes
+  uv run --quiet --with pyAesCrypt python -c 'import pyAesCrypt,sys; pyAesCrypt.encryptFile(sys.argv[1], sys.argv[2], "password123")' \
+    testdata/flower.jpg testdata/cm_aes/flower.jpg.aes || { echo "AES Crypt fixture failed"; exit 1; }
+fi
 BIG=$(python3 -c 'import hashlib; print(hashlib.sha256(bytes((i // 7) % 251 for i in range(20 << 20))).hexdigest())')
 # The public ID Container Master must give each container: SHA-256 of "veracrypt-salt:" and the
 # header's first 64 bytes, first 10 hex (ContainerSessions.idForSalt).
@@ -76,6 +82,8 @@ for t in ext4 ntfs luks2 luks1 zip iso; do
   have=$(adb -s "$S" shell sha256sum /sdcard/Download/cm-$t.hc 2>/dev/null | cut -d' ' -f1)
   [ "$want" = "$have" ] || adb -s "$S" push $src /sdcard/Download/cm-$t.hc >/dev/null
 done
+want=$(sha256sum testdata/cm_aes/flower.jpg.aes | cut -d' ' -f1)
+[ "$want" = "$(adb -s "$S" shell sha256sum /sdcard/Download/flower.jpg.aes 2>/dev/null | cut -d' ' -f1)" ] || adb -s "$S" push testdata/cm_aes/flower.jpg.aes /sdcard/Download/flower.jpg.aes >/dev/null
 adb -s "$S" shell input keyevent KEYCODE_WAKEUP
 DEVICE="$(adb -s "$S" shell getprop ro.product.model | tr -d '\r') / Android $(adb -s "$S" shell getprop ro.build.version.release | tr -d '\r')"
 
@@ -246,6 +254,17 @@ case_iso_read() {
   r=$(read_sha "$TREE" nested/very/deep/folder/empty_file.txt); [ "$r" = "\"sha256\": \"$EMPTY\"" ] || { fail "empty_file.txt: $r"; return 1; }
 }
 
+case_aescrypt() {
+  cm_front; pick flower.jpg.aes || { fail "could not pick the AES Crypt file"; return 1; }
+  dump | grep -q 'AES Crypt file' || { fail "not recognised as AES Crypt"; return 1; }
+  dump | grep -q 'content-desc="pim"' && { fail "a PIM field for AES Crypt"; return 1; }
+  local out; out=$(unlock not-the-password); [[ "$out" == message:* ]] || { fail "a wrong password: '$out'"; return 1; }
+  out=$(unlock password123); [[ "$out" == opened\ * ]] || { fail "unlock: '$out'"; return 1; }
+  local id=${out#opened }
+  TREE=$(grant "$id"); [ -n "$TREE" ] || { fail "no grant"; return 1; }
+  local r; r=$(read_sha "$TREE" flower.jpg); [ "$r" = "\"sha256\": \"$FLOWER\"" ] || { fail "flower.jpg: $r"; return 1; }
+}
+
 case_zip_and_veracrypt() {
   open_and_grant cm-ext4.hc password123 1 "$ID_EXT4" || return 1
   local vtree=$TREE
@@ -273,6 +292,7 @@ run_case idle_lock "Lock after 1 minute without use: a read works, then after 75
 run_case held_fd_lock "A client holds a descriptor across Lock and a fresh unlock of the same container: its late read fails rather than reaching the new session, it still closes, and a fresh open reads the file." case_held_fd_lock
 run_case zip_read "A ZIP made by Info-ZIP opens with no password; flower.jpg, a name with spaces, an empty file six folders down and a 20 MiB streamed entry read by SHA-256 through saf-probe's grant." case_zip_read
 run_case iso_read "An ISO 9660 image with Joliet names opens with no password; flower.jpg, a name with spaces and an empty file six folders down read by SHA-256 through saf-probe's grant." case_iso_read
+run_case aescrypt "An AES Crypt file made by pyAesCrypt: a wrong password refused, the right one opens it, and the one file inside, flower.jpg, reads by SHA-256 through saf-probe's grant." case_aescrypt
 run_case zip_and_veracrypt "A ZIP and a VeraCrypt container open together; the same flower.jpg reads from both through the same provider code, while a descriptor held on the ZIP's streamed entry seeks to 1 MiB." case_zip_and_veracrypt
 run_case lock_all_service "The foreground service runs while a container is open; Lock all closes it and the service stops; the container file is unchanged." case_lock_all_service
 
