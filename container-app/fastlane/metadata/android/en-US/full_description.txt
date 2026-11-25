@@ -1,0 +1,18 @@
+Container Master opens container files that are stored on your phone, so you can use the files inside them in your other apps.
+
+<b>What it opens</b>
+• VeraCrypt volumes made with VeraCrypt's defaults, AES and SHA-512, with or without a PIM
+• LUKS1 and LUKS2 volumes with AES-XTS, including LUKS2 with Argon2id
+• ZIP archives, stored or compressed, with no password
+• Inside an encrypted volume: exFAT, NTFS and ext4
+
+<b>How it works</b>
+Choose a file with the system picker and enter its password. Its files then show up in the Files app and in any app that opens files, until you lock it. Lock one container, or Lock all from the notification. A container also locks itself after a time without use, 15 minutes unless you change it, and can lock when the screen turns off.
+
+<b>Read-only</b>
+Container Master never writes to a container. The file you open stays exactly as it was.
+
+<b>Private</b>
+No network access, no ads, no tracking. Passwords are never stored. File names are masked in the issue report the app can send, and you see and edit everything before it is sent.
+
+Container Master is made by the same project as OTG Master, which opens encrypted USB drives. It is free and open source (GPL-3.0-or-later).

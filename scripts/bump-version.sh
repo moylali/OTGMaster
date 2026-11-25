@@ -12,14 +12,19 @@
 
 set -euo pipefail
 
+# --container bumps Container Master (container-app/, tags container-vX.Y.Z) instead of
+# OTG Master (app/, tags vX.Y.Z); each app keeps its own versionCode sequence.
+module=app; tag_prefix=v
+if [ "${1:-}" = "--container" ]; then module=container-app; tag_prefix=container-v; shift; fi
+
 if [ $# -ne 1 ]; then
-    echo "Usage: $0 <new-version-name>" >&2
+    echo "Usage: $0 [--container] <new-version-name>" >&2
     echo "Example: $0 0.2.3" >&2
     exit 1
 fi
 
 new_version_name="$1"
-gradle_file="$(dirname "$0")/../app/build.gradle.kts"
+gradle_file="$(dirname "$0")/../${module}/build.gradle.kts"
 
 current_code=$(grep -oP 'versionCode = \K\d+' "$gradle_file")
 new_code=$((current_code + 1))
@@ -31,7 +36,7 @@ sed -i \
 
 echo "Bumped versionCode ${current_code} -> ${new_code}, versionName -> ${new_version_name}"
 echo "Review the diff, then:"
-echo "  git add app/build.gradle.kts"
-echo "  git commit -m \"chore: bump version to ${new_version_name} (${new_code})\""
-echo "  git tag v${new_version_name}"
-echo "  git push origin main v${new_version_name}"
+echo "  git add ${module}/build.gradle.kts"
+echo "  git commit -m \"chore: bump ${module} to ${new_version_name} (${new_code})\""
+echo "  git tag ${tag_prefix}${new_version_name}"
+echo "  git push origin main ${tag_prefix}${new_version_name}"
