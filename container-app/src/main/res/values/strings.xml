@@ -16,6 +16,7 @@
     <string name="open_failed">Could not open this file: %1$s</string>
     <string name="pim_invalid">The PIM must be a whole number.</string>
     <string name="root_summary">Unlocked container, read-only</string>
+    <string name="root_summary_writable">Unlocked container</string>
     <string name="notification_channel">Mounted containers</string>
     <plurals name="notification_text">
         <item quantity="one">%d container is open. Its files can be read in other apps.</item>
@@ -33,6 +34,7 @@
     <string name="cd_show_password">Show or hide the password</string>
     <string name="cd_open_containers">Mounted containers: %1$d</string>
     <string name="open_details">%1$s, read-only</string>
+    <string name="open_details_writable">%1$s, read and write</string>
     <string name="version_label">Version %1$s (%2$d), %3$s</string>
     <string name="format_veracrypt">No known signature, so it is offered as a VeraCrypt volume. Enter its password and PIM.</string>
     <string name="format_luks_later">This is a LUKS volume (LUKS1 or LUKS2). Enter its password.</string>
@@ -64,4 +66,6 @@
     <string name="support_page">More ways to help</string>
     <string name="app_version">App version</string>
     <string name="cd_copy_version">Copy the version</string>
+    <string name="read_only_mode">Read-only mode</string>
+    <string name="read_only_mode_description">Open VeraCrypt and LUKS containers read-only. Turn it off to add, change and delete the files inside them. ZIP, ISO and AES Crypt files always open read-only.</string>
 </resources>

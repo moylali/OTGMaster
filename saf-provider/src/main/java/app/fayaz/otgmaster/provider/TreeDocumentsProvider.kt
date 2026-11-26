@@ -35,6 +35,8 @@ abstract class TreeDocumentsProvider : DocumentsProvider() {
 
     /** The roots' summary line. */
     protected abstract val rootSummary: String
+    /** A drive's summary line in the Files app; [rootSummary] for every drive unless overridden. */
+    protected open fun rootSummaryFor(drive: app.fayaz.otgmaster.core.MountedTree): String = rootSummary
 
     /** The roots' icon, a resource of the app. */
     protected abstract val rootIcon: Int
@@ -439,7 +441,7 @@ abstract class TreeDocumentsProvider : DocumentsProvider() {
         for (drive in drives) {
             val row = result.newRow()
             row.add(DocumentsContract.Root.COLUMN_ROOT_ID, rootIdForDrive(drive.id))
-            row.add(DocumentsContract.Root.COLUMN_SUMMARY, rootSummary)
+            row.add(DocumentsContract.Root.COLUMN_SUMMARY, rootSummaryFor(drive))
             // A read-only volume does not advertise create, so the Files app does
             // not offer to save into it.
             var rootFlags = DocumentsContract.Root.FLAG_SUPPORTS_IS_CHILD or

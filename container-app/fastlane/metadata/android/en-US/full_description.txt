@@ -11,8 +11,8 @@ Container Master opens container files that are stored on your phone, so you can
 <b>How it works</b>
 Choose a file with the system picker, or open it from another app with "Open with", and enter its password. Its files then show up in the Files app and in any app that opens files, until you lock it. Lock one container, or Lock all from the notification. A container also locks itself after a time without use, 15 minutes unless you change it, and can lock when the screen turns off.
 
-<b>Read-only</b>
-Container Master never writes to a container. The file you open stays exactly as it was.
+<b>Read-only by default</b>
+Read-only mode is on unless you turn it off, and then the file you open stays exactly as it was. With it off, VeraCrypt and LUKS containers open for writing: add, change and delete the files inside them from any app. ZIP, ISO and AES Crypt files always open read-only.
 
 <b>Private</b>
 No network access, no ads, no tracking. Passwords are stored only if you turn on Remember passwords, and then only under your phone's lock: reading one back needs your fingerprint or screen lock. File names are masked in the issue report the app can send, and you see and edit everything before it is sent.

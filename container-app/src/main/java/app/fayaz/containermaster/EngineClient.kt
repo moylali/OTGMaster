@@ -19,7 +19,7 @@ class EngineClient(context: Context) {
     private val resolver = context.applicationContext.contentResolver
     private val uri = Uri.parse("content://${EngineProvider.AUTHORITY}")
 
-    data class OpenContainer(val id: String, val name: String, val format: String, val fileSystem: String)
+    data class OpenContainer(val id: String, val name: String, val format: String, val fileSystem: String, val readOnly: Boolean = true)
     data class State(val open: List<OpenContainer>, val logs: List<String>, val idleMinutes: Int)
     sealed class OpenResult {
         object Ok : OpenResult(); object WrongPassword : OpenResult(); object AlreadyOpen : OpenResult()
@@ -33,7 +33,7 @@ class EngineClient(context: Context) {
         val b = call(EngineProvider.M_STATE)
         @Suppress("DEPRECATION")
         val open = b.getParcelableArrayList<Bundle>(EngineProvider.K_OPEN).orEmpty().map {
-            OpenContainer(it.getString("id")!!, it.getString("name")!!, it.getString("format")!!, it.getString("fs")!!)
+            OpenContainer(it.getString("id")!!, it.getString("name")!!, it.getString("format")!!, it.getString("fs")!!, it.getBoolean("ro", true))
         }
         return State(open, b.getStringArrayList(EngineProvider.K_LOGS).orEmpty(), b.getInt(EngineProvider.K_IDLE, 15))
     }
@@ -56,10 +56,12 @@ class EngineClient(context: Context) {
         return Detected(ContainerFormat.valueOf(b.getString(EngineProvider.K_FORMAT) ?: "VERACRYPT"), b.getString(EngineProvider.K_ID))
     }
 
-    /** Opens [uri] as [format]; [password] is cleared here once sent, and by the engine after use. */
-    fun open(format: ContainerFormat, uri: Uri, name: String, password: CharArray = CharArray(0), pim: Int? = null): OpenResult {
+    /** Opens [uri] as [format], for writing if [writable] (VeraCrypt and LUKS); [password] is cleared here once sent, and by the engine after use. */
+    fun open(format: ContainerFormat, uri: Uri, name: String, password: CharArray = CharArray(0), pim: Int? = null,
+             writable: Boolean = false): OpenResult {
         val extras = Bundle().apply {
             putString(EngineProvider.K_FORMAT, format.name); putString(EngineProvider.K_NAME, name)
+            putBoolean(EngineProvider.K_WRITABLE, writable)
             putCharArray(EngineProvider.K_PASSWORD, password); pim?.let { putInt(EngineProvider.K_PIM, it) }
         }
         try {

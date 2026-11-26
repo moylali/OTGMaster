@@ -1,3 +1,4 @@
-• New: the first release. Open VeraCrypt and LUKS containers, AES Crypt files, ZIP archives and ISO disc images on your phone, or from "Open with" in another app. Their files show up in the Files app, read-only, until you lock them.
-• New: remember passwords under your phone's lock; picking the same file again asks for your fingerprint.
+• New: the first release. Open VeraCrypt and LUKS containers, AES Crypt files, ZIP archives and ISO disc images on your phone, or from "Open with" in another app. Their files show up in the Files app until you lock them.
+• New: with Read-only mode off, change the files inside VeraCrypt and LUKS containers.
+• New: remember passwords under your phone's lock.
 • New: Lock all from the notification, and a lock after 15 minutes without use.
