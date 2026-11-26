@@ -116,6 +116,21 @@ activity cannot move to another process while it owns that work, so:
    every operation that changes what is mounted, called by the screen with a request
    and reporting through `OtgMasterState`'s log and drive list, as now. Same process,
    behaviour unchanged; the full E2E suite and a hardware run on the coordinator build.
+   **As built** (`engine/MountCoordinator.kt`): the device work of every operation that
+   adds or removes a drive. `unlockAndMount` (VeraCrypt, LUKS, BitLocker, APFS: unlock,
+   detect, cache, mount, list), `mountPlain`, `mountMtp`, `unlist` and `tearDown` (Unmount
+   and each partition of an Eject), `format`, `encrypt` and `repairJournal`. Each lists or
+   unlists the drive in `OtgMasterState`, tells the Files app, and logs through
+   `OtgMasterState.log`. The screen keeps the guards before an operation (unlock already
+   running, partition already mounting) and what it shows after (toasts, highlights,
+   shortcuts, saved credentials, the form's candidates), and runs the calls in its own
+   scope as before, holding `deviceMutex` across an unlock as before.
+   Still in `MainActivity`, for step 2: the USB connections and the form's candidates
+   (`openedDevices`, `_deviceCandidates`), probing (`openAndProbeUsb`, `probeQemuDisk`,
+   `reprobeHeldDevices`), and the bookkeeping at the end of an unmount that decides whether
+   the connection closes or the candidate goes back on the form, and Eject's around it.
+   Those are state the screen reads, so they move when the screen reads them across the
+   door, not before.
 2. **Move the screens to `:ui`** behind an engine door like Container Master's:
    commands (scan, unlock and mount, unmount, eject, format, encrypt, recovery, backups)
    and observed state (drive snapshots, log lines, progress, pending ejects and
