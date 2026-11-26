@@ -65,7 +65,7 @@ class AndroidLockKeys(private val alias: String = ALIAS) : LockedStore.Keys {
     } catch (e: Exception) {
         // InvalidAlgorithmParameterException / IllegalStateException: "Secure lock screen
         // must be enabled to create keys requiring user authentication".
-        android.util.Log.w("OTGMaster", "AndroidLockKeys: cannot create the key: ${e.message}")
+        android.util.Log.w("LockKeys", "AndroidLockKeys: cannot create the key: ${e.message}")
         false
     }
 
