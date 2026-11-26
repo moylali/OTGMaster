@@ -139,3 +139,31 @@ activity cannot move to another process while it owns that work, so:
    killing `:ui` mid-copy, byte for byte, and fails on the code before; a hardware
    bigwrite with `:ui` killed mid-run, then the laptop read-back and checkers; the
    held grant and the baseline roots, IDs and columns unchanged.
+
+   **The order step 2 is built in.** Each slice is behaviour-preserving and gets a full
+   E2E run, until the last, which moves the process:
+
+   1. *Engine state* (`9cb9237`): the USB connections, the form's candidates and the work in
+      flight live in `MountCoordinator`. `onDestroy` leaves them to a successor already up.
+   2. *Unmount and Eject* (`78f656b`): `unmount`, `ejectNow`, the busy check and the share
+      shortcuts run in the engine. The screen is a `MountCoordinator.Screen` (toast, drives
+      changed, devices changed, resumed), installed by the live activity.
+   3. *USB attach and probing*: the attach and detach broadcasts, the permission request, the
+      probes (`openAndProbeUsb`, `probeQemuDisk`, `reprobeHeldDevices`, re-offers) and auto
+      mount's choice of what to mount move to the engine, registered with the application
+      context. What the screen keeps: the USB-access hints and the scan warning (as state it
+      reads), and the fingerprint prompt in front of saved passwords.
+   4. *The door, in one process*: `OtgEngineProvider` (non-exported, `call()`, as Container
+      Master's `EngineProvider`) with the commands above and a state call returning copies:
+      drive snapshots (id, titles, filesystem, container tag, capacity, free space, read-only
+      reason, hidden-volume state, source device), the form's candidates (device key, name,
+      partitions with slot key, label, container type, APFS volume), unlocks in flight, pending
+      Ejects and Unmounts, disconnected cards, log lines. A state URI announces changes. The
+      screen switches to the door while still in the engine's process, so the switch is
+      tested apart from the process move. Keyfiles cross as URIs, readable by the app's uid
+      in either process; passwords only inside a call.
+   5. *Backups and recovery* through the door: the backup dialogs, Manage backups and the
+      recovery dialog read `JobStore` and `OtgMasterState` today.
+   6. *The process*: `MainActivity`, its dialogs and Report issue get `android:process=":ui"`;
+      the provider, the services, the receivers and the benchmark stay in the default
+      process. Then the acceptance tests above.
