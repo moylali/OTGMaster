@@ -411,7 +411,7 @@ object ContainerSessions : MountRegistry {
         try {
             val channel = FileInputStream(descriptor.fileDescriptor).channel
             val length = descriptor.statSize.takeIf { it >= 0 } ?: channel.size()
-            val img = app.fayaz.otgmaster.dmg.UdifImage.open(channel, length)
+            val img = app.fayaz.otgmaster.dmg.UdifImage.open(channel, length) { data, size -> app.fayaz.otgmaster.apfs.Lzfse.decompress(data, size) }
             val id = MessageDigest.getInstance("SHA-256").apply {
                 update("dmg:$length:".toByteArray()); update(img.readBlocks(0, minOf(8L, img.blockCount).toInt()))
             }.digest().joinToString("") { "%02x".format(it) }.take(10)

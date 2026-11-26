@@ -2,13 +2,14 @@
 """
 Writes a UDIF disk image (.dmg) holding a raw disk image, for Container Master's tests: no Mac and
 no hdiutil on this host. Chunks of 1 MiB (2,048 sectors), each written as the type the cycle
-names, so one image exercises zero-fill, raw, zlib and bzip2 chunks:
+names, so one image exercises zero-fill, raw, zlib, bzip2 and LZFSE chunks:
 
     python3 scripts/make_udif.py IN.img OUT.dmg [--types zlib,raw,bzip2,zero]
+    uv run --with pyliblzfse python scripts/make_udif.py IN.img OUT.dmg --types lzfse,zlib
 
 A chunk that is all zeros is always written as zero fill, as hdiutil does. The layout follows
-Apple's UDIF as dmg2img and libmodi document it; qemu-img (in the Android emulator's folder)
-reads the result independently: qemu-img convert -f dmg -O raw OUT.dmg check.img.
+Apple's UDIF as dmg2img and libmodi document it; 7-Zip reads the result with code of its own,
+which is the independent check: 7z x -tdmg OUT.dmg gives back IN.img byte for byte.
 """
 import argparse
 import base64
@@ -19,7 +20,7 @@ import zlib
 
 SECTOR = 512
 CHUNK_SECTORS = 2048
-TYPES = {"zero": 0x00000000, "raw": 0x00000001, "zlib": 0x80000005, "bzip2": 0x80000006}
+TYPES = {"zero": 0x00000000, "raw": 0x00000001, "zlib": 0x80000005, "bzip2": 0x80000006, "lzfse": 0x80000007}
 
 
 def main():
@@ -41,7 +42,11 @@ def main():
         n = min(CHUNK_SECTORS, sectors - first)
         chunk = data[first * SECTOR:(first + n) * SECTOR]
         kind = "zero" if chunk.count(0) == len(chunk) else cycle[i % len(cycle)]
-        payload = {"zero": b"", "raw": chunk, "zlib": zlib.compress(chunk, 6), "bzip2": bz2.compress(chunk, 9)}[kind]
+        if kind == "lzfse":
+            import liblzfse   # pyliblzfse: uv run --with pyliblzfse python scripts/make_udif.py ...
+            payload = liblzfse.compress(chunk)
+        else:
+            payload = {"zero": b"", "raw": chunk, "zlib": zlib.compress(chunk, 6), "bzip2": bz2.compress(chunk, 9)}[kind]
         entries.append((TYPES[kind], first, n, len(fork), len(payload)))
         fork += payload
     entries.append((0xFFFFFFFF, sectors, 0, len(fork), 0))

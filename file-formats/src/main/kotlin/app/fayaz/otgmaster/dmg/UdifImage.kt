@@ -19,8 +19,8 @@ import javax.xml.parsers.DocumentBuilderFactory
  * trailer at the end of the file points to an XML property list whose resource fork holds one
  * "blkx" entry per partition. Each is a "mish" table of chunks: a run of sectors, its type, and
  * where its bytes are in the file. Types read here: zero fill and ignored (both zeros), raw,
- * zlib (UDZO), bzip2 (UDBZ) and LZMA (ULMO). ADC and LZFSE (ULFO) chunks are named in the error
- * when a read reaches one. An image encrypted by Disk Utility ("encrcdsa") has no koly at the
+ * zlib (UDZO), bzip2 (UDBZ), LZMA (ULMO) and, with a decoder passed in, LZFSE (ULFO). ADC chunks
+ * are named in the error when a read reaches one. An image encrypted by Disk Utility ("encrcdsa") has no koly at the
  * end in the clear, and is refused as such.
  *
  * A decoded chunk is kept (the last [CACHE_CHUNKS]), since a filesystem reads neighbouring
@@ -32,6 +32,8 @@ class UdifImage private constructor(
     override val blockCount: Long,
     /** Each partition the image names, with its first sector and length on the image's disk. */
     val partitions: List<Partition>,
+    /** Decodes an LZFSE chunk to exactly the given size; null where no decoder is at hand (a JVM without the app's native code). */
+    private val lzfse: ((ByteArray, Int) -> ByteArray)?,
 ) : RawBlockDevice {
 
     override val blockSize: Int get() = SECTOR
@@ -96,7 +98,7 @@ class UdifImage private constructor(
             BZIP2 -> stream(org.apache.commons.compress.compressors.bzip2.BZip2CompressorInputStream(ByteArrayInputStream(raw)), size)
             LZMA -> stream(org.tukaani.xz.LZMAInputStream(ByteArrayInputStream(raw)), size)
             ADC -> throw UdifFormatException("This image uses ADC compression, which Container Master cannot read yet")
-            LZFSE -> throw UdifFormatException("This image uses LZFSE compression (ULFO), which Container Master cannot read yet")
+            LZFSE -> lzfse?.invoke(raw, size) ?: throw UdifFormatException("This image uses LZFSE compression (ULFO), and no LZFSE decoder is at hand")
             else -> throw UdifFormatException("This image uses chunk type 0x${Integer.toHexString(c.type)}, which Container Master cannot read")
         }
         if (out.size != size) throw UdifFormatException("a chunk decodes to ${out.size} bytes, not $size; the image is damaged")
@@ -150,7 +152,7 @@ class UdifImage private constructor(
         /** Whether [head], a file's first bytes, is an image Disk Utility encrypted. */
         fun looksEncrypted(head: ByteArray): Boolean = head.size >= 8 && String(head, 0, 8, Charsets.US_ASCII) == "encrcdsa"
 
-        fun open(channel: FileChannel, length: Long = channel.size()): UdifImage {
+        fun open(channel: FileChannel, length: Long = channel.size(), lzfse: ((ByteArray, Int) -> ByteArray)? = null): UdifImage {
             if (length < SECTOR) throw UdifFormatException("too short for a disk image")
             val koly = read(channel, length - SECTOR, SECTOR)
             if (koly.getInt(0) != 0x6B6F6C79) {   // "koly"
@@ -202,7 +204,7 @@ class UdifImage private constructor(
             for (i in 1 until chunks.size) if (chunks[i].sector < chunks[i - 1].sector + chunks[i - 1].sectors)
                 throw UdifFormatException("two chunks claim the same sectors; the image is damaged")
             val total = maxOf(sectorCount, chunks.lastOrNull()?.let { it.sector + it.sectors } ?: 0)
-            return UdifImage(channel, chunks, total, parts)
+            return UdifImage(channel, chunks, total, parts, lzfse)
         }
 
         private fun read(channel: FileChannel, pos: Long, len: Int): ByteBuffer {
