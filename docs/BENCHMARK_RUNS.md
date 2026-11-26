@@ -33,6 +33,26 @@ to a row here.
 
 ---
 
+## Commit hashes after the merge of #208
+
+#208 (Container Master: the owner's screen, settings and Open with; writes; TAR, 7z, restic,
+DMG and sparse bundles) was rebase-merged, so `main` has new hashes; the tree at `0f5d77e` is
+the PR head's, `a20d876`.
+
+| At the PR head | On `main` | Commit |
+|---|---|---|
+| `11e76f89` | `61b615b8` | refactor: the lock-protected store moves to :app-common |
+| `467cf03f` | `c2399f6d` | feat(container): Open with, Remember passwords, and a plainer main screen |
+| `6c9b32a8` | `02eadf34` | feat(container): VeraCrypt and LUKS containers open for writing with Read-only mode off |
+| `95eaf5dc` | `cbb1ada2` | fix(container): the file picker crashed: pin a current androidx.fragment |
+| `1aa9e831` | `e45d05a8` | feat(container): TAR, .tar.gz and 7z archives, read-only |
+| `d984efec` | `771f315b` | feat(container): restic backup repositories, picked as a folder, read-only |
+| `ce3d5766` | `84d3fd03` | feat(container): macOS disk images (.dmg), read-only |
+| `0d1876e3` | `4738f85b` | feat(container): LZFSE-compressed disk images, through libfmos |
+| `65220d50` | `533a9b50` | feat(container): macOS sparse bundles, picked as a folder, read-only |
+| `6a564254` | `90d3422e` | test(container): the folder picker has no Downloads root; settings rows in screen order |
+| `a20d876d` | `0f5d77ed` | docs: #205's hash table; the module map after Container Master's formats |
+
 ## Commit hashes after the merge of #205
 
 #205 (Milestone 2b step 1 for OTG Master) was rebase-merged, so `main` has new hashes; the tree
