@@ -38,6 +38,31 @@ object MountCoordinator {
 
     private fun log(line: String) = OtgMasterState.log(line)
 
+    // ── Device state (2b step 2) ─────────────────────────────────────────────────────────────
+    // What MainActivity kept per instance and the engine owns: the USB connections, the form's
+    // candidates and the work in flight. Moved here unchanged; the screen still drives them, and
+    // reads them through properties of the old names. They outlive an activity instance now, which
+    // is why MainActivity.onDestroy leaves them to a successor that is already up.
+
+    /** USB connections by device key, kept open while their partitions are offered or mounted. */
+    val openedDevices: MutableMap<String, RawBlockDevice> = java.util.Collections.synchronizedMap(LinkedHashMap())
+    /** In-flight unmounts per USB device, so the shared connection is closed by the last one. */
+    val pendingUnmounts = java.util.concurrent.ConcurrentHashMap<String, Int>()
+    /** The drives and partitions the unlock form offers. */
+    val deviceCandidates = androidx.compose.runtime.mutableStateOf<List<app.fayaz.otgmaster.UsbDeviceCandidate>>(emptyList())
+    /** A probe is running; set and read on the main thread. */
+    @Volatile var isProbingDevices = false
+    @Volatile var isQemuProbing = false
+    /** Partitions with an unlock started and not finished. */
+    val unlockingPartitions = kotlinx.coroutines.flow.MutableStateFlow<Set<String>>(emptySet())
+    class EjectInFlight(val title: String, val androidCanRead: Boolean, val notify: Boolean)
+    val ejectsInFlight = HashMap<String, EjectInFlight>()
+    /** Candidates withheld from the form while an auto-mount prompt is up. */
+    val deferredCandidates = LinkedHashMap<String, app.fayaz.otgmaster.UsbDeviceCandidate>()
+    val mtpInFlight: MutableSet<String> = java.util.concurrent.ConcurrentHashMap.newKeySet()
+    val reofferInFlight: MutableSet<String> = java.util.concurrent.ConcurrentHashMap.newKeySet()
+    val plainMountsInFlight: MutableSet<String> = java.util.concurrent.ConcurrentHashMap.newKeySet()
+
     /** What an unlock ended with, when it did not throw. A throw is an unlock failure. */
     sealed interface UnlockOutcome {
         /** Mounted and listed in [OtgMasterState.mountedDrives]. */
