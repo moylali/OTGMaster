@@ -736,7 +736,7 @@ class MainActivity : AppCompatActivity() {
                     val unlocking by unlockingPartitions.collectAsState()
                     OtgMasterApp(
                         unlockingPartitions = unlocking,
-                        deviceCandidates = _deviceCandidates.value,
+                        deviceCandidates = remember(_deviceCandidates.value) { _deviceCandidates.value.map { app.fayaz.otgmaster.engine.DeviceSnapshot.of(it) } },
                         mountedDrives = mountedDrivesState.value,
                         logs = logsState,
                         themeMode = themeMode,
@@ -2938,7 +2938,7 @@ const val SLIDER_HINT_OPEN_DELAY_MS = 6_000L
 @Composable
 fun OtgMasterApp(
     unlockingPartitions: Set<String> = emptySet(),
-    deviceCandidates: List<UsbDeviceCandidate>,
+    deviceCandidates: List<app.fayaz.otgmaster.engine.DeviceSnapshot>,
     mountedDrives: List<app.fayaz.otgmaster.engine.DriveSnapshot>,
     logs: List<String>,
     themeMode: ThemeMode,
@@ -3604,7 +3604,7 @@ private fun usbAccessLabel(mode: app.fayaz.otgmaster.usb.UsbAccessMode) = when (
 @Composable
 fun VeraCryptMountSection(
     unlockingPartitions: Set<String> = emptySet(),
-    deviceCandidates: List<UsbDeviceCandidate>,
+    deviceCandidates: List<app.fayaz.otgmaster.engine.DeviceSnapshot>,
     showNoDriveHelp: Boolean = false,
     usbHint: Int? = null,
     onUnlock: (String, VolumeCandidate, String, Int?, List<Uri>, app.fayaz.otgmaster.veracrypt.VeraCryptCipher, app.fayaz.otgmaster.veracrypt.VeraCryptHash, app.fayaz.otgmaster.veracrypt.HiddenVolumeCredentials?, Boolean, () -> Unit) -> Unit,
