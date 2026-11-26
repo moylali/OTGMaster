@@ -142,6 +142,28 @@ object ContainerSessions : MountRegistry {
         return md.digest().joinToString("") { "%02x".format(it) }.take(10)
     }
 
+    /** The ID of a LUKS volume: from its UUID, bytes 168 to 208 of the header. */
+    internal fun idForLuks(head: ByteArray): String =
+        MessageDigest.getInstance("SHA-256").apply { update("luks-uuid:".toByteArray()); update(head, 168, 40) }
+            .digest().joinToString("") { "%02x".format(it) }.take(10)
+
+    /** The ID of an AES Crypt file: from its first 256 bytes (header, extensions and IV). */
+    internal fun idForAesCrypt(head: ByteArray): String =
+        MessageDigest.getInstance("SHA-256").apply { update("aescrypt:".toByteArray()); update(head) }
+            .digest().joinToString("") { "%02x".format(it) }.take(10)
+
+    /**
+     * The ID a file of [format] will open under, from its first bytes [head], for the formats
+     * that take a password; null for the others. The screen looks a saved password up by it
+     * when the same file is picked again, whatever URI the picker gives this time.
+     */
+    internal fun passwordIdFor(format: ContainerFormat, head: ByteArray): String? = when (format) {
+        ContainerFormat.VERACRYPT -> if (head.size >= 64) idForSalt(head.copyOf(64)) else null
+        ContainerFormat.LUKS -> if (head.size >= 208) idForLuks(head) else null
+        ContainerFormat.AESCRYPT -> idForAesCrypt(head.copyOf(minOf(256, head.size)))
+        else -> null
+    }
+
     /**
      * Opens the VeraCrypt container [uri] with [password] and [pim]: reads it through its
      * descriptor, unlocks it, mounts its filesystem read-only and publishes it. Runs the key
@@ -223,8 +245,7 @@ object ContainerSessions : MountRegistry {
             val channel = FileInputStream(descriptor.fileDescriptor).channel
             val device = ChannelBlockDevice(channel, descriptor.statSize.takeIf { it >= 0 })
             val head = device.readBlocks(0, 1)
-            val id = MessageDigest.getInstance("SHA-256").apply { update("luks-uuid:".toByteArray()); update(head, 168, 40) }
-                .digest().joinToString("") { "%02x".format(it) }.take(10)
+            val id = idForLuks(head)
             if (sessions.any { it.id == id }) { CmLog.log("$masked is already open"); throw AlreadyOpenException() }
             val version = app.fayaz.otgmaster.luks.LuksUnlocker().luksVersion(device, 0)
             val mem = android.app.ActivityManager.MemoryInfo().also {
@@ -359,8 +380,7 @@ object ContainerSessions : MountRegistry {
             val length = descriptor.statSize.takeIf { it >= 0 } ?: channel.size()
             val head = java.nio.ByteBuffer.allocate(minOf(256L, length).toInt()).also { b -> var p = 0L
                 while (b.hasRemaining()) { if (channel.read(b, p).also { p += it } < 0) break } }.array()
-            val id = MessageDigest.getInstance("SHA-256").apply { update("aescrypt:".toByteArray()); update(head) }
-                .digest().joinToString("") { "%02x".format(it) }.take(10)
+            val id = idForAesCrypt(head)
             if (sessions.any { it.id == id }) { CmLog.log("$masked is already open"); throw AlreadyOpenException() }
             val tree = try {
                 app.fayaz.otgmaster.aescrypt.AesCryptSource.open(channel, length, password, displayName)
@@ -406,8 +426,11 @@ object ContainerSessions : MountRegistry {
             if (idle) ", idle for more than $idleMinutes min" else "")
     }
 
-    /** The format a picked file looks like, from its first 4 KiB; logged. */
-    fun detect(context: Context, uri: Uri, displayName: String): ContainerFormat {
+    /** What a picked file looks like: its format, and for a format with a password its ID. */
+    data class Detected(val format: ContainerFormat, val passwordId: String?)
+
+    /** The format a picked file looks like, from its first 4 KiB, and its ID; logged. */
+    fun detect(context: Context, uri: Uri, displayName: String): Detected {
         // The first 4 KiB, and the start of sector 16 (byte 32,768), where an ISO image says CD001.
         val first = context.contentResolver.openInputStream(uri)?.use { s ->
             val b = ByteArray(32_768 + 8); var n = 0
@@ -416,15 +439,15 @@ object ContainerSessions : MountRegistry {
         } ?: ByteArray(0)
         val head = first.copyOf(minOf(first.size, 4096))
         val s16 = if (first.size > 32_768) first.copyOfRange(32_768, first.size) else ByteArray(0)
-        return ContainerFormat.detect(head, s16).also {
-            CmLog.log("Chose ${app.fayaz.otgmaster.feedback.PathMask.mark(displayName)}: " + when (it) {
-                ContainerFormat.VERACRYPT -> "no known signature, so it is offered as VeraCrypt"
-                ContainerFormat.LUKS -> "a LUKS volume"
-                ContainerFormat.ZIP -> "a ZIP archive, opened without a password"
-                ContainerFormat.ISO -> "an ISO 9660 disc image, opened without a password"
-                ContainerFormat.AESCRYPT -> "an AES Crypt file"
-            })
-        }
+        val format = ContainerFormat.detect(head, s16)
+        CmLog.log("Chose ${app.fayaz.otgmaster.feedback.PathMask.mark(displayName)}: " + when (format) {
+            ContainerFormat.VERACRYPT -> "no known signature, so it is offered as VeraCrypt"
+            ContainerFormat.LUKS -> "a LUKS volume"
+            ContainerFormat.ZIP -> "a ZIP archive, opened without a password"
+            ContainerFormat.ISO -> "an ISO 9660 disc image, opened without a password"
+            ContainerFormat.AESCRYPT -> "an AES Crypt file"
+        })
+        return Detected(format, passwordIdFor(format, head))
     }
 
     fun lockAll(context: Context) = sessions.map { it.id }.forEach { lock(context, it) }

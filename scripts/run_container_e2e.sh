@@ -89,14 +89,15 @@ want=$(sha256sum testdata-container/aes/flower.jpg.aes | cut -d' ' -f1)
 adb -s "$S" shell input keyevent KEYCODE_WAKEUP
 DEVICE="$(adb -s "$S" shell getprop ro.product.model | tr -d '\r') / Android $(adb -s "$S" shell getprop ro.build.version.release | tr -d '\r')"
 
-RESULTS=(); PASS=0; FAIL=0
+RESULTS=(); PASS=0; FAIL=0; SKIPPED=0
 fail() { echo "  FAIL: $*"; WHY="$*"; return 1; }
 run_case() {
   local name=$1 desc=$2; shift 2
   if [ ${#ONLY[@]} -gt 0 ] && [[ ! " ${ONLY[*]} " =~ " $name " ]]; then return; fi
-  echo "== $name"; WHY=""; local t0=$SECONDS
+  echo "== $name"; WHY=""; SKIP=0; local t0=$SECONDS
   lock_all >/dev/null
   if "$@"; then RESULTS+=("| \`$name\` | $desc | ✅ PASSED | $((SECONDS - t0))s |"); PASS=$((PASS + 1))
+  elif [ "$SKIP" = 1 ]; then echo "  skipped: $WHY"; RESULTS+=("| \`$name\` | $desc | ⏭️ SKIPPED: $WHY | $((SECONDS - t0))s |"); SKIPPED=$((SKIPPED + 1))
   else RESULTS+=("| \`$name\` | $desc | ❌ FAILED: $WHY | $((SECONDS - t0))s |"); FAIL=$((FAIL + 1)); fi
   lock_all >/dev/null
 }
@@ -299,6 +300,67 @@ case_zip_and_veracrypt() {
   [ "$(open_ids | wc -l)" = 2 ] || { fail "not both open"; return 1; }
 }
 
+case_screen_settings() {
+  cm_front
+  local X; X=$(dump)
+  echo "$X" | grep -q 'content-desc="choose_file"' || { fail "no Choose a container file"; return 1; }
+  echo "$X" | grep -q 'Its files then show up' && { fail "the intro text is still under the title"; return 1; }
+  panel_open; on_screen 'text="Mounted containers"' || { fail "the panel is not called Mounted containers"; panel_close; return 1; }; panel_close
+  tap 'content-desc="settings"' || { fail "no Settings"; return 1; }; sleep 1; X=$(dump)
+  local d; for d in remember_passwords forget_passwords settings_report_issue donate_kofi version idle_15 lock_on_screen_off; do
+    echo "$X" | grep -q "content-desc=\"$d\"" || { adb -s "$S" shell input swipe 500 1800 500 600 300; sleep 1; X=$(dump); }
+    echo "$X" | grep -q "content-desc=\"$d\"" || { fail "Settings has no $d"; tap 'content-desc="close_settings"'; return 1; }
+  done
+  echo "$X" | grep -q 'content-desc="donate_support_link"' || { fail "Settings has no support link"; tap 'content-desc="close_settings"'; return 1; }
+  echo "$X" | grep -q "text=\"Version [^\"]*$APK_COMMIT\"" || { fail "the version row does not name $APK_COMMIT"; tap 'content-desc="close_settings"'; return 1; }
+  tap 'content-desc="close_settings"'
+}
+
+case_open_with_zip() {
+  view_file cm-zip.hc application/zip || { fail "saf-probe could not hand the ZIP over"; return 1; }
+  # A ZIP needs no password, so Open with mounts it at once and shows Mounted containers.
+  local i; for i in $(seq 1 30); do sleep 1; on_screen 'content-desc="close_open_containers"' && break; on_screen 'content-desc="message"' && break; done
+  on_screen 'content-desc="message"' && { fail "refused: $(dump | grep -oE 'text="[^"]*"[^>]*content-desc="message"')"; return 1; }
+  on_screen 'content-desc="close_open_containers"' || { fail "Mounted containers did not open after the ZIP mounted"; return 1; }
+  ZID=$(open_ids | tail -1); [ -n "$ZID" ] || { fail "the ZIP is not listed"; return 1; }
+  TREE=$(grant "$ZID"); [ -n "$TREE" ] || { fail "no grant on the ZIP"; return 1; }
+  local r; r=$(read_sha "$TREE" flower.jpg); [ "$r" = "\"sha256\": \"$FLOWER\"" ] || { fail "flower.jpg: $r"; return 1; }
+}
+
+case_open_with_veracrypt() {
+  view_file cm-ext4.hc application/octet-stream || { fail "saf-probe could not hand the file over"; return 1; }
+  # A VeraCrypt file needs its password: the form shows it, ready to unlock.
+  local i; for i in $(seq 1 15); do sleep 1; on_screen 'text="File: cm-ext4.hc"' && break; done
+  on_screen 'text="File: cm-ext4.hc"' || { fail "the handed-over file is not on the form"; return 1; }
+  local out; out=$(unlock password123 1); [ "$out" = "opened $ID_EXT4" ] || { fail "unlock: got '$out', expected 'opened $ID_EXT4'"; return 1; }
+}
+
+# Needs a screen lock, which this sets (PIN 1234) and clears; on an emulator only, so a phone kept
+# awake for the suite is never left behind a PIN.
+case_remember_password() {
+  [ "$(adb -s "$S" shell getprop ro.kernel.qemu | tr -d '\r')" = 1 ] || [ "$(adb -s "$S" shell getprop ro.boot.qemu | tr -d '\r')" = 1 ] || { WHY="not an emulator: skipped, it sets a PIN"; SKIP=1; return 1; }
+  adb -s "$S" shell locksettings set-pin 1234 >/dev/null
+  local rc=0; remember_inner || rc=1
+  adb -s "$S" shell locksettings clear --old 1234 >/dev/null
+  return $rc
+}
+remember_inner() {
+  cm_front; tap 'content-desc="settings"'; sleep 1
+  dump | grep -oE '<node[^>]*content-desc="remember_passwords"[^>]*' | grep -q 'checked="true"' || tap 'content-desc="remember_passwords"'; sleep 1
+  tap 'content-desc="close_settings"'; sleep 1
+  pick cm-ext4.hc || { fail "could not pick"; return 1; }
+  local out; out=$(unlock password123 1); [ "$out" = "opened $ID_EXT4" ] || { fail "first unlock: $out"; return 1; }
+  lock_all
+  cm_front; pick cm-ext4.hc >/dev/null
+  local i; for i in $(seq 1 10); do sleep 1; on_screen 'Open with the saved password' && break; done
+  on_screen 'Open with the saved password' || { fail "no phone-lock prompt on re-picking the same file"; return 1; }
+  adb -s "$S" shell input text 1234; adb -s "$S" shell input keyevent KEYCODE_ENTER
+  for i in $(seq 1 60); do sleep 1; [ "$(open_ids | tail -1)" = "$ID_EXT4" ] && break; done
+  [ "$(open_ids | tail -1)" = "$ID_EXT4" ] || { fail "the saved password did not open it"; return 1; }
+  lock_all; cm_front; tap 'content-desc="settings"'; sleep 1; tap 'content-desc="forget_passwords"'; sleep 1
+  tap 'content-desc="remember_passwords"'; sleep 1; tap 'content-desc="close_settings"'
+}
+
 run_case unlock_read "Pick a VeraCrypt file (ext4 inside), unlock, and read flower.jpg, a name with spaces and an empty file six folders down through saf-probe's grant, by SHA-256; no write, delete or rename offered." case_unlock_read
 run_case ntfs "The same, with NTFS inside the container." case_ntfs
 run_case wrong_password "A wrong password is refused with a message, and nothing opens." case_wrong_password
@@ -314,6 +376,10 @@ run_case iso_read "An ISO 9660 image with Joliet names opens with no password; f
 run_case aescrypt "An AES Crypt file made by pyAesCrypt: a wrong password refused, the right one opens it, and the one file inside, flower.jpg, reads by SHA-256 through saf-probe's grant." case_aescrypt
 run_case ui_killed "Milestone 2b: the screen's process (:ui) is killed while another app holds a descriptor on an open ZIP; the engine process lives on, the held read and a fresh read return the right bytes, and the relaunched screen lists the container." case_ui_killed
 run_case zip_and_veracrypt "A ZIP and a VeraCrypt container open together; the same flower.jpg reads from both through the same provider code, while a descriptor held on the ZIP's streamed entry seeks to 1 MiB." case_zip_and_veracrypt
+run_case screen_settings "The main screen has only the file button under the title; the panel is called Mounted containers; Settings has Remember passwords, Forget saved passwords, Report issue, Support (Ko-fi and the support page), the idle lock and the app version with this build's commit." case_screen_settings
+run_case open_with_zip "Open with: a ZIP handed over by another app (saf-probe, ACTION_VIEW, a read grant) mounts at once, Mounted containers opens, and flower.jpg reads by SHA-256." case_open_with_zip
+run_case open_with_veracrypt "Open with: a VeraCrypt file handed over as octet-stream lands on the form, and its password unlocks it under its usual ID." case_open_with_veracrypt
+run_case remember_password "Remember passwords on, with a PIN set: the password is saved after an unlock; picking the same file again asks for the PIN and opens it. Emulator only." case_remember_password
 run_case lock_all_service "The foreground service runs while a container is open; Lock all closes it and the service stops; the container file is unchanged." case_lock_all_service
 
 {
@@ -324,8 +390,8 @@ run_case lock_all_service "The foreground service runs while a container is open
   echo "## Results"; echo; echo "| Test Case | Description | Result | Duration |"; echo "|---|---|---|---|"
   printf '%s\n' "${RESULTS[@]}"; echo
   echo "## Summary"; echo; echo "| Metric | Value |"; echo "|---|---|"
-  echo "| Ran | $((PASS + FAIL)) |"; echo "| Passed | $PASS |"; echo "| Failed | $FAIL |"
+  echo "| Ran | $((PASS + FAIL)) |"; echo "| Passed | $PASS |"; echo "| Failed | $FAIL |"; echo "| Skipped | $SKIPPED |"
   echo "| Overall | $([ $FAIL = 0 ] && echo '✅ PASSED' || echo '❌ FAILED') |"
 } > "$REPORT"
-echo "Report saved to: $REPORT"; echo "Passed $PASS, failed $FAIL"
+echo "Report saved to: $REPORT"; echo "Passed $PASS, failed $FAIL, skipped $SKIPPED"
 [ $FAIL = 0 ]

@@ -42,7 +42,8 @@ unlock() {
     echo "message: $(echo "$X" | grep -oE 'text="[^"]*"[^>]*content-desc="message"' | sed -E 's/text="([^"]*)".*/\1/')"
   else echo "opened $(open_ids | tail -1)"; fi; }
 # The open containers are in the panel behind the top bar's icon, as OTG Master's drives are.
-panel_open() { cm_front; tap 'content-desc="open_containers"'; sleep 1; }
+# A mount opens the panel by itself, as OTG Master's slider does; tapping the icon then would hit the scrim.
+panel_open() { cm_front; on_screen 'content-desc="close_open_containers"' || tap 'content-desc="open_containers"'; sleep 1; }
 panel_close() { tap 'content-desc="close_open_containers"'; sleep 1; }
 open_ids() { panel_open; dump | grep -oE 'content-desc="open_[0-9a-f]+"' | grep -v 'open_containers' | sed -E 's/.*open_([0-9a-f]+)"/\1/'; panel_close; }
 lock_all() { panel_open; on_screen 'content-desc="lock_all"' && tap 'content-desc="lock_all"'; sleep 3; panel_close; }
@@ -58,3 +59,14 @@ grant() {
   tap_any 'text="Allow"' 'text="ALLOW"' || return 1; sleep 3
   adb -s "$S" shell cat $F/result-grant.json | grep -oE '"tree": "[^"]*"' | sed -E 's/"tree": "(.*)"/\1/; s#\\/#/#g'; }
 read_sha() { probe read --es tree "'$1'" --es path "'$2'" | grep -oE '"sha256": "[0-9a-f]+"|"error": "[^"]*"' | head -1; }
+# view_file <file name> <mime>: Open with, as a Files app does it. saf-probe asks the picker for the
+# file and hands it to Container Master with ACTION_VIEW, the MIME type and a read grant.
+view_file() {
+  adb -s "$S" shell "rm -f $F/result-view.json; am start -W -f 0x18080000 -n app.fayaz.safprobe/.ProbeActivity --es cmd view --es pkg $CM --es mime '$2'" >/dev/null; sleep 4
+  local X; X=$(dump)
+  if echo "$X" | grep -q 'content-desc="Clear query"'; then tap 'content-desc="Clear query"'
+  elif echo "$X" | grep -q 'text="Search this device"'; then tap 'text="Search this device"'
+  else tap 'content-desc="Search"'; fi; sleep 1
+  adb -s "$S" shell input text "${1%.*}"; adb -s "$S" shell input keyevent KEYCODE_ENTER; sleep 4
+  tap "text=\"$1\"" || return 1; sleep 4
+  adb -s "$S" shell cat $F/result-view.json 2>/dev/null | grep -q '"viewed"'; }
