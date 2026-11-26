@@ -132,6 +132,23 @@ All four were rebase-merged, so `main` has new hashes. The sections below name t
 | #193 | `a6a5286` | `bed05fa` | refactor(provider): look up and list through a DocumentSource tree contract |
 | #193 | `2d4bba3` | `c681622` | docs: the held grant still reads the same file on a6a5286 |
 
+## 2026-11-26: Unmount and Eject through MountCoordinator, OnePlus 7, Drive 1
+
+2b step 2, slices 1 to 3 (`9cb9237`, `78f656b`, `67724b8`): the device state, Unmount, Eject
+and the partition probes in the engine. **Minified** `67724b8`; `tools/saf-probe` from
+`cd9efa6`. OnePlus 7 (GM1901, LineageOS 23.2, Android 16), Drive 1 (`…6B31`).
+
+| Step | Result |
+|---|---|
+| Install over `c134fdc` (no drive mounted), launch: auto mount through the engine's probe | the 7 plain partitions mounted |
+| The read grant on `884fb1f107:/BENCH/edge` reads `size_1048577.bin` | 1,048,577 B, `31eb9165…063ff4`, flags 70 |
+| Write check on D1EXFAT, D1FAT32, D1NTFS and D1EXT4 (create, 3,149,825 B, read back, "wt" 1,049,941 B, read back, delete) | all four match at both steps, deleted |
+| Partition 4 (encrypted APFS), Unlock & mount | mounted within 10 s of the tap (screen polled every 3 s); the log lines were not captured this run |
+| Eject of the 8 drives through `MountCoordinator.ejectNow` and `unmount` | done, the service stopped; `sm unmount` of Android's mounts after |
+
+**Written to the drive:** a file created and deleted at the roots of D1EXFAT, D1FAT32, D1NTFS and
+D1EXT4, as on 11-25; the host check of both runs is owed with the next laptop check of D1.
+
 ## 2026-11-25: mounting through MountCoordinator, OnePlus 7, Drive 1
 
 Milestone 2b step 1 for OTG Master: the device work of unlock, plain mount, unmount, Format,
