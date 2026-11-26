@@ -66,6 +66,13 @@ if [ ! -f testdata-container/archives/test.7zenc ]; then
     || { echo "TAR or 7z fixture failed (needs tar, gzip and p7zip's 7z)"; rm -f "$A/test.7zenc"; exit 1; }
   rm -rf "$t"
 fi
+# A macOS disk image: the APFS GPT disk a Mac made for OTG Master's apfs_cs case, wrapped as UDIF
+# (zlib, raw and bzip2 chunks) by scripts/make_udif.py, since this host has no hdiutil.
+if [ ! -f testdata-container/dmg/test.dmg ]; then
+  [ -f testdata/apfs/apfs_cs/test.img ] || { echo "testdata/apfs/apfs_cs is missing: unpack testdata/apfs/apfs-images.tar.xz"; exit 1; }
+  mkdir -p testdata-container/dmg
+  python3 scripts/make_udif.py testdata/apfs/apfs_cs/test.img testdata-container/dmg/test.dmg --name "disk image" || { echo "DMG fixture failed"; exit 1; }
+fi
 # A restic repository (desktop restic), one snapshot of the shared tree. restic keeps each file's
 # absolute path, so the tree is backed up from a fixed place and RESTIC_PATH is where it sits in the snapshot.
 RESTIC_SRC=/tmp/cm-e2e-restic-src
@@ -102,9 +109,9 @@ echo "Building Container Master and saf-probe..."
 APK_COMMIT=$(grep -oE 'GIT_COMMIT = "[^"]*"' container-app/build/generated/source/buildConfig/debug/app/fayaz/containermaster/BuildConfig.java | cut -d'"' -f2)
 adb -s "$S" install -r container-app/build/outputs/apk/debug/container-app-debug.apk >/dev/null || exit 1
 adb -s "$S" install -r tools/saf-probe/build/outputs/apk/debug/saf-probe-debug.apk >/dev/null || exit 1
-for t in ext4 ntfs luks2 luks1 zip iso tar targz 7z 7zenc; do
+for t in ext4 ntfs luks2 luks1 zip iso tar targz 7z 7zenc dmg; do
   case $t in luks2) src=testdata/m_luks2_ext4/test.img ;; luks1) src=testdata/m_luks1_ext4/test.img ;; zip) src=testdata-container/zip/test.zip ;; iso) src=testdata-container/iso/test.iso ;;
-    tar) src=testdata-container/archives/test.tar ;; targz) src=testdata-container/archives/test.tar.gz ;; 7z) src=testdata-container/archives/test.7z ;; 7zenc) src=testdata-container/archives/test.7zenc ;;
+    dmg) src=testdata-container/dmg/test.dmg ;; tar) src=testdata-container/archives/test.tar ;; targz) src=testdata-container/archives/test.tar.gz ;; 7z) src=testdata-container/archives/test.7z ;; 7zenc) src=testdata-container/archives/test.7zenc ;;
     *) src=testdata/$t/test.img ;; esac
   want=$(sha256sum $src | cut -d' ' -f1)
   have=$(adb -s "$S" shell sha256sum /sdcard/Download/cm-$t.hc 2>/dev/null | cut -d' ' -f1)
@@ -413,6 +420,16 @@ case_restic_read() {
   r=$(read_sha "$TREE" "$snap/$RESTIC_PATH/nested/very/deep/folder/empty_file.txt"); [ "$r" = "\"sha256\": \"$EMPTY\"" ] || { fail "empty_file.txt: $r"; return 1; }
 }
 
+case_dmg_read() {
+  cm_front; pick cm-dmg.hc || { fail "could not pick the disk image"; return 1; }
+  dump | grep -q 'macOS disk image' || { fail "not recognised as a macOS disk image"; return 1; }
+  local out; out=$(unlock ""); [[ "$out" == opened\ * ]] || { fail "open: $out"; return 1; }
+  local id=${out#opened }
+  panel_open; on_screen 'DMG, APFS, read-only' || { fail "the panel does not say DMG, APFS, read-only"; panel_close; return 1; }; panel_close
+  TREE=$(grant "$id"); [ -n "$TREE" ] || { fail "no grant"; return 1; }
+  local r; r=$(read_sha "$TREE" flower.jpg); [ "$r" = "\"sha256\": \"$FLOWER\"" ] || { fail "flower.jpg: $r"; return 1; }
+}
+
 case_screen_settings() {
   cm_front
   local X; X=$(dump)
@@ -502,6 +519,7 @@ run_case sevenzip_read "The same for a 7z archive made by p7zip (solid LZMA2), o
 run_case sevenzip_encrypted "A 7z archive encrypted by p7zip with its file list hidden: a wrong password is refused and nothing opens; the right one opens it and every file reads by SHA-256." case_7z_encrypted
 run_case open_with_targz "Open with: a .tar.gz handed over as application/gzip mounts at once." case_open_with_targz
 run_case restic_read "A restic repository made by desktop restic, picked as a folder: recognised, a wrong password refused, the right one mounts it with its snapshot as a folder, and flower.jpg, a name with spaces and an empty file six folders down read by SHA-256." case_restic_read
+run_case dmg_read "A macOS disk image (UDIF with zlib, raw and bzip2 chunks) of the APFS GPT disk a Mac made: recognised by its trailer, opened with no password, the APFS partition found in the GPT inside, and flower.jpg reads by SHA-256." case_dmg_read
 run_case lock_all_service "The foreground service runs while a container is open; Lock all closes it and the service stops; the container file is unchanged." case_lock_all_service
 
 {

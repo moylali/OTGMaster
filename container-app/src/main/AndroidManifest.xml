@@ -43,6 +43,7 @@
                 <data android:mimeType="application/x-gzip" />
                 <data android:mimeType="application/x-compressed-tar" />
                 <data android:mimeType="application/x-7z-compressed" />
+                <data android:mimeType="application/x-apple-diskimage" />
                 <data android:mimeType="application/octet-stream" />
             </intent-filter>
         </activity>

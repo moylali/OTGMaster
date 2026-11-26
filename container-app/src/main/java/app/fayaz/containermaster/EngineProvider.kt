@@ -70,6 +70,7 @@ class EngineProvider : ContentProvider() {
                         ContainerFormat.ZIP -> ContainerSessions.openZip(ctx, uri, name)
                         ContainerFormat.ISO -> ContainerSessions.openIso(ctx, uri, name)
                         ContainerFormat.RESTIC -> ContainerSessions.openRestic(ctx, uri, name, password)
+                        ContainerFormat.DMG -> ContainerSessions.openDmg(ctx, uri, name, password)
                         ContainerFormat.TAR, ContainerFormat.TARGZ, ContainerFormat.SEVENZIP ->
                             ContainerSessions.openArchive(ctx, uri, name, ContainerFormat.valueOf(b.getString(K_FORMAT)!!), password)
                     }

@@ -74,4 +74,5 @@
     <string name="password_if_any">Password (leave empty if none)</string>
     <string name="choose_folder">Choose a backup folder</string>
     <string name="format_restic">This is a restic repository. Enter its password. Its snapshots open read-only, one folder each.</string>
+    <string name="format_dmg">This is a macOS disk image. It opens read-only. Enter a password only if the APFS volume inside is encrypted.</string>
 </resources>

@@ -394,6 +394,89 @@ object ContainerSessions : MountRegistry {
         }
     }
 
+    /**
+     * Opens a macOS disk image (UDIF) read-only: finds the first partition holding a filesystem
+     * Container Master reads (APFS, exFAT, FAT32, NTFS, ext4) and mounts it. A partition comes
+     * from the image's own table (one "blkx" entry each, as hdiutil writes them) or, for an
+     * image of a whole disk, from the GPT inside it. [password] opens an encrypted APFS volume.
+     *
+     * @throws IllegalArgumentException for an encrypted APFS volume and a wrong or missing password
+     */
+    fun openDmg(context: Context, uri: Uri, displayName: String, password: CharArray = CharArray(0)): Session {
+        val masked = app.fayaz.otgmaster.feedback.PathMask.mark(displayName)
+        CmLog.log("Opening $masked as a macOS disk image")
+        val t0 = android.os.SystemClock.elapsedRealtime()
+        val descriptor = context.contentResolver.openFileDescriptor(uri, "r")
+            ?: throw java.io.FileNotFoundException("The file could not be opened")
+        try {
+            val channel = FileInputStream(descriptor.fileDescriptor).channel
+            val length = descriptor.statSize.takeIf { it >= 0 } ?: channel.size()
+            val img = app.fayaz.otgmaster.dmg.UdifImage.open(channel, length)
+            val id = MessageDigest.getInstance("SHA-256").apply {
+                update("dmg:$length:".toByteArray()); update(img.readBlocks(0, minOf(8L, img.blockCount).toInt()))
+            }.digest().joinToString("") { "%02x".format(it) }.take(10)
+            if (sessions.any { it.id == id }) { CmLog.log("$masked is already open"); throw AlreadyOpenException() }
+            val candidates = (img.partitions.map { Triple(it.name, it.firstSector, it.sectorCount) } + gptPartitions(img))
+                .filter { it.third >= 64 }.distinctBy { it.second to it.third }
+            var unsupported: String? = null
+            for ((name, first, count) in candidates) {
+                val part: app.fayaz.otgmaster.block.RawBlockDevice =
+                    if (first == 0L && count >= img.blockCount) img else app.fayaz.otgmaster.block.SlicedBlockDevice(img, first, count)
+                val detected = runCatching { app.fayaz.otgmaster.fs.FilesystemDetector.detect(part) }.getOrNull() ?: continue
+                if (detected is app.fayaz.otgmaster.fs.DetectedFilesystem.Unsupported) { unsupported = detected.reason; continue }
+                if (detected !is app.fayaz.otgmaster.fs.DetectedFilesystem.Supported) continue
+                val cached = CachedBlockDevice(part, readAheadBytes = CachedBlockDevice.DEFAULT_READAHEAD_BYTES)
+                val driver = ReadOnlyBlockDeviceDriver(ByteBlockDevice(cached))
+                val fs = if (detected.displayName == "APFS") {
+                    try {
+                        app.fayaz.otgmaster.apfs.ApfsFileSystemCreator.mount(driver, String(password).ifEmpty { null })
+                    } catch (e: app.fayaz.otgmaster.apfs.ApfsFileSystem.WrongPasswordException) {
+                        CmLog.log("Could not open $masked: its APFS volume is encrypted, and the password is wrong or missing")
+                        throw IllegalArgumentException("wrong or missing password", e)
+                    }
+                } else DiskMounter.mount(driver)
+                val session = veraCryptSession(id, displayName, uri, fs, java.io.Closeable {}, descriptor, format = "DMG")
+                synchronized(this) {
+                    if (sessions.any { it.id == id }) { session.close(); throw AlreadyOpenException() }
+                    touch(id)
+                    sessions += session
+                    _open.value = sessions.toList()
+                }
+                notifyRoots(context)
+                CmLog.log("Opened $masked: partition \"$name\", ${session.fileSystemName}, read-only, in ${android.os.SystemClock.elapsedRealtime() - t0} ms; open as $id")
+                return session
+            }
+            throw java.io.IOException(unsupported ?: "No partition in this disk image holds a filesystem Container Master reads")
+        } catch (e: AlreadyOpenException) {
+            runCatching { descriptor.close() }; throw e
+        } catch (e: IllegalArgumentException) {
+            runCatching { descriptor.close() }; throw e
+        } catch (e: Exception) {
+            runCatching { descriptor.close() }
+            CmLog.log("Could not open $masked: ${e.message ?: e.javaClass.simpleName}")
+            throw e
+        } finally {
+            password.fill('\u0000')
+        }
+    }
+
+    /** The partitions of a GPT on [disk] (first sector, count), named by their GPT names; empty without a GPT. */
+    private fun gptPartitions(disk: app.fayaz.otgmaster.block.RawBlockDevice): List<Triple<String, Long, Long>> = runCatching {
+        val h = java.nio.ByteBuffer.wrap(disk.readBlocks(1, 1)).order(java.nio.ByteOrder.LITTLE_ENDIAN)
+        if (String(h.array(), 0, 8, Charsets.US_ASCII) != "EFI PART") return emptyList()
+        val entriesLba = h.getLong(72); val n = h.getInt(80); val size = h.getInt(84)
+        if (n !in 1..256 || size !in 128..512) return emptyList()
+        val bytes = disk.readBlocks(entriesLba, ((n.toLong() * size + 511) / 512).toInt())
+        val b = java.nio.ByteBuffer.wrap(bytes).order(java.nio.ByteOrder.LITTLE_ENDIAN)
+        (0 until n).mapNotNull { i ->
+            val o = i * size
+            if ((0 until 16).all { bytes[o + it].toInt() == 0 }) return@mapNotNull null
+            val first = b.getLong(o + 32); val last = b.getLong(o + 40)
+            val name = String(bytes, o + 56, 72, Charsets.UTF_16LE).trimEnd('\u0000')
+            if (first <= 0 || last < first || last >= disk.blockCount) null else Triple(name.ifEmpty { "GPT partition ${i + 1}" }, first, last - first + 1)
+        }
+    }.getOrDefault(emptyList())
+
     fun openZip(context: Context, uri: Uri, displayName: String): Session {
         val masked = app.fayaz.otgmaster.feedback.PathMask.mark(displayName)
         CmLog.log("Opening $masked as a ZIP archive")
@@ -609,7 +692,14 @@ object ContainerSessions : MountRegistry {
         } ?: ByteArray(0)
         val head = first.copyOf(minOf(first.size, 4096))
         val s16 = if (first.size > 32_768) first.copyOfRange(32_768, first.size) else ByteArray(0)
-        val format = ContainerFormat.detect(head, s16)
+        // A disk image says what it is at its end: the koly trailer in the last 512 bytes.
+        val tail = runCatching { context.contentResolver.openFileDescriptor(uri, "r")?.use { pfd ->
+            val ch = FileInputStream(pfd.fileDescriptor).channel
+            val len = pfd.statSize.takeIf { it >= 0 } ?: ch.size()
+            if (len < 512) ByteArray(0) else java.nio.ByteBuffer.allocate(512).also { b -> var p = len - 512
+                while (b.hasRemaining()) { if (ch.read(b, p).also { p += it } < 0) break } }.array()
+        } }.getOrNull() ?: ByteArray(0)
+        val format = if (app.fayaz.otgmaster.dmg.UdifImage.looksLikeUdif(tail)) ContainerFormat.DMG else ContainerFormat.detect(head, s16)
         CmLog.log("Chose ${app.fayaz.otgmaster.feedback.PathMask.mark(displayName)}: " + when (format) {
             ContainerFormat.VERACRYPT -> "no known signature, so it is offered as VeraCrypt"
             ContainerFormat.LUKS -> "a LUKS volume"
@@ -620,6 +710,7 @@ object ContainerSessions : MountRegistry {
             ContainerFormat.TARGZ -> "a gzip-compressed TAR archive, opened without a password"
             ContainerFormat.SEVENZIP -> "a 7z archive"
             ContainerFormat.RESTIC -> "a restic repository"
+            ContainerFormat.DMG -> "a macOS disk image"
         })
         return Detected(format, passwordIdFor(format, head))
     }
