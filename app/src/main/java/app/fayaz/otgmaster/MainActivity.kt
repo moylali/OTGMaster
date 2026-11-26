@@ -584,8 +584,15 @@ class MainActivity : AppCompatActivity() {
 
         registerUsbReceiver()
 
-        // Let components without an activity reference write to the log pane.
-        installedLogSink = { line -> runOnUiThread { appendLog(line) } }
+        // Let components without an activity reference write to the log pane. From another
+        // thread a line goes through Dispatchers.Main, not runOnUiThread: MountCoordinator logs
+        // from an IO thread and the screen then writes its own lines in withContext(Main), and
+        // Dispatchers.Main posts asynchronous messages, which pass a plain runOnUiThread post
+        // while a frame is pending. "Unlocked" then appeared after "Mounted" (OnePlus 7, 6d6995e).
+        installedLogSink = { line ->
+            if (android.os.Looper.myLooper() == android.os.Looper.getMainLooper()) appendLog(line)
+            else OtgMasterState.appScope.launch(Dispatchers.Main) { appendLog(line) }
+        }
         OtgMasterState.logSink = installedLogSink
 
         installedUnmountAll = {
