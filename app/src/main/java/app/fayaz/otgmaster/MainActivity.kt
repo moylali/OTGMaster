@@ -1221,36 +1221,8 @@ class MainActivity : AppCompatActivity() {
             }
             lifecycleScope.launch(Dispatchers.IO) {
                 try {
-                    val usb = getSystemService(Context.USB_SERVICE) as UsbManager
-                    val connection = usb.openDevice(d) ?: throw java.io.IOException("Android would not open the USB device")
-                    val mtp = android.mtp.MtpDevice(d)
-                    if (!mtp.open(connection)) {
-                        connection.close()
-                        throw java.io.IOException("the device refused an MTP session: unlock it, choose File transfer, " +
-                            "and close any other app showing its files")
-                    }
-                    val session = app.fayaz.otgmaster.mtp.MtpSession(d, mtp)
-                    val storages = session.storages()
-                    if (storages.isEmpty()) throw java.io.IOException("${session.name} reports no storage (is it unlocked?)")
-                    val drives = storages.map { fs ->
-                        val id = app.fayaz.otgmaster.extension.ExtensionContract.stableDriveId(
-                            key, fs.storageId.toLong() and 0xFFFFFFFFL, OtgMasterState.mountedDrives.map { it.id })
-                        MountedDrive(
-                            id = id,
-                            name = "${session.name} · ${fs.volumeLabel}",
-                            fileSystem = fs,
-                            blockDevice = null,
-                            sourceDeviceName = key,
-                            sourceDeviceDisplayName = session.name,
-                            isPlain = true,
-                            partitionLabel = fs.volumeLabel,
-                            filesystemName = "MTP",
-                            mountedReadOnly = true,
-                        ).also { OtgMasterState.addDrive(it) }
-                    }
+                    val drives = app.fayaz.otgmaster.engine.MountCoordinator.mountMtp(d, key)
                     withContext(Dispatchers.Main) {
-                        appendLog("Mounted ${session.name} over MTP, read-only: ${drives.joinToString { it.partitionLabel }}")
-                        contentResolver.notifyChange(android.provider.DocumentsContract.buildRootsUri(app.fayaz.otgmaster.extension.ExtensionContract.AUTHORITY), null)
                         newlyMountedDriveIds.value = newlyMountedDriveIds.value + drives.map { it.id }
                         updateMountedDrives()
                     }
@@ -1588,171 +1560,20 @@ class MainActivity : AppCompatActivity() {
             if (BuildConfig.DEBUG) OtgMasterState.testUnlockHold?.await(90, java.util.concurrent.TimeUnit.SECONDS)
             deviceMutex.withLock {
             try {
-                // An UNENCRYPTED candidate has a readable filesystem at its first
-                // sector, so there is no header to derive a key from. Falling
-                // through to the VeraCrypt branch ran 16,000 PBKDF2 iterations
-                // against an NTFS boot sector and then reported "failed to
-                // unlock", which reads as a wrong password rather than the truth.
-                if (candidate.containerType ==
-                        app.fayaz.otgmaster.veracrypt.ContainerType.UNENCRYPTED) {
-                    val available = device.blockCount - candidate.startBlock
-                    val plain = if (available <= 0) DetectedFilesystem.Unknown else
-                        FilesystemDetector.detectFromBytes(
-                            device.readBlocks(candidate.startBlock, minOf(4L, available).toInt()))
-                    withContext(Dispatchers.Main) {
-                        onComplete()
-                        appendLog(getString(R.string.log_volume_not_encrypted,
-                            candidate.label, plain.displayName))
-                    }
+                val outcome = app.fayaz.otgmaster.engine.MountCoordinator.unlockAndMount(
+                    app.fayaz.otgmaster.engine.MountCoordinator.UnlockRequest(
+                        deviceName, deviceDisplayName, device, candidate, password, pim, keyfiles, cipher, hash,
+                        readOnly, protectHidden, veraCryptHeaders, useBackupHeader,
+                        onProtectionTriggered = ::onHiddenProtectionTriggered,
+                    ))
+                if (outcome !is app.fayaz.otgmaster.engine.MountCoordinator.UnlockOutcome.Mounted) {
+                    withContext(Dispatchers.Main) { onComplete() }
                     return@withLock
                 }
-                val decryptedDevice = when (candidate.containerType) {
-                    app.fayaz.otgmaster.veracrypt.ContainerType.LUKS1,
-                    app.fayaz.otgmaster.veracrypt.ContainerType.LUKS2 -> {
-                        val passwordBytes = password.toByteArray(Charsets.UTF_8)
-                        try {
-                            app.fayaz.otgmaster.luks.LuksUnlocker().unlock(
-                                device, candidate.startBlock, candidate.blockCount, passwordBytes,
-                                availableMemoryBytes = availableMemoryBytes(),
-                            )
-                        } finally {
-                            passwordBytes.fill(0)
-                        }
-                    }
-                    app.fayaz.otgmaster.veracrypt.ContainerType.BITLOCKER ->
-                        app.fayaz.otgmaster.bitlocker.BitLockerUnlocker().unlock(
-                            device, candidate.startBlock, candidate.blockCount, password.toCharArray(),
-                            keyFiles = keyfiles.map { uri ->
-                                // A .BEK file is a few hundred bytes; the cap keeps a wrong pick from filling memory.
-                                (contentResolver.openInputStream(uri) ?: throw java.io.IOException("Cannot open the key file"))
-                                    .use { input ->
-                                        val buf = ByteArray(64 * 1024 + 1)
-                                        var n = 0
-                                        while (n < buf.size) { val r = input.read(buf, n, buf.size - n); if (r < 0) break; n += r }
-                                        buf.copyOf(n)
-                                    }
-                            },
-                        )
-                    // Nothing to decrypt at the block level: libfsapfs takes the
-                    // password when the filesystem is mounted, below.
-                    //
-                    // close() must stop here. Unmounting closes the mount's device
-                    // chain, and a bare SlicedBlockDevice passes close() on to the USB
-                    // connection itself — so unmounting an encrypted APFS volume closed
-                    // the whole stick under every other partition on it, the kernel
-                    // took it back, and Android mounted its plain partitions read-write
-                    // (device-matrix Drive 1, OnePlus 7: every run, at the first
-                    // remount). The other containers' devices do not close the raw one
-                    // either; its lifetime belongs to openedDevices / unmountDrive.
-                    app.fayaz.otgmaster.veracrypt.ContainerType.APFS -> {
-                        val slice = app.fayaz.otgmaster.block.SlicedBlockDevice(device, candidate.startBlock,
-                            candidate.blockCount ?: (device.blockCount - candidate.startBlock))
-                        object : app.fayaz.otgmaster.block.RawBlockDevice by slice {
-                            override fun close() {}
-                        }
-                    }
-                    else -> VeraCryptUnlocker().unlock(
-                        device, candidate, password.toCharArray(), pim, keyfiles, contentResolver,
-                        cipher, hash, protect = protectHidden.takeUnless { readOnly },
-                        headers = veraCryptHeaders, useBackupHeader = useBackupHeader,
-                    )
-                }
-                val veraCryptVolume = decryptedDevice as? app.fayaz.otgmaster.veracrypt.NativeDecryptedBlockDevice
-                val protection = veraCryptVolume?.hiddenVolumeProtection
-                // Set before the filesystem mounts: a mount can write too.
-                protection?.onTriggered = {
-                    onHiddenProtectionTriggered("$deviceDisplayName · ${candidate.label}")
-                }
-                val isApfs = candidate.containerType == app.fayaz.otgmaster.veracrypt.ContainerType.APFS
-                // APFS is not unlocked until it mounts.
-                if (!isApfs) withContext(Dispatchers.Main) { appendLog(getString(R.string.log_unlock_successful)) }
-
-                val detected = FilesystemDetector.detect(decryptedDevice)
-                withContext(Dispatchers.Main) { appendLog(getString(R.string.log_detected_filesystem, detected.displayName)) }
-
-                if (detected is DetectedFilesystem.Unsupported) {
-                    // S01: the decrypted device holds the volume key; nothing will mount it now.
-                    runCatching { decryptedDevice.close() }
-                    withContext(Dispatchers.Main) {
-                        onComplete()
-                        appendLog(getString(R.string.log_cannot_mount_reason, detected.reason))
-                    }
-                    return@launch
-                }
-
-                if (detected is DetectedFilesystem.Unknown) {
-                    withContext(Dispatchers.Main) { appendLog(getString(R.string.log_filesystem_unrecognized)) }
-                }
-
-                // Read cache with readahead between the filesystem driver and the
-                // decrypted device. libexfat reads directory and FAT entries
-                // unbuffered — measured at 100,844 preads averaging 24 bytes to list
-                // a 10,000-entry directory (docs/IO_PERFORMANCE.md §5.5) — and each
-                // one was a USB round trip plus a sector decryption. Caching
-                // plaintext means a hit skips both.
-                // Readahead helps or hurts depending on the filesystem's metadata
-                // layout — see CachedBlockDevice.NO_READAHEAD_BYTES.
-                val cachedDevice = wrapWithCache(decryptedDevice, detected.displayName)
-                val byteDevice = me.jahnen.libaums.core.driver.ByteBlockDevice(
-                    cachedDevice as me.jahnen.libaums.core.driver.BlockDeviceDriver
-                )
-                val fsDevice: me.jahnen.libaums.core.driver.BlockDeviceDriver =
-                    if (readOnly) app.fayaz.otgmaster.block.ReadOnlyBlockDeviceDriver(byteDevice) else byteDevice
-                val fileSystem = try {
-                    if (isApfs) {
-                        app.fayaz.otgmaster.apfs.ApfsFileSystemCreator.mount(fsDevice, password, candidate.apfsVolume).also {
-                            withContext(Dispatchers.Main) { appendLog(getString(R.string.log_unlock_successful)) }
-                        }
-                    } else {
-                        app.fayaz.otgmaster.disk.DiskMounter.mount(fsDevice)
-                    }
-                } catch (e: app.fayaz.otgmaster.apfs.ApfsFileSystem.WrongPasswordException) {
-                    throw e   // an unlock failure, reported (and cached credentials dropped) below
-                } catch (e: Exception) {
-                    android.util.Log.e("OTG_MOUNT", "Failed to mount file system", e)
-                    // S01: release the volume key held by the decrypted device (its close
-                    // leaves the USB connection alone).
-                    runCatching { decryptedDevice.close() }
-                    val msg = if (detected is DetectedFilesystem.Unknown)
-                        getString(R.string.log_unrecognized_fs_not_mounted)
-                    else
-                        getString(R.string.log_failed_to_mount, detected.displayName, e.reason())
-                    withContext(Dispatchers.Main) {
-                        onComplete()
-                        appendLog(msg)
-                    }
-                    return@launch
-                }
-                // Stable across mounts, so a companion app's persisted folder grant
-                // still resolves next time (see ExtensionContract).
-                val driveId = app.fayaz.otgmaster.extension.ExtensionContract.veraCryptDriveId(
-                    deviceName, candidate.startBlock, veraCryptVolume?.volumeType, OtgMasterState.mountedDrives.map { it.id },
-                    apfsVolume = candidate.apfsVolume)
-                val mountedDrive = MountedDrive(
-                    id = driveId,
-                    name = getString(R.string.mounted_drive_name, deviceDisplayName, driveId),
-                    fileSystem = fileSystem,
-                    blockDevice = cachedDevice,
-                    sourceDeviceName = deviceName,
-                    sourceDeviceDisplayName = deviceDisplayName,
-                    rawBlockDevice = device,
-                    sourceVolumeCandidate = candidate,
-                    partitionLabel = candidate.label,
-                    filesystemName = detected.displayName,
-                    mountedReadOnly = readOnly,
-                    partitionStartBlock = candidate.startBlock,
-                    partitionBlockCount = candidate.blockCount,
-                    veraCryptVolumeType = veraCryptVolume?.volumeType,
-                    hiddenVolumeProtection = protection,
-                )
-
-                OtgMasterState.addDrive(mountedDrive)
-                mountedDrive.readOnlyReason?.let { reason ->
-                    withContext(Dispatchers.Main) { appendLog("${mountedDrive.name} is read-only: $reason") }
-                }
-                contentResolver.notifyChange(
-                    android.provider.DocumentsContract.buildRootsUri(app.fayaz.otgmaster.provider.VeraCryptDocumentProvider.AUTHORITY), null
-                )
+                val mountedDrive = outcome.drive
+                val driveId = mountedDrive.id
+                val fileSystem = mountedDrive.fileSystem
+                val protection = mountedDrive.hiddenVolumeProtection
 
                 withContext(Dispatchers.Main) {
                     onComplete()
@@ -1947,16 +1768,6 @@ class MainActivity : AppCompatActivity() {
      * safe to unplug belongs there, not after this function returns, because the teardown
      * itself runs later on another thread and can wait behind another partition's unlock.
      */
-    /**
-     * Memory the phone has free right now, for refusing an Argon2 keyslot that cannot fit
-     * before it starts: running out part way is a kill, not an exception the unlock can catch.
-     */
-    private fun availableMemoryBytes(): Long? = runCatching {
-        val info = android.app.ActivityManager.MemoryInfo()
-        (getSystemService(ACTIVITY_SERVICE) as android.app.ActivityManager).getMemoryInfo(info)
-        info.availMem
-    }.getOrNull()
-
     private fun unmountDrive(
         drive: MountedDrive, isManual: Boolean = false, disconnected: Boolean = false,
         onTornDown: (() -> Unit)? = null,
@@ -1975,11 +1786,7 @@ class MainActivity : AppCompatActivity() {
         app.fayaz.otgmaster.backup.BackupMounts.forget(drive.id)
         OtgMasterState.unmountsInFlight.incrementAndGet()
         val t0 = System.currentTimeMillis()
-        OtgMasterState.removeDrive(drive.id)
-        val tRemoved = System.currentTimeMillis()
-        contentResolver.notifyChange(
-            android.provider.DocumentsContract.buildRootsUri(app.fayaz.otgmaster.provider.VeraCryptDocumentProvider.AUTHORITY), null
-        )
+        val tRemoved = app.fayaz.otgmaster.engine.MountCoordinator.unlist(drive)
         val tNotified = System.currentTimeMillis()
         updateMountedDrives()
         val tUpdated = System.currentTimeMillis()
@@ -1999,32 +1806,7 @@ class MainActivity : AppCompatActivity() {
         MountedDriveService.beginTeardown(applicationContext, drive.name)
         OtgMasterState.appScope.launch(Dispatchers.IO) {
           try {
-            OtgMasterState.unmountTeardownGate?.await()
-            // Wait for any in-flight ProxyFileDescriptor onRelease() callbacks to finish
-            // before unmounting — prevents a use-after-free if the OS is still flushing a
-            // file write when exfat_unmount frees the ef pointer.
-            app.fayaz.otgmaster.provider.VeraCryptDocumentProvider.drainCallbacks(drive.id)
-            // Unmounting flushes filesystem metadata, so it writes to the same shared
-            // USB device as every other partition.  Remounting empties the whole mount
-            // list at once, and four concurrent single-block writes killed the
-            // transport with "MAX_RECOVERY_ATTEMPTS Exceeded", which then failed the
-            // unlocks that followed.  Only the device work is serialised —
-            // drainCallbacks() above waits on in-flight file callbacks that can need
-            // the device themselves, so holding the lock across it deadlocks every
-            // later mount and unmount.
-            deviceMutex.withLock {
-                when (val fs = drive.fileSystem) {
-                    is app.fayaz.otgmaster.exfat.ExFatFileSystem -> fs.unmount()
-                    is app.fayaz.otgmaster.ntfs.NtfsFileSystem -> fs.unmount()
-                    is app.fayaz.otgmaster.apfs.ApfsFileSystem -> fs.unmount()
-                    // Leaves the clean flag set; a stream of writes keeps it clear (#36).
-                    is app.fayaz.otgmaster.ext4.Ext4FileSystem -> fs.unmount()
-                }
-                // drive.blockDevice is either NativeDecryptedBlockDevice (close zeros the key but
-                // does NOT close the underlying USB connection) or RawBlockDeviceAdapter (noop close).
-                // The raw USB connection is managed below — closed only when no other partitions remain.
-                drive.blockDevice?.close()
-            }
+            app.fayaz.otgmaster.engine.MountCoordinator.tearDown(drive)
             withContext(Dispatchers.Main) {
                 val ejecting = drive.sourceDeviceName?.let { it in OtgMasterState.ejectedDevices } == true
                 // A green "Unmounted" would overwrite the disconnect warning with good news,
@@ -2466,26 +2248,10 @@ class MainActivity : AppCompatActivity() {
      * device it was mounted from — and so any container's key, and the USB connection —
      * open for the caller to write through.
      */
-    private suspend fun detachForErase(drive: MountedDrive) {
-        // Before the drive leaves the list: from here on, a descriptor still open on the
-        // old filesystem fails its reads and writes, and its close writes nothing.
-        app.fayaz.otgmaster.provider.VeraCryptDocumentProvider.retire(drive.fileSystem)
-        withContext(Dispatchers.Main) {
-            OtgMasterState.removeDrive(drive.id)
-            contentResolver.notifyChange(
-                android.provider.DocumentsContract.buildRootsUri(app.fayaz.otgmaster.extension.ExtensionContract.AUTHORITY), null)
-            updateMountedDrives()
-            removeDriveShortcut(drive.id)
-        }
-        // As in unmountDrive: let in-flight file callbacks finish before the filesystem goes.
-        app.fayaz.otgmaster.provider.VeraCryptDocumentProvider.drainCallbacks(drive.id)
-        deviceMutex.withLock {
-            when (val fs = drive.fileSystem) {
-                is app.fayaz.otgmaster.exfat.ExFatFileSystem -> fs.unmount()
-                is app.fayaz.otgmaster.ntfs.NtfsFileSystem -> fs.unmount()
-                is app.fayaz.otgmaster.apfs.ApfsFileSystem -> fs.unmount()
-            }
-        }
+    /** The screen's part of taking a drive off the list for Format or Encrypt. */
+    private fun forgetErasedDrive(drive: MountedDrive) {
+        updateMountedDrives()
+        removeDriveShortcut(drive.id)
     }
 
     /**
@@ -2514,37 +2280,11 @@ class MainActivity : AppCompatActivity() {
         }
     }
 
-    /** Mounts the filesystem now on [device] in [old]'s place, and lists it again. */
-    private suspend fun remountAfterErase(
-        old: MountedDrive,
-        device: RawBlockDevice,
-        filesystemName: String,
-        candidate: VolumeCandidate?,
-        plain: Boolean,
-    ): MountedDrive {
-        val byteDevice = me.jahnen.libaums.core.driver.ByteBlockDevice(
-            device as me.jahnen.libaums.core.driver.BlockDeviceDriver)
-        val fileSystem = app.fayaz.otgmaster.disk.DiskMounter.mount(byteDevice)
-        val displayName = old.sourceDeviceDisplayName ?: old.name
-        val drive = old.copy(
-            name = if (plain) getString(R.string.mounted_drive_name_plain, displayName, filesystemName, old.id)
-                   else getString(R.string.mounted_drive_name, displayName, old.id),
-            fileSystem = fileSystem,
-            blockDevice = device,
-            isPlain = plain,
-            sourceVolumeCandidate = candidate,
-            filesystemName = filesystemName,
-            mountedReadOnly = false,
-        )
-        OtgMasterState.addDrive(drive)
-        withContext(Dispatchers.Main) {
-            contentResolver.notifyChange(
-                android.provider.DocumentsContract.buildRootsUri(app.fayaz.otgmaster.extension.ExtensionContract.AUTHORITY), null)
-            newlyMountedDriveIds.value = newlyMountedDriveIds.value + drive.id
-            updateMountedDrives()
-            pushDriveShortcut(drive)
-        }
-        return drive
+    /** The screen's part of a drive coming back after Format: highlight, cards, shortcut. */
+    private fun showRemounted(drive: MountedDrive) {
+        newlyMountedDriveIds.value = newlyMountedDriveIds.value + drive.id
+        updateMountedDrives()
+        pushDriveShortcut(drive)
     }
 
     private fun progressFor(title: String) = app.fayaz.otgmaster.format.DriveFormatter.Progress { phase, fraction ->
@@ -2565,23 +2305,11 @@ class MainActivity : AppCompatActivity() {
         lifecycleScope.launch(Dispatchers.IO) {
             val t0 = System.currentTimeMillis()
             try {
-                val label = runCatching { drive.fileSystem.volumeLabel.trim() }.getOrDefault("")
-                // Read before anything is touched: a volume the formatter cannot lay out
-                // again is refused with its files intact.
-                val existing = deviceMutex.withLock {
-                    // A plain partition's boot sector records where it starts; ext4 has no
-                    // such field, so a change to FAT32 or NTFS takes it from the partition table.
-                    app.fayaz.otgmaster.format.DriveFormatter.readExisting(device, label,
-                        partitionStart = if (drive.isPlain) drive.partitionStartBlock ?: 0 else 0)
-                }.copy(label = req.label)
                 val target = req.filesystem
-                detachForErase(drive)
-                deviceMutex.withLock {
-                    app.fayaz.otgmaster.format.DriveFormatter.reformat(device, existing, full, progressFor(title), target)
-                    (device as? app.fayaz.otgmaster.block.CachedBlockDevice)?.invalidate()
-                }
-                driveOperation.value = app.fayaz.otgmaster.ui.DriveOperation(title, getString(R.string.operation_mounting), null)
-                remountAfterErase(drive, device, target.displayName, drive.sourceVolumeCandidate, drive.isPlain)
+                val remounted = app.fayaz.otgmaster.engine.MountCoordinator.format(drive, device, req, progressFor(title),
+                    onUnlisted = { forgetErasedDrive(drive) },
+                    onMounting = { driveOperation.value = app.fayaz.otgmaster.ui.DriveOperation(title, getString(R.string.operation_mounting), null) })
+                withContext(Dispatchers.Main) { showRemounted(remounted) }
                 val secs = ((System.currentTimeMillis() - t0) / 1000).toInt()
                 withContext(Dispatchers.Main) {
                     appendLog(getString(R.string.log_format_done, drive.name, target.displayName, secs))
@@ -2628,22 +2356,8 @@ class MainActivity : AppCompatActivity() {
         lifecycleScope.launch(Dispatchers.IO) {
             val t0 = System.currentTimeMillis()
             try {
-                detachForErase(drive)
-                deviceMutex.withLock { drive.blockDevice?.close() }
-                // The whole partition, raw. Not closed with the volume: the USB connection
-                // under it belongs to openedDevices / unmountDrive, as for APFS.
-                val slice = app.fayaz.otgmaster.block.SlicedBlockDevice(raw, start, count)
-                val partition = object : RawBlockDevice by slice { override fun close() {} }
-                val volume = deviceMutex.withLock {
-                    if (luks2) {
-                        app.fayaz.otgmaster.format.DriveFormatter.encryptLuks2(partition, req.password.copyOf(),
-                            req.filesystem, req.label, req.full, progressFor(title))
-                    } else {
-                        app.fayaz.otgmaster.format.DriveFormatter.encrypt(partition, req.password, req.pim,
-                            req.cipher, req.hash, req.filesystem, req.label, req.full, progressFor(title),
-                            keyfiles = req.keyfiles.map { uri -> { contentResolver.openInputStream(uri) } })
-                    }
-                }
+                val candidate = app.fayaz.otgmaster.engine.MountCoordinator.encrypt(drive, raw, start, count, req,
+                    progressFor(title), onUnlisted = { forgetErasedDrive(drive) })
                 // Any credentials saved for the old volume would now only fail. Only this
                 // partition's: the device's other partitions keep theirs, and the session
                 // entry is dropped only when it is this partition's (it holds one per device).
@@ -2653,15 +2367,6 @@ class MainActivity : AppCompatActivity() {
                         if (sessionPlaintextCreds[deviceKey]?.candidateStartBlock == start) sessionPlaintextCreds.remove(deviceKey)
                     }
                 }
-                // Not mounted with the key still in memory. The new volume goes to the unlock
-                // form instead, so the user proves the password, PIM and keyfiles work while
-                // the drive is still empty, rather than after copying files onto it. Issue
-                // #94's reporter encrypted, used the drive, and found later that what they
-                // had kept would not open it.
-                volume.close() // wipes the master key; the USB connection stays open
-                val candidate = VolumeCandidate(drive.partitionLabel, start, count,
-                    if (luks2) app.fayaz.otgmaster.veracrypt.ContainerType.LUKS2
-                    else app.fayaz.otgmaster.veracrypt.ContainerType.VERACRYPT)
                 val secs = ((System.currentTimeMillis() - t0) / 1000).toInt()
                 if (req.saveToPasswordManager && passwordToSave != null) {
                     // The username is the device and the partition, nothing else (decided
@@ -2723,51 +2428,17 @@ class MainActivity : AppCompatActivity() {
             android.util.Log.i("OTGMaster", "mountPlainDevice: ${plain.label} already mounted or mounting, skipped")
             return
         }
-        val rawDevice = candidate.blockDevice
-        val sliced: RawBlockDevice = if (plain.startBlock == 0L) rawDevice
-            else app.fayaz.otgmaster.block.SlicedBlockDevice(rawDevice, plain.startBlock, plain.blockCount)
-        val adapter = app.fayaz.otgmaster.block.RawBlockDeviceAdapter(sliced)
         val deviceDisplayName = candidate.displayName
         appendLog("Mounting ${plain.filesystemName} on $deviceDisplayName…")
         lifecycleScope.launch(Dispatchers.IO) {
             try {
-                // Same cache for plain volumes: libaums rebuilds directory state that
-                // libexfat keeps parsed, so FAT32 re-reads blocks instead (its warm
-                // listing is 556 ms against exFAT's 30 ms).
-                val cachedDevice = wrapWithCache(adapter, plain.filesystemName)
-                val byteDevice = me.jahnen.libaums.core.driver.ByteBlockDevice(
-                    cachedDevice as me.jahnen.libaums.core.driver.BlockDeviceDriver
-                )
                 // Read-only mode covers plain drives too (#165): they mount with no form, so
                 // the partition's own choice, else the setting, decides, as for auto mount.
                 val readOnly = isPartitionReadOnly(candidate.deviceName, plain.startBlock)
-                val fsDevice: me.jahnen.libaums.core.driver.BlockDeviceDriver =
-                    if (readOnly) app.fayaz.otgmaster.block.ReadOnlyBlockDeviceDriver(byteDevice) else byteDevice
-                val fileSystem = app.fayaz.otgmaster.disk.DiskMounter.mount(fsDevice)
-                val driveId = app.fayaz.otgmaster.extension.ExtensionContract.stableDriveId(
-                    candidate.deviceName, plain.startBlock, OtgMasterState.mountedDrives.map { it.id })
-                val mountedDrive = MountedDrive(
-                    id = driveId,
-                    name = getString(R.string.mounted_drive_name_plain, deviceDisplayName, plain.filesystemName, driveId),
-                    fileSystem = fileSystem,
-                    blockDevice = cachedDevice,
-                    sourceDeviceName = candidate.deviceName,
-                    sourceDeviceDisplayName = deviceDisplayName,
-                    isPlain = true,
-                    rawBlockDevice = rawDevice,
-                    partitionLabel = plain.label,
-                    filesystemName = plain.filesystemName,
-                    mountedReadOnly = readOnly,
-                    partitionStartBlock = plain.startBlock,
-                    partitionBlockCount = plain.blockCount,
-                )
-                OtgMasterState.addDrive(mountedDrive)
-                mountedDrive.readOnlyReason?.let { reason ->
-                    withContext(Dispatchers.Main) { appendLog("${mountedDrive.name} is read-only: $reason") }
-                }
-                contentResolver.notifyChange(
-                    android.provider.DocumentsContract.buildRootsUri(app.fayaz.otgmaster.provider.VeraCryptDocumentProvider.AUTHORITY), null
-                )
+                val mountedDrive = app.fayaz.otgmaster.engine.MountCoordinator.mountPlain(
+                    candidate.deviceName, deviceDisplayName, candidate.blockDevice, plain, readOnly)
+                val driveId = mountedDrive.id
+                val fileSystem = mountedDrive.fileSystem
                 withContext(Dispatchers.Main) {
                     newlyMountedDriveIds.value = newlyMountedDriveIds.value + driveId
                     pendingToastMountNames.add(deviceDisplayName)
@@ -2792,45 +2463,6 @@ class MainActivity : AppCompatActivity() {
                 plainMountsInFlight.remove(mountKey)
             }
         }
-    }
-
-    /**
-     * Cache line size for a filesystem.
-     *
-     * exFAT re-reads a small metadata region thousands of times, so a 64 KiB line
-     * is nearly free and pays back 90x on a cold directory listing. FAT32 at small
-     * cluster sizes walks a large FAT sparsely, where the same readahead was pure
-     * amplification and made cold listings 2-4x slower. Measured in
-     * docs/IO_PERFORMANCE.md.
-     */
-    /**
-     * Wraps [device] in the block cache unless configuration disables it.
-     *
-     * Returning the bare device when disabled lets the cache be A/B'd in one
-     * session; [device] already implements BlockDeviceDriver in both mount paths.
-     */
-    private fun wrapWithCache(
-        device: app.fayaz.otgmaster.block.RawBlockDevice,
-        filesystemName: String,
-    ): app.fayaz.otgmaster.block.RawBlockDevice {
-        val cfg = OtgMasterState.cacheConfig
-        if (cfg?.enabled == false) {
-            appendLog("Block cache: DISABLED for this mount")
-            android.util.Log.i("OTGMaster", "block cache disabled for this mount")
-            return device
-        }
-        val readAhead = cfg?.readAheadBytes ?: readAheadFor(filesystemName)
-        android.util.Log.i("OTGMaster", "block cache enabled, readahead $readAhead bytes")
-        return app.fayaz.otgmaster.block.CachedBlockDevice(device, readAheadBytes = readAhead)
-    }
-
-    private fun readAheadFor(filesystemName: String): Int = when {
-        filesystemName.contains("exFAT", ignoreCase = true) ->
-            app.fayaz.otgmaster.block.CachedBlockDevice.DEFAULT_READAHEAD_BYTES
-        filesystemName.startsWith("ext", ignoreCase = true) ->
-            app.fayaz.otgmaster.block.CachedBlockDevice.DEFAULT_READAHEAD_BYTES
-        else ->
-            app.fayaz.otgmaster.block.CachedBlockDevice.FAT_READAHEAD_BYTES
     }
 
     /**
@@ -3014,7 +2646,7 @@ class MainActivity : AppCompatActivity() {
         val fs = drive.fileSystem as? app.fayaz.otgmaster.ext4.Ext4FileSystem ?: return
         appendLog(getString(R.string.log_journal_repair_started, drive.name))
         lifecycleScope.launch(Dispatchers.IO) {
-            val result = runCatching { deviceMutex.withLock { fs.replayJournal() } }
+            val result = runCatching { app.fayaz.otgmaster.engine.MountCoordinator.repairJournal(fs) }
             withContext(Dispatchers.Main) {
                 result.onSuccess { r ->
                     appendLog(getString(R.string.log_journal_repaired, drive.name, r.transactions, r.blocksReplayed))

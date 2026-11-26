@@ -13,6 +13,7 @@ class OtgMasterApp : Application() {
     override fun onCreate() {
         super.onCreate()
         Feedback.source = OtgFeedbackSource(this)
+        app.fayaz.otgmaster.engine.MountCoordinator.init(this)
     }
 }
 
