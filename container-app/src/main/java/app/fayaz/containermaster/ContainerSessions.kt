@@ -63,7 +63,7 @@ object ContainerSessions : MountRegistry {
     }
 
     private fun veraCryptSession(id: String, name: String, uri: Uri, fs: FileSystem,
-                                 decrypted: java.io.Closeable, descriptor: ParcelFileDescriptor, format: String = "VeraCrypt",
+                                 decrypted: java.io.Closeable, descriptor: java.io.Closeable, format: String = "VeraCrypt",
                                  device: ChannelBlockDevice? = null, readOnlyReason: String? = READ_ONLY_REASON) =
         Session(id, name, uri, format,
             fileSystemName = when (fs) {
@@ -416,37 +416,8 @@ object ContainerSessions : MountRegistry {
                 update("dmg:$length:".toByteArray()); update(img.readBlocks(0, minOf(8L, img.blockCount).toInt()))
             }.digest().joinToString("") { "%02x".format(it) }.take(10)
             if (sessions.any { it.id == id }) { CmLog.log("$masked is already open"); throw AlreadyOpenException() }
-            val candidates = (img.partitions.map { Triple(it.name, it.firstSector, it.sectorCount) } + gptPartitions(img))
-                .filter { it.third >= 64 }.distinctBy { it.second to it.third }
-            var unsupported: String? = null
-            for ((name, first, count) in candidates) {
-                val part: app.fayaz.otgmaster.block.RawBlockDevice =
-                    if (first == 0L && count >= img.blockCount) img else app.fayaz.otgmaster.block.SlicedBlockDevice(img, first, count)
-                val detected = runCatching { app.fayaz.otgmaster.fs.FilesystemDetector.detect(part) }.getOrNull() ?: continue
-                if (detected is app.fayaz.otgmaster.fs.DetectedFilesystem.Unsupported) { unsupported = detected.reason; continue }
-                if (detected !is app.fayaz.otgmaster.fs.DetectedFilesystem.Supported) continue
-                val cached = CachedBlockDevice(part, readAheadBytes = CachedBlockDevice.DEFAULT_READAHEAD_BYTES)
-                val driver = ReadOnlyBlockDeviceDriver(ByteBlockDevice(cached))
-                val fs = if (detected.displayName == "APFS") {
-                    try {
-                        app.fayaz.otgmaster.apfs.ApfsFileSystemCreator.mount(driver, String(password).ifEmpty { null })
-                    } catch (e: app.fayaz.otgmaster.apfs.ApfsFileSystem.WrongPasswordException) {
-                        CmLog.log("Could not open $masked: its APFS volume is encrypted, and the password is wrong or missing")
-                        throw IllegalArgumentException("wrong or missing password", e)
-                    }
-                } else DiskMounter.mount(driver)
-                val session = veraCryptSession(id, displayName, uri, fs, java.io.Closeable {}, descriptor, format = "DMG")
-                synchronized(this) {
-                    if (sessions.any { it.id == id }) { session.close(); throw AlreadyOpenException() }
-                    touch(id)
-                    sessions += session
-                    _open.value = sessions.toList()
-                }
-                notifyRoots(context)
-                CmLog.log("Opened $masked: partition \"$name\", ${session.fileSystemName}, read-only, in ${android.os.SystemClock.elapsedRealtime() - t0} ms; open as $id")
-                return session
-            }
-            throw java.io.IOException(unsupported ?: "No partition in this disk image holds a filesystem Container Master reads")
+            return mountDiskImage(context, id, displayName, uri, img, img.partitions.map { Triple(it.name, it.firstSector, it.sectorCount) },
+                password, descriptor, "DMG", masked, t0)
         } catch (e: AlreadyOpenException) {
             runCatching { descriptor.close() }; throw e
         } catch (e: IllegalArgumentException) {
@@ -455,6 +426,76 @@ object ContainerSessions : MountRegistry {
             runCatching { descriptor.close() }
             CmLog.log("Could not open $masked: ${e.message ?: e.javaClass.simpleName}")
             throw e
+        } finally {
+            password.fill('\u0000')
+        }
+    }
+
+
+    /**
+     * Mounts the first partition of [disk] that holds a filesystem Container Master reads, read-only,
+     * and publishes it as [format]: from [named] (the image's own partition list) or the GPT inside.
+     * APFS takes [password] for an encrypted volume.
+     */
+    private fun mountDiskImage(context: Context, id: String, displayName: String, uri: Uri, disk: app.fayaz.otgmaster.block.RawBlockDevice,
+                               named: List<Triple<String, Long, Long>>, password: CharArray, descriptor: java.io.Closeable,
+                               format: String, masked: String, t0: Long): Session {
+        if (sessions.any { it.id == id }) { CmLog.log("$masked is already open"); throw AlreadyOpenException() }
+        val candidates = (named + gptPartitions(disk)).filter { it.third >= 64 }.distinctBy { it.second to it.third }
+            .ifEmpty { listOf(Triple("whole image", 0L, disk.blockCount)) }
+        var unsupported: String? = null
+        for ((name, first, count) in candidates) {
+            val part: app.fayaz.otgmaster.block.RawBlockDevice =
+                if (first == 0L && count >= disk.blockCount) disk else app.fayaz.otgmaster.block.SlicedBlockDevice(disk, first, count)
+            val detected = runCatching { app.fayaz.otgmaster.fs.FilesystemDetector.detect(part) }.getOrNull() ?: continue
+            if (detected is app.fayaz.otgmaster.fs.DetectedFilesystem.Unsupported) { unsupported = detected.reason; continue }
+            if (detected !is app.fayaz.otgmaster.fs.DetectedFilesystem.Supported) continue
+            val cached = CachedBlockDevice(part, readAheadBytes = CachedBlockDevice.DEFAULT_READAHEAD_BYTES)
+            val driver = ReadOnlyBlockDeviceDriver(ByteBlockDevice(cached))
+            val fs = if (detected.displayName == "APFS") {
+                try {
+                    app.fayaz.otgmaster.apfs.ApfsFileSystemCreator.mount(driver, String(password).ifEmpty { null })
+                } catch (e: app.fayaz.otgmaster.apfs.ApfsFileSystem.WrongPasswordException) {
+                    CmLog.log("Could not open $masked: its APFS volume is encrypted, and the password is wrong or missing")
+                    throw IllegalArgumentException("wrong or missing password", e)
+                }
+            } else DiskMounter.mount(driver)
+            val session = veraCryptSession(id, displayName, uri, fs, java.io.Closeable {}, descriptor, format = format)
+            synchronized(this) {
+                if (sessions.any { it.id == id }) { session.close(); throw AlreadyOpenException() }
+                touch(id)
+                sessions += session
+                _open.value = sessions.toList()
+            }
+            notifyRoots(context)
+            CmLog.log("Opened $masked: partition \"$name\", ${session.fileSystemName}, read-only, in ${android.os.SystemClock.elapsedRealtime() - t0} ms; open as $id")
+            return session
+        }
+        throw java.io.IOException(unsupported ?: "No partition in this image holds a filesystem Container Master reads")
+    }
+
+    /**
+     * Opens a macOS sparse bundle, the folder [tree], read-only: its bands make one disk, whose
+     * first readable partition is mounted as for a DMG.
+     */
+    fun openSparseBundle(context: Context, tree: Uri, displayName: String, password: CharArray = CharArray(0)): Session {
+        val masked = app.fayaz.otgmaster.feedback.PathMask.mark(displayName)
+        CmLog.log("Opening $masked as a macOS sparse bundle")
+        val t0 = android.os.SystemClock.elapsedRealtime()
+        try {
+            val b = SafTreeBackend(context, tree)
+            val (size, band) = SparseBundleDevice.parseInfo(String(b.read("Info.plist"), Charsets.UTF_8))
+            val disk = SparseBundleDevice(object : SparseBundleDevice.Files {
+                override fun readBand(name: String, offset: Long, length: Int) = b.readUpTo("bands/$name", offset, length)
+            }, size, band)
+            val id = MessageDigest.getInstance("SHA-256").apply {
+                update("sparsebundle:$size:$band:".toByteArray()); update(disk.readBlocks(0, minOf(8L, disk.blockCount).toInt()))
+            }.digest().joinToString("") { "%02x".format(it) }.take(10)
+            return mountDiskImage(context, id, displayName, tree, disk, emptyList(), password, java.io.Closeable {}, "sparse bundle", masked, t0)
+        } catch (e: IllegalArgumentException) { throw e
+        } catch (e: AlreadyOpenException) { throw e
+        } catch (e: Exception) {
+            CmLog.log("Could not open $masked: ${e.message ?: e.javaClass.simpleName}"); throw e
         } finally {
             password.fill('\u0000')
         }
@@ -634,8 +675,12 @@ object ContainerSessions : MountRegistry {
             CmLog.log("Chose $masked: a restic repository")
             return Detected(ContainerFormat.RESTIC, idForRestic(b.read("config")))
         }
-        CmLog.log("Chose $masked: not a restic repository (no config file and keys folder)")
-        throw java.io.IOException("This folder is not a restic repository: it has no config file and keys folder")
+        if (b.exists("Info.plist") && b.exists("bands")) {
+            CmLog.log("Chose $masked: a macOS sparse bundle")
+            return Detected(ContainerFormat.SPARSEBUNDLE, null)
+        }
+        CmLog.log("Chose $masked: neither a restic repository nor a sparse bundle")
+        throw java.io.IOException("This folder is neither a restic repository (a config file and a keys folder) nor a macOS sparse bundle (Info.plist and bands)")
     }
 
     /**
@@ -711,6 +756,7 @@ object ContainerSessions : MountRegistry {
             ContainerFormat.SEVENZIP -> "a 7z archive"
             ContainerFormat.RESTIC -> "a restic repository"
             ContainerFormat.DMG -> "a macOS disk image"
+            ContainerFormat.SPARSEBUNDLE -> "a macOS sparse bundle"
         })
         return Detected(format, passwordIdFor(format, head))
     }

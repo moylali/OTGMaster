@@ -76,6 +76,19 @@ class SafTreeBackend(context: Context, private val tree: Uri) : ResticBackend {
 
     override fun exists(path: String): Boolean = docId(path) != null
 
+    /** Up to [length] bytes of [path] from [offset], fewer at its end; null if there is no such file. */
+    fun readUpTo(path: String, offset: Long, length: Int): ByteArray? {
+        val id = docId(path) ?: return null
+        val pfd = resolver.openFileDescriptor(DocumentsContract.buildDocumentUriUsingTree(tree, id), "r") ?: return null
+        pfd.use {
+            val ch = FileInputStream(it.fileDescriptor).channel
+            val out = ByteBuffer.allocate(length)
+            var p = offset
+            while (out.hasRemaining()) { val n = ch.read(out, p); if (n <= 0) break; p += n }
+            return out.array().copyOf(out.position())
+        }
+    }
+
     override fun size(path: String): Long {
         val parent = path.substringBeforeLast('/', "")
         return children(parent)[path.substringAfterLast('/')]?.size ?: throw FileNotFoundException(path)

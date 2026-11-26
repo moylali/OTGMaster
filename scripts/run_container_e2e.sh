@@ -74,6 +74,12 @@ if [ ! -f testdata-container/dmg/test.dmg ]; then
   uv run --quiet --with pyliblzfse python scripts/make_udif.py testdata/apfs/apfs_cs/test.img testdata-container/dmg/test.dmg \
     --types lzfse,zlib,raw,bzip2 --name "disk image" || { echo "DMG fixture failed"; exit 1; }
 fi
+# A sparse bundle (the folder format of Time Machine on a network disk) of the same APFS disk,
+# cut into 1 MiB bands by scripts/make_sparsebundle.py, zero bands left out and some cut short.
+if [ ! -f testdata-container/sparse/cm-sparse.sparsebundle/Info.plist ]; then
+  mkdir -p testdata-container/sparse
+  python3 scripts/make_sparsebundle.py testdata/apfs/apfs_cs/test.img testdata-container/sparse/cm-sparse.sparsebundle || { echo "sparse bundle fixture failed"; exit 1; }
+fi
 # A restic repository (desktop restic), one snapshot of the shared tree. restic keeps each file's
 # absolute path, so the tree is backed up from a fixed place and RESTIC_PATH is where it sits in the snapshot.
 RESTIC_SRC=/tmp/cm-e2e-restic-src
@@ -120,6 +126,7 @@ for t in ext4 ntfs luks2 luks1 zip iso tar targz 7z 7zenc dmg; do
 done
 # The restic repository is a folder: pushed whole when it is not there.
 adb -s "$S" shell test -f /sdcard/Download/cm-restic/config || adb -s "$S" push testdata-container/restic /sdcard/Download/cm-restic >/dev/null
+adb -s "$S" shell test -f /sdcard/Download/cm-sparse.sparsebundle/Info.plist || adb -s "$S" push testdata-container/sparse/cm-sparse.sparsebundle /sdcard/Download/cm-sparse.sparsebundle >/dev/null
 want=$(sha256sum testdata-container/aes/flower.jpg.aes | cut -d' ' -f1)
 [ "$want" = "$(adb -s "$S" shell sha256sum /sdcard/Download/flower.jpg.aes 2>/dev/null | cut -d' ' -f1)" ] || adb -s "$S" push testdata-container/aes/flower.jpg.aes /sdcard/Download/flower.jpg.aes >/dev/null
 adb -s "$S" shell input keyevent KEYCODE_WAKEUP
@@ -431,6 +438,15 @@ case_dmg_read() {
   local r; r=$(read_sha "$TREE" flower.jpg); [ "$r" = "\"sha256\": \"$FLOWER\"" ] || { fail "flower.jpg: $r"; return 1; }
 }
 
+case_sparsebundle_read() {
+  cm_front; pick_folder cm-sparse.sparsebundle || { fail "could not pick the sparse bundle folder"; return 1; }
+  dump | grep -q 'macOS sparse bundle' || { fail "not recognised as a sparse bundle"; return 1; }
+  local out; out=$(unlock ""); [[ "$out" == opened\ * ]] || { fail "open: $out"; return 1; }
+  local id=${out#opened }
+  TREE=$(grant "$id"); [ -n "$TREE" ] || { fail "no grant"; return 1; }
+  local r; r=$(read_sha "$TREE" flower.jpg); [ "$r" = "\"sha256\": \"$FLOWER\"" ] || { fail "flower.jpg: $r"; return 1; }
+}
+
 case_screen_settings() {
   cm_front
   local X; X=$(dump)
@@ -521,6 +537,7 @@ run_case sevenzip_encrypted "A 7z archive encrypted by p7zip with its file list 
 run_case open_with_targz "Open with: a .tar.gz handed over as application/gzip mounts at once." case_open_with_targz
 run_case restic_read "A restic repository made by desktop restic, picked as a folder: recognised, a wrong password refused, the right one mounts it with its snapshot as a folder, and flower.jpg, a name with spaces and an empty file six folders down read by SHA-256." case_restic_read
 run_case dmg_read "A macOS disk image (UDIF with LZFSE, zlib, raw and bzip2 chunks) of the APFS GPT disk a Mac made: recognised by its trailer, opened with no password, the APFS partition found in the GPT inside, and flower.jpg reads by SHA-256." case_dmg_read
+run_case sparsebundle_read "A macOS sparse bundle (the APFS GPT disk a Mac made, in 1 MiB bands, zero bands absent and some cut short), picked as a folder: recognised, opened with no password, and flower.jpg reads by SHA-256." case_sparsebundle_read
 run_case lock_all_service "The foreground service runs while a container is open; Lock all closes it and the service stops; the container file is unchanged." case_lock_all_service
 
 {
