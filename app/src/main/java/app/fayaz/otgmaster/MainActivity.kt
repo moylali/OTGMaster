@@ -198,7 +198,7 @@ class MainActivity : AppCompatActivity() {
         const val EXTRA_DRIVE_ID = "app.fayaz.otgmaster.EXTRA_DRIVE_ID"
         /** Set on the mounted-drives notification's intent: the app opens with the slider up. */
         const val EXTRA_OPEN_MOUNTED = "app.fayaz.otgmaster.EXTRA_OPEN_MOUNTED"
-        private const val SHARE_TARGET_CATEGORY = "app.fayaz.otgmaster.category.SHARE_TARGET"
+        const val SHARE_TARGET_CATEGORY = "app.fayaz.otgmaster.category.SHARE_TARGET"
         private const val PREF_ASKED_NOTIFICATIONS = "asked_notification_permission"
 
         /** When Android last started this activity for a USB plug-in (elapsedRealtime). */
@@ -597,6 +597,15 @@ class MainActivity : AppCompatActivity() {
             else OtgMasterState.appScope.launch(Dispatchers.Main) { appendLog(line) }
         }
         OtgMasterState.logSink = installedLogSink
+        // What the engine shows on this screen while it is the live one.
+        installedScreen = object : app.fayaz.otgmaster.engine.MountCoordinator.Screen {
+            override fun toast(message: String, ok: Boolean) { toastState.value = Pair(message, ok) }
+            override fun drivesChanged() = updateMountedDrives()
+            override fun devicesChanged() = refreshDevices()
+            override val isResumed: Boolean
+                get() = lifecycle.currentState.isAtLeast(androidx.lifecycle.Lifecycle.State.RESUMED)
+        }
+        app.fayaz.otgmaster.engine.MountCoordinator.screen = installedScreen
 
         installedUnmountAll = {
             // Timed because an unmount on a Huawei P20 Lite took over 90s to be
@@ -918,6 +927,7 @@ class MainActivity : AppCompatActivity() {
     private var installedUnmountAll: (() -> Unit)? = null
     private var installedDetachRequest: ((String) -> Unit)? = null
     private var installedLogSink: ((String) -> Unit)? = null
+    private var installedScreen: app.fayaz.otgmaster.engine.MountCoordinator.Screen? = null
 
     override fun onDestroy() {
         if (duplicate) { super.onDestroy(); return }
@@ -934,6 +944,8 @@ class MainActivity : AppCompatActivity() {
         val successor = liveActivity?.get()?.takeIf { it !== this }
         if (liveActivity?.get() === this) liveActivity = null
         if (OtgMasterState.logSink === installedLogSink) OtgMasterState.logSink = null
+        if (app.fayaz.otgmaster.engine.MountCoordinator.screen === installedScreen) app.fayaz.otgmaster.engine.MountCoordinator.screen = null
+        installedScreen = null
         if (OtgMasterState.mountRequest === installedMountRequest) OtgMasterState.mountRequest = null
         if (OtgMasterState.unmountAllRequest === installedUnmountAll) OtgMasterState.unmountAllRequest = null
         if (OtgMasterState.detachRequest === installedDetachRequest) OtgMasterState.detachRequest = null
@@ -1798,108 +1810,7 @@ class MainActivity : AppCompatActivity() {
                 saveManuallyUnmountedDevices()
             }
         }
-        drive.sourceDeviceName?.let { key ->
-            pendingUnmounts.merge(key, 1) { a, b -> a + b }
-        }
-        // A backup mounted from a repository on this drive cannot outlive it.
-        app.fayaz.otgmaster.backup.BackupMounts.dependents(drive.id).forEach { unmountDrive(it, disconnected = disconnected) }
-        app.fayaz.otgmaster.backup.BackupMounts.forget(drive.id)
-        OtgMasterState.unmountsInFlight.incrementAndGet()
-        val t0 = System.currentTimeMillis()
-        val tRemoved = app.fayaz.otgmaster.engine.MountCoordinator.unlist(drive)
-        val tNotified = System.currentTimeMillis()
-        updateMountedDrives()
-        val tUpdated = System.currentTimeMillis()
-        removeDriveShortcut(drive.id)
-        // All of this is main-thread work. updateMountedDrives reads free space,
-        // which is filesystem I/O, and on a slow card through a crypto layer that
-        // is the obvious candidate for a stall — but it runs after removeDrive, so
-        // in principle it cannot delay a waiter watching the mount list. Measured
-        // rather than assumed, because assuming has been wrong twice today.
-        android.util.Log.i("OTGMaster",
-            "unmountDrive ${drive.id}: remove=${tRemoved - t0}ms" +
-            " notify=${tNotified - tRemoved}ms update=${tUpdated - tNotified}ms" +
-            " shortcut=${System.currentTimeMillis() - tUpdated}ms")
-        // In the process scope, not the activity's: a teardown is flushing metadata, and it has
-        // to finish even if Android destroys the activity meanwhile (review of #141, PR-3). The
-        // service stays in the foreground until it has.
-        MountedDriveService.beginTeardown(applicationContext, drive.name)
-        OtgMasterState.appScope.launch(Dispatchers.IO) {
-          try {
-            app.fayaz.otgmaster.engine.MountCoordinator.tearDown(drive)
-            withContext(Dispatchers.Main) {
-                val ejecting = drive.sourceDeviceName?.let { it in OtgMasterState.ejectedDevices } == true
-                // A green "Unmounted" would overwrite the disconnect warning with good news,
-                // and the message at the end of an Eject says more than one per partition.
-                if (!disconnected && !ejecting) toastState.value = Pair("Unmounted: ${drive.name}", true)
-                appendLog(getString(R.string.log_drive_unmounted, drive.name))
-
-                val sourceKey = drive.sourceDeviceName
-                val rawDevice = drive.rawBlockDevice
-                val volCandidate = drive.sourceVolumeCandidate
-
-                if (sourceKey != null && rawDevice != null) {
-                    val stillUnmounting = (pendingUnmounts.merge(sourceKey, -1) { a, b -> a + b } ?: 0) > 0
-                    val otherMounted = OtgMasterState.mountedDrives.any { it.sourceDeviceName == sourceKey }
-                    val candidatesInForm = _deviceCandidates.value.any { it.deviceName == sourceKey }
-                    android.util.Log.i("OTGMaster",
-                        "unmountDrive ${drive.id} done: plain=${drive.isPlain} stillUnmounting=$stillUnmounting" +
-                        " otherMounted=$otherMounted candidatesInForm=$candidatesInForm" +
-                        " raw=${objId(rawDevice)} opened=${objId(openedDevices[sourceKey])}")
-
-                    // close() is idempotent, so a connection the detach handler already
-                    // closed is safe to close again. What is not safe is closing one a
-                    // mounted partition still reads through.
-                    val rawInUse = OtgMasterState.mountedDrives.any { it.rawBlockDevice === rawDevice }
-                    val current = openedDevices[sourceKey]
-                    if (current != null && current !== rawDevice) {
-                        // A newer connection to this device already exists. Restoring
-                        // this one over it put a dead connection back in openedDevices,
-                        // and every unlock through it failed with result == -1.
-                        if (!rawInUse) rawDevice.close()
-                    } else if (!stillUnmounting && !otherMounted && (ejecting || !candidatesInForm) &&
-                            (ejecting || !OtgMasterState.holdConnections)) {
-                        // Last partition from this USB — release the connection.
-                        //
-                        // This used to close only if openedDevices still held it, but a
-                        // successful mount of the last encrypted partition removes the
-                        // entry, so the connection was never closed: every remount leaked
-                        // one, still holding the interface, while the next probe opened
-                        // another to the same device.
-                        openedDevices.remove(sourceKey)
-                        if (!rawInUse) rawDevice.close()
-                        if (ejecting) finishEject(sourceKey)
-                    } else if (!ejecting && !drive.isPlain && volCandidate != null) {
-                        // Other partitions still alive; restore this candidate so the user can remount.
-                        openedDevices[sourceKey] = rawDevice
-                        val existing = _deviceCandidates.value.find { it.deviceName == sourceKey }
-                        if (existing != null) {
-                            _deviceCandidates.value = _deviceCandidates.value.map {
-                                if (it.deviceName == sourceKey &&
-                                        it.candidates.none { c -> c.slotKey == volCandidate.slotKey })
-                                    it.copy(candidates = (it.candidates + volCandidate).sortedWith(compareBy({ c -> c.startBlock }, { c -> c.apfsVolume })))
-                                else it
-                            }
-                        } else {
-                            _deviceCandidates.value = _deviceCandidates.value + UsbDeviceCandidate(
-                                deviceName = sourceKey,
-                                displayName = drive.sourceDeviceDisplayName ?: sourceKey,
-                                blockDevice = rawDevice,
-                                candidates = listOf(volCandidate),
-                                plainPartitions = emptyList()
-                            )
-                        }
-                    }
-                }
-
-                refreshDevices()
-                onTornDown?.invoke()
-            }
-          } finally {
-            OtgMasterState.unmountsInFlight.decrementAndGet()
-            MountedDriveService.endTeardown(applicationContext, drive.name)
-          }
-        }
+        app.fayaz.otgmaster.engine.MountCoordinator.unmount(drive, disconnected, onTornDown)
     }
 
     // ── USB access and Eject ──────────────────────────────────────────────────
@@ -1956,7 +1867,7 @@ class MainActivity : AppCompatActivity() {
         OtgMasterState.ejectedDevices.removeAll { it.startsWith("${device.vendorId}:${device.productId}") }
     }
 
-    private fun ejectTargets(key: String) = OtgMasterState.mountedDrives.filter { it.sourceDeviceName == key }
+    private fun ejectTargets(key: String) = app.fayaz.otgmaster.engine.MountCoordinator.ejectTargets(key)
 
     private fun ejectTapped(drive: MountedDrive) {
         val key = drive.sourceDeviceName ?: return
@@ -1964,19 +1875,10 @@ class MainActivity : AppCompatActivity() {
     }
 
     /** True while something still needs the drive: an open file, or a backup that uses it. */
-    private fun deviceBusy(key: String): Boolean = drivesBusy(ejectTargets(key))
+    private fun deviceBusy(key: String): Boolean = app.fayaz.otgmaster.engine.MountCoordinator.deviceBusy(key)
 
     /** The same for [drives] alone, and the backups mounted from them. */
-    private fun drivesBusy(drives: List<MountedDrive>): Boolean {
-        val ids = drives.flatMap { d ->
-            listOf(d.id) + app.fayaz.otgmaster.backup.BackupMounts.dependents(d.id).map { it.id }
-        }
-        if (ids.any { app.fayaz.otgmaster.provider.VeraCryptDocumentProvider.driveInUse(it) }) return true
-        val jobs = app.fayaz.otgmaster.backup.JobStore.get(this).jobs.value
-        return ids.any { id ->
-            app.fayaz.otgmaster.ui.jobsForDrive(jobs, id).any { app.fayaz.otgmaster.backup.BackupExecutor.isBusy(it.id) }
-        }
-    }
+    private fun drivesBusy(drives: List<MountedDrive>): Boolean = app.fayaz.otgmaster.engine.MountCoordinator.drivesBusy(drives)
 
     /**
      * Unmount waits for a transfer as Eject does, so that a copy in Files or a backup running
@@ -2100,45 +2002,10 @@ class MainActivity : AppCompatActivity() {
         ejectBusyDialog.value = null
     }
 
-    /**
-     * Unmounts every partition of [key] and releases the device, so Android can take it.
-     * What was only offered for unlocking goes too: its connection holds the interface as well.
-     */
+    /** Ejects [key] now: see MountCoordinator.ejectNow. Its busy dialog, if up, goes. */
     private fun ejectNow(key: String, notify: Boolean) {
-        val targets = ejectTargets(key)
-        val title = OtgMasterState.pendingEjects.value[key]?.title
-            ?: targets.firstNotNullOfOrNull { it.sourceDeviceDisplayName } ?: key
-        OtgMasterState.pendingEjects.value = OtgMasterState.pendingEjects.value - key
-        OtgMasterState.driveWatchers.remove("eject:$key")
         if (ejectBusyDialog.value == key) ejectBusyDialog.value = null
-        if (targets.isEmpty()) return
-
-        ejectsInFlight[key] = app.fayaz.otgmaster.engine.MountCoordinator.EjectInFlight(
-            title,
-            app.fayaz.otgmaster.usb.UsbAccess.androidCanRead(targets.map {
-                app.fayaz.otgmaster.usb.EjectedPartition(it.isPlain, it.filesystemName)
-            }),
-            notify,
-        )
-        OtgMasterState.ejectedDevices.add(key)
-        _deviceCandidates.value = _deviceCandidates.value.filterNot { it.deviceName == key }
-        deferredCandidates.remove(key)
-        val raws = targets.mapNotNull { it.rawBlockDevice }
-        openedDevices.remove(key)?.takeIf { o -> raws.none { it === o } }?.let { o ->
-            OtgMasterState.appScope.launch(Dispatchers.IO) { runCatching { o.close() } }
-        }
-        targets.forEach { unmountDrive(it) }
-    }
-
-    /** The last partition is unmounted and the connection closed. */
-    private fun finishEject(key: String) {
-        val done = ejectsInFlight.remove(key) ?: return
-        val message = getString(if (done.androidCanRead) R.string.eject_done_android else R.string.eject_done_other)
-        appendLog(getString(R.string.log_ejected, done.title))
-        toastState.value = Pair(message, true)
-        if (done.notify || !lifecycle.currentState.isAtLeast(androidx.lifecycle.Lifecycle.State.RESUMED)) {
-            MountedDriveService.driveEjected(applicationContext, done.title, message)
-        }
+        app.fayaz.otgmaster.engine.MountCoordinator.ejectNow(key, notify)
     }
 
     /** The dialogs of Eject and of Scan under Wait for Android. */
@@ -2998,48 +2865,9 @@ class MainActivity : AppCompatActivity() {
         return uri.lastPathSegment
     }
 
-    private fun pushDriveShortcut(drive: MountedDrive) {
-        if (Build.VERSION.SDK_INT < Build.VERSION_CODES.Q) return
-        val shortcutManager = getSystemService(android.content.pm.ShortcutManager::class.java) ?: return
-        val intent = Intent(this, MainActivity::class.java).apply {
-            action = Intent.ACTION_DEFAULT
-            putExtra(EXTRA_DRIVE_ID, drive.id)
-        }
-        val shortcut = android.content.pm.ShortcutInfo.Builder(this, "drive_share_${drive.id}")
-            .setShortLabel(drive.name)
-            .setLongLabel(drive.name)
-            .setIcon(android.graphics.drawable.Icon.createWithResource(this, R.mipmap.ic_launcher))
-            .setIntent(intent)
-            .setCategories(setOf(SHARE_TARGET_CATEGORY))
-            .setLongLived(true)
-            .build()
-        // Best-effort: a share shortcut is a convenience, and failing to add one must
-        // not fail the mount it follows. On Android 10 addDynamicShortcuts throws
-        // "Max number of dynamic shortcuts exceeded" from about the fifth mounted
-        // drive (pushDynamicShortcut, from Android 11, evicts instead). Thrown inside
-        // attemptUnlock's success path, that reported a mounted drive as failed,
-        // deleted its saved password, and ran onComplete twice (Samsung M30).
-        try {
-            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.R) {
-                shortcutManager.pushDynamicShortcut(shortcut)
-            } else {
-                // Make room by dropping shortcuts of drives no longer mounted first.
-                val live = OtgMasterState.mountedDrives.map { "drive_share_${it.id}" }.toSet()
-                val stale = shortcutManager.dynamicShortcuts.map { it.id }.filter { it !in live }
-                if (stale.isNotEmpty()) shortcutManager.removeDynamicShortcuts(stale)
-                if (shortcutManager.dynamicShortcuts.size < shortcutManager.maxShortcutCountPerActivity)
-                    shortcutManager.addDynamicShortcuts(listOf(shortcut))
-            }
-        } catch (e: Exception) {
-            android.util.Log.w("OTGMaster", "share shortcut for ${drive.name} not added: ${e.message}")
-        }
-    }
+    private fun pushDriveShortcut(drive: MountedDrive) = app.fayaz.otgmaster.engine.MountCoordinator.pushShortcut(drive)
 
-    private fun removeDriveShortcut(driveId: String) {
-        if (Build.VERSION.SDK_INT < Build.VERSION_CODES.Q) return
-        val shortcutManager = getSystemService(android.content.pm.ShortcutManager::class.java) ?: return
-        shortcutManager.removeDynamicShortcuts(listOf("drive_share_$driveId"))
-    }
+    private fun removeDriveShortcut(driveId: String) = app.fayaz.otgmaster.engine.MountCoordinator.removeShortcut(driveId)
 
     private inline fun <reified T> Intent.getParcelableExtraCompat(name: String): T? {
         return if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
