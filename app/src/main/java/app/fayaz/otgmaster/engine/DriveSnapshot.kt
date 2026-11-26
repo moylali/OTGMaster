@@ -57,3 +57,24 @@ data class DriveSnapshot(
         )
     }
 }
+
+/**
+ * What the unlock form shows of a drive offered for unlocking: its key and name, the partitions
+ * it can unlock, and how many it leaves out, with no USB connection behind it (2b step 2).
+ *
+ * [connection] is the identity of the connection the engine holds for it. The form keys its
+ * selection on the list, and a drive re-probed through a new connection used to compare unequal
+ * (UsbDeviceCandidate compares its block device); carrying the identity keeps that.
+ */
+data class DeviceSnapshot(
+    val deviceName: String,
+    val displayName: String,
+    val candidates: List<app.fayaz.otgmaster.veracrypt.VolumeCandidate>,
+    val hiddenPartitions: Int,
+    val connection: Int,
+) {
+    companion object {
+        fun of(d: app.fayaz.otgmaster.UsbDeviceCandidate) = DeviceSnapshot(
+            d.deviceName, d.displayName, d.candidates, d.hiddenPartitions, System.identityHashCode(d.blockDevice))
+    }
+}
