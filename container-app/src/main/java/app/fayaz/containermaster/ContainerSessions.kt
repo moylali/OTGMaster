@@ -179,7 +179,7 @@ object ContainerSessions : MountRegistry {
         ContainerFormat.LUKS -> if (head.size >= 208) idForLuks(head) else null
         ContainerFormat.AESCRYPT -> idForAesCrypt(head.copyOf(minOf(256, head.size)))
         ContainerFormat.SEVENZIP -> if (head.size >= 32) idFor7z(head) else null
-        else -> null
+        else -> null   // ZIP, ISO and TAR have no password; a restic repository's ID comes from detectFolder
     }
 
     /**
@@ -535,6 +535,67 @@ object ContainerSessions : MountRegistry {
             if (idle) ", idle for more than $idleMinutes min" else "")
     }
 
+    /** The ID of a restic repository: from its config file, which holds the repository's own ID. */
+    internal fun idForRestic(config: ByteArray): String =
+        MessageDigest.getInstance("SHA-256").apply { update("restic:".toByteArray()); update(config) }
+            .digest().joinToString("") { "%02x".format(it) }.take(10)
+
+    /**
+     * What a picked folder is: a restic repository (a config file and a keys folder) or nothing
+     * Container Master opens.
+     */
+    fun detectFolder(context: Context, tree: Uri, displayName: String): Detected {
+        val b = SafTreeBackend(context, tree)
+        val masked = app.fayaz.otgmaster.feedback.PathMask.mark(displayName)
+        if (b.exists("config") && b.exists("keys")) {
+            CmLog.log("Chose $masked: a restic repository")
+            return Detected(ContainerFormat.RESTIC, idForRestic(b.read("config")))
+        }
+        CmLog.log("Chose $masked: not a restic repository (no config file and keys folder)")
+        throw java.io.IOException("This folder is not a restic repository: it has no config file and keys folder")
+    }
+
+    /**
+     * Opens the restic repository in the picked folder [tree] with [password], read-only: every
+     * snapshot is a folder at its root, named by its time and host, as in OTG Master's Backups.
+     *
+     * @throws IllegalArgumentException for a wrong password
+     * @throws AlreadyOpenException if the same repository is open
+     */
+    fun openRestic(context: Context, tree: Uri, displayName: String, password: CharArray): Session {
+        val masked = app.fayaz.otgmaster.feedback.PathMask.mark(displayName)
+        CmLog.log("Opening $masked as a restic repository")
+        val t0 = android.os.SystemClock.elapsedRealtime()
+        val pw = String(password).toByteArray(Charsets.UTF_8)
+        password.fill('\u0000')
+        try {
+            val backend = SafTreeBackend(context, tree)
+            val id = idForRestic(backend.read("config"))
+            if (sessions.any { it.id == id }) { CmLog.log("$masked is already open"); throw AlreadyOpenException() }
+            val repo = app.fayaz.otgmaster.backup.restic.ResticRepository.open(backend, pw)
+                ?: run { CmLog.log("Could not open $masked: wrong password"); throw IllegalArgumentException("wrong password") }
+            val fs = app.fayaz.otgmaster.backup.restic.ResticFileSystem(repo, displayName)
+            val snapshots = runCatching { repo.snapshots().size }.getOrDefault(-1)
+            val session = Session(id, displayName, tree, "restic", "restic", null,
+                UsbFileDocumentSource(fs) { "Container Master mounts backups read-only" }, fs) {}
+            synchronized(this) {
+                if (sessions.any { it.id == id }) throw AlreadyOpenException()
+                touch(id)
+                sessions += session
+                _open.value = sessions.toList()
+            }
+            notifyRoots(context)
+            CmLog.log("Opened $masked: $snapshots snapshots in ${android.os.SystemClock.elapsedRealtime() - t0} ms; open as $id")
+            return session
+        } catch (e: IllegalArgumentException) { throw e
+        } catch (e: AlreadyOpenException) { throw e
+        } catch (e: Exception) {
+            CmLog.log("Could not open $masked: ${e.message ?: e.javaClass.simpleName}"); throw e
+        } finally {
+            pw.fill(0)
+        }
+    }
+
     /** What a picked file looks like: its format, and for a format with a password its ID. */
     data class Detected(val format: ContainerFormat, val passwordId: String?)
 
@@ -558,6 +619,7 @@ object ContainerSessions : MountRegistry {
             ContainerFormat.TAR -> "a TAR archive, opened without a password"
             ContainerFormat.TARGZ -> "a gzip-compressed TAR archive, opened without a password"
             ContainerFormat.SEVENZIP -> "a 7z archive"
+            ContainerFormat.RESTIC -> "a restic repository"
         })
         return Detected(format, passwordIdFor(format, head))
     }

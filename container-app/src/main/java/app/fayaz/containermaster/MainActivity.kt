@@ -6,6 +6,7 @@ import android.content.Intent
 import android.net.Uri
 import android.os.Build
 import android.os.Bundle
+import android.provider.DocumentsContract
 import android.provider.OpenableColumns
 import androidx.fragment.app.FragmentActivity
 import androidx.activity.compose.rememberLauncherForActivityResult
@@ -195,10 +196,13 @@ private fun Screen(theme: String, incoming: Uri?, onIncomingTaken: () -> Unit, o
             message = null
             scope.launch {
                 picked = withContext(Dispatchers.IO) {
-                    val name = context.contentResolver.query(uri, arrayOf(OpenableColumns.DISPLAY_NAME), null, null, null)
-                        ?.use { c -> if (c.moveToFirst()) c.getString(0) else null } ?: uri.lastPathSegment ?: "container"
+                    // A picked folder's name is on its document, not on the tree URI.
+                    val nameUri = if (DocumentsContract.isTreeUri(uri))
+                        DocumentsContract.buildDocumentUriUsingTree(uri, DocumentsContract.getTreeDocumentId(uri)) else uri
+                    val name = runCatching { context.contentResolver.query(nameUri, arrayOf(OpenableColumns.DISPLAY_NAME), null, null, null)
+                        ?.use { c -> if (c.moveToFirst()) c.getString(0) else null } }.getOrNull() ?: uri.lastPathSegment ?: "container"
                     val d = runCatching { engine.detect(uri, name) }.getOrDefault(EngineClient.Detected(ContainerFormat.VERACRYPT, null))
-                    Picked(uri, name, d.format, d.passwordId)
+                    if (d.problem != null) { message = d.problem; null } else Picked(uri, name, d.format, d.passwordId)
                 }
                 // A saved password for this container: the phone's lock, then open it with that.
                 val p = picked
@@ -227,6 +231,13 @@ private fun Screen(theme: String, incoming: Uri?, onIncomingTaken: () -> Unit, o
             }
     }
     val pick = rememberLauncherForActivityResult(ActivityResultContracts.OpenDocument()) { uri -> if (uri != null) take(uri, handedOver = false) }
+    // A backup is a folder (restic): read access kept, so its packs still read after the picker is gone.
+    val pickFolder = rememberLauncherForActivityResult(ActivityResultContracts.OpenDocumentTree()) { uri ->
+        if (uri != null) {
+            runCatching { context.contentResolver.takePersistableUriPermission(uri, Intent.FLAG_GRANT_READ_URI_PERMISSION) }
+            take(uri, handedOver = false)
+        }
+    }
     LaunchedEffect(incoming) { incoming?.let { onIncomingTaken(); take(it, handedOver = true) } }
 
     Box(Modifier.fillMaxSize()) {
@@ -255,6 +266,9 @@ private fun Screen(theme: String, incoming: Uri?, onIncomingTaken: () -> Unit, o
                 OutlinedButton(onClick = { pick.launch(arrayOf("*/*")) }, enabled = !busy, modifier = Modifier.desc("choose_file")) {
                     Text(stringResource(R.string.choose_file))
                 }
+                OutlinedButton(onClick = { pickFolder.launch(null) }, enabled = !busy, modifier = Modifier.desc("choose_folder")) {
+                    Text(stringResource(R.string.choose_folder))
+                }
                 picked?.let { p ->
                     Card(Modifier.fillMaxWidth()) {
                         Column(Modifier.padding(12.dp)) {
@@ -268,6 +282,7 @@ private fun Screen(theme: String, incoming: Uri?, onIncomingTaken: () -> Unit, o
                                 ContainerFormat.TAR -> R.string.format_tar
                                 ContainerFormat.TARGZ -> R.string.format_targz
                                 ContainerFormat.SEVENZIP -> R.string.format_7z
+                                ContainerFormat.RESTIC -> R.string.format_restic
                             }), style = MaterialTheme.typography.bodySmall, modifier = Modifier.desc("format"))
                         }
                     }
@@ -275,7 +290,7 @@ private fun Screen(theme: String, incoming: Uri?, onIncomingTaken: () -> Unit, o
                 // The form follows the chosen file's format. VeraCrypt: a password and a PIM.
                 // LUKS and ZIP are recognised and named, and come in later versions.
                 val isLuks = picked?.format == ContainerFormat.LUKS || picked?.format == ContainerFormat.AESCRYPT ||
-                    picked?.format == ContainerFormat.SEVENZIP
+                    picked?.format == ContainerFormat.SEVENZIP || picked?.format == ContainerFormat.RESTIC
                 val optionalPassword = picked?.format == ContainerFormat.SEVENZIP
                 if (picked == null || picked?.format == ContainerFormat.VERACRYPT || isLuks) {
                     OutlinedTextField(
@@ -352,7 +367,7 @@ private fun Screen(theme: String, incoming: Uri?, onIncomingTaken: () -> Unit, o
                     Column(Modifier.padding(12.dp)) {
                         Text(s.name, style = MaterialTheme.typography.titleSmall, modifier = Modifier.desc("open_${s.id}"))
                         Text(stringResource(if (s.readOnly) R.string.open_details else R.string.open_details_writable,
-                            if (s.format in setOf("ZIP", "ISO", "AES Crypt", "TAR", "TAR.GZ", "7z")) s.fileSystem else "${s.format}, ${s.fileSystem}"),
+                            if (s.format in setOf("ZIP", "ISO", "AES Crypt", "TAR", "TAR.GZ", "7z", "restic")) s.fileSystem else "${s.format}, ${s.fileSystem}"),
                             style = MaterialTheme.typography.bodySmall)
                         Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.End) {
                             OutlinedButton(onClick = {

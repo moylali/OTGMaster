@@ -48,7 +48,10 @@ class EngineProvider : ContentProvider() {
             }
             M_DETECT -> {
                 val uri = Uri.parse(arg)
-                val d = runCatching { ContainerSessions.detect(ctx, uri, extras?.getString(K_NAME) ?: "container") }
+                val d = if (android.provider.DocumentsContract.isTreeUri(uri)) {
+                    try { ContainerSessions.detectFolder(ctx, uri, extras?.getString(K_NAME) ?: "folder") }
+                    catch (e: Exception) { out.putString(K_MESSAGE, e.message); return out }
+                } else runCatching { ContainerSessions.detect(ctx, uri, extras?.getString(K_NAME) ?: "container") }
                     .getOrElse { CmLog.log("Could not read the chosen file: ${it.message}"); ContainerSessions.Detected(ContainerFormat.VERACRYPT, null) }
                 out.putString(K_FORMAT, d.format.name)
                 d.passwordId?.let { out.putString(K_ID, it) }
@@ -66,6 +69,7 @@ class EngineProvider : ContentProvider() {
                         ContainerFormat.AESCRYPT -> ContainerSessions.openAesCrypt(ctx, uri, name, password)
                         ContainerFormat.ZIP -> ContainerSessions.openZip(ctx, uri, name)
                         ContainerFormat.ISO -> ContainerSessions.openIso(ctx, uri, name)
+                        ContainerFormat.RESTIC -> ContainerSessions.openRestic(ctx, uri, name, password)
                         ContainerFormat.TAR, ContainerFormat.TARGZ, ContainerFormat.SEVENZIP ->
                             ContainerSessions.openArchive(ctx, uri, name, ContainerFormat.valueOf(b.getString(K_FORMAT)!!), password)
                     }
