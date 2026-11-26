@@ -503,3 +503,33 @@ Java_app_fayaz_otgmaster_apfs_ApfsNative_readFile(JNIEnv *env, jclass, jlong han
 }
 
 } /* extern "C" */
+
+// LZFSE, through libfmos's decoder (vendored with libfsapfs, which uses it for compressed
+// files): a macOS disk image compressed as ULFO keeps each chunk as one LZFSE stream. Returns
+// exactly [expected] bytes or throws IOException; a stream that decodes to anything else is damage.
+#include "libfmos_lzfse.h"
+
+extern "C" JNIEXPORT jbyteArray JNICALL
+Java_app_fayaz_otgmaster_apfs_Lzfse_decompress(JNIEnv* env, jclass, jbyteArray src, jint expected) {
+    jclass io = env->FindClass("java/io/IOException");
+    if (expected < 0) { env->ThrowNew(io, "lzfse: a negative size"); return nullptr; }
+    jsize n = env->GetArrayLength(src);
+    std::vector<uint8_t> in(static_cast<size_t>(n));
+    env->GetByteArrayRegion(src, 0, n, reinterpret_cast<jbyte*>(in.data()));
+    // One byte more than expected, so a stream that decodes to more is caught, not truncated.
+    std::vector<uint8_t> out(static_cast<size_t>(expected) + 1);
+    size_t outSize = out.size();
+    libcerror_error_t* error = nullptr;
+    if (libfmos_lzfse_decompress(in.data(), in.size(), out.data(), &outSize, &error) != 1) {
+        libcerror_error_free(&error);
+        env->ThrowNew(io, "lzfse: the compressed data is damaged");
+        return nullptr;
+    }
+    if (outSize != static_cast<size_t>(expected)) {
+        env->ThrowNew(io, ("lzfse: decoded " + std::to_string(outSize) + " bytes, expected " + std::to_string(expected)).c_str());
+        return nullptr;
+    }
+    jbyteArray result = env->NewByteArray(expected);
+    if (result) env->SetByteArrayRegion(result, 0, expected, reinterpret_cast<const jbyte*>(out.data()));
+    return result;
+}

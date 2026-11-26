@@ -67,11 +67,12 @@ if [ ! -f testdata-container/archives/test.7zenc ]; then
   rm -rf "$t"
 fi
 # A macOS disk image: the APFS GPT disk a Mac made for OTG Master's apfs_cs case, wrapped as UDIF
-# (zlib, raw and bzip2 chunks) by scripts/make_udif.py, since this host has no hdiutil.
+# (LZFSE, zlib, raw and bzip2 chunks) by scripts/make_udif.py, since this host has no hdiutil.
 if [ ! -f testdata-container/dmg/test.dmg ]; then
   [ -f testdata/apfs/apfs_cs/test.img ] || { echo "testdata/apfs/apfs_cs is missing: unpack testdata/apfs/apfs-images.tar.xz"; exit 1; }
   mkdir -p testdata-container/dmg
-  python3 scripts/make_udif.py testdata/apfs/apfs_cs/test.img testdata-container/dmg/test.dmg --name "disk image" || { echo "DMG fixture failed"; exit 1; }
+  uv run --quiet --with pyliblzfse python scripts/make_udif.py testdata/apfs/apfs_cs/test.img testdata-container/dmg/test.dmg \
+    --types lzfse,zlib,raw,bzip2 --name "disk image" || { echo "DMG fixture failed"; exit 1; }
 fi
 # A restic repository (desktop restic), one snapshot of the shared tree. restic keeps each file's
 # absolute path, so the tree is backed up from a fixed place and RESTIC_PATH is where it sits in the snapshot.
@@ -519,7 +520,7 @@ run_case sevenzip_read "The same for a 7z archive made by p7zip (solid LZMA2), o
 run_case sevenzip_encrypted "A 7z archive encrypted by p7zip with its file list hidden: a wrong password is refused and nothing opens; the right one opens it and every file reads by SHA-256." case_7z_encrypted
 run_case open_with_targz "Open with: a .tar.gz handed over as application/gzip mounts at once." case_open_with_targz
 run_case restic_read "A restic repository made by desktop restic, picked as a folder: recognised, a wrong password refused, the right one mounts it with its snapshot as a folder, and flower.jpg, a name with spaces and an empty file six folders down read by SHA-256." case_restic_read
-run_case dmg_read "A macOS disk image (UDIF with zlib, raw and bzip2 chunks) of the APFS GPT disk a Mac made: recognised by its trailer, opened with no password, the APFS partition found in the GPT inside, and flower.jpg reads by SHA-256." case_dmg_read
+run_case dmg_read "A macOS disk image (UDIF with LZFSE, zlib, raw and bzip2 chunks) of the APFS GPT disk a Mac made: recognised by its trailer, opened with no password, the APFS partition found in the GPT inside, and flower.jpg reads by SHA-256." case_dmg_read
 run_case lock_all_service "The foreground service runs while a container is open; Lock all closes it and the service stops; the container file is unchanged." case_lock_all_service
 
 {
