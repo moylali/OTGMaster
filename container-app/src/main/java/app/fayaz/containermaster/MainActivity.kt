@@ -134,6 +134,9 @@ class MainActivity : FragmentActivity() {
     }
 }
 
+/** Formats that open without a password: an Open button, and Open with mounts them at once. */
+private val NO_PASSWORD = setOf(ContainerFormat.ZIP, ContainerFormat.ISO, ContainerFormat.TAR, ContainerFormat.TARGZ)
+
 private fun Modifier.desc(d: String) = this.semantics { contentDescription = d }.testTag(d)
 
 private data class Picked(val uri: Uri, val name: String, val format: ContainerFormat, val passwordId: String?)
@@ -220,7 +223,7 @@ private fun Screen(theme: String, incoming: Uri?, onIncomingTaken: () -> Unit, o
                         }
                     }
                 }
-                if (handedOver && p != null && (p.format == ContainerFormat.ZIP || p.format == ContainerFormat.ISO)) openWithoutPassword(p)
+                if (handedOver && p != null && p.format in NO_PASSWORD) openWithoutPassword(p)
             }
     }
     val pick = rememberLauncherForActivityResult(ActivityResultContracts.OpenDocument()) { uri -> if (uri != null) take(uri, handedOver = false) }
@@ -262,17 +265,22 @@ private fun Screen(theme: String, incoming: Uri?, onIncomingTaken: () -> Unit, o
                                 ContainerFormat.ZIP -> R.string.format_zip_later
                                 ContainerFormat.ISO -> R.string.format_iso
                                 ContainerFormat.AESCRYPT -> R.string.format_aescrypt
+                                ContainerFormat.TAR -> R.string.format_tar
+                                ContainerFormat.TARGZ -> R.string.format_targz
+                                ContainerFormat.SEVENZIP -> R.string.format_7z
                             }), style = MaterialTheme.typography.bodySmall, modifier = Modifier.desc("format"))
                         }
                     }
                 }
                 // The form follows the chosen file's format. VeraCrypt: a password and a PIM.
                 // LUKS and ZIP are recognised and named, and come in later versions.
-                val isLuks = picked?.format == ContainerFormat.LUKS || picked?.format == ContainerFormat.AESCRYPT
+                val isLuks = picked?.format == ContainerFormat.LUKS || picked?.format == ContainerFormat.AESCRYPT ||
+                    picked?.format == ContainerFormat.SEVENZIP
+                val optionalPassword = picked?.format == ContainerFormat.SEVENZIP
                 if (picked == null || picked?.format == ContainerFormat.VERACRYPT || isLuks) {
                     OutlinedTextField(
                         value = password, onValueChange = { password = it },
-                        label = { Text(stringResource(R.string.password)) },
+                        label = { Text(stringResource(if (optionalPassword) R.string.password_if_any else R.string.password)) },
                         visualTransformation = if (showPassword) VisualTransformation.None else PasswordVisualTransformation(),
                         keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Password),
                         trailingIcon = {
@@ -324,9 +332,9 @@ private fun Screen(theme: String, incoming: Uri?, onIncomingTaken: () -> Unit, o
                                 if (message == null || message == notSaved) { password = ""; pim = ""; picked = null; showOpen = true }
                             }
                         },
-                    ) { Text(stringResource(if (busy) R.string.unlocking else R.string.unlock)) }
+                    ) { Text(stringResource(if (busy) R.string.unlocking else if (optionalPassword) R.string.open_archive else R.string.unlock)) }
                 }
-                if (picked?.format == ContainerFormat.ZIP || picked?.format == ContainerFormat.ISO) {
+                if (picked?.format in NO_PASSWORD) {
                     Button(enabled = !busy, modifier = Modifier.desc("open_zip"), onClick = {
                         picked?.let { openWithoutPassword(it) }
                     }) { Text(stringResource(R.string.open_archive)) }
@@ -344,7 +352,7 @@ private fun Screen(theme: String, incoming: Uri?, onIncomingTaken: () -> Unit, o
                     Column(Modifier.padding(12.dp)) {
                         Text(s.name, style = MaterialTheme.typography.titleSmall, modifier = Modifier.desc("open_${s.id}"))
                         Text(stringResource(if (s.readOnly) R.string.open_details else R.string.open_details_writable,
-                            if (s.format == "ZIP" || s.format == "ISO" || s.format == "AES Crypt") s.fileSystem else "${s.format}, ${s.fileSystem}"),
+                            if (s.format in setOf("ZIP", "ISO", "AES Crypt", "TAR", "TAR.GZ", "7z")) s.fileSystem else "${s.format}, ${s.fileSystem}"),
                             style = MaterialTheme.typography.bodySmall)
                         Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.End) {
                             OutlinedButton(onClick = {

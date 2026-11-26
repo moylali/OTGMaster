@@ -26,7 +26,7 @@ pick() {
 # typed after a refused unlock, and typing after it made the next case's password wrong.
 clear_field() { adb -s "$S" shell input keyevent KEYCODE_MOVE_END; adb -s "$S" shell input keyevent $(printf '67 %.0s' $(seq 64)); }
 unlock() {
-  tap 'content-desc="password"'; sleep 1; clear_field; adb -s "$S" shell input text "$1"; adb -s "$S" shell input keyevent KEYCODE_BACK; sleep 1
+  tap 'content-desc="password"'; sleep 1; clear_field; [ -n "$1" ] && adb -s "$S" shell input text "$1"; adb -s "$S" shell input keyevent KEYCODE_BACK; sleep 1
   # LUKS, ZIP and AES Crypt have no PIM field. A BACK with no keyboard up leaves the screen.
   if on_screen 'content-desc="pim"'; then
     tap 'content-desc="pim"'; sleep 1; clear_field

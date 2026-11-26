@@ -66,6 +66,8 @@ class EngineProvider : ContentProvider() {
                         ContainerFormat.AESCRYPT -> ContainerSessions.openAesCrypt(ctx, uri, name, password)
                         ContainerFormat.ZIP -> ContainerSessions.openZip(ctx, uri, name)
                         ContainerFormat.ISO -> ContainerSessions.openIso(ctx, uri, name)
+                        ContainerFormat.TAR, ContainerFormat.TARGZ, ContainerFormat.SEVENZIP ->
+                            ContainerSessions.openArchive(ctx, uri, name, ContainerFormat.valueOf(b.getString(K_FORMAT)!!), password)
                     }
                     out.putString(K_RESULT, R_OK)
                 } catch (e: IllegalArgumentException) {

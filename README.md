@@ -136,7 +136,7 @@ GPL-3.0-or-later: see [LICENSE](LICENSE). The app and its source, and the binary
 statically links every component below, are distributed under it. Each component's own
 licence permits this: `libexfat` and `libntfs-3g` are GPL-2.0-or-later, `libfsapfs` and its
 libyal libraries LGPL-3.0-or-later, the Apache-2.0 components (libaums,
-mbedTLS) are compatible with GPL-3.0, zstd's decoder is taken under BSD-3-Clause, and LibTomCrypt's Twofish and the
+mbedTLS, Commons Compress) are compatible with GPL-3.0, XZ for Java is 0BSD, zstd's decoder is taken under BSD-3-Clause, and LibTomCrypt's Twofish and the
 Argon2 reference implementation are public domain or dual-licensed with a permissive option.
 
 ### Third-party components
@@ -151,6 +151,8 @@ Argon2 reference implementation are public domain or dual-licensed with a permis
 | Serpent from the Linux kernel (`disk-engine/src/main/cpp/serpent/serpent_generic.c`) | GPL-2.0-or-later | `crypto/serpent_generic.c` at v6.12, pinned in [VENDOR_FIXES.md](docs/VENDOR_FIXES.md); see [PROVENANCE.md](disk-engine/src/main/cpp/serpent/PROVENANCE.md) |
 | [zstd](https://github.com/facebook/zstd) decoder (`disk-engine/src/main/cpp/zstd/`) | BSD-3-Clause OR GPL-2.0-only | Reads restic's compressed repositories; v1.5.7, pinned in [VENDOR_FIXES.md](docs/VENDOR_FIXES.md) |
 | [LibTomCrypt](https://github.com/libtom/libtomcrypt) Twofish (`disk-engine/src/main/cpp/libtomcrypt/`) | Public domain OR WTFPL | Twofish for VeraCrypt volumes and cascades; pinned in [VENDOR_FIXES.md](docs/VENDOR_FIXES.md) |
+| [Apache Commons Compress](https://commons.apache.org/proper/commons-compress/) 1.27.1, with commons-io, commons-lang3 and commons-codec | Apache-2.0 | Container Master's 7z reader (`file-formats`), a Maven dependency |
+| [XZ for Java](https://tukaani.org/xz/java.html) 1.10 | 0BSD | LZMA and LZMA2 decoding for 7z (`file-formats`), a Maven dependency |
 | [Argon2 reference implementation](https://github.com/P-H-C/phc-winner-argon2) (`disk-engine/src/main/cpp/argon2/`) | CC0-1.0 OR Apache-2.0 | Argon2 KDF for VeraCrypt headers and LUKS2 key slots; pinned in [VENDOR_FIXES.md](docs/VENDOR_FIXES.md) |
 
 ### Support
