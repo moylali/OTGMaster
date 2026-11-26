@@ -165,7 +165,7 @@ class MainActivity : AppCompatActivity() {
         set(v) { app.fayaz.otgmaster.engine.MountCoordinator.isProbingDevices = v }
 
     // For Compose state hoisting
-    private val mountedDrivesState = mutableStateOf<List<MountedDrive>>(emptyList())
+    private val mountedDrivesState = mutableStateOf<List<app.fayaz.otgmaster.engine.DriveSnapshot>>(emptyList())
     private val logsState = mutableStateListOf<String>()
     private val toastState = mutableStateOf<Pair<String, Boolean>?>(null) // message to isSuccess
     private val newlyMountedDriveIds = mutableStateOf<Set<String>>(emptySet())
@@ -750,7 +750,7 @@ class MainActivity : AppCompatActivity() {
                             sharedPreferences.edit().putString(PREF_USB_ACCESS, mode.prefValue).apply()
                         },
                         usbHint = usbHint.value,
-                        onEject = { drive -> ejectTapped(drive) },
+                        onEject = { d -> live(d)?.let { ejectTapped(it) } },
                         onCancelEject = { key -> cancelEject(key) },
                         sessionCredentials = sessionPlaintextCreds,
                         hasCachedCreds = { deviceKey, startBlock ->
@@ -776,13 +776,13 @@ class MainActivity : AppCompatActivity() {
                             attemptUnlock(deviceName, candidate, pwd, pim, keyfiles, cipher, hash, protectHidden = protect,
                                 useBackupHeader = backupHeader, onComplete = onComplete)
                         },
-                        onUnmount = { drive -> unmountTapped(drive) },
+                        onUnmount = { d -> live(d)?.let { unmountTapped(it) } },
                         onCancelUnmount = { id -> cancelUnmount(id) },
-                        onOpenFilesApp = { drive -> openFilesApp(drive) },
+                        onOpenFilesApp = { d -> live(d)?.let { openFilesApp(it) } },
                         journalRepairPrompt = journalRepairPrompt.value,
                         journalRepairs = journalRepairs.intValue,
                         onRequestJournalRepair = { drive -> journalRepairPrompt.value = drive.id },
-                        onJournalRepair = { drive -> repairJournal(drive) },
+                        onJournalRepair = { d -> live(d)?.let { repairJournal(it) } },
                         onJournalRepairDismiss = { journalRepairPrompt.value = null },
                         onClearLogs = { clearLogs() },
                         onCopyText = { text, label -> copyText(text, label) },
@@ -838,11 +838,14 @@ class MainActivity : AppCompatActivity() {
                         },
                         newlyMountedDriveIds = newlyMountedDriveIds.value,
                         onHighlightConsumed = { driveId -> newlyMountedDriveIds.value = newlyMountedDriveIds.value - driveId },
-                        formatUnavailable = { formatUnavailable(it) },
-                        encryptUnavailable = { encryptUnavailable(it) },
-                        driveSummary = { driveSummary(it) },
-                        onFormat = { drive, req -> formatDrive(drive, req) },
-                        onEncrypt = { drive, req -> encryptDrive(drive, req) },
+                        formatUnavailable = { d -> live(d)?.let { formatUnavailable(it) } ?: "" },
+                        encryptUnavailable = { d -> live(d)?.let { encryptUnavailable(it) } ?: "" },
+                        driveSummary = { d -> live(d)?.let { driveSummary(it) } },
+                        onFormat = { d, req -> live(d)?.let { formatDrive(it, req) } },
+                        onEncrypt = { d, req -> live(d)?.let { encryptDrive(it, req) } },
+                        suggestedLabel = { d -> live(d)?.let { suggestedVolumeLabel(it) } ?: "OTGMASTER" },
+                        driveSpace = { d -> live(d)?.let { it.fileSystem.capacity to it.fileSystem.freeSpace } },
+                        liveDrive = { id -> OtgMasterState.mountedDrives.firstOrNull { it.id == id } },
                         driveOperation = driveOperation.value,
                         onDriveOperationClose = { driveOperation.value = null },
                         disconnectedDrives = OtgMasterState.disconnectedDrives.value,
@@ -2524,10 +2527,15 @@ class MainActivity : AppCompatActivity() {
         }
     }
 
+    /** The engine's drive a snapshot names, if it is still mounted. */
+    private fun live(d: app.fayaz.otgmaster.engine.DriveSnapshot): MountedDrive? = OtgMasterState.mountedDrives.firstOrNull { it.id == d.id }
+
     private fun updateMountedDrives() {
-        mountedDrivesState.value = OtgMasterState.mountedDrives.toList()
-        OtgMasterState.clearDisconnectedFor(mountedDrivesState.value)
-        offerJournalRepair(mountedDrivesState.value)
+        val drives = OtgMasterState.mountedDrives.toList()
+        // The screen gets copies; what it does with a drive names it by id (2b step 2).
+        mountedDrivesState.value = drives.map { app.fayaz.otgmaster.engine.DriveSnapshot.of(it) }
+        OtgMasterState.clearDisconnectedFor(drives)
+        offerJournalRepair(drives)
     }
 
     private fun openFilesApp(drive: MountedDrive) {
@@ -2885,6 +2893,14 @@ fun DriveTag(label: String, color: Color) {
 /** How wide the main screen's form gets in landscape. */
 private val LANDSCAPE_FORM_WIDTH = 640.dp
 
+fun driveTitle(drive: app.fayaz.otgmaster.engine.DriveSnapshot): String = buildString {
+    append(drive.sourceDeviceDisplayName ?: drive.name)
+    if (drive.partitionLabel.isNotEmpty()) {
+        append(" · ")
+        append(drive.partitionLabel)
+    }
+}
+
 fun driveTitle(drive: MountedDrive): String = buildString {
     append(drive.sourceDeviceDisplayName ?: drive.name)
     if (drive.partitionLabel.isNotEmpty()) {
@@ -2923,7 +2939,7 @@ const val SLIDER_HINT_OPEN_DELAY_MS = 6_000L
 fun OtgMasterApp(
     unlockingPartitions: Set<String> = emptySet(),
     deviceCandidates: List<UsbDeviceCandidate>,
-    mountedDrives: List<MountedDrive>,
+    mountedDrives: List<app.fayaz.otgmaster.engine.DriveSnapshot>,
     logs: List<String>,
     themeMode: ThemeMode,
     versionName: String,
@@ -2933,7 +2949,7 @@ fun OtgMasterApp(
     usbAccessMode: app.fayaz.otgmaster.usb.UsbAccessMode = app.fayaz.otgmaster.usb.UsbAccessMode.ALWAYS,
     onUsbAccessModeChange: (app.fayaz.otgmaster.usb.UsbAccessMode) -> Unit = {},
     usbHint: Int? = null,
-    onEject: (MountedDrive) -> Unit = {},
+    onEject: (app.fayaz.otgmaster.engine.DriveSnapshot) -> Unit = {},
     onCancelEject: (String) -> Unit = {},
     onCancelUnmount: (String) -> Unit = {},
     sessionCredentials: Map<String, app.fayaz.otgmaster.security.CredentialStore.Credentials>,
@@ -2948,12 +2964,12 @@ fun OtgMasterApp(
     onRefreshDevices: () -> Unit,
     showNoDriveHelp: Boolean = false,
     onUnlock: (String, VolumeCandidate, String, Int?, List<Uri>, app.fayaz.otgmaster.veracrypt.VeraCryptCipher, app.fayaz.otgmaster.veracrypt.VeraCryptHash, app.fayaz.otgmaster.veracrypt.HiddenVolumeCredentials?, Boolean, () -> Unit) -> Unit,
-    onUnmount: (MountedDrive) -> Unit,
-    onOpenFilesApp: (MountedDrive) -> Unit,
+    onUnmount: (app.fayaz.otgmaster.engine.DriveSnapshot) -> Unit,
+    onOpenFilesApp: (app.fayaz.otgmaster.engine.DriveSnapshot) -> Unit,
     journalRepairPrompt: String? = null,
     journalRepairs: Int = 0,
-    onRequestJournalRepair: (MountedDrive) -> Unit = {},
-    onJournalRepair: (MountedDrive) -> Unit = {},
+    onRequestJournalRepair: (app.fayaz.otgmaster.engine.DriveSnapshot) -> Unit = {},
+    onJournalRepair: (app.fayaz.otgmaster.engine.DriveSnapshot) -> Unit = {},
     onJournalRepairDismiss: () -> Unit = {},
     onClearLogs: () -> Unit,
     onCopyText: (String, String) -> Unit,
@@ -2974,11 +2990,17 @@ fun OtgMasterApp(
     onSliderHintOff: () -> Unit = {},
     newlyMountedDriveIds: Set<String> = emptySet(),
     onHighlightConsumed: (String) -> Unit = {},
-    formatUnavailable: (MountedDrive) -> String? = { "" },
-    encryptUnavailable: (MountedDrive) -> String? = { "" },
-    driveSummary: (MountedDrive) -> app.fayaz.otgmaster.ui.DriveSummary? = { null },
-    onFormat: (MountedDrive, app.fayaz.otgmaster.ui.FormatRequest) -> Unit = { _, _ -> },
-    onEncrypt: (MountedDrive, app.fayaz.otgmaster.ui.EncryptRequest) -> Unit = { _, _ -> },
+    formatUnavailable: (app.fayaz.otgmaster.engine.DriveSnapshot) -> String? = { "" },
+    encryptUnavailable: (app.fayaz.otgmaster.engine.DriveSnapshot) -> String? = { "" },
+    driveSummary: (app.fayaz.otgmaster.engine.DriveSnapshot) -> app.fayaz.otgmaster.ui.DriveSummary? = { null },
+    onFormat: (app.fayaz.otgmaster.engine.DriveSnapshot, app.fayaz.otgmaster.ui.FormatRequest) -> Unit = { _, _ -> },
+    onEncrypt: (app.fayaz.otgmaster.engine.DriveSnapshot, app.fayaz.otgmaster.ui.EncryptRequest) -> Unit = { _, _ -> },
+    /** The label Format and Encrypt suggest; reads the volume, so called off the main thread. */
+    suggestedLabel: (app.fayaz.otgmaster.engine.DriveSnapshot) -> String = { "OTGMASTER" },
+    /** Capacity and free space; reads the volume under its lock, so called off the main thread. */
+    driveSpace: (app.fayaz.otgmaster.engine.DriveSnapshot) -> Pair<Long, Long>? = { null },
+    /** The engine's drive behind a snapshot, for what still needs it (recovery, until 2b step 2 slice 5). */
+    liveDrive: (String) -> MountedDrive? = { null },
     driveOperation: app.fayaz.otgmaster.ui.DriveOperation? = null,
     onDriveOperationClose: () -> Unit = {},
     disconnectedDrives: List<DisconnectedDrive> = emptyList(),
@@ -2986,13 +3008,13 @@ fun OtgMasterApp(
     onDismissDisconnected: (String) -> Unit = {},
 ) {
     var showSettings by remember { mutableStateOf(false) }
-    var formatTarget by remember { mutableStateOf<MountedDrive?>(null) }
-    var encryptTarget by remember { mutableStateOf<MountedDrive?>(null) }
-    var backupTarget by remember { mutableStateOf<MountedDrive?>(null) }
-    var backupsTarget by remember { mutableStateOf<MountedDrive?>(null) }
-    var enableBackupsFor by remember { mutableStateOf<MountedDrive?>(null) }
-    var recoveryTarget by remember { mutableStateOf<MountedDrive?>(null) }
-    recoveryTarget?.let { d -> app.fayaz.otgmaster.ui.RecoveryDialog(d, onDismiss = { recoveryTarget = null }) }
+    var formatTarget by remember { mutableStateOf<app.fayaz.otgmaster.engine.DriveSnapshot?>(null) }
+    var encryptTarget by remember { mutableStateOf<app.fayaz.otgmaster.engine.DriveSnapshot?>(null) }
+    var backupTarget by remember { mutableStateOf<app.fayaz.otgmaster.engine.DriveSnapshot?>(null) }
+    var backupsTarget by remember { mutableStateOf<app.fayaz.otgmaster.engine.DriveSnapshot?>(null) }
+    var enableBackupsFor by remember { mutableStateOf<app.fayaz.otgmaster.engine.DriveSnapshot?>(null) }
+    var recoveryTarget by remember { mutableStateOf<app.fayaz.otgmaster.engine.DriveSnapshot?>(null) }
+    recoveryTarget?.let { d -> liveDrive(d.id) }?.let { d -> app.fayaz.otgmaster.ui.RecoveryDialog(d, onDismiss = { recoveryTarget = null }) }
     val backupJobs by app.fayaz.otgmaster.backup.JobStore.get(androidx.compose.ui.platform.LocalContext.current).jobs.collectAsState()
     backupTarget?.let { d ->
         app.fayaz.otgmaster.ui.BackupSetupDialog(d.id, d.name, onDismiss = { backupTarget = null })
@@ -3024,10 +3046,10 @@ fun OtgMasterApp(
     // under the filesystem's lock, which a long write holds for minutes: read it off the main
     // thread, once per form, and open the form when it is in.
     val formatForm by produceState<Pair<app.fayaz.otgmaster.ui.DriveSummary, String>?>(null, formatTarget) {
-        value = formatTarget?.let { t -> withContext(Dispatchers.IO) { driveSummary(t)?.let { it to suggestedVolumeLabel(t) } } }
+        value = formatTarget?.let { t -> withContext(Dispatchers.IO) { driveSummary(t)?.let { it to suggestedLabel(t) } } }
     }
     val encryptForm by produceState<Pair<app.fayaz.otgmaster.ui.DriveSummary, String>?>(null, encryptTarget) {
-        value = encryptTarget?.let { t -> withContext(Dispatchers.IO) { driveSummary(t)?.let { it to suggestedVolumeLabel(t) } } }
+        value = encryptTarget?.let { t -> withContext(Dispatchers.IO) { driveSummary(t)?.let { it to suggestedLabel(t) } } }
     }
     formatTarget?.let { target ->
         formatForm?.let { (summary, suggestedLabel) ->
@@ -3037,7 +3059,7 @@ fun OtgMasterApp(
                     .firstOrNull { it.displayName.equals(target.filesystemName, ignoreCase = true) },
                 // Inside BitLocker the new filesystem goes around BitLocker's metadata, which
                 // FAT32, exFAT and NTFS mark bad; ext4 is not written to (and Windows cannot read it).
-                options = if (target.sourceVolumeCandidate?.containerType ==
+                options = if (target.containerType ==
                     app.fayaz.otgmaster.veracrypt.ContainerType.BITLOCKER) {
                     app.fayaz.otgmaster.format.DriveFormatter.Filesystem.entries
                         .filter { it != app.fayaz.otgmaster.format.DriveFormatter.Filesystem.EXT4 }
@@ -3110,7 +3132,7 @@ fun OtgMasterApp(
         }
     }
     var backupProblem by remember { mutableStateOf<String?>(null) }
-    val backupCount = mountedDrives.count { it.fileSystem is app.fayaz.otgmaster.backup.restic.ResticFileSystem }
+    val backupCount = mountedDrives.count { it.isBackup }
     val driveCount = mountedDrives.size - backupCount
     val shownTab = if (backupsHidden) app.fayaz.otgmaster.ui.MountedTab.DRIVES else mountedTab
 
@@ -3121,7 +3143,7 @@ fun OtgMasterApp(
         val fresh = mountedDrives.filter { it.id in newlyMountedDriveIds && it.id !in announcedMounts }
         announcedMounts = announcedMounts.intersect(newlyMountedDriveIds) + fresh.map { it.id }
         if (fresh.isNotEmpty()) {
-            mountedTab = if (fresh.any { it.fileSystem is app.fayaz.otgmaster.backup.restic.ResticFileSystem })
+            mountedTab = if (fresh.any { it.isBackup })
                 app.fayaz.otgmaster.ui.MountedTab.BACKUPS else app.fayaz.otgmaster.ui.MountedTab.DRIVES
             showMounted = true
         }
@@ -3131,7 +3153,7 @@ fun OtgMasterApp(
             val onBackupsTab = tab == app.fayaz.otgmaster.ui.MountedTab.BACKUPS
             // With backups hidden there is one list, and a backup still mounted is in it: its
             // card is the only way to unmount it.
-            val cards = mountedDrives.filter { backupsHidden || (it.fileSystem is app.fayaz.otgmaster.backup.restic.ResticFileSystem) == onBackupsTab }
+            val cards = mountedDrives.filter { backupsHidden || it.isBackup == onBackupsTab }
             val gone = if (onBackupsTab) emptyList() else disconnectedDrives
             if (cards.isEmpty() && gone.isEmpty()) {
                 Text(stringResource(if (onBackupsTab) R.string.no_backups_mounted else R.string.no_drives_mounted),
@@ -3168,12 +3190,12 @@ fun OtgMasterApp(
                             // minutes, and ext4 reads its superblock from the drive. Read here, a
                             // 2.2 GB write to an NTFS volume on a Pixel 7 Pro made the app "not
                             // responding" at the first touch. Until the first read, no bar.
-                            val isBackup = drive.fileSystem is app.fayaz.otgmaster.backup.restic.ResticFileSystem
+                            val isBackup = drive.isBackup
                             // A mounted backup has no capacity of its own: space stays null.
                             val space by produceState<Pair<Long, Long>?>(null, drive.id) {
                                 while (!isBackup) {
                                     value = withContext(Dispatchers.IO) {
-                                        runCatching { drive.fileSystem.capacity to drive.fileSystem.freeSpace }.getOrNull()
+                                        runCatching { driveSpace(drive) }.getOrNull()
                                     } ?: value
                                     delay(SPACE_REFRESH_MS)
                                 }
@@ -3187,7 +3209,7 @@ fun OtgMasterApp(
                             Row(horizontalArrangement = Arrangement.spacedBy(6.dp)) {
                                 // A mounted backup has no candidate behind it, and is encrypted.
                                 val encTag = if (isBackup) Pair("ENCRYPTED", Color(0xFF2E7D32))
-                                    else encryptionTag(drive.sourceVolumeCandidate?.containerType)
+                                    else encryptionTag(drive.containerType)
                                 DriveTag(label = encTag.first, color = encTag.second)
 
                                 if (drive.filesystemName.isNotEmpty()) {
@@ -3213,7 +3235,7 @@ fun OtgMasterApp(
                             // journalRepairs is read so the card recomposes after a repair:
                             // the volume changes underneath an unchanged MountedDrive.
                             val needsRepair = remember(drive.id, journalRepairs) {
-                                (drive.fileSystem as? app.fayaz.otgmaster.ext4.Ext4FileSystem)?.needsJournalRecovery == true
+                                drive.needsJournalRecovery
                             }
                             if (needsRepair) {
                                 Spacer(modifier = Modifier.height(6.dp))
@@ -3254,8 +3276,7 @@ fun OtgMasterApp(
                             // *encrypted* partition's credentials.
                             val canClearCredentials = !drive.isPlain && deviceKey != null && hasCachedCreds(deviceKey, null)
                             // A phone or camera over MTP, or a mounted backup, is read-only: browsing is all there is.
-                            val browseOnly = drive.fileSystem is app.fayaz.otgmaster.mtp.MtpStorageFileSystem ||
-                                drive.fileSystem is app.fayaz.otgmaster.backup.restic.ResticFileSystem
+                            val browseOnly = drive.browseOnly
                             val ejectPending = deviceKey != null && deviceKey in OtgMasterState.pendingEjects.value
                             val unmountPending = !ejectPending && drive.id in OtgMasterState.pendingUnmounts.value
                             if (ejectPending || unmountPending) {
@@ -3295,7 +3316,7 @@ fun OtgMasterApp(
                                         if (backupsHidden) enableBackupsFor = drive else backupTarget = drive
                                     })
                                     add(app.fayaz.otgmaster.ui.DriveAction("recovery_action", stringResource(R.string.recovery_action),
-                                        app.fayaz.otgmaster.ui.recoveryUnavailable(drive, stringResource(R.string.recovery_not_supported))) { recoveryTarget = drive })
+                                        liveDrive(drive.id)?.let { app.fayaz.otgmaster.ui.recoveryUnavailable(it, stringResource(R.string.recovery_not_supported)) } ?: stringResource(R.string.recovery_not_supported)) { recoveryTarget = drive })
                                     val driveJobs = app.fayaz.otgmaster.ui.jobsForDrive(backupJobs, drive.id)
                                     if (driveJobs.isNotEmpty() && !backupsHidden) {
                                         add(app.fayaz.otgmaster.ui.DriveAction("backups_action",
