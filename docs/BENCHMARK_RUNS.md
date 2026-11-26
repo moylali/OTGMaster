@@ -33,6 +33,18 @@ to a row here.
 
 ---
 
+## Commit hashes after the merge of #205
+
+#205 (Milestone 2b step 1 for OTG Master) was rebase-merged, so `main` has new hashes; the tree
+at `01ecaa4` is the PR head's, `9c2b548`.
+
+| At the PR head | On `main` | Commit |
+|---|---|---|
+| `dd2c36a` | `9ecf144` | docs: hash table for the rebase-merge of #202 |
+| `6d6995e` | `bde6f09` | refactor(engine): mounting and unmounting move to MountCoordinator (2b step 1) |
+| `c134fdc` | `056b045` | fix(log): background log lines keep their order with the screen's own |
+| `9c2b548` | `01ecaa4` | docs: mounting through MountCoordinator on the OnePlus 7, Drive 1 |
+
 ## Commit hashes after the merge of #202
 
 #202 (the architecture proposal's Milestones 1 to 5, and Container Master's 2b) was
