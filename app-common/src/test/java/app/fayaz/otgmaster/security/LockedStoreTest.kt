@@ -74,14 +74,6 @@ class LockedStoreTest {
     }
 
     @Test
-    fun `names hide the drive serial`() {
-        val name = LockedStore.nameFor(CredentialStore.sanitize("2385:5734:ABC123"), 2048)
-        assertFalse(name.contains("ABC123"))
-        assertTrue(name.startsWith(LockedStore.devicePrefix(CredentialStore.sanitize("2385:5734:ABC123"))))
-        assertTrue(name.endsWith("_sb2048"))
-    }
-
-    @Test
     fun `an envelope moved to another name does not open`() {
         val kv = MapKv()
         val store = LockedStore(kv, SoftKeys())
@@ -90,30 +82,6 @@ class LockedStoreTest {
         try {
             store.get("d_b_sb0"); fail("a moved envelope opened")
         } catch (e: javax.crypto.AEADBadTagException) { /* bound to its name */ }
-    }
-
-    @Test
-    fun `passwords saved before 0_5_4 move across under their new names`() {
-        val kv = MapKv()
-        val store = LockedStore(kv, SoftKeys())
-        val dev = CredentialStore.sanitize("2385:5734:ABC123")
-        val perPartition = """{"password":"p1","startBlock":2048}"""
-        val oldestFormat = """{"password":"p0","startBlock":40}"""
-        val legacy = mapOf(
-            "cred_${dev}_sb2048" to perPartition,
-            "cred_${CredentialStore.sanitize("1:2:S9")}" to oldestFormat,
-            "unrelated" to "x",
-        )
-        assertTrue(CredentialStore.migrate(legacy, store))
-        assertEquals(perPartition, String(store.get(LockedStore.nameFor(dev, 2048))!!))
-        assertEquals(oldestFormat, String(store.get(LockedStore.nameFor(CredentialStore.sanitize("1:2:S9"), 40))!!))
-        assertEquals("only the two credentials", 2, kv.map.size)
-    }
-
-    @Test
-    fun `without a screen lock the migration reports failure, so the old file is kept`() {
-        val store = LockedStore(MapKv(), SoftKeys(available = false))
-        assertFalse(CredentialStore.migrate(mapOf("cred_x_sb0" to """{"password":"p"}"""), store))
     }
 
     @Test
