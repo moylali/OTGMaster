@@ -60,6 +60,8 @@ class ContainerMasterApp : Application() {
         const val THEME = "theme_mode"
         const val IDLE_MINUTES = "idle_minutes"
         const val LOCK_ON_SCREEN_OFF = "lock_on_screen_off"
+        /** Settings, Remember passwords: save a container's password after it opens. Off by default. */
+        const val REMEMBER_PASSWORDS = "remember_passwords"
         fun prefs(c: Context) = c.getSharedPreferences("containermaster_prefs", Context.MODE_PRIVATE)
     }
 }

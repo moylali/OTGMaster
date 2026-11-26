@@ -7,7 +7,7 @@ import android.net.Uri
 import android.os.Build
 import android.os.Bundle
 import android.provider.OpenableColumns
-import androidx.activity.ComponentActivity
+import androidx.fragment.app.FragmentActivity
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.compose.setContent
 import androidx.activity.result.contract.ActivityResultContracts
@@ -78,6 +78,8 @@ import androidx.compose.ui.ExperimentalComposeUiApi
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.platform.LocalUriHandler
+import android.widget.Toast
 import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.semantics.contentDescription
@@ -101,7 +103,16 @@ import kotlinx.coroutines.withContext
  * Master's mounted drives are. Every control carries a content description, which the E2E
  * suite finds it by.
  */
-class MainActivity : ComponentActivity() {
+class MainActivity : FragmentActivity() {
+    /** A file handed over by Open with, until the screen has taken it. */
+    private val incoming = mutableStateOf<Uri?>(null)
+
+    override fun onNewIntent(intent: Intent) {
+        super.onNewIntent(intent)
+        viewedUri(intent)?.let { incoming.value = it }
+    }
+
+    private fun viewedUri(intent: Intent?): Uri? = intent?.takeIf { it.action == Intent.ACTION_VIEW }?.data
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
@@ -109,13 +120,14 @@ class MainActivity : ComponentActivity() {
             requestPermissions(arrayOf(android.Manifest.permission.POST_NOTIFICATIONS), 1)
         }
         val prefs = ContainerMasterApp.prefs(this)
+        incoming.value = viewedUri(intent)
         setContent {
             var theme by remember { mutableStateOf(prefs.getString(ContainerMasterApp.THEME, "SYSTEM") ?: "SYSTEM") }
             val dark = when (theme) { "LIGHT" -> false; "DARK" -> true; else -> isSystemInDarkTheme() }
             LaunchedEffect(dark) { applySystemBarAppearance(dark) }
             MaterialTheme(colorScheme = if (dark) darkColorScheme() else lightColorScheme()) {
                 Surface(Modifier.fillMaxSize(), color = MaterialTheme.colorScheme.background) {
-                    Screen(theme) { t -> theme = t; prefs.edit().putString(ContainerMasterApp.THEME, t).apply() }
+                    Screen(theme, incoming.value, { incoming.value = null }) { t -> theme = t; prefs.edit().putString(ContainerMasterApp.THEME, t).apply() }
                 }
             }
         }
@@ -124,11 +136,11 @@ class MainActivity : ComponentActivity() {
 
 private fun Modifier.desc(d: String) = this.semantics { contentDescription = d }.testTag(d)
 
-private data class Picked(val uri: Uri, val name: String, val format: ContainerFormat)
+private data class Picked(val uri: Uri, val name: String, val format: ContainerFormat, val passwordId: String?)
 
 @OptIn(ExperimentalMaterial3Api::class, ExperimentalComposeUiApi::class)
 @Composable
-private fun Screen(theme: String, onTheme: (String) -> Unit) {
+private fun Screen(theme: String, incoming: Uri?, onIncomingTaken: () -> Unit, onTheme: (String) -> Unit) {
     val context = LocalContext.current
     val scope = rememberCoroutineScope()
     // The engine runs in another process (Milestone 2b): the screen holds copies, refreshed
@@ -148,20 +160,70 @@ private fun Screen(theme: String, onTheme: (String) -> Unit) {
     var message by remember { mutableStateOf<String?>(null) }
     var showOpen by remember { mutableStateOf(false) }
     var showSettings by remember { mutableStateOf(false) }
+    val prefs = remember { ContainerMasterApp.prefs(context) }
+    val saved = remember { SavedPasswords(context) }
+    var remember by remember { mutableStateOf(prefs.getBoolean(ContainerMasterApp.REMEMBER_PASSWORDS, false)) }
+    val savedWrong = stringResource(R.string.saved_password_wrong)
+    val savedUnreadable = stringResource(R.string.saved_password_unreadable)
+    val already = stringResource(R.string.already_open)
+    val failed = stringResource(R.string.open_failed, "%s")
 
-    val pick = rememberLauncherForActivityResult(ActivityResultContracts.OpenDocument()) { uri ->
-        if (uri != null) {
+    fun openWithoutPassword(p: Picked) {
+        busy = true; message = null
+        SessionService.start(context)
+        scope.launch {
+            message = withContext(Dispatchers.IO) {
+                when (val r = engine.open(p.format, p.uri, p.name)) {
+                    EngineClient.OpenResult.Ok -> null
+                    EngineClient.OpenResult.AlreadyOpen -> already
+                    EngineClient.OpenResult.WrongPassword -> failed.replace("%s", "wrong password")
+                    is EngineClient.OpenResult.Failed -> failed.replace("%s", r.message)
+                }
+            }
+            busy = false
+            if (message == null) { picked = null; showOpen = true }
+        }
+    }
+
+    // A file chosen with the button, or handed over by Open with ([handedOver]): its format, then
+    // the saved password if there is one; a file handed over that needs no password opens at once.
+    fun take(uri: Uri, handedOver: Boolean) {
             message = null
             scope.launch {
                 picked = withContext(Dispatchers.IO) {
                     val name = context.contentResolver.query(uri, arrayOf(OpenableColumns.DISPLAY_NAME), null, null, null)
                         ?.use { c -> if (c.moveToFirst()) c.getString(0) else null } ?: uri.lastPathSegment ?: "container"
-                    val format = runCatching { engine.detect(uri, name) }.getOrDefault(ContainerFormat.VERACRYPT)
-                    Picked(uri, name, format)
+                    val d = runCatching { engine.detect(uri, name) }.getOrDefault(EngineClient.Detected(ContainerFormat.VERACRYPT, null))
+                    Picked(uri, name, d.format, d.passwordId)
                 }
+                // A saved password for this container: the phone's lock, then open it with that.
+                val p = picked
+                if (p?.passwordId != null && remember && withContext(Dispatchers.IO) { saved.has(p.passwordId) }) {
+                    (context as? FragmentActivity)?.askPhoneLock(context.getString(R.string.saved_prompt_title), p.name) {
+                        busy = true; message = null
+                        SessionService.start(context)
+                        scope.launch {
+                            message = withContext(Dispatchers.IO) {
+                                val s = runCatching { saved.load(p.passwordId) }.getOrNull()
+                                    ?: return@withContext savedUnreadable
+                                when (val r = engine.open(p.format, p.uri, p.name, s.password, s.pim)) {
+                                    EngineClient.OpenResult.Ok -> null
+                                    // The container's password was changed since: the saved one only fails now.
+                                    EngineClient.OpenResult.WrongPassword -> { saved.forget(p.passwordId); savedWrong }
+                                    EngineClient.OpenResult.AlreadyOpen -> already
+                                    is EngineClient.OpenResult.Failed -> failed.replace("%s", r.message)
+                                }
+                            }
+                            busy = false
+                            if (message == null) { picked = null; showOpen = true }
+                        }
+                    }
+                }
+                if (handedOver && p != null && (p.format == ContainerFormat.ZIP || p.format == ContainerFormat.ISO)) openWithoutPassword(p)
             }
-        }
     }
+    val pick = rememberLauncherForActivityResult(ActivityResultContracts.OpenDocument()) { uri -> if (uri != null) take(uri, handedOver = false) }
+    LaunchedEffect(incoming) { incoming?.let { onIncomingTaken(); take(it, handedOver = true) } }
 
     Box(Modifier.fillMaxSize()) {
         Scaffold(
@@ -186,7 +248,6 @@ private fun Screen(theme: String, onTheme: (String) -> Unit) {
                     .verticalScroll(rememberScrollState()).padding(16.dp),
                 verticalArrangement = Arrangement.spacedBy(12.dp),
             ) {
-                Text(stringResource(R.string.intro))
                 OutlinedButton(onClick = { pick.launch(arrayOf("*/*")) }, enabled = !busy, modifier = Modifier.desc("choose_file")) {
                     Text(stringResource(R.string.choose_file))
                 }
@@ -228,9 +289,8 @@ private fun Screen(theme: String, onTheme: (String) -> Unit) {
                         singleLine = true, modifier = Modifier.fillMaxWidth().desc("pim"),
                     )
                     val wrong = stringResource(R.string.wrong_password)
-                    val already = stringResource(R.string.already_open)
-                    val failed = stringResource(R.string.open_failed, "%s")
                     val pimInvalid = stringResource(R.string.pim_invalid)
+                    val notSaved = stringResource(R.string.saved_password_no_lock)
                     Button(
                         enabled = picked != null && !busy,
                         modifier = Modifier.desc("unlock"),
@@ -239,43 +299,35 @@ private fun Screen(theme: String, onTheme: (String) -> Unit) {
                             val pimValue = if (pim.isEmpty()) null else pim.toIntOrNull()
                             if (pim.isNotEmpty() && pimValue == null) { message = pimInvalid; return@Button }
                             val chars = password.toCharArray()
+                            // Kept for saving: open() clears what it sends.
+                            val toSave = if (remember && p.passwordId != null) password.toCharArray() else null
                             busy = true; message = null
                             // Started from the visible screen, before the key derivation (F4).
                             SessionService.start(context)
                             scope.launch {
                                 message = withContext(Dispatchers.IO) {
-                                    when (val r = engine.open(p.format, p.uri, p.name, chars, pimValue)) {
-                                        EngineClient.OpenResult.Ok -> null
-                                        EngineClient.OpenResult.WrongPassword -> wrong
-                                        EngineClient.OpenResult.AlreadyOpen -> already
-                                        is EngineClient.OpenResult.Failed -> failed.replace("%s", r.message)
+                                    try {
+                                        when (val r = engine.open(p.format, p.uri, p.name, chars, pimValue)) {
+                                            EngineClient.OpenResult.Ok ->
+                                                // Saved only once it has opened, so a typo is never kept.
+                                                if (toSave != null && !saved.save(p.passwordId!!, toSave, pimValue)) notSaved else null
+                                            EngineClient.OpenResult.WrongPassword -> wrong
+                                            EngineClient.OpenResult.AlreadyOpen -> already
+                                            is EngineClient.OpenResult.Failed -> failed.replace("%s", r.message)
+                                        }
+                                    } finally {
+                                        toSave?.fill('\u0000')
                                     }
                                 }
                                 busy = false
-                                if (message == null) { password = ""; pim = ""; picked = null }
+                                if (message == null || message == notSaved) { password = ""; pim = ""; picked = null; showOpen = true }
                             }
                         },
                     ) { Text(stringResource(if (busy) R.string.unlocking else R.string.unlock)) }
                 }
                 if (picked?.format == ContainerFormat.ZIP || picked?.format == ContainerFormat.ISO) {
-                    val already = stringResource(R.string.already_open)
-                    val failed = stringResource(R.string.open_failed, "%s")
                     Button(enabled = !busy, modifier = Modifier.desc("open_zip"), onClick = {
-                        val p = picked ?: return@Button
-                        busy = true; message = null
-                        SessionService.start(context)
-                        scope.launch {
-                            message = withContext(Dispatchers.IO) {
-                                when (val r = engine.open(p.format, p.uri, p.name)) {
-                                    EngineClient.OpenResult.Ok -> null
-                                    EngineClient.OpenResult.AlreadyOpen -> already
-                                    EngineClient.OpenResult.WrongPassword -> failed.replace("%s", "wrong password")
-                                    is EngineClient.OpenResult.Failed -> failed.replace("%s", r.message)
-                                }
-                            }
-                            busy = false
-                            if (message == null) picked = null
-                        }
+                        picked?.let { openWithoutPassword(it) }
                     }) { Text(stringResource(R.string.open_archive)) }
                 }
                 message?.let { Text(it, color = MaterialTheme.colorScheme.error, modifier = Modifier.desc("message")) }
@@ -316,7 +368,6 @@ private fun Screen(theme: String, onTheme: (String) -> Unit) {
                 }
             }
             HorizontalDivider(Modifier.padding(vertical = 8.dp))
-            val prefs = remember { ContainerMasterApp.prefs(context) }
             var idle by remember(state.idleMinutes) { mutableStateOf(state.idleMinutes) }
             Text(stringResource(R.string.idle_lock), style = MaterialTheme.typography.titleMedium)
             for (m in listOf(1, 5, 15, 30, 60, 0)) {
@@ -337,13 +388,46 @@ private fun Screen(theme: String, onTheme: (String) -> Unit) {
                 }, modifier = Modifier.desc("lock_on_screen_off"))
             }
             HorizontalDivider(Modifier.padding(vertical = 8.dp))
+            Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
+                Text(stringResource(R.string.remember_passwords), style = MaterialTheme.typography.titleMedium, modifier = Modifier.weight(1f))
+                Switch(checked = remember, onCheckedChange = {
+                    remember = it; prefs.edit().putBoolean(ContainerMasterApp.REMEMBER_PASSWORDS, it).apply()
+                }, modifier = Modifier.desc("remember_passwords"))
+            }
+            Text(stringResource(R.string.remember_passwords_description), style = MaterialTheme.typography.bodySmall)
+            TextButton(onClick = {
+                saved.forgetAll()
+                Toast.makeText(context, R.string.saved_passwords_forgotten, Toast.LENGTH_SHORT).show()
+            }, modifier = Modifier.desc("forget_passwords")) { Text(stringResource(R.string.forget_passwords)) }
+            HorizontalDivider(Modifier.padding(vertical = 8.dp))
             TextButton(onClick = { context.startActivity(Intent(context, FeedbackActivity::class.java)) },
                 modifier = Modifier.desc("settings_report_issue")) {
                 Text(stringResource(app.fayaz.otgmaster.common.R.string.feedback_report_issue))
             }
             HorizontalDivider(Modifier.padding(vertical = 8.dp))
-            Text(stringResource(R.string.version_label, BuildConfig.VERSION_NAME, BuildConfig.VERSION_CODE, BuildConfig.GIT_COMMIT),
-                style = MaterialTheme.typography.bodySmall, modifier = Modifier.desc("version"))
+            // Support, as in OTG Master's Settings: Ko-fi, and the site's Support section.
+            val uriHandler = LocalUriHandler.current
+            val donateUrl = stringResource(R.string.donate_url)
+            Text(stringResource(R.string.donate_title), style = MaterialTheme.typography.titleMedium)
+            Text(stringResource(R.string.donate_summary), style = MaterialTheme.typography.bodySmall)
+            TextButton(onClick = { uriHandler.openUri(donateUrl) }, modifier = Modifier.desc("donate_kofi")) {
+                Text(stringResource(R.string.donate_kofi))
+            }
+            val supportUrl = stringResource(R.string.support_page_url)
+            TextButton(onClick = { uriHandler.openUri(supportUrl) }, modifier = Modifier.desc("donate_support_link")) {
+                Text(stringResource(R.string.support_page))
+            }
+            HorizontalDivider(Modifier.padding(vertical = 8.dp))
+            val versionText = stringResource(R.string.version_label, BuildConfig.VERSION_NAME, BuildConfig.VERSION_CODE, BuildConfig.GIT_COMMIT)
+            Text(stringResource(R.string.app_version), style = MaterialTheme.typography.titleMedium)
+            Row(Modifier.fillMaxWidth().clickable {
+                context.getSystemService(ClipboardManager::class.java)
+                    .setPrimaryClip(ClipData.newPlainText(context.getString(R.string.app_version), versionText))
+            }.padding(vertical = 4.dp).desc("version"), verticalAlignment = Alignment.CenterVertically,
+                horizontalArrangement = Arrangement.SpaceBetween) {
+                Text(versionText, style = MaterialTheme.typography.bodyMedium, modifier = Modifier.weight(1f))
+                Icon(Icons.Default.ContentCopy, contentDescription = stringResource(R.string.cd_copy_version))
+            }
         }
     }
 }
@@ -403,4 +487,26 @@ private fun SidePanel(title: String, closeDesc: String, onDismiss: () -> Unit, c
             }
         }
     }
+}
+
+/**
+ * The phone's lock in front of a saved password: a fingerprint (class 3) or the screen lock,
+ * as OTG Master's Auto mount asks. [onOk] runs on the main thread after it is given; the
+ * keystore then releases the password key for [app.fayaz.otgmaster.security.AndroidLockKeys.WINDOW_SECONDS].
+ * Cancelling leaves the form for typing the password.
+ */
+private fun FragmentActivity.askPhoneLock(title: String, subtitle: String, onOk: () -> Unit) {
+    val prompt = androidx.biometric.BiometricPrompt(this, androidx.core.content.ContextCompat.getMainExecutor(this),
+        object : androidx.biometric.BiometricPrompt.AuthenticationCallback() {
+            override fun onAuthenticationSucceeded(result: androidx.biometric.BiometricPrompt.AuthenticationResult) = onOk()
+        })
+    val info = androidx.biometric.BiometricPrompt.PromptInfo.Builder().setTitle(title).setSubtitle(subtitle)
+    if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.R) {
+        info.setAllowedAuthenticators(androidx.biometric.BiometricManager.Authenticators.BIOMETRIC_STRONG or
+            androidx.biometric.BiometricManager.Authenticators.DEVICE_CREDENTIAL)
+    } else {
+        info.setAllowedAuthenticators(androidx.biometric.BiometricManager.Authenticators.BIOMETRIC_STRONG)
+            .setNegativeButtonText(getString(R.string.saved_prompt_type_instead))
+    }
+    prompt.authenticate(info.build())
 }

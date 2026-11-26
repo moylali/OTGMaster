@@ -48,9 +48,13 @@ class EngineClient(context: Context) {
         awaitClose { resolver.unregisterContentObserver(observer) }
     }
 
-    fun detect(uri: Uri, name: String): ContainerFormat =
-        ContainerFormat.valueOf(call(EngineProvider.M_DETECT, uri.toString(), Bundle().apply { putString(EngineProvider.K_NAME, name) })
-            .getString(EngineProvider.K_FORMAT) ?: "VERACRYPT")
+    /** A picked file's format and, for one with a password, the ID its saved password is under. */
+    data class Detected(val format: ContainerFormat, val passwordId: String?)
+
+    fun detect(uri: Uri, name: String): Detected {
+        val b = call(EngineProvider.M_DETECT, uri.toString(), Bundle().apply { putString(EngineProvider.K_NAME, name) })
+        return Detected(ContainerFormat.valueOf(b.getString(EngineProvider.K_FORMAT) ?: "VERACRYPT"), b.getString(EngineProvider.K_ID))
+    }
 
     /** Opens [uri] as [format]; [password] is cleared here once sent, and by the engine after use. */
     fun open(format: ContainerFormat, uri: Uri, name: String, password: CharArray = CharArray(0), pim: Int? = null): OpenResult {

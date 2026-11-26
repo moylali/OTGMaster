@@ -1,15 +1,14 @@
 <?xml version="1.0" encoding="utf-8"?>
 <resources>
     <string name="app_name">Container Master</string>
-    <string name="intro">Open a VeraCrypt or LUKS container, an AES Crypt file, a ZIP archive or an ISO disc image from your phone. Its files then show up in the Files app and in any app that opens files, until you lock it.</string>
     <string name="choose_file">Choose a container file</string>
     <string name="chosen_file">File: %1$s</string>
     <string name="password">Password</string>
     <string name="pim">PIM (leave empty for the default)</string>
     <string name="unlock">Unlock</string>
     <string name="unlocking">Unlocking…</string>
-    <string name="open_containers">Open containers</string>
-    <string name="none_open">No container is open.</string>
+    <string name="open_containers">Mounted containers</string>
+    <string name="none_open">No container is mounted.</string>
     <string name="lock">Lock</string>
     <string name="lock_all">Lock all</string>
     <string name="wrong_password">The password is wrong (or the PIM, for VeraCrypt). Or this file is not that kind of container.</string>
@@ -17,7 +16,7 @@
     <string name="open_failed">Could not open this file: %1$s</string>
     <string name="pim_invalid">The PIM must be a whole number.</string>
     <string name="root_summary">Unlocked container, read-only</string>
-    <string name="notification_channel">Open containers</string>
+    <string name="notification_channel">Mounted containers</string>
     <plurals name="notification_text">
         <item quantity="one">%d container is open. Its files can be read in other apps.</item>
         <item quantity="other">%d containers are open. Their files can be read in other apps.</item>
@@ -32,7 +31,7 @@
     <string name="cd_clear_logs">Clear logs</string>
     <string name="cd_copy_logs">Copy logs</string>
     <string name="cd_show_password">Show or hide the password</string>
-    <string name="cd_open_containers">Open containers: %1$d</string>
+    <string name="cd_open_containers">Mounted containers: %1$d</string>
     <string name="open_details">%1$s, read-only</string>
     <string name="version_label">Version %1$s (%2$d), %3$s</string>
     <string name="format_veracrypt">No known signature, so it is offered as a VeraCrypt volume. Enter its password and PIM.</string>
@@ -48,4 +47,21 @@
         <item quantity="other">%d minutes</item>
     </plurals>
     <string name="lock_on_screen_off">Lock when the screen turns off</string>
+    <string name="remember_passwords">Remember passwords</string>
+    <string name="remember_passwords_description">After a container opens, its password is saved under your phone\'s lock. When you pick the same file again, your fingerprint or screen lock opens it. This needs a screen lock (PIN, pattern or password).</string>
+    <string name="forget_passwords">Forget saved passwords</string>
+    <string name="saved_passwords_forgotten">Saved passwords forgotten</string>
+    <string name="saved_prompt_title">Open with the saved password</string>
+    <string name="saved_prompt_type_instead">Type it instead</string>
+    <string name="saved_password_wrong">The saved password no longer opens this container, so it was forgotten. Type the new one.</string>
+    <string name="saved_password_unreadable">The saved password could not be read. Type it instead.</string>
+    <string name="saved_password_no_lock">Opened. The password was not saved, because this phone has no screen lock.</string>
+    <string name="donate_title">Donate</string>
+    <string name="donate_summary">Support development</string>
+    <string name="donate_url">https://ko-fi.com/moylali</string>
+    <string name="donate_kofi">Support me on Ko-fi</string>
+    <string name="support_page_url">https://moylali.github.io/OTGMaster/#support</string>
+    <string name="support_page">More ways to help</string>
+    <string name="app_version">App version</string>
+    <string name="cd_copy_version">Copy the version</string>
 </resources>

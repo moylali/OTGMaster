@@ -26,6 +26,20 @@
                 <action android:name="android.intent.action.MAIN" />
                 <category android:name="android.intent.category.LAUNCHER" />
             </intent-filter>
+            <!-- Open with: a file another app hands over is mounted and listed under Mounted
+                 containers. VeraCrypt, LUKS and AES Crypt files have no MIME type of their
+                 own and arrive as octet-stream; the format is told from the file's bytes. -->
+            <intent-filter>
+                <action android:name="android.intent.action.VIEW" />
+                <category android:name="android.intent.category.DEFAULT" />
+                <category android:name="android.intent.category.BROWSABLE" />
+                <data android:scheme="content" />
+                <data android:mimeType="application/zip" />
+                <data android:mimeType="application/x-zip-compressed" />
+                <data android:mimeType="application/x-iso9660-image" />
+                <data android:mimeType="application/x-cd-image" />
+                <data android:mimeType="application/octet-stream" />
+            </intent-filter>
         </activity>
 
         <!-- Keeps open containers alive while the user works in Files or another app, and

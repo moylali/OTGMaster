@@ -48,8 +48,10 @@ class EngineProvider : ContentProvider() {
             }
             M_DETECT -> {
                 val uri = Uri.parse(arg)
-                out.putString(K_FORMAT, runCatching { ContainerSessions.detect(ctx, uri, extras?.getString(K_NAME) ?: "container").name }
-                    .getOrElse { CmLog.log("Could not read the chosen file: ${it.message}"); ContainerFormat.VERACRYPT.name })
+                val d = runCatching { ContainerSessions.detect(ctx, uri, extras?.getString(K_NAME) ?: "container") }
+                    .getOrElse { CmLog.log("Could not read the chosen file: ${it.message}"); ContainerSessions.Detected(ContainerFormat.VERACRYPT, null) }
+                out.putString(K_FORMAT, d.format.name)
+                d.passwordId?.let { out.putString(K_ID, it) }
             }
             M_OPEN -> {
                 val b = extras ?: Bundle()
@@ -105,7 +107,7 @@ class EngineProvider : ContentProvider() {
         const val M_STATE = "state"; const val M_DETECT = "detect"; const val M_OPEN = "open"
         const val M_LOCK = "lock"; const val M_LOCK_ALL = "lockAll"; const val M_SET_IDLE = "setIdle"; const val M_CLEAR_LOGS = "clearLogs"
         const val K_OPEN = "open"; const val K_LOGS = "logs"; const val K_IDLE = "idle"; const val K_FORMAT = "format"
-        const val K_NAME = "name"; const val K_PASSWORD = "password"; const val K_PIM = "pim"
+        const val K_ID = "id"; const val K_NAME = "name"; const val K_PASSWORD = "password"; const val K_PIM = "pim"
         const val K_RESULT = "result"; const val K_MESSAGE = "message"
         const val R_OK = "ok"; const val R_WRONG = "wrong"; const val R_ALREADY = "already"; const val R_FAILED = "failed"
     }

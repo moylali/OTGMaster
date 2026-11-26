@@ -39,6 +39,9 @@ class ProbeActivity : Activity() {
 
     private val tag = "SAFPROBE"
     private val requestTree = 1
+    private val requestView = 2
+    private var viewPackage = ""
+    private var viewMime = ""
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
@@ -69,6 +72,15 @@ class ProbeActivity : Activity() {
                 "write" -> finishWith(cmd, write(tree(), intent.getStringExtra("name") ?: "saf-probe-write.bin",
                     intent.getIntExtra("bytes", 3 * 1024 * 1024 + 4097), intent.getBooleanExtra("keep", false)))
                 "outside" -> finishWith(cmd, outside(tree(), intent.getStringExtra("docid") ?: error("--es docid is required")))
+                "view" -> {
+                    // Open with, as a Files app does it: the user picks a file, and it is handed
+                    // to --es pkg with ACTION_VIEW, --es mime and a read grant (Container Master's E2E).
+                    viewPackage = intent.getStringExtra("pkg") ?: error("--es pkg is required")
+                    viewMime = intent.getStringExtra("mime") ?: "application/octet-stream"
+                    val pick = Intent(Intent.ACTION_OPEN_DOCUMENT).addCategory(Intent.CATEGORY_OPENABLE).setType("*/*")
+                    startActivityForResult(pick, requestView)
+                    return
+                }
                 else -> finishWith(cmd, JSONObject().put("error", "unknown cmd $cmd"))
             }
         } catch (e: Exception) {
@@ -79,6 +91,17 @@ class ProbeActivity : Activity() {
     @Deprecated("Deprecated in Java")
     override fun onActivityResult(requestCode: Int, resultCode: Int, data: Intent?) {
         super.onActivityResult(requestCode, resultCode, data)
+        if (requestCode == requestView) {
+            val out = JSONObject().put("resultCode", resultCode)
+            val uri = data?.data
+            if (resultCode == RESULT_OK && uri != null) {
+                startActivity(Intent(Intent.ACTION_VIEW).setDataAndType(uri, viewMime).setPackage(viewPackage)
+                    .addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION or Intent.FLAG_ACTIVITY_NEW_TASK))
+                out.put("viewed", uri.toString()).put("mime", viewMime)
+            }
+            finishWith("view", out)
+            return
+        }
         val out = JSONObject().put("resultCode", resultCode)
         val uri = data?.data
         if (resultCode == RESULT_OK && uri != null) {
