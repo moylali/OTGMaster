@@ -62,6 +62,8 @@ class ContainerMasterApp : Application() {
         const val LOCK_ON_SCREEN_OFF = "lock_on_screen_off"
         /** Settings, Remember passwords: save a container's password after it opens. Off by default. */
         const val REMEMBER_PASSWORDS = "remember_passwords"
+        /** Settings, Read-only mode: on by default; off opens VeraCrypt and LUKS files for writing. */
+        const val READ_ONLY = "read_only_mode"
         fun prefs(c: Context) = c.getSharedPreferences("containermaster_prefs", Context.MODE_PRIVATE)
     }
 }

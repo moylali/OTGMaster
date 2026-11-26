@@ -40,7 +40,7 @@ class EngineProvider : ContentProvider() {
                 out.putParcelableArrayList(K_OPEN, ArrayList(ContainerSessions.open.value.map { s ->
                     Bundle().apply {
                         putString("id", s.id); putString("name", s.name)
-                        putString("format", s.format); putString("fs", s.fileSystemName)
+                        putString("format", s.format); putString("fs", s.fileSystemName); putBoolean("ro", s.readOnlyReason != null)
                     }
                 }))
                 out.putStringArrayList(K_LOGS, ArrayList(CmLog.lines.value))
@@ -61,8 +61,8 @@ class EngineProvider : ContentProvider() {
                 SessionService.opening = true
                 try {
                     when (ContainerFormat.valueOf(b.getString(K_FORMAT) ?: "VERACRYPT")) {
-                        ContainerFormat.VERACRYPT -> ContainerSessions.openVeraCrypt(ctx, uri, name, password, pim)
-                        ContainerFormat.LUKS -> ContainerSessions.openLuks(ctx, uri, name, password)
+                        ContainerFormat.VERACRYPT -> ContainerSessions.openVeraCrypt(ctx, uri, name, password, pim, b.getBoolean(K_WRITABLE))
+                        ContainerFormat.LUKS -> ContainerSessions.openLuks(ctx, uri, name, password, b.getBoolean(K_WRITABLE))
                         ContainerFormat.AESCRYPT -> ContainerSessions.openAesCrypt(ctx, uri, name, password)
                         ContainerFormat.ZIP -> ContainerSessions.openZip(ctx, uri, name)
                         ContainerFormat.ISO -> ContainerSessions.openIso(ctx, uri, name)
@@ -107,7 +107,7 @@ class EngineProvider : ContentProvider() {
         const val M_STATE = "state"; const val M_DETECT = "detect"; const val M_OPEN = "open"
         const val M_LOCK = "lock"; const val M_LOCK_ALL = "lockAll"; const val M_SET_IDLE = "setIdle"; const val M_CLEAR_LOGS = "clearLogs"
         const val K_OPEN = "open"; const val K_LOGS = "logs"; const val K_IDLE = "idle"; const val K_FORMAT = "format"
-        const val K_ID = "id"; const val K_NAME = "name"; const val K_PASSWORD = "password"; const val K_PIM = "pim"
+        const val K_ID = "id"; const val K_WRITABLE = "writable"; const val K_NAME = "name"; const val K_PASSWORD = "password"; const val K_PIM = "pim"
         const val K_RESULT = "result"; const val K_MESSAGE = "message"
         const val R_OK = "ok"; const val R_WRONG = "wrong"; const val R_ALREADY = "already"; const val R_FAILED = "failed"
     }

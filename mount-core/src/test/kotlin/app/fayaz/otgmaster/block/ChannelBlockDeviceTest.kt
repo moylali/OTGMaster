@@ -53,11 +53,18 @@ class ChannelBlockDeviceTest {
         override fun read(dsts: Array<out ByteBuffer>, offset: Int, length: Int) = throw UnsupportedOperationException()
         override fun write(src: ByteBuffer) = throw UnsupportedOperationException()
         override fun write(srcs: Array<out ByteBuffer>, offset: Int, length: Int) = throw UnsupportedOperationException()
-        override fun write(src: ByteBuffer, position: Long) = throw UnsupportedOperationException()
+        override fun write(src: ByteBuffer, position: Long): Int {
+            val n = minOf(100, src.remaining())
+            val slice = src.slice().limit(n) as ByteBuffer
+            val put = inner.write(slice, position)
+            src.position(src.position() + put)
+            return put
+        }
         override fun position() = throw UnsupportedOperationException()
         override fun position(newPosition: Long) = throw UnsupportedOperationException()
         override fun truncate(size: Long) = throw UnsupportedOperationException()
-        override fun force(metaData: Boolean) = throw UnsupportedOperationException()
+        var forced = 0
+        override fun force(metaData: Boolean) { forced++; inner.force(metaData) }
         override fun transferTo(position: Long, count: Long, target: WritableByteChannel) = throw UnsupportedOperationException()
         override fun transferFrom(src: ReadableByteChannel, position: Long, count: Long) = throw UnsupportedOperationException()
         override fun map(mode: MapMode, position: Long, size: Long): MappedByteBuffer = throw UnsupportedOperationException()
@@ -83,5 +90,37 @@ class ChannelBlockDeviceTest {
             RandomAccessFile(f, "rw").use { it.setLength(512L * 3 + 256) }
             assertThrows(EOFException::class.java) { dev.readBlocks(3, 1) }
         }
+    }
+
+    @Test
+    fun `a writable device writes whole blocks in place, and the file keeps its length`() {
+        val (f, data) = file(512 * 8)
+        RandomAccessFile(f, "r").use { r -> RandomAccessFile(f, "rw").use { w ->
+            val dev = ChannelBlockDevice(r.channel, writeChannel = w.channel)
+            val two = ByteArray(1024) { (0xA0 + it % 7).toByte() }
+            dev.writeBlocks(5, two)
+            assertArrayEquals(two, dev.readBlocks(5, 2))
+            val want = data.copyOf().also { System.arraycopy(two, 0, it, 512 * 5, 1024) }
+            assertArrayEquals(want, f.readBytes())
+            assertThrows(IllegalArgumentException::class.java) { dev.writeBlocks(7, ByteArray(1024)) }
+            assertThrows(IllegalArgumentException::class.java) { dev.writeBlocks(0, ByteArray(100)) }
+            assertArrayEquals("a refused write changed the file", want, f.readBytes())
+            assertEquals(512L * 8, f.length())
+        } }
+    }
+
+    @Test
+    fun `short writes are looped over, and close forces the writes to storage`() {
+        val (f, data) = file(512 * 4)
+        RandomAccessFile(f, "r").use { r -> RandomAccessFile(f, "rw").use { w ->
+            val out = Trickle(w.channel)
+            val dev = ChannelBlockDevice(r.channel, writeChannel = out)
+            val block = ByteArray(512) { 0x5A }
+            dev.writeBlocks(2, block)
+            val want = data.copyOf().also { System.arraycopy(block, 0, it, 1024, 512) }
+            assertArrayEquals(want, f.readBytes())
+            dev.close()
+            assertEquals(1, out.forced)
+        } }
     }
 }

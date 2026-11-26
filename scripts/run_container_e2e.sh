@@ -300,6 +300,41 @@ case_zip_and_veracrypt() {
   [ "$(open_ids | wc -l)" = 2 ] || { fail "not both open"; return 1; }
 }
 
+# write_case <file on the phone> <fixture> VERACRYPT|LUKS <pim or empty> <expected id>: Read-only mode
+# off, unlock, write through saf-probe's write grant, lock, then the host decrypts the pulled file
+# with tools that share no code with the app, runs the checker, and reads the files back.
+write_case() {
+  set_read_only off
+  cm_front; pick "$1" || { fail "could not pick $1"; set_read_only on; return 1; }
+  local out; out=$(unlock password123 $4); [ "$out" = "opened $5" ] || { fail "unlock: got '$out'"; set_read_only on; return 1; }
+  panel_open; on_screen 'read and write' || { fail "the panel does not say read and write"; panel_close; set_read_only on; return 1; }; panel_close
+  TREE=$(grant_rw "$5"); [ -n "$TREE" ] || { fail "no write grant on $5"; set_read_only on; return 1; }
+  local w; w=$(probe write --es tree "'$TREE'" --es name cm-write.bin --ez keep true)
+  echo "$w" | grep -q '"match": true' || { fail "the write did not read back: $w"; set_read_only on; return 1; }
+  local wsha; wsha=$(echo "$w" | grep -oE '"rewritten": \{ "bytes": [0-9]+, "sha256": "[0-9a-f]+"' | grep -oE '[0-9a-f]{64}')
+  lock_all; set_read_only on
+  local tmp; tmp=$(mktemp -d); adb -s "$S" pull /sdcard/Download/"$1" "$tmp/c.img" >/dev/null
+  local host; host=$(python3 scripts/check_container_write.py "$tmp/c.img" "$3" password123 "${4:-0}" cm-write.bin "$wsha" flower.jpg "$FLOWER" 2>&1)
+  rm -rf "$tmp"
+  # The fixture goes back, so later cases and runs start from the file the host made.
+  adb -s "$S" push "$2" /sdcard/Download/"$1" >/dev/null
+  [ "$host" = CLEAN ] || { fail "host check: $host"; return 1; }
+}
+case_write_veracrypt() { write_case cm-ext4.hc testdata/ext4/test.img VERACRYPT 1 "$ID_EXT4"; }
+case_write_luks2() { write_case cm-luks2.hc testdata/m_luks2_ext4/test.img LUKS "" "$ID_LUKS2"; }
+case_read_only_default() {
+  # Read-only mode is on unless turned off: a VeraCrypt file opens read-only, and a write grant cannot create.
+  cm_front; pick cm-ext4.hc || { fail "could not pick"; return 1; }
+  local out; out=$(unlock password123 1); [ "$out" = "opened $ID_EXT4" ] || { fail "unlock: $out"; return 1; }
+  panel_open; on_screen 'ext4, read-only' || { fail "the panel does not say read-only"; panel_close; return 1; }; panel_close
+  local before; before=$(adb -s "$S" shell sha256sum /sdcard/Download/cm-ext4.hc | cut -d' ' -f1)
+  TREE=$(grant_rw "$ID_EXT4"); [ -n "$TREE" ] || { fail "no grant"; return 1; }
+  local w; w=$(probe write --es tree "'$TREE'" --es name cm-write.bin)
+  echo "$w" | grep -q '"error"' || { fail "a write into a read-only container was not refused: $w"; return 1; }
+  lock_all
+  [ "$(adb -s "$S" shell sha256sum /sdcard/Download/cm-ext4.hc | cut -d' ' -f1)" = "$before" ] || { fail "the container changed"; return 1; }
+}
+
 case_screen_settings() {
   cm_front
   local X; X=$(dump)
@@ -307,7 +342,7 @@ case_screen_settings() {
   echo "$X" | grep -q 'Its files then show up' && { fail "the intro text is still under the title"; return 1; }
   panel_open; on_screen 'text="Mounted containers"' || { fail "the panel is not called Mounted containers"; panel_close; return 1; }; panel_close
   tap 'content-desc="settings"' || { fail "no Settings"; return 1; }; sleep 1; X=$(dump)
-  local d; for d in remember_passwords forget_passwords settings_report_issue donate_kofi version idle_15 lock_on_screen_off; do
+  local d; for d in read_only_mode remember_passwords forget_passwords settings_report_issue donate_kofi version idle_15 lock_on_screen_off; do
     echo "$X" | grep -q "content-desc=\"$d\"" || { adb -s "$S" shell input swipe 500 1800 500 600 300; sleep 1; X=$(dump); }
     echo "$X" | grep -q "content-desc=\"$d\"" || { fail "Settings has no $d"; tap 'content-desc="close_settings"'; return 1; }
   done
@@ -380,6 +415,9 @@ run_case screen_settings "The main screen has only the file button under the tit
 run_case open_with_zip "Open with: a ZIP handed over by another app (saf-probe, ACTION_VIEW, a read grant) mounts at once, Mounted containers opens, and flower.jpg reads by SHA-256." case_open_with_zip
 run_case open_with_veracrypt "Open with: a VeraCrypt file handed over as octet-stream lands on the form, and its password unlocks it under its usual ID." case_open_with_veracrypt
 run_case remember_password "Remember passwords on, with a PIN set: the password is saved after an unlock; picking the same file again asks for the PIN and opens it. Emulator only." case_remember_password
+run_case read_only_default "Read-only mode on, the default: a VeraCrypt file opens read-only, the panel says so, a write through a write grant is refused, and the file is unchanged." case_read_only_default
+run_case write_veracrypt "Read-only mode off: a VeraCrypt file (ext4) opens read and write; saf-probe writes a file through a write grant and reads it back; locked and pulled, the host decrypts it in Python, e2fsck -fn is clean, and the written file and flower.jpg match by SHA-256." case_write_veracrypt
+run_case write_luks2 "The same for a LUKS2 file (Argon2id, ext4), decrypted on the host with cryptsetup's layout and Python's AES." case_write_luks2
 run_case lock_all_service "The foreground service runs while a container is open; Lock all closes it and the service stops; the container file is unchanged." case_lock_all_service
 
 {

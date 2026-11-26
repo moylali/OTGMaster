@@ -163,6 +163,7 @@ private fun Screen(theme: String, incoming: Uri?, onIncomingTaken: () -> Unit, o
     val prefs = remember { ContainerMasterApp.prefs(context) }
     val saved = remember { SavedPasswords(context) }
     var remember by remember { mutableStateOf(prefs.getBoolean(ContainerMasterApp.REMEMBER_PASSWORDS, false)) }
+    var readOnly by remember { mutableStateOf(prefs.getBoolean(ContainerMasterApp.READ_ONLY, true)) }
     val savedWrong = stringResource(R.string.saved_password_wrong)
     val savedUnreadable = stringResource(R.string.saved_password_unreadable)
     val already = stringResource(R.string.already_open)
@@ -206,7 +207,7 @@ private fun Screen(theme: String, incoming: Uri?, onIncomingTaken: () -> Unit, o
                             message = withContext(Dispatchers.IO) {
                                 val s = runCatching { saved.load(p.passwordId) }.getOrNull()
                                     ?: return@withContext savedUnreadable
-                                when (val r = engine.open(p.format, p.uri, p.name, s.password, s.pim)) {
+                                when (val r = engine.open(p.format, p.uri, p.name, s.password, s.pim, writable = !readOnly)) {
                                     EngineClient.OpenResult.Ok -> null
                                     // The container's password was changed since: the saved one only fails now.
                                     EngineClient.OpenResult.WrongPassword -> { saved.forget(p.passwordId); savedWrong }
@@ -307,7 +308,7 @@ private fun Screen(theme: String, incoming: Uri?, onIncomingTaken: () -> Unit, o
                             scope.launch {
                                 message = withContext(Dispatchers.IO) {
                                     try {
-                                        when (val r = engine.open(p.format, p.uri, p.name, chars, pimValue)) {
+                                        when (val r = engine.open(p.format, p.uri, p.name, chars, pimValue, writable = !readOnly)) {
                                             EngineClient.OpenResult.Ok ->
                                                 // Saved only once it has opened, so a typo is never kept.
                                                 if (toSave != null && !saved.save(p.passwordId!!, toSave, pimValue)) notSaved else null
@@ -342,7 +343,8 @@ private fun Screen(theme: String, incoming: Uri?, onIncomingTaken: () -> Unit, o
                 Card(Modifier.fillMaxWidth().padding(vertical = 4.dp)) {
                     Column(Modifier.padding(12.dp)) {
                         Text(s.name, style = MaterialTheme.typography.titleSmall, modifier = Modifier.desc("open_${s.id}"))
-                        Text(stringResource(R.string.open_details, if (s.format == "ZIP" || s.format == "ISO" || s.format == "AES Crypt") s.fileSystem else "${s.format}, ${s.fileSystem}"),
+                        Text(stringResource(if (s.readOnly) R.string.open_details else R.string.open_details_writable,
+                            if (s.format == "ZIP" || s.format == "ISO" || s.format == "AES Crypt") s.fileSystem else "${s.format}, ${s.fileSystem}"),
                             style = MaterialTheme.typography.bodySmall)
                         Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.End) {
                             OutlinedButton(onClick = {
@@ -387,6 +389,14 @@ private fun Screen(theme: String, incoming: Uri?, onIncomingTaken: () -> Unit, o
                     screenOff = it; prefs.edit().putBoolean(ContainerMasterApp.LOCK_ON_SCREEN_OFF, it).apply()
                 }, modifier = Modifier.desc("lock_on_screen_off"))
             }
+            HorizontalDivider(Modifier.padding(vertical = 8.dp))
+            Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
+                Text(stringResource(R.string.read_only_mode), style = MaterialTheme.typography.titleMedium, modifier = Modifier.weight(1f))
+                Switch(checked = readOnly, onCheckedChange = {
+                    readOnly = it; prefs.edit().putBoolean(ContainerMasterApp.READ_ONLY, it).apply()
+                }, modifier = Modifier.desc("read_only_mode"))
+            }
+            Text(stringResource(R.string.read_only_mode_description), style = MaterialTheme.typography.bodySmall)
             HorizontalDivider(Modifier.padding(vertical = 8.dp))
             Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
                 Text(stringResource(R.string.remember_passwords), style = MaterialTheme.typography.titleMedium, modifier = Modifier.weight(1f))

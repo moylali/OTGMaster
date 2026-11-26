@@ -6,8 +6,9 @@ import java.nio.ByteBuffer
 import java.nio.channels.FileChannel
 
 /**
- * A read-only [RawBlockDevice] over a seekable file: the container a user picked in Container
- * Master, read through its descriptor (architecture proposal, F7). Only whole [blockSize]
+ * A [RawBlockDevice] over a seekable file: the container a user picked in Container Master,
+ * read through its descriptor (architecture proposal, F7), and written through [writeChannel]
+ * when it was opened for writing, read-only otherwise. Only whole [blockSize]
  * blocks are exposed, so a file whose length is not a multiple of it loses its tail, which no
  * supported format uses.
  *
@@ -21,7 +22,15 @@ class ChannelBlockDevice(
     /** The file's length in bytes, as the opener measured it; null to ask the channel. */
     length: Long? = null,
     override val blockSize: Int = 512,
+    /**
+     * The same file open for writing ("rw"), or null for a read-only device. A separate channel
+     * because a descriptor's FileInputStream channel cannot write and its FileOutputStream
+     * channel cannot read; both are positional, so neither moves the other's offset.
+     */
+    private val writeChannel: FileChannel? = null,
 ) : RawBlockDevice {
+
+    val writable: Boolean get() = writeChannel != null
 
     override val blockCount: Long = (length ?: channel.size()).also {
         require(it >= 0) { "negative length $it" }
@@ -42,8 +51,23 @@ class ChannelBlockDevice(
     }
 
     override fun writeBlocks(startBlock: Long, data: ByteArray) {
-        throw IOException("This container is open read-only")
+        val out = writeChannel ?: throw IOException("This container is open read-only")
+        require(data.size % blockSize == 0) { "a write of ${data.size} bytes is not whole $blockSize-byte blocks" }
+        requireInRange(startBlock, (data.size / blockSize).toLong(), "write")
+        val buffer = ByteBuffer.wrap(data)
+        var position = Math.multiplyExact(startBlock, blockSize.toLong())
+        // Positional, and looped: a descriptor from another provider can take part of a buffer.
+        while (buffer.hasRemaining()) position += out.write(buffer, position)
     }
 
-    override fun close() = channel.close()
+    /** Puts what was written on the storage under the file, so a lock leaves nothing in memory. */
+    fun force() { writeChannel?.force(true) }
+
+    override fun close() {
+        try {
+            force()
+        } finally {
+            try { writeChannel?.close() } finally { channel.close() }
+        }
+    }
 }

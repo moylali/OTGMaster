@@ -32,8 +32,10 @@ import java.util.concurrent.CopyOnWriteArrayList
  */
 object ContainerSessions : MountRegistry {
 
-    /** Container Master opens every container read-only in this first release. */
+    /** Why a container is not writable: Read-only mode, or a format Container Master only reads. */
     const val READ_ONLY_REASON = "Container Master opens containers read-only"
+    /** A VeraCrypt or LUKS file asked for read and write whose provider gave read access only. */
+    const val NO_WRITE_ACCESS = "The app that holds this file gave read access only"
 
     /**
      * One open container: its tree, how the screen and Report issue describe it, and how it is
@@ -50,16 +52,19 @@ object ContainerSessions : MountRegistry {
         val capacityBytes: Long?,
         override val tree: DocumentSource,
         override val session: Any,
+        /** Null when the container is open for writing (Read-only mode off, a VeraCrypt or LUKS file). */
+        override val readOnlyReason: String? = READ_ONLY_REASON,
+        private val free: () -> Long = { 0L },
         private val closer: () -> Unit,
     ) : MountedTree {
-        override val readOnlyReason: String get() = READ_ONLY_REASON
         // Unknown for a read-only container; the root shows none rather than a guess.
-        override fun freeBytes(): Long = 0L
+        override fun freeBytes(): Long = free()
         internal fun close() = closer()
     }
 
     private fun veraCryptSession(id: String, name: String, uri: Uri, fs: FileSystem,
-                                 decrypted: java.io.Closeable, descriptor: ParcelFileDescriptor, format: String = "VeraCrypt") =
+                                 decrypted: java.io.Closeable, descriptor: ParcelFileDescriptor, format: String = "VeraCrypt",
+                                 device: ChannelBlockDevice? = null, readOnlyReason: String? = READ_ONLY_REASON) =
         Session(id, name, uri, format,
             fileSystemName = when (fs) {
                 is app.fayaz.otgmaster.exfat.ExFatFileSystem -> "exFAT"
@@ -69,8 +74,10 @@ object ContainerSessions : MountRegistry {
                 else -> "FAT32"
             },
             capacityBytes = runCatching { fs.capacity }.getOrNull(),
-            tree = UsbFileDocumentSource(fs) { READ_ONLY_REASON },
+            tree = UsbFileDocumentSource(fs) { readOnlyReason },
             session = fs,
+            readOnlyReason = readOnlyReason,
+            free = { if (readOnlyReason == null) runCatching { fs.freeSpace }.getOrDefault(0L) else 0L },
         ) {
             runCatching {
                 when (fs) {
@@ -78,11 +85,13 @@ object ContainerSessions : MountRegistry {
                     is app.fayaz.otgmaster.ntfs.NtfsFileSystem -> fs.unmount()
                     is app.fayaz.otgmaster.ext4.Ext4FileSystem -> fs.unmount()
                     is app.fayaz.otgmaster.apfs.ApfsFileSystem -> fs.unmount()
-                    else -> Unit   // libaums' FAT32 holds nothing to release on a read-only mount
+                    else -> Unit   // libaums' FAT32 writes through at each file's close; nothing to release
                 }
             }
-            // Zeroes the volume key, then the picked file's descriptor goes.
+            // Zeroes the volume key; then what was written is forced to the file's storage, and
+            // the picked file's descriptor goes.
             runCatching { decrypted.close() }
+            device?.let { d -> runCatching { d.close() }.onFailure { CmLog.log("Could not finish writing ${app.fayaz.otgmaster.feedback.PathMask.mark(name)}: ${it.message}") } }
             runCatching { descriptor.close() }
         }
 
@@ -165,20 +174,44 @@ object ContainerSessions : MountRegistry {
     }
 
     /**
+     * The picked file's descriptor, for reading and writing when [writable] and its provider
+     * allows it, else for reading. Returns the descriptor and why it is read-only (null when
+     * writable). A provider that refuses "rw" (a handed-over file often has a read grant only)
+     * leaves the container read-only rather than unopened, and the log says so.
+     */
+    private fun openDescriptor(context: Context, uri: Uri, writable: Boolean, masked: String): Pair<ParcelFileDescriptor, String?> {
+        if (writable) {
+            val rw = runCatching { context.contentResolver.openFileDescriptor(uri, "rw") }.getOrNull()
+            if (rw != null) return rw to null
+            CmLog.log("$masked can only be read: the app that holds it gave no write access, so it opens read-only")
+        }
+        val r = context.contentResolver.openFileDescriptor(uri, "r") ?: throw java.io.FileNotFoundException("The file could not be opened")
+        return r to (if (writable) NO_WRITE_ACCESS else READ_ONLY_REASON)
+    }
+
+    private fun deviceOver(descriptor: ParcelFileDescriptor, readOnlyReason: String?) = ChannelBlockDevice(
+        FileInputStream(descriptor.fileDescriptor).channel, descriptor.statSize.takeIf { it >= 0 },
+        writeChannel = if (readOnlyReason == null) java.io.FileOutputStream(descriptor.fileDescriptor).channel else null)
+
+    private fun mountOver(cached: CachedBlockDevice, readOnlyReason: String?): FileSystem =
+        DiskMounter.mount(if (readOnlyReason == null) ByteBlockDevice(cached) else ReadOnlyBlockDeviceDriver(ByteBlockDevice(cached)))
+
+    /**
      * Opens the VeraCrypt container [uri] with [password] and [pim]: reads it through its
-     * descriptor, unlocks it, mounts its filesystem read-only and publishes it. Runs the key
+     * descriptor, unlocks it, mounts its filesystem (for writing when [writable] and the file's
+     * provider allows it, read-only otherwise) and publishes it. Runs the key
      * derivation, so call it off the main thread. [password] is cleared by the unlocker.
      *
      * @throws IllegalArgumentException for a wrong password or PIM, or a file that is not one
      * @throws AlreadyOpenException if the same file is open
      */
-    fun openVeraCrypt(context: Context, uri: Uri, displayName: String, password: CharArray, pim: Int?): Session {
+    fun openVeraCrypt(context: Context, uri: Uri, displayName: String, password: CharArray, pim: Int?, writable: Boolean = false): Session {
         val masked = app.fayaz.otgmaster.feedback.PathMask.mark(displayName)
         CmLog.log("Opening $masked as VeraCrypt (PIM ${if (pim == null) "default" else "custom"})")
         val t0 = android.os.SystemClock.elapsedRealtime()
         try {
-            return openVeraCryptLogged(context, uri, displayName, password, pim).also {
-                CmLog.log("Unlocked and mounted $masked (${it.fileSystemName}, read-only) in ${android.os.SystemClock.elapsedRealtime() - t0} ms; open as ${it.id}")
+            return openVeraCryptLogged(context, uri, displayName, password, pim, writable, masked).also {
+                CmLog.log("Unlocked and mounted $masked (${it.fileSystemName}, ${if (it.readOnlyReason == null) "read and write" else "read-only"}) in ${android.os.SystemClock.elapsedRealtime() - t0} ms; open as ${it.id}")
             }
         } catch (e: IllegalArgumentException) {
             CmLog.log("Could not unlock $masked: wrong password or PIM, or not a VeraCrypt volume")
@@ -192,13 +225,11 @@ object ContainerSessions : MountRegistry {
         }
     }
 
-    private fun openVeraCryptLogged(context: Context, uri: Uri, displayName: String, password: CharArray, pim: Int?): Session {
-        val descriptor = context.contentResolver.openFileDescriptor(uri, "r")
-            ?: throw java.io.FileNotFoundException("The file could not be opened")
+    private fun openVeraCryptLogged(context: Context, uri: Uri, displayName: String, password: CharArray, pim: Int?,
+                                    writable: Boolean, masked: String): Session {
+        val (descriptor, readOnlyReason) = openDescriptor(context, uri, writable, masked)
         try {
-            val channel = FileInputStream(descriptor.fileDescriptor).channel
-            val length = descriptor.statSize.takeIf { it >= 0 }
-            val device = ChannelBlockDevice(channel, length)
+            val device = deviceOver(descriptor, readOnlyReason)
             val id = idForSalt(device.readBlocks(0, 1).copyOf(64))
             // Before the key derivation: the same file picked through another URI is refused here.
             if (sessions.any { it.id == id }) throw AlreadyOpenException()
@@ -207,8 +238,8 @@ object ContainerSessions : MountRegistry {
                 headers = VeraCryptUnlocker.Headers.STANDARD_ONLY)
             try {
                 val cached = CachedBlockDevice(decrypted, readAheadBytes = CachedBlockDevice.DEFAULT_READAHEAD_BYTES)
-                val fs = DiskMounter.mount(ReadOnlyBlockDeviceDriver(ByteBlockDevice(cached)))
-                val session = veraCryptSession(id, displayName, uri, fs, decrypted, descriptor)
+                val fs = mountOver(cached, readOnlyReason)
+                val session = veraCryptSession(id, displayName, uri, fs, decrypted, descriptor, device = device, readOnlyReason = readOnlyReason)
                 synchronized(this) {
                     if (sessions.any { it.id == id }) { session.close(); throw AlreadyOpenException() }
                     touch(id)
@@ -233,17 +264,15 @@ object ContainerSessions : MountRegistry {
      * the provider). The ID comes from the header's UUID, which a password change keeps. The
      * phone's free memory is passed so an Argon2 keyslot that cannot fit is refused, not tried.
      */
-    fun openLuks(context: Context, uri: Uri, displayName: String, password: CharArray): Session {
+    fun openLuks(context: Context, uri: Uri, displayName: String, password: CharArray, writable: Boolean = false): Session {
         val masked = app.fayaz.otgmaster.feedback.PathMask.mark(displayName)
         CmLog.log("Opening $masked as LUKS")
         val t0 = android.os.SystemClock.elapsedRealtime()
-        val descriptor = context.contentResolver.openFileDescriptor(uri, "r")
-            ?: throw java.io.FileNotFoundException("The file could not be opened")
+        val (descriptor, readOnlyReason) = openDescriptor(context, uri, writable, masked)
         val passwordBytes = String(password).toByteArray(Charsets.UTF_8)
         password.fill('\u0000')
         try {
-            val channel = FileInputStream(descriptor.fileDescriptor).channel
-            val device = ChannelBlockDevice(channel, descriptor.statSize.takeIf { it >= 0 })
+            val device = deviceOver(descriptor, readOnlyReason)
             val head = device.readBlocks(0, 1)
             val id = idForLuks(head)
             if (sessions.any { it.id == id }) { CmLog.log("$masked is already open"); throw AlreadyOpenException() }
@@ -253,8 +282,9 @@ object ContainerSessions : MountRegistry {
             val decrypted = app.fayaz.otgmaster.luks.LuksUnlocker().unlock(device, 0, device.blockCount, passwordBytes, availableMemoryBytes = mem)
             try {
                 val cached = CachedBlockDevice(decrypted, readAheadBytes = CachedBlockDevice.DEFAULT_READAHEAD_BYTES)
-                val fs = DiskMounter.mount(ReadOnlyBlockDeviceDriver(ByteBlockDevice(cached)))
-                val session = veraCryptSession(id, displayName, uri, fs, decrypted, descriptor, format = "LUKS$version")
+                val fs = mountOver(cached, readOnlyReason)
+                val session = veraCryptSession(id, displayName, uri, fs, decrypted, descriptor, format = "LUKS$version",
+                    device = device, readOnlyReason = readOnlyReason)
                 synchronized(this) {
                     if (sessions.any { it.id == id }) { session.close(); throw AlreadyOpenException() }
                     touch(id)
@@ -262,7 +292,7 @@ object ContainerSessions : MountRegistry {
                     _open.value = sessions.toList()
                 }
                 notifyRoots(context)
-                CmLog.log("Unlocked and mounted $masked (LUKS$version, ${session.fileSystemName}, read-only) in ${android.os.SystemClock.elapsedRealtime() - t0} ms; open as $id")
+                CmLog.log("Unlocked and mounted $masked (LUKS$version, ${session.fileSystemName}, ${if (readOnlyReason == null) "read and write" else "read-only"}) in ${android.os.SystemClock.elapsedRealtime() - t0} ms; open as $id")
                 return session
             } catch (e: Throwable) {
                 runCatching { decrypted.close() }; throw e

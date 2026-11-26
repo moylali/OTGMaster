@@ -70,3 +70,15 @@ view_file() {
   adb -s "$S" shell input text "${1%.*}"; adb -s "$S" shell input keyevent KEYCODE_ENTER; sleep 4
   tap "text=\"$1\"" || return 1; sleep 4
   adb -s "$S" shell cat $F/result-view.json 2>/dev/null | grep -q '"viewed"'; }
+# grant_rw <id>: as grant, with write access, for the write cases.
+grant_rw() {
+  adb -s "$S" shell "rm -f $F/result-grant.json; am start -W -f 0x18080000 -n app.fayaz.safprobe/.ProbeActivity --es cmd grant --ez write true --es initial 'content://$CM.documents/document/$1%3A%2F'" >/dev/null; sleep 5
+  tap_any 'text="Use this folder"' 'text="USE THIS FOLDER"' || return 1; sleep 2
+  tap_any 'text="Allow"' 'text="ALLOW"' || return 1; sleep 3
+  adb -s "$S" shell cat $F/result-grant.json | grep -oE '"tree": "[^"]*"' | sed -E 's/"tree": "(.*)"/\1/; s#\\/#/#g'; }
+# set_read_only on|off: Settings, Read-only mode.
+set_read_only() {
+  cm_front; tap 'content-desc="settings"'; sleep 1
+  local on; dump | grep -oE '<node[^>]*content-desc="read_only_mode"[^>]*' | grep -q 'checked="true"' && on=on || on=off
+  [ "$on" = "$1" ] || tap 'content-desc="read_only_mode"'; sleep 1
+  tap 'content-desc="close_settings"'; sleep 1; }

@@ -12,6 +12,10 @@ class ContainerDocumentsProvider : TreeDocumentsProvider() {
     override val rootDocumentName: String get() = "Container"
     override val rootSummary: String
         get() = context?.getString(R.string.root_summary) ?: "Unlocked container, read-only"
+
+    override fun rootSummaryFor(drive: app.fayaz.otgmaster.core.MountedTree): String =
+        if (drive.readOnlyReason != null) rootSummary
+        else context?.getString(R.string.root_summary_writable) ?: "Unlocked container"
     override val rootIcon: Int get() = android.R.drawable.ic_lock_lock
     override val fallbackAuthority: String get() = "app.fayaz.containermaster.documents"
 
