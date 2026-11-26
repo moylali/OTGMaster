@@ -1296,19 +1296,7 @@ class MainActivity : AppCompatActivity() {
             val display = drives.firstNotNullOfOrNull { it.sourceDeviceDisplayName } ?: key
             lifecycleScope.launch(Dispatchers.IO) {
                 try {
-                    val probed = deviceMutex.withLock {
-                        app.fayaz.otgmaster.veracrypt.VeraCryptUnlocker().probeCandidates(raw)
-                    }
-                    val mountedLabels = OtgMasterState.mountedDrives
-                        .filter { it.sourceDeviceName == key }.map { it.partitionLabel }.toSet()
-                    val mountedStarts = OtgMasterState.mountedDrives
-                        .filter { it.sourceDeviceName == key }
-                        .mapNotNull { it.sourceVolumeCandidate?.slotKey }.toSet()
-                    val locked = probed.filter {
-                        it.containerType != app.fayaz.otgmaster.veracrypt.ContainerType.UNKNOWN &&
-                            it.containerType != app.fayaz.otgmaster.veracrypt.ContainerType.UNENCRYPTED &&
-                            it.label !in mountedLabels && it.slotKey !in mountedStarts
-                    }
+                    val (probed, locked) = app.fayaz.otgmaster.engine.MountCoordinator.probeLocked(key, raw)
                     withContext(Dispatchers.Main) {
                         if (locked.isNotEmpty() && _deviceCandidates.value.none { it.deviceName == key }) {
                             openedDevices.putIfAbsent(key, raw)
@@ -1332,16 +1320,7 @@ class MainActivity : AppCompatActivity() {
         val device = app.fayaz.otgmaster.block.FileBlockDevice(sda)
         lifecycleScope.launch(Dispatchers.IO) {
             try {
-                val allCandidates = app.fayaz.otgmaster.veracrypt.VeraCryptUnlocker().probeCandidates(device)
-                val plainPartitions = detectPlainPartitions(device, allCandidates)
-                // Only show candidates the picker can actually act on. UNENCRYPTED has
-                // nothing to unlock — it is either auto-mounted as a plain partition or
-                // its filesystem is unsupported — and UNKNOWN means the probe could not
-                // identify it at all.
-                val candidates = allCandidates.filter {
-                    it.containerType != app.fayaz.otgmaster.veracrypt.ContainerType.UNKNOWN &&
-                    it.containerType != app.fayaz.otgmaster.veracrypt.ContainerType.UNENCRYPTED
-                }
+                val (allCandidates, plainPartitions, candidates) = app.fayaz.otgmaster.engine.MountCoordinator.probe(device)
                 withContext(Dispatchers.Main) {
                     isQemuProbing = false
                     val qemuCandidate = UsbDeviceCandidate(QEMU_DEVICE_KEY, getString(R.string.qemu_test_disk_label), device, candidates, plainPartitions, allCandidates.size - candidates.size)
@@ -1437,22 +1416,12 @@ class MainActivity : AppCompatActivity() {
                 val skippedLines = mutableListOf<String>()
                 val newCandidates = openedList.mapIndexed { index, opened ->
                     val displayName = UsbDeviceDescriber.friendlyName(opened.usbDevice, baseIndex + index)
-                    val allCandidates = try {
-                        VeraCryptUnlocker().probeCandidates(opened.blockDevice)
+                    val (allCandidates, plainPartitions, candidates) = try {
+                        app.fayaz.otgmaster.engine.MountCoordinator.probe(opened.blockDevice)
                     } catch (e: Exception) {
                         e.printStackTrace()
                         OtgMasterState.logFailure("probe", "Reading the partition table of $displayName failed", e)
-                        emptyList()
-                    }
-                    // Detect plain filesystems on IO thread (readBlocks is blocking).
-                    val plainPartitions = detectPlainPartitions(opened.blockDevice, allCandidates)
-                    // Only show candidates the picker can actually act on. UNENCRYPTED has
-                    // nothing to unlock — it is either auto-mounted as a plain partition or
-                    // its filesystem is unsupported — and UNKNOWN means the probe could not
-                    // identify it at all.
-                    val candidates = allCandidates.filter {
-                        it.containerType != app.fayaz.otgmaster.veracrypt.ContainerType.UNKNOWN &&
-                        it.containerType != app.fayaz.otgmaster.veracrypt.ContainerType.UNENCRYPTED
+                        app.fayaz.otgmaster.engine.MountCoordinator.Probed(emptyList(), emptyList(), emptyList())
                     }
                     // Partitions neither mounted nor offered, one line each, so a drive with
                     // "missing" partitions says why (and so does a report sent from it).
@@ -2292,9 +2261,6 @@ class MainActivity : AppCompatActivity() {
         }
     }
 
-    private fun detectPlainPartitions(device: RawBlockDevice, candidates: List<VolumeCandidate>): List<PlainPartition> =
-        app.fayaz.otgmaster.fs.PlainPartitions.detect(device, candidates)
-
     /**
      * Plain partitions being mounted right now, as "deviceKey@startBlock".
      *
@@ -2378,8 +2344,7 @@ class MainActivity : AppCompatActivity() {
             val probed = withContext(Dispatchers.IO) {
                 runCatching {
                     deviceMutex.withLock {
-                        val all = app.fayaz.otgmaster.veracrypt.VeraCryptUnlocker().probeCandidates(raw)
-                        all to detectPlainPartitions(raw, all)
+                        app.fayaz.otgmaster.engine.MountCoordinator.probe(raw).let { it.all to it.plain }
                     }
                 }.onFailure { android.util.Log.w(TAG, "re-probe of held $key failed", it) }.getOrNull()
             } ?: continue
