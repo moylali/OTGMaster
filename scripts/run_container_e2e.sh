@@ -66,6 +66,19 @@ if [ ! -f testdata-container/archives/test.7zenc ]; then
     || { echo "TAR or 7z fixture failed (needs tar, gzip and p7zip's 7z)"; rm -f "$A/test.7zenc"; exit 1; }
   rm -rf "$t"
 fi
+# A restic repository (desktop restic), one snapshot of the shared tree. restic keeps each file's
+# absolute path, so the tree is backed up from a fixed place and RESTIC_PATH is where it sits in the snapshot.
+RESTIC_SRC=/tmp/cm-e2e-restic-src
+RESTIC_PATH=${RESTIC_SRC#/}
+if [ ! -f testdata-container/restic/config ]; then
+  command -v restic >/dev/null || { echo "restic is not installed; the restic fixture needs it"; exit 1; }
+  rm -rf "$RESTIC_SRC"; mkdir -p "$RESTIC_SRC/nested/very/deep/folder" testdata-container
+  cp testdata/flower.jpg "$RESTIC_SRC/"; printf 'Hello World\n' > "$RESTIC_SRC/file with spaces.txt"; : > "$RESTIC_SRC/nested/very/deep/folder/empty_file.txt"
+  RESTIC_PASSWORD=password123 restic init --repo testdata-container/restic -q && \
+    RESTIC_PASSWORD=password123 restic backup --repo testdata-container/restic --host cm-e2e -q "$RESTIC_SRC" \
+    || { echo "restic fixture failed"; rm -rf testdata-container/restic; exit 1; }
+  rm -rf "$RESTIC_SRC"
+fi
 # An AES Crypt (version 2) file, made by pyAesCrypt through uv, holding flower.jpg.
 if [ ! -f testdata-container/aes/flower.jpg.aes ]; then
   mkdir -p testdata-container/aes
@@ -97,6 +110,8 @@ for t in ext4 ntfs luks2 luks1 zip iso tar targz 7z 7zenc; do
   have=$(adb -s "$S" shell sha256sum /sdcard/Download/cm-$t.hc 2>/dev/null | cut -d' ' -f1)
   [ "$want" = "$have" ] || adb -s "$S" push $src /sdcard/Download/cm-$t.hc >/dev/null
 done
+# The restic repository is a folder: pushed whole when it is not there.
+adb -s "$S" shell test -f /sdcard/Download/cm-restic/config || adb -s "$S" push testdata-container/restic /sdcard/Download/cm-restic >/dev/null
 want=$(sha256sum testdata-container/aes/flower.jpg.aes | cut -d' ' -f1)
 [ "$want" = "$(adb -s "$S" shell sha256sum /sdcard/Download/flower.jpg.aes 2>/dev/null | cut -d' ' -f1)" ] || adb -s "$S" push testdata-container/aes/flower.jpg.aes /sdcard/Download/flower.jpg.aes >/dev/null
 adb -s "$S" shell input keyevent KEYCODE_WAKEUP
@@ -383,6 +398,21 @@ case_open_with_targz() {
   [ -n "$(open_ids | tail -1)" ] || { fail "not listed"; return 1; }
 }
 
+case_restic_read() {
+  cm_front; pick_folder cm-restic || { fail "could not pick the cm-restic folder"; return 1; }
+  dump | grep -q 'restic repository' || { fail "not recognised as a restic repository"; return 1; }
+  local out; out=$(unlock not-the-password); [[ "$out" == message:* ]] || { fail "a wrong password was not refused: $out"; return 1; }
+  out=$(unlock password123); [[ "$out" == opened\ * ]] || { fail "open: $out"; return 1; }
+  local id=${out#opened }
+  TREE=$(grant "$id"); [ -n "$TREE" ] || { fail "no grant"; return 1; }
+  local snap; snap=$(probe list --es tree "'$TREE'" | grep -oE '"names": \[ "[^"]+"' | sed -E 's/.*\[ "//; s/"$//')
+  [ -n "$snap" ] || { fail "no snapshot folder at the root"; return 1; }
+  local r
+  r=$(read_sha "$TREE" "$snap/$RESTIC_PATH/flower.jpg"); [ "$r" = "\"sha256\": \"$FLOWER\"" ] || { fail "flower.jpg in $snap: $r"; return 1; }
+  r=$(read_sha "$TREE" "$snap/$RESTIC_PATH/file with spaces.txt"); [ "$r" = "\"sha256\": \"$SPACES\"" ] || { fail "file with spaces.txt: $r"; return 1; }
+  r=$(read_sha "$TREE" "$snap/$RESTIC_PATH/nested/very/deep/folder/empty_file.txt"); [ "$r" = "\"sha256\": \"$EMPTY\"" ] || { fail "empty_file.txt: $r"; return 1; }
+}
+
 case_screen_settings() {
   cm_front
   local X; X=$(dump)
@@ -471,6 +501,7 @@ run_case targz_read "The same for a gzip-compressed TAR; the 20 MiB file is past
 run_case sevenzip_read "The same for a 7z archive made by p7zip (solid LZMA2), opened with no password." case_7z_read
 run_case sevenzip_encrypted "A 7z archive encrypted by p7zip with its file list hidden: a wrong password is refused and nothing opens; the right one opens it and every file reads by SHA-256." case_7z_encrypted
 run_case open_with_targz "Open with: a .tar.gz handed over as application/gzip mounts at once." case_open_with_targz
+run_case restic_read "A restic repository made by desktop restic, picked as a folder: recognised, a wrong password refused, the right one mounts it with its snapshot as a folder, and flower.jpg, a name with spaces and an empty file six folders down read by SHA-256." case_restic_read
 run_case lock_all_service "The foreground service runs while a container is open; Lock all closes it and the service stops; the container file is unchanged." case_lock_all_service
 
 {

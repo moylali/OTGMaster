@@ -82,3 +82,13 @@ set_read_only() {
   local on; dump | grep -oE '<node[^>]*content-desc="read_only_mode"[^>]*' | grep -q 'checked="true"' && on=on || on=off
   [ "$on" = "$1" ] || tap 'content-desc="read_only_mode"'; sleep 1
   tap 'content-desc="close_settings"'; sleep 1; }
+# pick_folder <name>: Choose a backup folder; in the folder picker, go to Downloads, open <name>,
+# use it and allow access.
+pick_folder() {
+  tap 'content-desc="choose_folder"' || return 1; sleep 4
+  tap_any 'content-desc="Show roots"' 'content-desc="Open navigation drawer"' >/dev/null 2>&1; sleep 1
+  tap_any 'text="Downloads"' 'text="Download"' || return 1; sleep 2
+  tap "text=\"$1\"" || return 1; sleep 2
+  tap_any 'text="Use this folder"' 'text="USE THIS FOLDER"' || return 1; sleep 2
+  tap_any 'text="Allow"' 'text="ALLOW"' || return 1; sleep 4
+  on_screen "text=\"File: $1\""; }

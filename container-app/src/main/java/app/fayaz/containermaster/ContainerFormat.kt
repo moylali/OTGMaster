@@ -13,7 +13,9 @@ enum class ContainerFormat(val supported: Boolean) {
     AESCRYPT(true),
     TAR(true),
     TARGZ(true),
-    SEVENZIP(true);
+    SEVENZIP(true),
+    /** A restic repository: a folder, picked with the folder picker, not told from a file's bytes. */
+    RESTIC(true);
 
     companion object {
         private val LUKS_MAGIC = byteArrayOf(0x4C, 0x55, 0x4B, 0x53, 0xBA.toByte(), 0xBE.toByte())

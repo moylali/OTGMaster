@@ -72,4 +72,6 @@
     <string name="format_targz">This is a gzip-compressed TAR archive. It opens without a password, read-only.</string>
     <string name="format_7z">This is a 7z archive. Enter its password if it has one. It opens read-only.</string>
     <string name="password_if_any">Password (leave empty if none)</string>
+    <string name="choose_folder">Choose a backup folder</string>
+    <string name="format_restic">This is a restic repository. Enter its password. Its snapshots open read-only, one folder each.</string>
 </resources>

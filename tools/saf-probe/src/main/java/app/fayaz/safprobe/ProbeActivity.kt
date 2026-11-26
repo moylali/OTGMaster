@@ -72,6 +72,7 @@ class ProbeActivity : Activity() {
                 "write" -> finishWith(cmd, write(tree(), intent.getStringExtra("name") ?: "saf-probe-write.bin",
                     intent.getIntExtra("bytes", 3 * 1024 * 1024 + 4097), intent.getBooleanExtra("keep", false)))
                 "outside" -> finishWith(cmd, outside(tree(), intent.getStringExtra("docid") ?: error("--es docid is required")))
+                "list" -> finishWith(cmd, list(tree(), intent.getStringExtra("path") ?: ""))
                 "view" -> {
                     // Open with, as a Files app does it: the user picks a file, and it is handed
                     // to --es pkg with ACTION_VIEW, --es mime and a read grant (Container Master's E2E).
@@ -122,6 +123,21 @@ class ProbeActivity : Activity() {
         val last = contentResolver.persistedUriPermissions.maxByOrNull { it.persistedTime }
             ?: error("no persisted grant; run cmd grant first")
         return last.uri
+    }
+
+    /** The names in the folder at [path] under the grant's root ("" for the root itself). */
+    private fun list(tree: Uri, path: String): JSONObject {
+        var docId = DocumentsContract.getTreeDocumentId(tree)
+        fun kids(id: String): List<Pair<String, String>> {
+            val out = ArrayList<Pair<String, String>>()
+            contentResolver.query(DocumentsContract.buildChildDocumentsUriUsingTree(tree, id), arrayOf(
+                DocumentsContract.Document.COLUMN_DISPLAY_NAME, DocumentsContract.Document.COLUMN_DOCUMENT_ID), null, null, null)?.use { c ->
+                while (c.moveToNext()) out += c.getString(0) to c.getString(1)
+            }
+            return out
+        }
+        for (part in path.split('/').filter { it.isNotEmpty() }) docId = kids(docId).firstOrNull { it.first == part }?.second ?: error("$part not found")
+        return JSONObject().put("names", JSONArray(kids(docId).map { it.first }))
     }
 
     private fun read(tree: Uri, path: String): JSONObject {

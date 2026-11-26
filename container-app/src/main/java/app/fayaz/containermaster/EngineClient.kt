@@ -49,11 +49,13 @@ class EngineClient(context: Context) {
     }
 
     /** A picked file's format and, for one with a password, the ID its saved password is under. */
-    data class Detected(val format: ContainerFormat, val passwordId: String?)
+    data class Detected(val format: ContainerFormat, val passwordId: String?, val problem: String? = null)
 
+    /** A file's or a picked folder's format; for a folder that is no repository, [Detected.problem] says why. */
     fun detect(uri: Uri, name: String): Detected {
         val b = call(EngineProvider.M_DETECT, uri.toString(), Bundle().apply { putString(EngineProvider.K_NAME, name) })
-        return Detected(ContainerFormat.valueOf(b.getString(EngineProvider.K_FORMAT) ?: "VERACRYPT"), b.getString(EngineProvider.K_ID))
+        return Detected(ContainerFormat.valueOf(b.getString(EngineProvider.K_FORMAT) ?: "VERACRYPT"), b.getString(EngineProvider.K_ID),
+            b.getString(EngineProvider.K_MESSAGE).takeIf { b.getString(EngineProvider.K_FORMAT) == null })
     }
 
     /** Opens [uri] as [format], for writing if [writable] (VeraCrypt and LUKS); [password] is cleared here once sent, and by the engine after use. */
