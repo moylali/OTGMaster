@@ -532,6 +532,12 @@ class MainActivity : AppCompatActivity() {
             return
         }
         liveActivity = java.lang.ref.WeakReference(this)
+        // A new screen takes over from any before it, as a fresh one did when this state was the
+        // activity's own: the previous screen's connections to drives not mounted are released,
+        // so this one probes them again (which is what runs auto mount after a relaunch), and the
+        // work its own coroutines tracked, cancelled with it, is forgotten rather than left stuck.
+        closeOpenedDevices()
+        app.fayaz.otgmaster.engine.MountCoordinator.forgetScreenWork()
         // Before the first frame, so it is laid out edge-to-edge from the start; the icon
         // colours follow the in-app theme once it is read (applySystemBarAppearance).
         enableEdgeToEdge()

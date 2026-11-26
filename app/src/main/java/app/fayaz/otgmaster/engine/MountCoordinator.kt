@@ -64,6 +64,23 @@ object MountCoordinator {
     val reofferInFlight: MutableSet<String> = java.util.concurrent.ConcurrentHashMap.newKeySet()
     val plainMountsInFlight: MutableSet<String> = java.util.concurrent.ConcurrentHashMap.newKeySet()
 
+    /**
+     * Forgets what a screen's own coroutines tracked: probes, unlocks, plain and MTP mounts and
+     * re-offers in flight, and candidates held behind its auto-mount prompt. Those run in the
+     * activity's scope and are cancelled with it, often before they could clear their entry, so a
+     * new screen starts from none, as it did when this state was the activity's. Unmounts and
+     * Ejects run in the process scope and are kept.
+     */
+    fun forgetScreenWork() {
+        isProbingDevices = false
+        isQemuProbing = false
+        unlockingPartitions.value = emptySet()
+        plainMountsInFlight.clear()
+        mtpInFlight.clear()
+        reofferInFlight.clear()
+        deferredCandidates.clear()
+    }
+
     /** What an unlock ended with, when it did not throw. A throw is an unlock failure. */
     sealed interface UnlockOutcome {
         /** Mounted and listed in [OtgMasterState.mountedDrives]. */
