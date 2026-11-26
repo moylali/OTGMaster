@@ -18,5 +18,9 @@ kotlin {
 
 dependencies {
     api(project(":mount-core"))
+    // 7z (and its LZMA/LZMA2 decoders): Apache Commons Compress, Apache-2.0; XZ for Java, 0BSD.
+    // Pinned; listed in README.md's third-party table.
+    implementation("org.apache.commons:commons-compress:1.27.1")
+    implementation("org.tukaani:xz:1.10")
     testImplementation("junit:junit:4.13.2")
 }

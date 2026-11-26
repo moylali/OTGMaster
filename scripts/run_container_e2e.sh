@@ -55,6 +55,17 @@ PY
   fi
   rm -rf "$t"
 fi
+# TAR (GNU tar, plain and gzipped) and 7z (p7zip: plain, and encrypted with its file list hidden)
+# archives of the same tree as the ZIP, the 20 MiB entry included, so the streamed paths run too.
+if [ ! -f testdata-container/archives/test.7zenc ]; then
+  t=$(mktemp -d); mkdir -p "$t/nested/very/deep/folder" testdata-container/archives
+  cp testdata/flower.jpg "$t/"; printf 'Hello World\n' > "$t/file with spaces.txt"; : > "$t/nested/very/deep/folder/empty_file.txt"
+  python3 -c 'import sys; open(sys.argv[1],"wb").write(bytes((i // 7) % 251 for i in range(20 << 20)))' "$t/big.bin"
+  A="$PWD/testdata-container/archives"
+  (cd "$t" && tar -cf "$A/test.tar" . && tar -czf "$A/test.tar.gz" . && 7z a -bd -bso0 "$A/test.7z" . && 7z a -bd -bso0 -ppassword123 -mhe=on "$A/test.7zenc" .) \
+    || { echo "TAR or 7z fixture failed (needs tar, gzip and p7zip's 7z)"; rm -f "$A/test.7zenc"; exit 1; }
+  rm -rf "$t"
+fi
 # An AES Crypt (version 2) file, made by pyAesCrypt through uv, holding flower.jpg.
 if [ ! -f testdata-container/aes/flower.jpg.aes ]; then
   mkdir -p testdata-container/aes
@@ -78,8 +89,10 @@ echo "Building Container Master and saf-probe..."
 APK_COMMIT=$(grep -oE 'GIT_COMMIT = "[^"]*"' container-app/build/generated/source/buildConfig/debug/app/fayaz/containermaster/BuildConfig.java | cut -d'"' -f2)
 adb -s "$S" install -r container-app/build/outputs/apk/debug/container-app-debug.apk >/dev/null || exit 1
 adb -s "$S" install -r tools/saf-probe/build/outputs/apk/debug/saf-probe-debug.apk >/dev/null || exit 1
-for t in ext4 ntfs luks2 luks1 zip iso; do
-  case $t in luks2) src=testdata/m_luks2_ext4/test.img ;; luks1) src=testdata/m_luks1_ext4/test.img ;; zip) src=testdata-container/zip/test.zip ;; iso) src=testdata-container/iso/test.iso ;; *) src=testdata/$t/test.img ;; esac
+for t in ext4 ntfs luks2 luks1 zip iso tar targz 7z 7zenc; do
+  case $t in luks2) src=testdata/m_luks2_ext4/test.img ;; luks1) src=testdata/m_luks1_ext4/test.img ;; zip) src=testdata-container/zip/test.zip ;; iso) src=testdata-container/iso/test.iso ;;
+    tar) src=testdata-container/archives/test.tar ;; targz) src=testdata-container/archives/test.tar.gz ;; 7z) src=testdata-container/archives/test.7z ;; 7zenc) src=testdata-container/archives/test.7zenc ;;
+    *) src=testdata/$t/test.img ;; esac
   want=$(sha256sum $src | cut -d' ' -f1)
   have=$(adb -s "$S" shell sha256sum /sdcard/Download/cm-$t.hc 2>/dev/null | cut -d' ' -f1)
   [ "$want" = "$have" ] || adb -s "$S" push $src /sdcard/Download/cm-$t.hc >/dev/null
@@ -335,6 +348,41 @@ case_read_only_default() {
   [ "$(adb -s "$S" shell sha256sum /sdcard/Download/cm-ext4.hc | cut -d' ' -f1)" = "$before" ] || { fail "the container changed"; return 1; }
 }
 
+# archive_case <file> <recognised text> [password]: open, grant, and read the shared tree by SHA-256.
+archive_case() {
+  cm_front; pick "$1" || { fail "could not pick $1"; return 1; }
+  dump | grep -q "$2" || { fail "not recognised as: $2"; return 1; }
+  if [ -n "${3+x}" ]; then
+    local out; out=$(unlock "$3"); [[ "$out" == opened\ * ]] || { fail "open: $out"; return 1; }
+  else
+    tap 'content-desc="open_zip"' || { fail "no Open"; return 1; }
+    local i; for i in $(seq 1 60); do sleep 1; on_screen 'content-desc="chosen_file"' || break; on_screen 'content-desc="message"' && break; done
+    on_screen 'content-desc="message"' && { fail "did not open: $(dump | grep -oE 'text="[^"]*"[^>]*content-desc="message"')"; return 1; }
+  fi
+  local id; id=$(open_ids | tail -1); [ -n "$id" ] || { fail "not listed as open"; return 1; }
+  TREE=$(grant "$id"); [ -n "$TREE" ] || { fail "no grant"; return 1; }
+  local r
+  r=$(read_sha "$TREE" flower.jpg); [ "$r" = "\"sha256\": \"$FLOWER\"" ] || { fail "flower.jpg: $r"; return 1; }
+  r=$(read_sha "$TREE" "file with spaces.txt"); [ "$r" = "\"sha256\": \"$SPACES\"" ] || { fail "file with spaces.txt: $r"; return 1; }
+  r=$(read_sha "$TREE" nested/very/deep/folder/empty_file.txt); [ "$r" = "\"sha256\": \"$EMPTY\"" ] || { fail "empty_file.txt: $r"; return 1; }
+  r=$(read_sha "$TREE" big.bin); [ "$r" = "\"sha256\": \"$BIG\"" ] || { fail "big.bin: $r"; return 1; }
+}
+case_tar_read() { archive_case cm-tar.hc 'a TAR archive'; }
+case_targz_read() { archive_case cm-targz.hc 'gzip-compressed TAR'; }
+case_7z_read() { archive_case cm-7z.hc 'a 7z archive' ""; }
+case_7z_encrypted() {
+  cm_front; pick cm-7zenc.hc || { fail "could not pick"; return 1; }
+  local out; out=$(unlock not-the-password); [[ "$out" == message:* ]] || { fail "a wrong password was not refused: $out"; return 1; }
+  [ -z "$(open_ids)" ] || { fail "something opened with a wrong password"; return 1; }
+  lock_all; archive_case cm-7zenc.hc 'a 7z archive' password123
+}
+case_open_with_targz() {
+  view_file cm-targz.hc application/gzip || { fail "saf-probe could not hand the file over"; return 1; }
+  local i; for i in $(seq 1 60); do sleep 1; on_screen 'content-desc="close_open_containers"' && break; on_screen 'content-desc="message"' && break; done
+  on_screen 'content-desc="close_open_containers"' || { fail "a handed-over .tar.gz did not mount"; return 1; }
+  [ -n "$(open_ids | tail -1)" ] || { fail "not listed"; return 1; }
+}
+
 case_screen_settings() {
   cm_front
   local X; X=$(dump)
@@ -418,6 +466,11 @@ run_case remember_password "Remember passwords on, with a PIN set: the password 
 run_case read_only_default "Read-only mode on, the default: a VeraCrypt file opens read-only, the panel says so, a write through a write grant is refused, and the file is unchanged." case_read_only_default
 run_case write_veracrypt "Read-only mode off: a VeraCrypt file (ext4) opens read and write; saf-probe writes a file through a write grant and reads it back; locked and pulled, the host decrypts it in Python, e2fsck -fn is clean, and the written file and flower.jpg match by SHA-256." case_write_veracrypt
 run_case write_luks2 "The same for a LUKS2 file (Argon2id, ext4), decrypted on the host with cryptsetup's layout and Python's AES." case_write_luks2
+run_case tar_read "A TAR archive made by GNU tar opens with no password; flower.jpg, a name with spaces, an empty file six folders down and a 20 MiB file read by SHA-256 through saf-probe's grant." case_tar_read
+run_case targz_read "The same for a gzip-compressed TAR; the 20 MiB file is past the 16 MiB read into memory, so it streams." case_targz_read
+run_case sevenzip_read "The same for a 7z archive made by p7zip (solid LZMA2), opened with no password." case_7z_read
+run_case sevenzip_encrypted "A 7z archive encrypted by p7zip with its file list hidden: a wrong password is refused and nothing opens; the right one opens it and every file reads by SHA-256." case_7z_encrypted
+run_case open_with_targz "Open with: a .tar.gz handed over as application/gzip mounts at once." case_open_with_targz
 run_case lock_all_service "The foreground service runs while a container is open; Lock all closes it and the service stops; the container file is unchanged." case_lock_all_service
 
 {

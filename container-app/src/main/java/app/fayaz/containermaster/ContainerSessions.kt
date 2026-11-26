@@ -162,6 +162,14 @@ object ContainerSessions : MountRegistry {
             .digest().joinToString("") { "%02x".format(it) }.take(10)
 
     /**
+     * The ID of a 7z archive: from its 32-byte signature header, which holds the CRC, offset and
+     * size of the archive's own index, so it differs between archives and survives a re-pick.
+     */
+    internal fun idFor7z(head: ByteArray): String =
+        MessageDigest.getInstance("SHA-256").apply { update("7z:".toByteArray()); update(head, 0, 32) }
+            .digest().joinToString("") { "%02x".format(it) }.take(10)
+
+    /**
      * The ID a file of [format] will open under, from its first bytes [head], for the formats
      * that take a password; null for the others. The screen looks a saved password up by it
      * when the same file is picked again, whatever URI the picker gives this time.
@@ -170,6 +178,7 @@ object ContainerSessions : MountRegistry {
         ContainerFormat.VERACRYPT -> if (head.size >= 64) idForSalt(head.copyOf(64)) else null
         ContainerFormat.LUKS -> if (head.size >= 208) idForLuks(head) else null
         ContainerFormat.AESCRYPT -> idForAesCrypt(head.copyOf(minOf(256, head.size)))
+        ContainerFormat.SEVENZIP -> if (head.size >= 32) idFor7z(head) else null
         else -> null
     }
 
@@ -315,6 +324,76 @@ object ContainerSessions : MountRegistry {
      * publishes its tree. No password. Its ID comes from the archive's own bytes (its length,
      * first 4 KiB and end record), so a client's grant survives a fresh pick, as for VeraCrypt.
      */
+    /**
+     * Opens a TAR (plain or gzip-compressed) or 7z archive read-only and publishes it; [password]
+     * for an encrypted 7z, empty otherwise. Reads the archive's whole index first.
+     *
+     * @throws IllegalArgumentException for a 7z whose index is encrypted and the password wrong or missing
+     * @throws AlreadyOpenException if the same file is open
+     */
+    fun openArchive(context: Context, uri: Uri, displayName: String, format: ContainerFormat, password: CharArray = CharArray(0)): Session {
+        val masked = app.fayaz.otgmaster.feedback.PathMask.mark(displayName)
+        val label = when (format) { ContainerFormat.TAR -> "TAR"; ContainerFormat.TARGZ -> "TAR.GZ"; else -> "7z" }
+        CmLog.log("Opening $masked as a $label archive")
+        val t0 = android.os.SystemClock.elapsedRealtime()
+        val descriptor = context.contentResolver.openFileDescriptor(uri, "r")
+            ?: throw java.io.FileNotFoundException("The file could not be opened")
+        try {
+            val channel = FileInputStream(descriptor.fileDescriptor).channel
+            val length = descriptor.statSize.takeIf { it >= 0 } ?: channel.size()
+            val head = java.nio.ByteBuffer.allocate(minOf(4096L, length).toInt()).also { b -> var p = 0L
+                while (b.hasRemaining()) { if (channel.read(b, p).also { p += it } < 0) break } }.array()
+            val id = if (format == ContainerFormat.SEVENZIP) idFor7z(head) else
+                MessageDigest.getInstance("SHA-256").apply { update("tar:$length:".toByteArray()); update(head) }
+                    .digest().joinToString("") { "%02x".format(it) }.take(10)
+            if (sessions.any { it.id == id }) { CmLog.log("$masked is already open"); throw AlreadyOpenException() }
+            val files: Int
+            val skipped: Int
+            val tree: app.fayaz.otgmaster.core.DocumentSource
+            val closer: () -> Unit
+            if (format == ContainerFormat.SEVENZIP) {
+                val sz = try {
+                    app.fayaz.otgmaster.sevenzip.SevenZipDocumentSource.open(channel, password)
+                } catch (e: java.io.IOException) {
+                    // A 7z whose list of files is encrypted cannot be read at all without its password,
+                    // and a wrong one decrypts it to garbage ("Compressed data is corrupt", from XZ).
+                    if (password.isNotEmpty() || e.javaClass.simpleName == "PasswordRequiredException")
+                        throw IllegalArgumentException("wrong or missing password", e)
+                    throw e
+                }
+                tree = sz; files = -1; skipped = sz.skippedUnsafe
+                closer = { runCatching { sz.close() }; runCatching { descriptor.close() } }
+            } else {
+                val tar = app.fayaz.otgmaster.tar.TarDocumentSource.open(channel, gzip = format == ContainerFormat.TARGZ)
+                tree = tar; files = tar.archive.entries.count { !it.isDirectory }; skipped = tar.archive.skippedUnsafe + tar.archive.skippedOther
+                closer = { runCatching { descriptor.close() } }
+            }
+            val session = Session(id, displayName, uri, label, label, length, tree, tree, closer = closer)
+            synchronized(this) {
+                if (sessions.any { it.id == id }) { session.close(); throw AlreadyOpenException() }
+                touch(id)
+                sessions += session
+                _open.value = sessions.toList()
+            }
+            notifyRoots(context)
+            CmLog.log("Opened $masked" + (if (files >= 0) ": $files files" else "") +
+                (if (skipped > 0) ", $skipped entries with unsafe names, links or devices left out" else "") +
+                " in ${android.os.SystemClock.elapsedRealtime() - t0} ms; open as $id")
+            return session
+        } catch (e: AlreadyOpenException) {
+            runCatching { descriptor.close() }; throw e
+        } catch (e: IllegalArgumentException) {
+            runCatching { descriptor.close() }
+            CmLog.log("Could not open $masked: the password is wrong or missing"); throw e
+        } catch (e: Exception) {
+            runCatching { descriptor.close() }
+            CmLog.log("Could not open $masked: ${e.message ?: e.javaClass.simpleName}")
+            throw e
+        } finally {
+            password.fill('\u0000')
+        }
+    }
+
     fun openZip(context: Context, uri: Uri, displayName: String): Session {
         val masked = app.fayaz.otgmaster.feedback.PathMask.mark(displayName)
         CmLog.log("Opening $masked as a ZIP archive")
@@ -476,6 +555,9 @@ object ContainerSessions : MountRegistry {
             ContainerFormat.ZIP -> "a ZIP archive, opened without a password"
             ContainerFormat.ISO -> "an ISO 9660 disc image, opened without a password"
             ContainerFormat.AESCRYPT -> "an AES Crypt file"
+            ContainerFormat.TAR -> "a TAR archive, opened without a password"
+            ContainerFormat.TARGZ -> "a gzip-compressed TAR archive, opened without a password"
+            ContainerFormat.SEVENZIP -> "a 7z archive"
         })
         return Detected(format, passwordIdFor(format, head))
     }

@@ -68,4 +68,8 @@
     <string name="cd_copy_version">Copy the version</string>
     <string name="read_only_mode">Read-only mode</string>
     <string name="read_only_mode_description">Open VeraCrypt and LUKS containers read-only. Turn it off to add, change and delete the files inside them. ZIP, ISO and AES Crypt files always open read-only.</string>
+    <string name="format_tar">This is a TAR archive. It opens without a password, read-only.</string>
+    <string name="format_targz">This is a gzip-compressed TAR archive. It opens without a password, read-only.</string>
+    <string name="format_7z">This is a 7z archive. Enter its password if it has one. It opens read-only.</string>
+    <string name="password_if_any">Password (leave empty if none)</string>
 </resources>

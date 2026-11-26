@@ -38,6 +38,11 @@
                 <data android:mimeType="application/x-zip-compressed" />
                 <data android:mimeType="application/x-iso9660-image" />
                 <data android:mimeType="application/x-cd-image" />
+                <data android:mimeType="application/x-tar" />
+                <data android:mimeType="application/gzip" />
+                <data android:mimeType="application/x-gzip" />
+                <data android:mimeType="application/x-compressed-tar" />
+                <data android:mimeType="application/x-7z-compressed" />
                 <data android:mimeType="application/octet-stream" />
             </intent-filter>
         </activity>
