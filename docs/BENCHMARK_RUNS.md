@@ -100,6 +100,32 @@ All four were rebase-merged, so `main` has new hashes. The sections below name t
 | #193 | `a6a5286` | `bed05fa` | refactor(provider): look up and list through a DocumentSource tree contract |
 | #193 | `2d4bba3` | `c681622` | docs: the held grant still reads the same file on a6a5286 |
 
+## 2026-11-25: mounting through MountCoordinator, OnePlus 7, Drive 1
+
+Milestone 2b step 1 for OTG Master: the device work of unlock, plain mount, unmount, Format,
+Encrypt, journal repair and MTP moved from MainActivity to `engine/MountCoordinator`.
+**Minified** `c134fdc` (the move, `6d6995e`, plus the log-order fix found on this phone);
+`tools/saf-probe` from `cd9efa6`. OnePlus 7 (GM1901, LineageOS 23.2, Android 16, SDK 36),
+Drive 1 (`…6B31`).
+
+| Step | Build | Result |
+|---|---|---|
+| Eject in the app (8 drives), `sm unmount` of Android's mounts, install | `6d6995e` → `c134fdc` | done, the app's service stopped before the install |
+| Launch: auto mount through `MountCoordinator.mountPlain` | `c134fdc` | the 7 plain partitions mounted (FAT32, the four APFS read-only, NTFS, ext4) |
+| The read grant on `884fb1f107:/BENCH/edge` reads `size_1048577.bin` | `c134fdc` | 1,048,577 B, SHA-256 `31eb9165…063ff4`, flags 70 |
+| Write check on D1EXFAT, D1FAT32, D1NTFS and D1EXT4 (create, 3,149,825 B, read back, "wt" 1,049,941 B, read back, delete) | `c134fdc` | all four match at both steps, deleted |
+| Partition 4 (encrypted APFS), password, Unlock & mount, through `MountCoordinator.unlockAndMount` | `c134fdc` | mounted within 11 s of the tap (screen polled every 3 s), read-only; the log in order: attempt, detected APFS, unlocked, read-only, mounted |
+| Eject (8 drives), `sm unmount` of Android's mounts | `c134fdc` | done, the service stopped |
+
+**The same unlock on `6d6995e`** mounted too, but its log read "Mounted …" before "Unlocked" and the
+read-only notice: the coordinator's lines reached the screen through `runOnUiThread`, which the
+screen's own `withContext(Dispatchers.Main)` lines can pass. Fixed in `c134fdc`.
+
+Not exercised on the phone: BitLocker, VeraCrypt and LUKS unlocks, Format, Encrypt, journal repair
+and MTP; the E2E suite covers each on the emulators. **Written to the drive:** one file created
+and deleted at the roots of D1EXFAT, D1FAT32, D1NTFS and D1EXT4; their host check is owed with the
+next laptop check of D1.
+
 ## 2026-11-25: a USB stick encrypted by Windows 11, on the OnePlus 7 (#184)
 
 The hardware check of `fix/bitlocker-togo-scan` (`021d688`). The stick is the spare SanDisk
