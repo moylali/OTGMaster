@@ -14,6 +14,8 @@ enum class ContainerFormat(val supported: Boolean) {
     TAR(true),
     TARGZ(true),
     SEVENZIP(true),
+    /** A macOS disk image (UDIF), told from the "koly" trailer at its end. */
+    DMG(true),
     /** A restic repository: a folder, picked with the folder picker, not told from a file's bytes. */
     RESTIC(true);
 
