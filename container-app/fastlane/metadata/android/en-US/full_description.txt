@@ -8,6 +8,7 @@ Container Master opens container files that are stored on your phone, so you can
 • TAR archives, plain or gzip-compressed (.tar.gz)
 • 7z archives, including ones encrypted with a password
 • macOS disk images (.dmg) with APFS, exFAT, FAT32, NTFS or ext4 inside, compressed with LZFSE, zlib or bzip2, or not at all
+• macOS sparse bundles (.sparsebundle folders, as Time Machine writes to a network disk) with APFS inside
 • restic backup repositories: pick the folder, enter its password, and every snapshot opens as a folder
 • AES Crypt files (version 2), checked whole before they open
 • Inside an encrypted volume: exFAT, NTFS and ext4

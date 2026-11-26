@@ -284,6 +284,7 @@ private fun Screen(theme: String, incoming: Uri?, onIncomingTaken: () -> Unit, o
                                 ContainerFormat.SEVENZIP -> R.string.format_7z
                                 ContainerFormat.RESTIC -> R.string.format_restic
                                 ContainerFormat.DMG -> R.string.format_dmg
+                                ContainerFormat.SPARSEBUNDLE -> R.string.format_sparsebundle
                             }), style = MaterialTheme.typography.bodySmall, modifier = Modifier.desc("format"))
                         }
                     }
@@ -291,8 +292,10 @@ private fun Screen(theme: String, incoming: Uri?, onIncomingTaken: () -> Unit, o
                 // The form follows the chosen file's format. VeraCrypt: a password and a PIM.
                 // LUKS and ZIP are recognised and named, and come in later versions.
                 val isLuks = picked?.format == ContainerFormat.LUKS || picked?.format == ContainerFormat.AESCRYPT ||
-                    picked?.format == ContainerFormat.SEVENZIP || picked?.format == ContainerFormat.RESTIC || picked?.format == ContainerFormat.DMG
-                val optionalPassword = picked?.format == ContainerFormat.SEVENZIP || picked?.format == ContainerFormat.DMG
+                    picked?.format == ContainerFormat.SEVENZIP || picked?.format == ContainerFormat.RESTIC || picked?.format == ContainerFormat.DMG ||
+                    picked?.format == ContainerFormat.SPARSEBUNDLE
+                val optionalPassword = picked?.format == ContainerFormat.SEVENZIP || picked?.format == ContainerFormat.DMG ||
+                    picked?.format == ContainerFormat.SPARSEBUNDLE
                 if (picked == null || picked?.format == ContainerFormat.VERACRYPT || isLuks) {
                     OutlinedTextField(
                         value = password, onValueChange = { password = it },

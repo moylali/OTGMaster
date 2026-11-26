@@ -16,6 +16,8 @@ enum class ContainerFormat(val supported: Boolean) {
     SEVENZIP(true),
     /** A macOS disk image (UDIF), told from the "koly" trailer at its end. */
     DMG(true),
+    /** A macOS sparse bundle (a folder of bands): Time Machine on a network disk, or a growable image. */
+    SPARSEBUNDLE(true),
     /** A restic repository: a folder, picked with the folder picker, not told from a file's bytes. */
     RESTIC(true);
 
