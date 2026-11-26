@@ -121,7 +121,7 @@ class MainActivity : AppCompatActivity() {
     private lateinit var usbDeviceProvider: app.fayaz.otgmaster.usb.UsbDeviceProvider
     // Keyed by UsbDevice.deviceName. Kept open (not closed) while listed here, since the
     // user may switch the dropdown selection before deciding which one to unlock.
-    private val openedDevices = mutableMapOf<String, RawBlockDevice>()
+    private val openedDevices get() = app.fayaz.otgmaster.engine.MountCoordinator.openedDevices
 
     /**
      * Serialises volume unlocks across partitions.
@@ -155,12 +155,14 @@ class MainActivity : AppCompatActivity() {
      * with "MAX_RECOVERY_ATTEMPTS Exceeded" — which is what stopped a
      * four-partition drive from ever surviving a remount.
      */
-    private val pendingUnmounts = java.util.concurrent.ConcurrentHashMap<String, Int>()
-    private val _deviceCandidates = mutableStateOf<List<UsbDeviceCandidate>>(emptyList())
+    private val pendingUnmounts get() = app.fayaz.otgmaster.engine.MountCoordinator.pendingUnmounts
+    private val _deviceCandidates get() = app.fayaz.otgmaster.engine.MountCoordinator.deviceCandidates
     // Guards against overlapping probes (e.g. from rapid repeated ATTACHED broadcasts on a
     // flaky connection) racing to open/add the same device twice. Touched only on the UI
     // thread, so no synchronization is needed.
-    private var isProbingDevices = false
+    private var isProbingDevices: Boolean
+        get() = app.fayaz.otgmaster.engine.MountCoordinator.isProbingDevices
+        set(v) { app.fayaz.otgmaster.engine.MountCoordinator.isProbingDevices = v }
 
     // For Compose state hoisting
     private val mountedDrivesState = mutableStateOf<List<MountedDrive>>(emptyList())
@@ -174,7 +176,7 @@ class MainActivity : AppCompatActivity() {
      * offered Unlock & mount for a partition already being unlocked, and the second unlock
      * waited on deviceMutex and mounted it again: two filesystems over one volume.
      */
-    private val unlockingPartitions = kotlinx.coroutines.flow.MutableStateFlow<Set<String>>(emptySet())
+    private val unlockingPartitions get() = app.fayaz.otgmaster.engine.MountCoordinator.unlockingPartitions
     /** A Scan tap found no USB drive, so the "no drives" message offers its help link. */
     private val scanFoundNoDrive = mutableStateOf(false)
     private val pendingToastMountNames = mutableListOf<String>()
@@ -254,8 +256,7 @@ class MainActivity : AppCompatActivity() {
     private val ejectBusyDialog = mutableStateOf<String?>(null)
     /** The partition whose "transfer in progress" dialog is up, for Unmount. */
     private val unmountBusyDialog = mutableStateOf<String?>(null)
-    private class EjectInFlight(val title: String, val androidCanRead: Boolean, val notify: Boolean)
-    private val ejectsInFlight = HashMap<String, EjectInFlight>()
+    private val ejectsInFlight get() = app.fayaz.otgmaster.engine.MountCoordinator.ejectsInFlight
 
     /**
      * Candidates withheld from the unlock form while an auto-mount prompt is pending.
@@ -269,7 +270,7 @@ class MainActivity : AppCompatActivity() {
      * short of restarting the app. Holding them here means every exit path, plus
      * onResume, can put them back.
      */
-    private val deferredCandidates = LinkedHashMap<String, UsbDeviceCandidate>()
+    private val deferredCandidates get() = app.fayaz.otgmaster.engine.MountCoordinator.deferredCandidates
     private val sessionPlaintextCreds = androidx.compose.runtime.snapshots.SnapshotStateMap<String, app.fayaz.otgmaster.security.CredentialStore.Credentials>()
     private val excludedDeviceKeys = mutableStateOf<Set<String>>(emptySet())
     /** Settings → Read-only mode: the default for any partition with no choice of its own. */
@@ -302,7 +303,9 @@ class MainActivity : AppCompatActivity() {
     // still be flushing after an ExFAT unmount, making a second concurrent probe slow
     // and producing a different FileBlockDevice instance that causes a stale
     // accessibility node in the Compose form (UiAutomator StaleObjectException).
-    private var isQemuProbing = false
+    private var isQemuProbing: Boolean
+        get() = app.fayaz.otgmaster.engine.MountCoordinator.isQemuProbing
+        set(v) { app.fayaz.otgmaster.engine.MountCoordinator.isQemuProbing = v }
 
     private val versionName: String by lazy {
         packageManager.getPackageInfo(packageName, 0).versionName ?: "?"
@@ -925,6 +928,10 @@ class MainActivity : AppCompatActivity() {
         // the benchmark reported "no mount handler installed — is MainActivity
         // running?" twice in a row with MainActivity on screen. A user reaches the
         // same state by backing out and relaunching straight away.
+        // The USB connections and the form's candidates outlive this instance now (they are the
+        // engine's, MountCoordinator's). A newer instance already up owns them: closing them here
+        // would take the connections it just opened out from under its form.
+        val successor = liveActivity?.get()?.takeIf { it !== this }
         if (liveActivity?.get() === this) liveActivity = null
         if (OtgMasterState.logSink === installedLogSink) OtgMasterState.logSink = null
         if (OtgMasterState.mountRequest === installedMountRequest) OtgMasterState.mountRequest = null
@@ -934,7 +941,7 @@ class MainActivity : AppCompatActivity() {
         installedMountRequest = null
         installedUnmountAll = null
         installedDetachRequest = null
-        closeOpenedDevices()
+        if (successor == null) closeOpenedDevices()
         unregisterReceiver(usbReceiver)
         super.onDestroy()
     }
@@ -961,6 +968,12 @@ class MainActivity : AppCompatActivity() {
         releasable.forEach { (key, device) ->
             device.close()
             openedDevices.remove(key)
+        }
+        // Their candidates went with the instance before; now they would stay listed over a closed
+        // connection, so they go with it.
+        if (releasable.isNotEmpty()) {
+            _deviceCandidates.value = _deviceCandidates.value.filterNot { it.deviceName in releasable.keys }
+            releasable.keys.forEach { deferredCandidates.remove(it) }
         }
         if (openedDevices.isNotEmpty()) {
             Log.i(TAG, "kept ${openedDevices.size} USB connection(s) open for mounted drives")
@@ -1207,7 +1220,7 @@ class MainActivity : AppCompatActivity() {
     }
 
     /** MTP devices being opened, so a second scan does not open one twice. */
-    private val mtpInFlight = java.util.concurrent.ConcurrentHashMap.newKeySet<String>()
+    private val mtpInFlight get() = app.fayaz.otgmaster.engine.MountCoordinator.mtpInFlight
 
     /**
      * Another phone or a camera over USB (MTP/PTP): each storage it reports is mounted
@@ -1243,7 +1256,7 @@ class MainActivity : AppCompatActivity() {
     }
 
     /** Devices being re-probed by [reofferPartlyMountedDevices], so it runs once per device. */
-    private val reofferInFlight = java.util.concurrent.ConcurrentHashMap.newKeySet<String>()
+    private val reofferInFlight get() = app.fayaz.otgmaster.engine.MountCoordinator.reofferInFlight
 
     /**
      * Offers the still-locked partitions of a device that already has a partition
@@ -2100,7 +2113,7 @@ class MainActivity : AppCompatActivity() {
         if (ejectBusyDialog.value == key) ejectBusyDialog.value = null
         if (targets.isEmpty()) return
 
-        ejectsInFlight[key] = EjectInFlight(
+        ejectsInFlight[key] = app.fayaz.otgmaster.engine.MountCoordinator.EjectInFlight(
             title,
             app.fayaz.otgmaster.usb.UsbAccess.androidCanRead(targets.map {
                 app.fayaz.otgmaster.usb.EjectedPartition(it.isPlain, it.filesystemName)
@@ -2424,7 +2437,7 @@ class MainActivity : AppCompatActivity() {
      * request asked for p2, and p2 ended up mounted twice — two independent ext4
      * instances over one filesystem, one of which then took the write test.
      */
-    private val plainMountsInFlight = java.util.concurrent.ConcurrentHashMap.newKeySet<String>()
+    private val plainMountsInFlight get() = app.fayaz.otgmaster.engine.MountCoordinator.plainMountsInFlight
 
     private fun mountPlainDevice(candidate: UsbDeviceCandidate, plain: PlainPartition) {
         val mountKey = "${candidate.deviceName}@${plain.startBlock}"
