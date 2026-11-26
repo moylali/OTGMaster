@@ -745,6 +745,46 @@ object MountCoordinator {
         shortcutManager.removeDynamicShortcuts(listOf("drive_share_$driveId"))
     }
 
+    /** What a probe of a disk found: every partition, the plain ones, and those the form can act on. */
+    data class Probed(
+        val all: List<VolumeCandidate>,
+        val plain: List<PlainPartition>,
+        /** Without UNENCRYPTED (mounted as plain, or an unsupported filesystem) and UNKNOWN (not identified). */
+        val unlockable: List<VolumeCandidate>,
+    )
+
+    /**
+     * Reads [device]'s partition table and what each partition holds. Blocking I/O; call it off
+     * the main thread. Throws if the partition table cannot be read.
+     */
+    fun probe(device: RawBlockDevice): Probed {
+        val all = VeraCryptUnlocker().probeCandidates(device)
+        // Detect plain filesystems here too, on the same IO thread (readBlocks is blocking).
+        val plain = app.fayaz.otgmaster.fs.PlainPartitions.detect(device, all)
+        // Only candidates the picker can act on. UNENCRYPTED has nothing to unlock — it is
+        // either mounted as a plain partition or its filesystem is unsupported — and UNKNOWN
+        // means the probe could not identify it at all.
+        val unlockable = all.filter { it.containerType != ContainerType.UNKNOWN && it.containerType != ContainerType.UNENCRYPTED }
+        return Probed(all, plain, unlockable)
+    }
+
+    /**
+     * Re-reads a partly mounted drive [key] through its held connection [raw], under the device
+     * mutex, and returns every partition and the locked ones not mounted yet: what Unmount or a
+     * held connection leaves to offer again.
+     */
+    suspend fun probeLocked(key: String, raw: RawBlockDevice): Pair<List<VolumeCandidate>, List<VolumeCandidate>> {
+        val probed = OtgMasterState.deviceMutex.withLock { VeraCryptUnlocker().probeCandidates(raw) }
+        val mounted = OtgMasterState.mountedDrives.filter { it.sourceDeviceName == key }
+        val mountedLabels = mounted.map { it.partitionLabel }.toSet()
+        val mountedStarts = mounted.mapNotNull { it.sourceVolumeCandidate?.slotKey }.toSet()
+        val locked = probed.filter {
+            it.containerType != ContainerType.UNKNOWN && it.containerType != ContainerType.UNENCRYPTED &&
+                it.label !in mountedLabels && it.slotKey !in mountedStarts
+        }
+        return probed to locked
+    }
+
     /** Adds a freshly mounted drive to the list, says if it is read-only, tells the Files app. */
     private fun listMounted(drive: MountedDrive) {
         OtgMasterState.addDrive(drive)
