@@ -454,7 +454,8 @@ case_screen_settings() {
   echo "$X" | grep -q 'Its files then show up' && { fail "the intro text is still under the title"; return 1; }
   panel_open; on_screen 'text="Mounted containers"' || { fail "the panel is not called Mounted containers"; panel_close; return 1; }; panel_close
   tap 'content-desc="settings"' || { fail "no Settings"; return 1; }; sleep 1; X=$(dump)
-  local d; for d in read_only_mode remember_passwords forget_passwords settings_report_issue donate_kofi version idle_15 lock_on_screen_off; do
+  # Top to bottom: a row is looked for after the ones above it, scrolling down when needed.
+  local d; for d in idle_15 lock_on_screen_off read_only_mode remember_passwords forget_passwords settings_report_issue donate_kofi version; do
     echo "$X" | grep -q "content-desc=\"$d\"" || { adb -s "$S" shell input swipe 500 1800 500 600 300; sleep 1; X=$(dump); }
     echo "$X" | grep -q "content-desc=\"$d\"" || { fail "Settings has no $d"; tap 'content-desc="close_settings"'; return 1; }
   done

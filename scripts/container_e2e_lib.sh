@@ -86,8 +86,14 @@ set_read_only() {
 # use it and allow access.
 pick_folder() {
   tap 'content-desc="choose_folder"' || return 1; sleep 4
-  tap_any 'content-desc="Show roots"' 'content-desc="Open navigation drawer"' >/dev/null 2>&1; sleep 1
-  tap_any 'text="Downloads"' 'text="Download"' || return 1; sleep 2
+  # The folder picker has no Downloads root; Download is a folder of the phone's storage root,
+  # which the picker opens at or which its roots list names after the phone (or Internal storage).
+  if ! on_screen 'text="Download"'; then
+    tap 'content-desc="Show roots"'; sleep 1
+    local model; model=$(adb -s "$S" shell getprop ro.product.model | tr -d '\r')
+    tap_any "text=\"$model\"" 'text="Internal storage"' || return 1; sleep 2
+  fi
+  tap 'text="Download"' || return 1; sleep 2
   tap "text=\"$1\"" || return 1; sleep 2
   tap_any 'text="Use this folder"' 'text="USE THIS FOLDER"' || return 1; sleep 2
   tap_any 'text="Allow"' 'text="ALLOW"' || return 1; sleep 4
