@@ -99,6 +99,10 @@ dependencies {
     implementation("androidx.activity:activity-compose:1.9.0")
     // The fingerprint or screen-lock prompt in front of a saved password; brings FragmentActivity.
     implementation("androidx.biometric:biometric:1.1.0")
+    // biometric 1.1.0 brings fragment 1.2, whose FragmentActivity refuses activity 1.9's request codes
+    // ("Can only use lower 16 bits for requestCode") and crashed the file picker; OTG Master gets a
+    // newer fragment through appcompat.
+    implementation("androidx.fragment:fragment-ktx:1.8.5")
 
     testImplementation("junit:junit:4.13.2")
     androidTestImplementation("androidx.test.ext:junit:1.1.5")
