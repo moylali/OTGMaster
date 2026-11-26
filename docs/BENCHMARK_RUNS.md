@@ -33,6 +33,57 @@ to a row here.
 
 ---
 
+## Commit hashes after the merge of #202
+
+#202 (the architecture proposal's Milestones 1 to 5, and Container Master's 2b) was
+rebase-merged, so `main` has new hashes; the tree at `cd9efa6` is the PR head's, `abb0607`.
+The sections below name the PR's commits. Look the PR hash up here to find it on `main`.
+
+| At the PR head | On `main` | Commit |
+|---|---|---|
+| `f1d255d` | `ff7ec27` | refactor: the block and document-tree contracts move to a :mount-core JVM module |
+| `0725e1e` | `e8e3095` | docs: the held grant still reads the same file on the R8 build of 8c6bc7d |
+| `3172831` | `a604fb2` | refactor: engine code logs through EngineLog, not OTG Master's app object |
+| `710f196` | `b91bb46` | refactor: the drivers, crypto layers, formatters and native code move to :disk-engine |
+| `db7f86b` | `0a7e08b` | docs: read sections before and after the :disk-engine move on the OnePlus 7 |
+| `de71762` | `d339f93` | docs: the held grant still reads the same file on the R8 build of add74bf |
+| `ce0b285` | `1c787d1` | docs: ENGINE_SPLIT.md, the modules as built and the plan for the provider |
+| `392b8d3` | `9e1f6ca` | refactor(provider): files open through a DocumentHandle, not a libaums UsbFile |
+| `b933fcc` | `b23db59` | tools: saf-probe takes a write grant and writes through the provider |
+| `2efd185` | `fafcd2d` | docs: writes through the provider's DocumentHandle on four of Drive 1's filesystems |
+| `64ab7f3` | `424512b` | test: ExFatDeleteTreeTest compares image digests, not two 128 MiB copies |
+| `8f8a97c` | `1ba9a49` | refactor(provider): the provider asks a MountRegistry, not OtgMasterState |
+| `f318022` | `067b7d0` | refactor(provider): the serving and session safety move to :saf-provider |
+| `e338bab` | `33f35e4` | docs: the provider as a :saf-provider subclass on the OnePlus 7, Drive 1 |
+| `431e65c` | `22ac887` | refactor(engine): DiskMounter registers the drivers once and mounts, not MainActivity |
+| `16ef582` | `7b22af5` | docs: mounting through DiskMounter on the OnePlus 7, Drive 1 |
+| `17b4f7a` | `40338e3` | feat(engine): ChannelBlockDevice, a read-only block device over a picked file |
+| `c2f219b` | `4f79352` | feat(container): Container Master's first slice, a read-only VeraCrypt file opener |
+| `15d043b` | `fa9ec66` | fix(container): a container keeps its ID across picks, from its header salt |
+| `df250db` | `8840b99` | docs: Container Master's first slice on the Pixel 7 Pro |
+| `e0287f3` | `80e5420` | docs: Container Master beside OTG Master on the OnePlus 7 |
+| `9a207fa` | `2790de7` | test(container): Container Master's E2E suite, scripts/run_container_e2e.sh |
+| `86b48e7` | `8738d15` | docs, scripts: Drive 1's laptop check after Milestones 2 and 3; compare_test_drive.sh |
+| `a8d0d56` | `1d7b39c` | test(container): the E2E helper clears the password and PIM before typing |
+| `323166c` | `66aa1f5` | refactor: Report issue moves to :app-common, so Container Master reuses it |
+| `2f0f99b` | `8aadcea` | feat(container): Container Master's screen follows OTG Master's, with logs and Report issue |
+| `ddb5708` | `dda010b` | feat(container): idle lock and lock on screen off (proposal N2) |
+| `0c831c8` | `2856aad` | test(container): a descriptor held across Lock and a fresh unlock reads nothing |
+| `77862bb` | `3ccde3f` | docs: a USB stick encrypted by Windows 11, on the OnePlus 7 (#184) |
+| `d2ce404` | `5b0fd51` | feat(zip): a read-only ZIP reader as a DocumentSource, in :file-formats |
+| `9db5c57` | `c285dda` | feat(container): Container Master opens ZIP archives |
+| `1588732` | `63cd880` | docs, gitignore: the SanDisk unchanged after the phone run; generated ZIP fixtures ignored |
+| `4dd3e9d` | `7644d91` | ci, docs: CI runs every module's tests and builds Container Master; hash tables for #196 and #198 |
+| `9b3342e` | `d96f9d6` | test(container): every saf-probe run starts in a task of its own |
+| `1ff7920` | `219454a` | feat(container): Container Master opens LUKS1 and LUKS2 volumes |
+| `93dc9b3` | `9779973` | release: Container Master gets its own version, notes, listing, tags and release workflow |
+| `5438a72` | `560ea60` | feat(iso): ISO 9660 disc images, read-only, in :file-formats and Container Master |
+| `590ee9f` | `d975cdf` | feat(aescrypt): AES Crypt version 2 files, verified, in :file-formats and Container Master |
+| `bb3a62c` | `7197c19` | feat(container): the screens run in their own process; the engine keeps the containers (2b) |
+| `7dd92b5` | `5c6406a` | docs: Milestone 2b, done in Container Master and planned in two steps for OTG Master |
+| `3bd299f` | `3128e58` | test(container): Container Master's own fixtures go in testdata-container/ |
+| `abb0607` | `cd9efa6` | test(container): skip the PIM step when the form has no PIM field |
+
 ## Commit hashes after the merges of #188, #189, #190 and #193
 
 All four were rebase-merged, so `main` has new hashes. The sections below name the PR's commits.
