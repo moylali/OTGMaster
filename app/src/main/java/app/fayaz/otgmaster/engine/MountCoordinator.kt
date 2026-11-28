@@ -802,6 +802,88 @@ object MountCoordinator {
         return probed to locked
     }
 
+    /** What [openAndProbe] found: the drives it opened, as form entries, and what it says about the rest. */
+    data class ProbeRun(
+        /** One entry per drive opened, with every partition the probe found. */
+        val devices: List<app.fayaz.otgmaster.UsbDeviceCandidate>,
+        /** One reason per attached device that was not opened, whether or not another one was. */
+        val notOpened: List<String>,
+        /** One line per partition neither mounted nor offered, with its drive's name, so a drive with "missing" partitions says why. */
+        val skipped: List<String>,
+        /** The volumes Android was using just before the claim, for reportTakenFromAndroid. */
+        val androidHad: List<String>,
+    )
+
+    /**
+     * Opens every attached USB drive not in [excludeKeys] and reads its partitions (2b step 2,
+     * slice 3). Blocking I/O; call it off the main thread. Throws if opening fails as a whole;
+     * a drive whose partition table cannot be read comes back with no partitions, and the
+     * failure goes to the report's history. [baseIndex] numbers the drives' display names after
+     * those the form already shows; [knownVolumes] are the removable volumes Android had before.
+     */
+    fun openAndProbe(excludeKeys: Set<String>, knownVolumes: Set<String>, baseIndex: Int): ProbeRun {
+        val opener = app.fayaz.otgmaster.usb.LibaumsRawBlockDeviceOpener(appContext)
+        // What Android is using just before the claim.
+        val androidHad = runCatching { app.fayaz.otgmaster.usb.UsbAccess.androidVolumeNames(appContext, knownVolumes) }
+            .getOrDefault(emptyList())
+        val openedList = opener.openAllAvailable(excludeKeys)
+        val notOpened = opener.notOpened.toList()
+        openedList.forEach {
+            android.util.Log.i("OTGMaster", "probe opened ${it.deviceKey} as ${Integer.toHexString(System.identityHashCode(it.blockDevice))}")
+        }
+        val skipped = mutableListOf<String>()
+        val devices = openedList.mapIndexed { index, opened ->
+            val displayName = app.fayaz.otgmaster.usb.UsbDeviceDescriber.friendlyName(opened.usbDevice, baseIndex + index)
+            val (all, plain, unlockable) = try {
+                probe(opened.blockDevice)
+            } catch (e: Exception) {
+                e.printStackTrace()
+                OtgMasterState.logFailure("probe", "Reading the partition table of $displayName failed", e)
+                Probed(emptyList(), emptyList(), emptyList())
+            }
+            app.fayaz.otgmaster.fs.SkippedPartitions.lines(
+                all, plain.map { it.startBlock }.toSet(), opened.blockDevice.blockSize, ::formatSizeForLog,
+            ) { c ->
+                runCatching {
+                    FilesystemDetector.detectFromBytes(
+                        opened.blockDevice.readBlocks(c.startBlock, minOf(4L, opened.blockDevice.blockCount - c.startBlock).toInt()))
+                }.getOrDefault(DetectedFilesystem.Unknown)
+            }.forEach { skipped += "$displayName · $it" }
+            app.fayaz.otgmaster.UsbDeviceCandidate(opened.deviceKey, displayName, opened.blockDevice, unlockable, plain, all.size - unlockable.size)
+        }
+        return ProbeRun(devices, notOpened, skipped, androidHad)
+    }
+
+    private fun formatSizeForLog(bytes: Long): String = app.fayaz.otgmaster.formatSize(bytes)
+
+    /** Newly probed drives split by what happens to them next; see [classify]. */
+    data class Classified(
+        /** Drives with plain partitions, all of which auto mount. */
+        val withPlain: List<app.fayaz.otgmaster.UsbDeviceCandidate>,
+        /** Drives with partitions to unlock, for the form or auto mount: the plain ones taken out. */
+        val encrypted: List<app.fayaz.otgmaster.UsbDeviceCandidate>,
+    )
+
+    /**
+     * Splits newly probed drives: every plain partition is mounted at once, and a drive with
+     * partitions to unlock goes to the form with its plain ones left out (and counted as hidden),
+     * so the form shows only what is still to unlock. Drives with no plain partition come first
+     * in [Classified.encrypted], then the mixed ones, as the form always listed them.
+     */
+    fun classify(devices: List<app.fayaz.otgmaster.UsbDeviceCandidate>): Classified {
+        val (hasPlain, pureEncrypted) = devices.partition { it.plainPartitions.isNotEmpty() }
+        val (purePlain, mixed) = hasPlain.partition { device ->
+            val plainStarts = device.plainPartitions.map { it.startBlock }.toSet()
+            device.candidates.all { it.isIn(plainStarts) }
+        }
+        val mixedEncrypted = mixed.map { device ->
+            val plainStarts = device.plainPartitions.map { it.startBlock }.toSet()
+            val kept = device.candidates.filter { !it.isIn(plainStarts) }
+            device.copy(candidates = kept, hiddenPartitions = device.hiddenPartitions + (device.candidates.size - kept.size))
+        }
+        return Classified(purePlain + mixed, pureEncrypted + mixedEncrypted)
+    }
+
     /** Adds a freshly mounted drive to the list, says if it is read-only, tells the Files app. */
     private fun listMounted(drive: MountedDrive) {
         OtgMasterState.addDrive(drive)
