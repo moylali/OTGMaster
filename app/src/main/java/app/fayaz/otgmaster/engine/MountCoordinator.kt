@@ -555,8 +555,8 @@ object MountCoordinator {
          * its own state for the keys [matches] accepts (null when Android did not say which).
          */
         fun usbDetaching(device: android.hardware.usb.UsbDevice?, matches: ((String) -> Boolean)?)
-        /** The answer to the screen's USB permission prompt. */
-        fun usbPermission(device: android.hardware.usb.UsbDevice?, granted: Boolean)
+        /** Android granted the permission [requestPermission] asked for; the engine has logged it. */
+        fun usbPermissionGranted(device: android.hardware.usb.UsbDevice)
         /** The phone was unlocked. */
         fun userPresent()
     }
@@ -579,7 +579,7 @@ object MountCoordinator {
             val device = intent.usbDevice()
             when (intent.action) {
                 USB_PERMISSION_ACTION ->
-                    screen?.usbPermission(device, intent.getBooleanExtra(android.hardware.usb.UsbManager.EXTRA_PERMISSION_GRANTED, false))
+                    permissionAnswered(device, intent.getBooleanExtra(android.hardware.usb.UsbManager.EXTRA_PERMISSION_GRANTED, false))
                 android.content.Intent.ACTION_USER_PRESENT -> screen?.userPresent()
                 android.hardware.usb.UsbManager.ACTION_USB_DEVICE_ATTACHED -> {
                     forgetEjected(device)
@@ -628,6 +628,153 @@ object MountCoordinator {
             getParcelableExtra(android.hardware.usb.UsbManager.EXTRA_DEVICE)
         }
 
+    // ── USB permission and probing (2b step 2, slice 3c) ────────────────────────────────────
+
+    /** The key of the emulator's virtio disk, which the E2E cases attach as /dev/block/sda. */
+    const val QEMU_DEVICE_KEY = "qemu:/dev/block/sda"
+
+    /** The attached USB devices and their permissions, as the screen and the probes see them. */
+    val usb: app.fayaz.otgmaster.usb.UsbDeviceProvider by lazy {
+        app.fayaz.otgmaster.usb.RealUsbDeviceProvider(
+            appContext.getSystemService(Context.USB_SERVICE) as android.hardware.usb.UsbManager, permissionIntent)
+    }
+
+    private val permissionIntent: android.app.PendingIntent by lazy {
+        val flags = android.app.PendingIntent.FLAG_UPDATE_CURRENT or android.app.PendingIntent.FLAG_MUTABLE
+        val intent = android.content.Intent(USB_PERMISSION_ACTION).apply { setPackage(appContext.packageName) }
+        android.app.PendingIntent.getBroadcast(appContext, 0, intent, flags)
+    }
+
+    /** When permission was first asked for each device (by its bus path), until Android answers. */
+    private val permissionAskedAt = java.util.concurrent.ConcurrentHashMap<String, Long>()
+
+    private fun secondsSince(t: Long?) = t?.let { (System.currentTimeMillis() - it + 500) / 1000 }
+
+    /**
+     * Asks for USB permission, and says in the log what is still pending. A report used to
+     * show "Requested USB permission…" and then nothing, which cannot tell a prompt never
+     * answered from one answered late, or from a phone that never showed it.
+     */
+    fun requestPermission(d: android.hardware.usb.UsbDevice) {
+        val name = app.fayaz.otgmaster.usb.UsbDeviceDescriber.friendlyName(d, 0)
+        val asked = permissionAskedAt[d.deviceName]
+        if (asked == null) {
+            permissionAskedAt[d.deviceName] = System.currentTimeMillis()
+            log(appContext.getString(R.string.log_requested_usb_permission_for, name))
+        } else {
+            log(appContext.getString(R.string.log_usb_permission_still_waiting, name, secondsSince(asked) ?: 0L))
+        }
+        usb.requestPermission(d, permissionIntent)
+    }
+
+    private fun permissionAnswered(device: android.hardware.usb.UsbDevice?, granted: Boolean) {
+        val waited = device?.let { secondsSince(permissionAskedAt.remove(it.deviceName)) }
+        if (device != null && granted) {
+            log(appContext.getString(R.string.log_usb_permission_granted, device.deviceName) +
+                (waited?.let { " " + appContext.getString(R.string.log_usb_permission_after, it) } ?: ""))
+            screen?.usbPermissionGranted(device)
+        } else {
+            log(appContext.getString(R.string.log_usb_permission_denied_for,
+                device?.let { app.fayaz.otgmaster.usb.UsbDeviceDescriber.friendlyName(it, 0) } ?: "the USB device", waited ?: 0L))
+        }
+    }
+
+    /**
+     * Drops any opened, not-yet-mounted connection whose device is no longer among [devices],
+     * and the Eject flags of devices unplugged while nothing was listening. Main thread.
+     *
+     * Two guards, because getting this wrong closes a live connection:
+     *
+     * 1. Never touch a device a mounted drive is using. Closing it left the MountedDrive
+     *    holding a dead handle, and reads then failed silently — ExFatFile.read swallows the
+     *    error — so the volume appeared empty rather than erroring.
+     *
+     * 2. Match on vendor:product rather than the full key. stableKey embeds the serial number
+     *    only when permission is held, and falls back to the device path otherwise, so the SAME
+     *    device yields two different keys depending on permission state. openedDevices stores
+     *    the serial form; recomputing here with permission momentarily unavailable produced the
+     *    path form, no match, and the device was closed as "stale".
+     */
+    fun dropStaleConnections(devices: List<android.hardware.usb.UsbDevice>) {
+        val mountedDeviceKeys = OtgMasterState.mountedDrives.mapNotNull { it.sourceDeviceName }.toSet()
+        val attachedKeys = devices.map { app.fayaz.otgmaster.usb.UsbDeviceDescriber.stableKey(it, usb.hasPermission(it)) }.toSet()
+        val attachedIds = devices.map { "${it.vendorId}:${it.productId}" }.toSet()
+        fun vendorProductOf(key: String): String = key.split(":").take(2).joinToString(":")
+        val staleKeys = openedDevices.keys.filter { key ->
+            key != QEMU_DEVICE_KEY &&
+                key !in mountedDeviceKeys &&
+                key !in attachedKeys &&
+                vendorProductOf(key) !in attachedIds
+        }
+        if (staleKeys.isNotEmpty()) {
+            staleKeys.forEach { key -> openedDevices.remove(key)?.close() }
+            deviceCandidates.value = deviceCandidates.value.filterNot { it.deviceName in staleKeys }
+        }
+        // Unplugged while this was not listening: the next plug-in is a fresh start.
+        OtgMasterState.ejectedDevices.removeAll { it != QEMU_DEVICE_KEY && vendorProductOf(it) !in attachedIds }
+    }
+
+    /** True while any partition of [key] is still being unmounted. */
+    fun isUnmounting(key: String): Boolean = (pendingUnmounts[key] ?: 0) > 0
+
+    /**
+     * Offers the still-locked partitions of a device that already has a partition mounted, when
+     * the form has no entry for it. Main thread; the probe runs on IO.
+     *
+     * Mounts outlive the activity (they live in OtgMasterState), the form did not. refreshDevices
+     * skips any device with a mounted partition — rightly, since opening it again would claim the
+     * USB interface and kill the live mount — so a recreated activity (rotation, memory pressure,
+     * leaving and coming back) never re-offered the other partitions: on a drive with a plain
+     * partition beside an encrypted one, the encrypted one showed "No USB drives available to
+     * mount" until the drive was replugged. Found by the partitioned_mbr E2E case, whose test
+     * relaunches the activity between its two test methods.
+     *
+     * The probe reads through the mounted drive's own connection, under deviceMutex, and never
+     * opens a new one.
+     */
+    fun reofferPartlyMounted() {
+        val mountedDeviceKeys = OtgMasterState.mountedDrives.mapNotNull { it.sourceDeviceName }.toSet()
+        val offered = deviceCandidates.value.map { it.deviceName }.toSet()
+        for (key in mountedDeviceKeys) {
+            if (key in offered || isUnmounting(key) || !reofferInFlight.add(key)) continue
+            val drives = OtgMasterState.mountedDrives.filter { it.sourceDeviceName == key }
+            val raw = drives.firstNotNullOfOrNull { it.rawBlockDevice }
+            if (raw == null) { reofferInFlight.remove(key); continue }
+            val display = drives.firstNotNullOfOrNull { it.sourceDeviceDisplayName } ?: key
+            OtgMasterState.appScope.launch(Dispatchers.IO) {
+                try {
+                    val (probed, locked) = probeLocked(key, raw)
+                    withContext(Dispatchers.Main) {
+                        if (locked.isNotEmpty() && deviceCandidates.value.none { it.deviceName == key }) {
+                            openedDevices.putIfAbsent(key, raw)
+                            deviceCandidates.value = deviceCandidates.value +
+                                app.fayaz.otgmaster.UsbDeviceCandidate(key, display, raw, locked, emptyList(), probed.size - locked.size)
+                            log(appContext.getString(R.string.log_reoffered_locked_partitions, locked.size, display))
+                        }
+                    }
+                } catch (e: Exception) {
+                    android.util.Log.w("OTGMaster", "re-probe of partly mounted $key failed", e)
+                    OtgMasterState.logFailure("probe", "Re-reading the partitions of $key failed", e)
+                } finally {
+                    reofferInFlight.remove(key)
+                }
+            }
+        }
+    }
+
+    /**
+     * Opens and probes the emulator's disk [sda] and holds its connection: the form entry with
+     * every partition the probe found. Blocking I/O; call it off the main thread. Throws, with
+     * the disk closed again, if the partition table cannot be read.
+     */
+    fun probeQemu(sda: java.io.File): app.fayaz.otgmaster.UsbDeviceCandidate {
+        val device = app.fayaz.otgmaster.block.FileBlockDevice(sda)
+        val (all, plain, unlockable) = try { probe(device) } catch (e: Exception) { device.close(); throw e }
+        openedDevices[QEMU_DEVICE_KEY] = device
+        return app.fayaz.otgmaster.UsbDeviceCandidate(QEMU_DEVICE_KEY, appContext.getString(R.string.qemu_test_disk_label),
+            device, unlockable, plain, all.size - unlockable.size)
+    }
+
     /** A new plug-in of [device]: the app may open it again. */
     fun forgetEjected(device: android.hardware.usb.UsbDevice?) {
         if (device == null) return
@@ -663,6 +810,10 @@ object MountCoordinator {
      * Main thread.
      */
     fun usbGone(device: android.hardware.usb.UsbDevice?, matches: ((String) -> Boolean)?) {
+        // Unplugged with its permission prompt still unanswered: say so, once.
+        device?.let { d -> permissionAskedAt.remove(d.deviceName)?.let { t ->
+            log(appContext.getString(R.string.log_usb_permission_unanswered, app.fayaz.otgmaster.usb.UsbDeviceDescriber.friendlyName(d, 0), secondsSince(t) ?: 0L))
+        } }
         screen?.usbDetaching(device, matches)
         if (matches != null) dropDetached(matches)
         log(appContext.getString(R.string.log_usb_device_detached))
