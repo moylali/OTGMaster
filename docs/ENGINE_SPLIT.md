@@ -152,7 +152,14 @@ activity cannot move to another process while it owns that work, so:
       probes (`openAndProbeUsb`, `probeQemuDisk`, `reprobeHeldDevices`, re-offers) and auto
       mount's choice of what to mount move to the engine, registered with the application
       context. What the screen keeps: the USB-access hints and the scan warning (as state it
-      reads), and the fingerprint prompt in front of saved passwords.
+      reads), and the fingerprint prompt in front of saved passwords. Built in four parts:
+      3a (`59771bc`) opening and probing a plugged-in drive; 3b (`835e664`) the broadcasts,
+      heard by one receiver for the main process, with a detach's engine state dropped
+      there (an unplug with no screen up now leaves a disconnected card, where before the
+      drive stayed listed over a dead connection); 3c (`96d29e3`) the permission request,
+      the stale-connection sweep, re-offers and the emulator disk. Left for 3d: what
+      `refreshDevices` decides (screen on, notifications first, the USB access setting) and
+      auto mount's choice.
    4. *The door, in one process*: `OtgEngineProvider` (non-exported, `call()`, as Container
       Master's `EngineProvider`) with the commands above and a state call returning copies:
       drive snapshots (id, titles, filesystem, container tag, capacity, free space, read-only

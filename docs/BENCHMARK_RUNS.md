@@ -33,6 +33,39 @@ to a row here.
 
 ---
 
+## Commit hashes after the merge of #214
+
+#214 (a document query that finished late no longer answers "busy") was rebase-merged, so
+`main` has new hashes; the tree at `af51b3a` is the PR head's, `577351b`.
+
+| At the PR head | On `main` | Commit |
+|---|---|---|
+| `317d3fa1` | `1eab7a7e` | fix(provider): a document query that finished late no longer answers "busy" |
+| `577351b9` | `af51b3a6` | docs: #212's hash table; D4 runs of #212's fix and the late-query fix; D1's host check |
+
+## 2026-11-27: USB broadcasts in the engine, unplugged with and without a screen, OnePlus 7, Drive 4
+
+`arch/otg-2b-door-3c` before its rebase onto `af51b3a` (which brought only #214's provider fix
+and docs): **minified** `48390d0` (slices 3b and 3c), then `af51b3a` (main, the old code) for
+the comparison, then `ff48f1a` (the card fix below). Each installed APK's SHA-256 matched its
+build. OnePlus 7 (GM1901, LineageOS 23.2, Android 16) over Tailscale, Drive 4 (`…EF450`),
+unplugged and replugged by hand. The benchmark build (`app.fayaz.otgmaster.bench`) is Android's
+default for D4's plug-in: on the first replug it opened D4 and auto mounted its ten partitions
+read-only, idle; it was force-stopped and disabled for the rest and enabled again after.
+
+| Build | Step | Result |
+|---|---|---|
+| `48390d0` | Partition 1 (LUKS1, ext2) unlocked; `edge/size_1048577.bin` through the provider | mounted, read-only; matches `D4L1EXT2` |
+| `48390d0` | Unplug with OTG Master on screen | the engine unmounted it as disconnected; the card reads "Disconnected while mounted", on external power |
+| `48390d0` | Partition 1 again, the screen closed with Back (process and service kept), the file read again with no screen | matches |
+| `48390d0` | Unplug with no screen up, then replug | at once: unmounted as disconnected, the toast, the service stopped. The replug opened OTG Master, which probed D4 and offered it; the disconnected card is there |
+| `af51b3a` (old) | The same: Partition 1, screen closed, unplug, replug | nothing on the unplug; the service stays; on replug Partition 1 is still listed as mounted ("kept 1 USB connection(s) open"), the cached file still reads, and `edge/emoji_😀_name.txt` fails with EIO |
+| `ff48f1a` | Partition 9 (BitLocker, FAT32) unlocked, More actions opened (nothing tapped), Eject | Format, Encrypt, Back up and Recover deleted files offered (the regression hid all but Back up); ejected, no drives, the service stopped |
+
+**Written to the drive:** nothing. Partitions 1 to 8 mount read-only; Partition 9 was mounted
+read-write, nothing was written to it and it was ejected. D4 stays on the phone, so the host
+check is owed with the next read-back.
+
 ## Commit hashes after the merge of #212
 
 #212 (2b step 2, slices 1 to 3: the device state, Unmount, Eject and the probes move to
