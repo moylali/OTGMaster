@@ -1,7 +1,6 @@
 package app.fayaz.otgmaster
 
 import android.app.PendingIntent
-import android.content.BroadcastReceiver
 import android.content.Context
 import android.content.Intent
 import android.content.IntentFilter
@@ -193,7 +192,6 @@ class MainActivity : AppCompatActivity() {
         @Volatile private var liveActivity: java.lang.ref.WeakReference<MainActivity>? = null
 
         const val TAG = "OTGMaster"
-        private const val REQUEST_USB_PERMISSION = "app.fayaz.otgmaster.USB_PERMISSION"
         private const val QEMU_DEVICE_KEY = "qemu:/dev/block/sda"
         const val EXTRA_DRIVE_ID = "app.fayaz.otgmaster.EXTRA_DRIVE_ID"
         /** Set on the mounted-drives notification's intent: the app opens with the slider up. */
@@ -203,7 +201,7 @@ class MainActivity : AppCompatActivity() {
 
         /** When Android last started this activity for a USB plug-in (elapsedRealtime). */
         @Volatile private var attachLaunchAt = 0L
-        /** An instance is started (visible); it hears plug-ins through usbReceiver. */
+        /** An instance is started (visible); it hears plug-ins through MountCoordinator's receiver. */
         @Volatile private var started = false
 
         /**
@@ -446,72 +444,58 @@ class MainActivity : AppCompatActivity() {
 
     private val permissionIntent: PendingIntent by lazy {
         val flags = PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_MUTABLE
-        val intent = Intent(REQUEST_USB_PERMISSION).apply { setPackage(packageName) }
+        val intent = Intent(app.fayaz.otgmaster.engine.MountCoordinator.USB_PERMISSION_ACTION).apply { setPackage(packageName) }
         PendingIntent.getBroadcast(this, 0, intent, flags)
     }
 
-    private val usbReceiver = object : BroadcastReceiver() {
-        override fun onReceive(context: Context, intent: Intent) {
-            when (intent.action) {
-                REQUEST_USB_PERMISSION -> {
-                    val device = intent.getParcelableExtraCompat<UsbDevice>(UsbManager.EXTRA_DEVICE)
-                    val granted = intent.getBooleanExtra(UsbManager.EXTRA_PERMISSION_GRANTED, false)
-                    val waited = device?.let { secondsSince(permissionAskedAt.remove(it.deviceName)) }
-                    if (device != null && granted) {
-                        appendLog(getString(R.string.log_usb_permission_granted, device.deviceName) +
-                            (waited?.let { " " + getString(R.string.log_usb_permission_after, it) } ?: ""))
-                        // A phone or camera goes to the MTP path, not the USB-drive one.
-                        if (app.fayaz.otgmaster.mtp.MtpSession.isMtpDevice(device) && !UsbDeviceDescriber.isMassStorageDevice(device)) {
-                            mountMtpDevices(listOf(device), OtgMasterState.mountedDrives.mapNotNull { it.sourceDeviceName }.toSet())
-                        } else openAndProbeUsb()
-                    } else {
-                        appendLog(getString(R.string.log_usb_permission_denied_for,
-                            device?.let { UsbDeviceDescriber.friendlyName(it, 0) } ?: "the USB device", waited ?: 0L))
-                    }
-                }
-                // Unlocked: a refresh deferred at the lock screen runs now (see onWindowFocusChanged).
-                Intent.ACTION_USER_PRESENT -> if (refreshWaitsForScreen) refreshDevices()
-                UsbManager.ACTION_USB_DEVICE_ATTACHED -> {
-                    usbWaitSince = 0L
-                    forgetEjected(intent.getParcelableExtraCompat<UsbDevice>(UsbManager.EXTRA_DEVICE))
-                    scanFoundNoDrive.value = false
-                    notificationAskedThisPlugIn = false
-                    notificationsOffLogged = false
-                    appendLog(getString(R.string.log_usb_device_attached))
-                    refreshDevices()
-                }
-                UsbManager.ACTION_USB_DEVICE_DETACHED -> {
-                    usbWaitSince = 0L
-                    val detached = intent.getParcelableExtraCompat<UsbDevice>(UsbManager.EXTRA_DEVICE)
-                    // Unplugged with its permission prompt still unanswered: say so, once.
-                    detached?.let { d -> permissionAskedAt.remove(d.deviceName)?.let { t ->
-                        appendLog(getString(R.string.log_usb_permission_unanswered, UsbDeviceDescriber.friendlyName(d, 0), secondsSince(t) ?: 0L))
-                    } }
-                    if (detached != null) {
-                        // At detach time, device.serialNumber often throws (device is gone), so
-                        // stableKey falls back to the bus path. Keys stored at mount time likely
-                        // used the serial. Match by vendorId:productId, minus the devices of the
-                        // same model that are still attached — see matchesDetached.
-                        val detachedKeys = setOf(
-                            UsbDeviceDescriber.stableKey(detached, true),
-                            UsbDeviceDescriber.stableKey(detached, false),
-                        )
-                        val vendorProduct = "${detached.vendorId}:${detached.productId}"
-                        val stillAttachedKeys = usbDeviceProvider.getDevices()
-                            .filter { it.deviceName != detached.deviceName }
-                            .flatMap { listOf(
-                                UsbDeviceDescriber.stableKey(it, usbDeviceProvider.hasPermission(it)),
-                                UsbDeviceDescriber.stableKey(it, false),
-                            ) }
-                            .toSet()
-                        handleDetach { key ->
-                            UsbDeviceDescriber.matchesDetached(key, detachedKeys, vendorProduct, stillAttachedKeys)
-                        }
-                    }
-                    appendLog(getString(R.string.log_usb_device_detached))
-                    refreshDevices()
-                }
-            }
+    // What the screen does with the USB broadcasts, which MountCoordinator hears for the process.
+
+    private fun onUsbPermission(device: UsbDevice?, granted: Boolean) {
+        val waited = device?.let { secondsSince(permissionAskedAt.remove(it.deviceName)) }
+        if (device != null && granted) {
+            appendLog(getString(R.string.log_usb_permission_granted, device.deviceName) +
+                (waited?.let { " " + getString(R.string.log_usb_permission_after, it) } ?: ""))
+            // A phone or camera goes to the MTP path, not the USB-drive one.
+            if (app.fayaz.otgmaster.mtp.MtpSession.isMtpDevice(device) && !UsbDeviceDescriber.isMassStorageDevice(device)) {
+                mountMtpDevices(listOf(device), OtgMasterState.mountedDrives.mapNotNull { it.sourceDeviceName }.toSet())
+            } else openAndProbeUsb()
+        } else {
+            appendLog(getString(R.string.log_usb_permission_denied_for,
+                device?.let { UsbDeviceDescriber.friendlyName(it, 0) } ?: "the USB device", waited ?: 0L))
+        }
+    }
+
+    private fun onUsbAttached() {
+        usbWaitSince = 0L
+        scanFoundNoDrive.value = false
+        notificationAskedThisPlugIn = false
+        notificationsOffLogged = false
+        appendLog(getString(R.string.log_usb_device_attached))
+        refreshDevices()
+    }
+
+    /**
+     * What the screen forgets of a USB device going away, for the stored keys [matches] accepts:
+     * suppression flags and session credentials, and the dialogs of the Eject and Unmount waits
+     * the engine is about to drop. MountCoordinator.usbGone does the rest, then re-probes.
+     */
+    private fun onUsbDetaching(detached: UsbDevice?, matches: ((String) -> Boolean)?) {
+        usbWaitSince = 0L
+        // Unplugged with its permission prompt still unanswered: say so, once.
+        detached?.let { d -> permissionAskedAt.remove(d.deviceName)?.let { t ->
+            appendLog(getString(R.string.log_usb_permission_unanswered, UsbDeviceDescriber.friendlyName(d, 0), secondsSince(t) ?: 0L))
+        } }
+        if (matches == null) return
+        // Clear suppression flags so the next plug-in triggers auto-mount again.
+        manuallyUnmountedDevices.removeAll { matches(it) }
+        autoMountAttempted.removeAll { matches(it) }
+        sessionPlaintextCreds.keys.filter { matches(it) }.forEach { sessionPlaintextCreds.remove(it) }
+        saveManuallyUnmountedDevices()
+        ejectBusyDialog.value?.let { key ->
+            if (key in OtgMasterState.pendingEjects.value && matches(key)) ejectBusyDialog.value = null
+        }
+        unmountBusyDialog.value?.let { id ->
+            if (OtgMasterState.mountedDrives.any { it.id == id && it.sourceDeviceName?.let(matches) == true }) unmountBusyDialog.value = null
         }
     }
 
@@ -525,7 +509,7 @@ class MainActivity : AppCompatActivity() {
         // With the notifications question above it, Android made a second MainActivity over
         // the first (Pixel 7 Pro, Android 17): the second mounted while the first still waited
         // for the answer, and the question stayed buried under it. A file picker above it does
-        // the same. The first instance hears the attach through usbReceiver, so this one closes.
+        // the same. The first instance hears the attach through the screen callback, so this one closes.
         if (!isTaskRoot && intent?.action == UsbManager.ACTION_USB_DEVICE_ATTACHED) {
             duplicate = true
             finish()
@@ -591,8 +575,6 @@ class MainActivity : AppCompatActivity() {
         val usbMgr = getSystemService(Context.USB_SERVICE) as UsbManager
         usbDeviceProvider = RealUsbDeviceProvider(usbMgr, permissionIntent)
 
-        registerUsbReceiver()
-
         // Let components without an activity reference write to the log pane. From another
         // thread a line goes through Dispatchers.Main, not runOnUiThread: MountCoordinator logs
         // from an IO thread and the screen then writes its own lines in withContext(Main), and
@@ -610,6 +592,11 @@ class MainActivity : AppCompatActivity() {
             override fun devicesChanged() = refreshDevices()
             override val isResumed: Boolean
                 get() = lifecycle.currentState.isAtLeast(androidx.lifecycle.Lifecycle.State.RESUMED)
+            override fun usbAttached(device: UsbDevice?) = onUsbAttached()
+            override fun usbDetaching(device: UsbDevice?, matches: ((String) -> Boolean)?) = onUsbDetaching(device, matches)
+            override fun usbPermission(device: UsbDevice?, granted: Boolean) = onUsbPermission(device, granted)
+            // Unlocked: a refresh deferred at the lock screen runs now (see onWindowFocusChanged).
+            override fun userPresent() { if (refreshWaitsForScreen) refreshDevices() }
         }
         app.fayaz.otgmaster.engine.MountCoordinator.screen = installedScreen
 
@@ -635,11 +622,7 @@ class MainActivity : AppCompatActivity() {
         }
         OtgMasterState.unmountAllRequest = installedUnmountAll
         installedDetachRequest = { deviceKey ->
-            runOnUiThread {
-                handleDetach { it == deviceKey }
-                appendLog(getString(R.string.log_usb_device_detached))
-                refreshDevices()
-            }
+            runOnUiThread { app.fayaz.otgmaster.engine.MountCoordinator.usbGone(null) { it == deviceKey } }
         }
         OtgMasterState.detachRequest = installedDetachRequest
 
@@ -963,7 +946,6 @@ class MainActivity : AppCompatActivity() {
         installedUnmountAll = null
         installedDetachRequest = null
         if (successor == null) closeOpenedDevices()
-        unregisterReceiver(usbReceiver)
         super.onDestroy()
     }
 
@@ -1019,20 +1001,6 @@ class MainActivity : AppCompatActivity() {
         toastState.value = Pair(message, false)
         if (!lifecycle.currentState.isAtLeast(androidx.lifecycle.Lifecycle.State.RESUMED)) {
             android.widget.Toast.makeText(this, message, android.widget.Toast.LENGTH_LONG).show()
-        }
-    }
-
-    private fun registerUsbReceiver() {
-        val filter = IntentFilter().apply {
-            addAction(REQUEST_USB_PERMISSION)
-            addAction(UsbManager.ACTION_USB_DEVICE_ATTACHED)
-            addAction(UsbManager.ACTION_USB_DEVICE_DETACHED)
-            addAction(Intent.ACTION_USER_PRESENT)
-        }
-        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
-            registerReceiver(usbReceiver, filter, RECEIVER_NOT_EXPORTED)
-        } else {
-            registerReceiver(usbReceiver, filter)
         }
     }
 
@@ -1643,82 +1611,6 @@ class MainActivity : AppCompatActivity() {
     }
 
     /**
-     * Everything a USB device going away undoes, for the devices whose stored keys
-     * [matchesDetached] accepts: suppression flags, session credentials, mounted
-     * partitions (left as disconnected cards) and probed handles.
-     */
-    private fun handleDetach(matchesDetached: (String) -> Boolean) {
-        // Clear suppression flags so the next plug-in triggers auto-mount again.
-        manuallyUnmountedDevices.removeAll { matchesDetached(it) }
-        autoMountAttempted.removeAll { matchesDetached(it) }
-        OtgMasterState.ejectedDevices.removeAll { matchesDetached(it) }
-        // Unplugged while waiting to eject: nothing is left to eject.
-        OtgMasterState.pendingEjects.value.keys.filter { matchesDetached(it) }.forEach { dropPendingEject(it) }
-        // Nor to unmount.
-        OtgMasterState.mountedDrives.filter { it.sourceDeviceName?.let(matchesDetached) == true }
-            .forEach { dropPendingUnmount(it.id) }
-        sessionPlaintextCreds.keys.filter { matchesDetached(it) }.forEach { sessionPlaintextCreds.remove(it) }
-        saveManuallyUnmountedDevices()
-        // Unmount any mounted drives from this device. A drive still mounted
-        // here was not unmounted first: pulled out, or dropped by itself, which
-        // on bus-powered SSD enclosures is usually the phone's port browning out
-        // under load (issue #50). Its card stays, marked disconnected.
-        val lost = OtgMasterState.mountedDrives
-            .filter { it.sourceDeviceName?.let(matchesDetached) == true }
-        if (lost.isNotEmpty()) recordDisconnect(lost)
-        lost.forEach { unmountDrive(it, disconnected = true) }
-        // An MTP device's session is shared by its storages; close it once they are gone.
-        lost.mapNotNull { (it.fileSystem as? app.fayaz.otgmaster.mtp.MtpStorageFileSystem)?.session }.distinct()
-            .forEach { s -> lifecycleScope.launch(Dispatchers.IO) { runCatching { s.close() } } }
-        // Close and discard any probed-but-not-yet-mounted block handles.
-        val keysToClose = openedDevices.keys.filter { matchesDetached(it) }
-        val toClose = keysToClose.mapNotNull { openedDevices.remove(it) }
-        _deviceCandidates.value = _deviceCandidates.value.filterNot { matchesDetached(it.deviceName) }
-        if (toClose.isNotEmpty()) {
-            lifecycleScope.launch(Dispatchers.IO) { toClose.forEach { runCatching { it.close() } } }
-        }
-    }
-
-    /**
-     * Leaves a disconnected card for each of [lost] and says why it may have happened.
-     *
-     * Only the battery is readable here: Android gives apps no view of a hub, or of how
-     * much current the port supplies. A phone plugged into power was most likely feeding
-     * the drive through a powered hub, so it does not get the power advice.
-     */
-    private fun recordDisconnect(lost: List<MountedDrive>) {
-        val battery = registerReceiver(null, IntentFilter(Intent.ACTION_BATTERY_CHANGED))
-        val level = battery?.getIntExtra(android.os.BatteryManager.EXTRA_LEVEL, -1) ?: -1
-        val scale = battery?.getIntExtra(android.os.BatteryManager.EXTRA_SCALE, -1) ?: -1
-        val event = DisconnectEvent(
-            atMillis = System.currentTimeMillis(),
-            batteryPercent = if (level >= 0 && scale > 0) level * 100 / scale else null,
-            externalPower = (battery?.getIntExtra(android.os.BatteryManager.EXTRA_PLUGGED, 0) ?: 0) != 0,
-        )
-        lost.forEach { drive ->
-            OtgMasterState.recordDisconnect(DisconnectedDrive(
-                partitionKey = drive.partitionKey,
-                title = driveTitle(drive),
-                filesystemName = drive.filesystemName,
-                containerType = drive.sourceVolumeCandidate?.containerType,
-                event = event,
-            ))
-        }
-        val names = lost.joinToString { driveTitle(it) }
-        val message = getString(
-            if (event.externalPower) R.string.drive_disconnected_unexpectedly
-            else R.string.drive_disconnected_power_hint,
-            names)
-        appendLog(message)
-        toastState.value = Pair(message, false)
-        // The in-app banner is invisible to someone copying in Files, which is where a
-        // drop mid-transfer happens.
-        if (!lifecycle.currentState.isAtLeast(androidx.lifecycle.Lifecycle.State.RESUMED)) {
-            android.widget.Toast.makeText(this, message, android.widget.Toast.LENGTH_LONG).show()
-        }
-    }
-
-    /**
      * [onTornDown] runs on the main thread once the filesystem is unmounted and the decrypted
      * device closed, and not at all if that fails: anything that tells the user the drive is
      * safe to unplug belongs there, not after this function returns, because the teardown
@@ -1785,11 +1677,7 @@ class MainActivity : AppCompatActivity() {
         scanFoundNoDrive.value = usbDeviceProvider.getDevices().none { UsbDeviceDescriber.isMassStorageDevice(it) }
     }
 
-    /** A new plug-in of [device]: the app may open it again. */
-    private fun forgetEjected(device: UsbDevice?) {
-        if (device == null) return
-        OtgMasterState.ejectedDevices.removeAll { it.startsWith("${device.vendorId}:${device.productId}") }
-    }
+    private fun forgetEjected(device: UsbDevice?) = app.fayaz.otgmaster.engine.MountCoordinator.forgetEjected(device)
 
     private fun ejectTargets(key: String) = app.fayaz.otgmaster.engine.MountCoordinator.ejectTargets(key)
 
