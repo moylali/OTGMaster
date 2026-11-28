@@ -1382,27 +1382,22 @@ class MainActivity : AppCompatActivity() {
                 val excludeKeys = OtgMasterState.mountedDrives.mapNotNull { it.sourceDeviceName }.toSet() +
                     openedDevices.keys + pendingUnmounts.filterValues { it > 0 }.keys +
                     OtgMasterState.ejectedDevices
-                val opener = LibaumsRawBlockDeviceOpener(this@MainActivity)
-                // What Android is using just before the claim (reportTakenFromAndroid).
-                val androidHad = runCatching {
-                    app.fayaz.otgmaster.usb.UsbAccess.androidVolumeNames(this@MainActivity,
-                        sharedPreferences.getStringSet(PREF_KNOWN_VOLUMES, emptySet()).orEmpty())
-                }.getOrDefault(emptyList())
-                val openedList = try {
-                    opener.openAllAvailable(excludeKeys).also {
-                        // Every device not opened says why, whether or not another one opened.
-                        val reasons = opener.notOpened.toList()
-                        if (reasons.isNotEmpty()) withContext(Dispatchers.Main) {
-                            reasons.forEach { appendLog(getString(R.string.log_could_not_open_device, it)) }
-                        }
-                    }
+                // The engine opens and probes (2b step 2, slice 3); the screen applies the result.
+                val run = try {
+                    app.fayaz.otgmaster.engine.MountCoordinator.openAndProbe(excludeKeys,
+                        sharedPreferences.getStringSet(PREF_KNOWN_VOLUMES, emptySet()).orEmpty(),
+                        _deviceCandidates.value.size)
                 } catch (e: Exception) {
                     e.printStackTrace()
                     withContext(Dispatchers.Main) { appendLog(getString(R.string.log_error_probing_candidates, e.reason())) }
                     return@launch
                 }
+                // Every device not opened says why, whether or not another one opened.
+                if (run.notOpened.isNotEmpty()) withContext(Dispatchers.Main) {
+                    run.notOpened.forEach { appendLog(getString(R.string.log_could_not_open_device, it)) }
+                }
 
-                if (openedList.isEmpty()) {
+                if (run.devices.isEmpty()) {
                     withContext(Dispatchers.Main) {
                         // Every attached device was filtered out as already open. If any of
                         // them are sitting in deferredCandidates, an earlier auto-mount
@@ -1410,83 +1405,34 @@ class MainActivity : AppCompatActivity() {
                         // failure, so Scan works as a recovery action.
                         if (deferredCandidates.isNotEmpty()) {
                             restoreDeferredCandidates()
-                        } else if (!quietIfNone && opener.notOpened.isEmpty()) {
+                        } else if (!quietIfNone && run.notOpened.isEmpty()) {
                             appendLog(getString(R.string.log_could_not_open_block_device))
                         }
                     }
                     return@launch
                 }
 
-                if (androidHad.isNotEmpty()) withContext(Dispatchers.Main) { androidHad.forEach(::reportTakenFromAndroid) }
-                val baseIndex = _deviceCandidates.value.size
-                openedList.forEach {
-                    android.util.Log.i("OTGMaster", "probe opened ${it.deviceKey} as ${objId(it.blockDevice)}")
-                }
-                val skippedLines = mutableListOf<String>()
-                val newCandidates = openedList.mapIndexed { index, opened ->
-                    val displayName = UsbDeviceDescriber.friendlyName(opened.usbDevice, baseIndex + index)
-                    val (allCandidates, plainPartitions, candidates) = try {
-                        app.fayaz.otgmaster.engine.MountCoordinator.probe(opened.blockDevice)
-                    } catch (e: Exception) {
-                        e.printStackTrace()
-                        OtgMasterState.logFailure("probe", "Reading the partition table of $displayName failed", e)
-                        app.fayaz.otgmaster.engine.MountCoordinator.Probed(emptyList(), emptyList(), emptyList())
-                    }
-                    // Partitions neither mounted nor offered, one line each, so a drive with
-                    // "missing" partitions says why (and so does a report sent from it).
-                    val skipped = app.fayaz.otgmaster.fs.SkippedPartitions.lines(
-                        allCandidates, plainPartitions.map { it.startBlock }.toSet(),
-                        opened.blockDevice.blockSize, ::formatSize,
-                    ) { c ->
-                        runCatching {
-                            app.fayaz.otgmaster.fs.FilesystemDetector.detectFromBytes(
-                                opened.blockDevice.readBlocks(c.startBlock,
-                                    minOf(4L, opened.blockDevice.blockCount - c.startBlock).toInt()))
-                        }.getOrDefault(app.fayaz.otgmaster.fs.DetectedFilesystem.Unknown)
-                    }
-                    skipped.forEach { skippedLines += "$displayName · $it" }
-                    UsbDeviceCandidate(opened.deviceKey, displayName, opened.blockDevice, candidates, plainPartitions, allCandidates.size - candidates.size)
-                }
+                if (run.androidHad.isNotEmpty()) withContext(Dispatchers.Main) { run.androidHad.forEach(::reportTakenFromAndroid) }
 
                 withContext(Dispatchers.Main) {
-                    skippedLines.forEach { appendLog(it) }
+                    run.skipped.forEach { appendLog(it) }
                     val existingKeys = _deviceCandidates.value.map { it.deviceName }.toSet()
-                    val (uniqueNew, duplicates) = newCandidates.partition { it.deviceName !in existingKeys }
+                    val (uniqueNew, duplicates) = run.devices.partition { it.deviceName !in existingKeys }
                     // Close rather than leak the redundant connections opened for devices
                     // that turned out to already be in the dropdown by the time we got here.
                     duplicates.forEach { it.blockDevice.close() }
 
-                    // Classify each device:
-                    //  - purePlain:  every candidate is a recognised plain FS → auto-mount all
-                    //  - mixed:      has both plain and encrypted candidates → auto-mount plain
-                    //                partitions AND show VeraCrypt form for the encrypted ones
-                    //  - pureEncrypted: no plain candidates → VeraCrypt form only
-                    val (hasPlain, pureEncrypted) = uniqueNew.partition { it.plainPartitions.isNotEmpty() }
-                    val (purePlain, mixed) = hasPlain.partition { device ->
-                        val plainStarts = device.plainPartitions.map { it.startBlock }.toSet()
-                        device.candidates.all { it.isIn(plainStarts) }
-                    }
-
-                    // Auto-mount ALL plain partitions on pure-plain and mixed devices
-                    (purePlain + mixed).forEach { candidate ->
+                    // Every plain partition mounts now; the partitions to unlock go to the form
+                    // or auto mount, with the plain ones taken out (MountCoordinator.classify).
+                    val classified = app.fayaz.otgmaster.engine.MountCoordinator.classify(uniqueNew)
+                    classified.withPlain.forEach { candidate ->
                         openedDevices[candidate.deviceName] = candidate.blockDevice
                         candidate.plainPartitions.forEach { plain ->
                             mountPlainDevice(candidate, plain)
                         }
                     }
 
-                    // For mixed devices, strip out the already-mounted plain candidates so
-                    // the VeraCrypt form only shows the encrypted partitions still to unlock.
-                    val mixedEncrypted = mixed.map { device ->
-                        val plainStarts = device.plainPartitions.map { it.startBlock }.toSet()
-                        val kept = device.candidates.filter { !it.isIn(plainStarts) }
-                        device.copy(
-                            candidates = kept,
-                            hiddenPartitions = device.hiddenPartitions + (device.candidates.size - kept.size),
-                        )
-                    }
-
-                    val encryptedNew = pureEncrypted + mixedEncrypted
+                    val encryptedNew = classified.encrypted
                     encryptedNew.forEach { openedDevices[it.deviceName] = it.blockDevice }
                     // Defer auto-mount candidates from _deviceCandidates so the form doesn't
                     // flash while waiting for the biometric prompt. They'll be added back in
