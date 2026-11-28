@@ -33,6 +33,22 @@ to a row here.
 
 ---
 
+## Commit hashes after the merge of #212
+
+#212 (2b step 2, slices 1 to 3: the device state, Unmount, Eject and the probes move to
+MountCoordinator) was rebase-merged, so `main` has new hashes; the tree at `f6d847f` is the PR
+head's, `6b34ea8`.
+
+| At the PR head | On `main` | Commit |
+|---|---|---|
+| `1503d924` | `bfe3489d` | docs: hash table for the rebase-merge of #208 |
+| `9cb92373` | `171f2ac3` | refactor(engine): the USB connections and the form's candidates move to MountCoordinator |
+| `78f656bd` | `b774db36` | refactor(engine): Unmount, Eject, the busy check and share shortcuts move to MountCoordinator |
+| `334ffd80` | `31bb60e0` | docs: the order 2b step 2 is built in, and the door's API |
+| `67724b81` | `173f65c5` | refactor(engine): reading a drive's partitions moves to MountCoordinator |
+| `c99c9293` | `c9f35225` | docs: Unmount and Eject through MountCoordinator on the OnePlus 7, Drive 1 |
+| `6b34ea84` | `f6d847f1` | fix(engine): a new screen releases what the previous one held, as before |
+
 ## Commit hashes after the merge of #208
 
 #208 (Container Master: the owner's screen, settings and Open with; writes; TAR, 7z, restic,
@@ -131,6 +147,48 @@ All four were rebase-merged, so `main` has new hashes. The sections below name t
 | #193 | `96f30a1` | `c74836a` | docs: Milestone 0 and 1 hardware evidence |
 | #193 | `a6a5286` | `bed05fa` | refactor(provider): look up and list through a DocumentSource tree contract |
 | #193 | `2d4bba3` | `c681622` | docs: the held grant still reads the same file on a6a5286 |
+
+## 2026-11-27: the late-query fix, OnePlus 7, Drive 4
+
+`fix/provider-late-result`, **minified** `cac3eaf` (before its rebase onto `f6d847f`, which
+changed no file it touches); the installed APK's SHA-256 matched the build. `tools/saf-probe`
+from `cd9efa6`. OnePlus 7 (GM1901, LineageOS 23.2, Android 16) over Tailscale, Drive 4
+(`…EF450`).
+
+| Step | Result |
+|---|---|
+| Install with OTG Master idle, launch, unlock Partition 1 (LUKS1, ext2) | mounted, read-only |
+| 47 files through the provider against `D4L1EXT2.manifest`: all 22 under `edge/`, both under `large/` (256 MiB and 2.1 GB), the depth-10 leaf under `nested/`, 12 from `mixed/`, 5 each from `dense_lfn/` and `dense_short/` | 47 match. On the first pass the 2.1 GB read outran the probe's 30 s result wait, and the next read picked up its late result file. Each was read again alone and matched (2.1 GB in 126 s). |
+| Eject | no drives, the service stopped, no crash |
+
+The late path itself (a query that is still running past `QUERY_WAIT_MS`) was not reached on
+the phone, since nothing held the volume's lock. The unit tests cover it, and two of them fail
+on the old code. **Written to the drive:** nothing (read-only mount).
+
+## 2026-11-27: a new screen after the engine took the device state, OnePlus 7, Drive 4
+
+#212's fix `6b34ea8`, **minified**; the installed APK's SHA-256 matched the build. OnePlus 7
+(GM1901, LineageOS 23.2, Android 16) over Tailscale, Drive 4 (`…EF450`). Before the install,
+the benchmark build (`app.fayaz.otgmaster.bench`) held D4's ten partitions mounted read-only
+and idle; they were ejected through that app's Eject.
+
+| Step | Result |
+|---|---|
+| Launch, USB access granted: the coordinator's probe | the form offers D4, Partition 1 |
+| Partition 1 (LUKS1, ext2), Unlock & mount | mounted, read-only |
+| Relaunch with CLEAR_TASK (a new screen replaces the old) | Partition 1 stays mounted; the new screen probes again ("Found 3 USB devices") and offers Partition 2. This probe is what the regression lost. |
+| Partition 2 (LUKS1, ext3), unlocked through the new connection | mounted |
+| Read through the provider: `edge/size_1048577.bin` on Partition 1, 8 files under `edge/` on Partition 2 | match `D4L1EXT2` and `D4L1EXT3` |
+| Eject | no drives, the service stopped, Android mounted nothing, no crash |
+
+**Written to the drive:** nothing (both mounts read-only).
+
+## 2026-11-26: Drive 1 back on the laptop
+
+The host check owed after the 11-25 and 11-26 runs below, which each created and deleted a file
+at the roots of D1EXFAT, D1FAT32, D1NTFS and D1EXT4. `read_matrix_drive.sh`, then
+`verify_volume.sh` on every partition: **9 CLEAN**. D1FAT32's only finding was its dirty bit
+(byte 65), and its fixtures matched, 20,995 of 20,995.
 
 ## 2026-11-26: Unmount and Eject through MountCoordinator, OnePlus 7, Drive 1
 
