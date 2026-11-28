@@ -1,1 +1,2 @@
 • Fixed: some BitLocker drives from Windows were opened as FAT32 and never asked for the password
+• Fixed: a file could fail to open with a "busy" error while a long copy to the drive was running

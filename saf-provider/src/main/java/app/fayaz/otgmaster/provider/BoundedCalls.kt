@@ -23,6 +23,12 @@ import java.util.concurrent.atomic.AtomicBoolean
  * while the drive is busy does not queue a thread per ask behind the lock.
  */
 internal class BoundedCalls<T>(
+    /**
+     * Keep a late query's result until [awaitOutstanding] takes it. For callers that wait on
+     * after [Late]; a caller that never does would keep every late result until its key is
+     * asked again, which for a folder listing can be thousands of rows.
+     */
+    private val holdLateResults: Boolean = false,
     private val executor: Executor = Executors.newCachedThreadPool { r ->
         Thread(r, "ProviderQuery").apply { isDaemon = true }
     },
@@ -35,8 +41,12 @@ internal class BoundedCalls<T>(
         val late = AtomicBoolean(false)
         @Volatile var onLate: ((Result<T>) -> Unit)? = null
         override fun done() {
-            inFlight.remove(key, this)
-            if (late.get()) onLate?.invoke(runCatching { unwrap { get() } })
+            // With holdLateResults a late query stays in the map until [awaitOutstanding] hands its
+            // result out, or the next call for the key replaces it. Removed here, a waiter arriving
+            // just after it finished found nothing and answered Late with the result in hand.
+            val isLate = late.get()
+            if (!(isLate && holdLateResults)) inFlight.remove(key, this)
+            if (isLate) onLate?.invoke(runCatching { unwrap { get() } })
         }
     }
 
@@ -61,13 +71,19 @@ internal class BoundedCalls<T>(
         }
     }
 
-    /** Waits up to [waitMs] more for the query outstanding under [key], if there is one. */
+    /**
+     * Waits up to [waitMs] more for the query outstanding under [key], if there is one. With
+     * holdLateResults it also hands out the result of a late one that has finished since, once;
+     * after that the key is free and the next [call] runs the query again.
+     */
     fun awaitOutstanding(key: String, waitMs: Long): Outcome<T> {
         val c = inFlight[key] ?: return Late
         return try {
             Done(unwrap { c.get(waitMs, TimeUnit.MILLISECONDS) })
         } catch (_: TimeoutException) {
             Late
+        } finally {
+            if (c.isDone) inFlight.remove(key, c)
         }
     }
 

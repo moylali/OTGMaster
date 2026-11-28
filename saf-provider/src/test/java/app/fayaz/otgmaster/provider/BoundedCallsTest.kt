@@ -81,12 +81,58 @@ class BoundedCallsTest {
 
     @Test
     fun `awaitOutstanding waits for the query already running`() {
-        val calls = BoundedCalls<List<String>>()
+        val calls = BoundedCalls<List<String>>(holdLateResults = true)
         val release = holdLock()
         assertEquals(BoundedCalls.Late, calls.call("d:/", 50, onLate = {}) { listing() })
         assertEquals(BoundedCalls.Late, calls.awaitOutstanding("d:/", 50))
         release.countDown()
         assertEquals(BoundedCalls.Done(listOf("a", "b")), calls.awaitOutstanding("d:/", 5_000))
+    }
+
+    /**
+     * The provider's order after a late query: knownRows, then awaitOutstanding. A query that
+     * finished in between used to be gone from the in-flight map, so the wait answered Late and
+     * the provider threw "busy" with the result in hand. This waits until the query has fully
+     * finished (onLate ran) before asking, which is the race CI hit, made certain.
+     */
+    @Test
+    fun `awaitOutstanding still has a late query's result once it has finished`() {
+        val calls = BoundedCalls<List<String>>(holdLateResults = true)
+        val release = holdLock()
+        val finished = CountDownLatch(1)
+        assertEquals(BoundedCalls.Late, calls.call("d:/", 50, onLate = { finished.countDown() }) { listing() })
+        release.countDown()
+        assertTrue("the late query never finished", finished.await(5, TimeUnit.SECONDS))
+        Thread.sleep(50) // done() returns after onLate
+        assertEquals(BoundedCalls.Done(listOf("a", "b")), calls.awaitOutstanding("d:/", 1_000))
+    }
+
+    @Test
+    fun `a late result is handed out once, and the next query runs again`() {
+        val calls = BoundedCalls<List<String>>(holdLateResults = true)
+        val release = holdLock()
+        val runs = AtomicInteger()
+        val finished = CountDownLatch(1)
+        assertEquals(BoundedCalls.Late, calls.call("d:/", 50, onLate = { finished.countDown() }) { runs.incrementAndGet(); listing() })
+        release.countDown()
+        assertTrue(finished.await(5, TimeUnit.SECONDS))
+        Thread.sleep(50)
+        assertEquals(BoundedCalls.Done(listOf("a", "b")), calls.awaitOutstanding("d:/", 1_000))
+        assertEquals(BoundedCalls.Late, calls.awaitOutstanding("d:/", 50))
+        assertEquals(BoundedCalls.Done(listOf("a", "b")), calls.call("d:/", 1_000, onLate = {}) { runs.incrementAndGet(); listing() })
+        assertEquals(2, runs.get())
+    }
+
+    /** Without holdLateResults a finished late query leaves the map, as folder listings need. */
+    @Test
+    fun `a late result is not held unless asked for`() {
+        val calls = BoundedCalls<List<String>>()
+        val release = holdLock()
+        val finished = CountDownLatch(1)
+        assertEquals(BoundedCalls.Late, calls.call("d:/", 50, onLate = { finished.countDown() }) { listing() })
+        release.countDown()
+        assertTrue(finished.await(5, TimeUnit.SECONDS))
+        assertEquals(BoundedCalls.Late, calls.awaitOutstanding("d:/", 50))
     }
 
     @Test

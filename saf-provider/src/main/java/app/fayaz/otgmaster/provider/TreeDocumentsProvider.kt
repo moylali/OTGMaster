@@ -82,7 +82,8 @@ abstract class TreeDocumentsProvider : DocumentsProvider() {
         private const val QUERY_WAIT_MAX_MS = 12_000L
         /** A listing read after its query gave up is kept this long for the client's next ask. */
         private const val LATE_LISTING_MS = 60_000L
-        private val documentQueries = BoundedCalls<List<Map<String, Any?>>>()
+        // queryDocument waits on after Late (awaitOutstanding), so its late results are held for it.
+        private val documentQueries = BoundedCalls<List<Map<String, Any?>>>(holdLateResults = true)
         private val childQueries = BoundedCalls<List<Map<String, Any?>>>()
         private val lateListings = java.util.concurrent.ConcurrentHashMap<String, Pair<Long, List<Map<String, Any?>>>>()
         /** The last row read for each document, answered while its drive is busy. */
