@@ -800,8 +800,9 @@ class MainActivity : AppCompatActivity() {
                         },
                         newlyMountedDriveIds = newlyMountedDriveIds.value,
                         onHighlightConsumed = { driveId -> newlyMountedDriveIds.value = newlyMountedDriveIds.value - driveId },
-                        formatUnavailable = { d -> live(d)?.let { formatUnavailable(it) } ?: "" },
-                        encryptUnavailable = { d -> live(d)?.let { encryptUnavailable(it) } ?: "" },
+                        // null means available, so a drive that is gone must not fall through to it.
+                        formatUnavailable = { d -> live(d).let { if (it == null) "" else formatUnavailable(it) } },
+                        encryptUnavailable = { d -> live(d).let { if (it == null) "" else encryptUnavailable(it) } },
                         driveSummary = { d -> live(d)?.let { driveSummary(it) } },
                         onFormat = { d, req -> live(d)?.let { formatDrive(it, req) } },
                         onEncrypt = { d, req -> live(d)?.let { encryptDrive(it, req) } },
@@ -3032,7 +3033,7 @@ fun OtgMasterApp(
                                         if (backupsHidden) enableBackupsFor = drive else backupTarget = drive
                                     })
                                     add(app.fayaz.otgmaster.ui.DriveAction("recovery_action", stringResource(R.string.recovery_action),
-                                        liveDrive(drive.id)?.let { app.fayaz.otgmaster.ui.recoveryUnavailable(it, stringResource(R.string.recovery_not_supported)) } ?: stringResource(R.string.recovery_not_supported)) { recoveryTarget = drive })
+                                        liveDrive(drive.id).let { live -> if (live == null) stringResource(R.string.recovery_not_supported) else app.fayaz.otgmaster.ui.recoveryUnavailable(live, stringResource(R.string.recovery_not_supported)) }) { recoveryTarget = drive })
                                     val driveJobs = app.fayaz.otgmaster.ui.jobsForDrive(backupJobs, drive.id)
                                     if (driveJobs.isNotEmpty() && !backupsHidden) {
                                         add(app.fayaz.otgmaster.ui.DriveAction("backups_action",
